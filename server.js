@@ -64,6 +64,31 @@ function listUserSaves(username) {
   } catch { return []; }
 }
 
+function getLatestSave() {
+  try {
+    const latest = fs.readdirSync(SAVES_DIR)
+      .filter(f => f.endsWith('.json'))
+      .map(f => {
+        const fullPath = path.join(SAVES_DIR, f);
+        const stat = fs.statSync(fullPath);
+        return { file: f, path: fullPath, mtimeMs: stat.mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+    if (!latest) return null;
+    const data = JSON.parse(fs.readFileSync(latest.path, 'utf8'));
+    if (!data || !data.state) return null;
+    return {
+      name: data.meta?.name || latest.file.replace(/\.json$/, ''),
+      username: data.meta?.username || null,
+      date: data.meta?.date || new Date(latest.mtimeMs).toISOString(),
+      state: data.state,
+    };
+  } catch (e) {
+    console.warn('[autoload] impossible de lire la dernière sauvegarde:', e.message);
+    return null;
+  }
+}
+
 // couleur déterministe par username
 const COLORS = ['#e25e4c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#f0a040','#40d0c0','#e0e0e0'];
 const userColor = username => COLORS[parseInt(sha256(username).slice(0,2), 16) % COLORS.length];
@@ -91,6 +116,12 @@ let nextId  = 1;
 let clients = [];   // { ws, id, color, name, username, token, isAdmin }
 let hostId  = null;
 let worldConfig = { size: 64, maxPlayers: 8, resources: { tree: 8, iron: 2, coal: 2 } };
+const startupSave = getLatestSave();
+let startupSaveLoaded = false;
+if (startupSave?.state?.world) worldConfig = sanitizeWorldConfig(startupSave.state.world);
+if (startupSave) {
+  console.log(`[autoload] dernière sauvegarde prête: "${startupSave.name}"${startupSave.username ? ' (' + startupSave.username + ')' : ''}`);
+}
 
 const send = (c, msg) => { if (c.ws.readyState === 1) c.ws.send(JSON.stringify(msg)); };
 const broadcastAll  = msg => { const r = JSON.stringify(msg); clients.forEach(c => { if(c.ws.readyState===1) c.ws.send(r); }); };
@@ -155,6 +186,20 @@ wss.on('connection', (ws) => {
   if (hostId === null) {
     hostId = id;
     send(client, { type: 'hello', id, color, name, role: 'host', isAdmin: false, worldConfig });
+    if (startupSave && !startupSaveLoaded) {
+      startupSaveLoaded = true;
+      const state = startupSave.state;
+      state.world = state.world ? sanitizeWorldConfig(state.world) : worldConfig;
+      state.size = state.world.size;
+      worldConfig = state.world;
+      send(client, {
+        type: 'game_loaded',
+        state,
+        name: startupSave.name,
+        loadedBy: 'serveur',
+      });
+      console.log(`[autoload] "${startupSave.name}" envoyée au premier hôte`);
+    }
   } else {
     send(client, { type: 'hello', id, color, name, role: 'guest', isAdmin: false, worldConfig });
     const host = clients.find(c => c.id === hostId);
@@ -213,6 +258,19 @@ wss.on('connection', (ws) => {
         send(client, { type:'auth_ok', username: user.username, color: user.color, token: msg.token });
         broadcastPlayerList();
         console.log(`[resume] ${user.username}`);
+        break;
+      }
+
+      case 'logout': {
+        Object.assign(client, {
+          username: null,
+          token: null,
+          name: 'Joueur ' + client.id,
+          color: COLORS[(client.id - 1) % COLORS.length],
+        });
+        send(client, { type:'logout_ok', name: client.name, color: client.color });
+        broadcastPlayerList();
+        console.log(`[logout] joueur #${client.id}`);
         break;
       }
 
