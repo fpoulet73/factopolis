@@ -770,24 +770,27 @@ function refreshWorkerAllocation(){
   for(const b of buildings){ b.workersAssigned = 0; b.workersByTown = {}; }
   const jobs = buildings
     .filter(b=>!b.dead && !b.paused && workersRequiredOf(b)>0)
-    .sort((a,b)=> (a.y-b.y) || (a.x-b.x));
+    .sort((a,b)=> workersRequiredOf(b) - workersRequiredOf(a)); // les plus grands postes en premier
   const homes = buildings
-    .filter(b=>!b.dead && BUILD[b.type].resid && b.pop>0)
-    .sort((a,b)=> workRadiusOf(b)-workRadiusOf(a));
-  for(const home of homes){
-    let available = home.pop;
-    const radius = workRadiusOf(home);
-    const nearbyJobs = jobs
-      .filter(j=>ownedBy(j, home.owner) && workersAllocatedOf(j) < workersRequiredOf(j) && buildingDistance(home,j) <= radius)
-      .sort((a,b)=> buildingDistance(home,a)-buildingDistance(home,b));
-    for(const job of nearbyJobs){
-      if(available <= 0) break;
+    .filter(b=>!b.dead && BUILD[b.type].resid && b.pop>0);
+  // disponibilité par maison
+  const avail = new Map(homes.map(h => [h, h.pop]));
+  // approche centrée sur le poste : chaque poste recrute depuis les maisons les plus proches
+  // null owner = bâtiment solo/non assigné, peut travailler avec n'importe quel propriétaire
+  for(const job of jobs){
+    const nearbyHomes = homes
+      .filter(h => (h.owner == null || job.owner == null || h.owner === job.owner)
+                && avail.get(h) > 0
+                && buildingDistance(h, job) <= workRadiusOf(h))
+      .sort((a,b)=> buildingDistance(a, job) - buildingDistance(b, job));
+    for(const home of nearbyHomes){
       const need = workersRequiredOf(job) - workersAllocatedOf(job);
-      const take = Math.min(available, need);
+      if(need <= 0) break;
+      const take = Math.min(avail.get(home), need);
       job.workersAssigned = (job.workersAssigned||0) + take;
       if(home.townId != null)
         job.workersByTown[home.townId] = (job.workersByTown[home.townId]||0) + take;
-      available -= take;
+      avail.set(home, avail.get(home) - take);
     }
   }
   for(const k in WALLETS){
@@ -804,8 +807,8 @@ function newBuilding(type,x,y,w,h){
               storage:{}, inc:{}, prog:0, trucksOut:0, dead:false, owner:null };
   if(type==='mine')  b.ore = terrain[y*N+x]===T.IRON ? 'iron' : 'coal';
   if(type==='depot'){
-    b.allow = {}; b.sellTo = {};
-    for(const k in RES){ b.allow[k] = k !== 'water'; b.sellTo[k] = false; }
+    b.allow = {}; b.sellTo = {}; b.sellMin = {};
+    for(const k in RES){ b.allow[k] = k !== 'water'; b.sellTo[k] = false; b.sellMin[k] = 0; }
   }
   if(type==='tank'){
     b.allow = { water:true };
@@ -1172,8 +1175,13 @@ const MP_ZONE = 20; // distance minimale entre bâtiments de joueurs différents
 // ou null si la pose est libre.
 function nearbyEnemyOwner(myId, cx, cy){
   if(!myId) return null; // solo : pas de restriction
+  // Seuls les joueurs actuellement connectés comptent — évite les faux positifs
+  // liés aux bâtiments créés par le joueur lui-même dans une session précédente
+  // (où son ID de session était différent).
+  const enemyIds = new Set(MP.players.filter(p => p.id !== myId).map(p => p.id));
   for(const b of buildings){
     if(!b.owner || b.owner === myId) continue;
+    if(!enemyIds.has(b.owner)) continue; // ID orphelin → traiter comme neutre
     // distance Chebyshev (max des axes) entre centres — simple et rapide
     const bcx = b.x + (b.w-1)/2, bcy = b.y + (b.h-1)/2;
     if(Math.abs(cx - bcx) <= MP_ZONE && Math.abs(cy - bcy) <= MP_ZONE) return b.owner;
@@ -1313,7 +1321,7 @@ function clickAt(x,y){
 // ---------- logistique (camions) ----------
 function tryDispatch(b,res){
   const starts = adjRoadTiles(b);
-  if(!starts.length) return false;
+  const senderHasRoad = starts.length > 0;
   dist.fill(-1);
   const q = [];
   for(const s of starts){ dist[s] = 0; prev[s] = -1; q.push(s); }
@@ -1326,10 +1334,12 @@ function tryDispatch(b,res){
       if(road[ni] && dist[ni]<0){ dist[ni] = dist[c]+1; prev[ni] = c; q.push(ni); }
     }
   }
-  let bestB = null, bestScore = Infinity, bestTile = -1;
-  // rayon d'action de l'expéditeur
+  // Les bâtiments non-industriels sans route ne peuvent pas dispatcher
   const senderIsDepot = isStorageHub(b);
   const senderIsInd   = !!BUILD[b.type]?.ind;
+  if(!senderHasRoad && !senderIsInd) return false;
+  let bestB = null, bestScore = Infinity, bestTile = -1;
+  // rayon d'action de l'expéditeur
   const senderRadius  = senderIsDepot ? (b.type === 'tank' ? tankRadiusOf(b) : depotRadiusOf(b))
                       : senderIsInd   ? indRadiusOf(b)
                       : Infinity;
@@ -1338,19 +1348,23 @@ function tryDispatch(b,res){
     if(c===b || c.dead || !accepts(c,res) || space(c,res)<=0) continue;
     if(res === 'water' && b.type === 'pump' && c.type === 'bakery') continue;
     if(isStorageHub(b) && isStorageHub(c)) continue;
+    // Liaisons directes sans limite de rayon (portée = réseau routier uniquement)
+    const millToBakery = b.type === 'mill'  && res === 'flour' && c.type === 'bakery';
+    const pumpToTank   = b.type === 'pump'  && res === 'water' && c.type === 'tank';
+    const noRangeLimit = millToBakery || pumpToTank;
     // vérifier le rayon de l'expéditeur
-    if(senderRadius < Infinity){
+    if(!noRangeLimit && senderRadius < Infinity){
       const d2 = Math.max(Math.abs(centerOfBuilding(c).x - senderCenter.x),
                           Math.abs(centerOfBuilding(c).y - senderCenter.y));
       if(d2 > senderRadius) continue;
     }
     // vérifier le rayon de la cible si c'est un entrepôt ou un bâtiment industriel
-    if(isStorageHub(c)){
+    if(!pumpToTank && isStorageHub(c)){
       const d2 = Math.max(Math.abs(centerOfBuilding(b).x - centerOfBuilding(c).x),
                           Math.abs(centerOfBuilding(b).y - centerOfBuilding(c).y));
       if(d2 > (c.type === 'tank' ? tankRadiusOf(c) : depotRadiusOf(c))) continue;
     }
-    if(BUILD[c.type]?.ind){
+    if(!noRangeLimit && BUILD[c.type]?.ind){
       const d2 = Math.max(Math.abs(centerOfBuilding(b).x - centerOfBuilding(c).x),
                           Math.abs(centerOfBuilding(b).y - centerOfBuilding(c).y));
       if(d2 > indRadiusOf(c)) continue;
@@ -1358,7 +1372,10 @@ function tryDispatch(b,res){
     let bd = Infinity, bt = -1;
     for(const t of adjRoadTiles(c))
       if(dist[t]>=0 && dist[t]<bd){ bd = dist[t]; bt = t; }
-    if(bt<0) continue;
+    // Livraison directe (sans route) pour ind→ind dans le rayon, ou pour les liaisons spéciales
+    const targetIsInd = !!BUILD[c.type]?.ind;
+    const directOk = noRangeLimit || (senderIsInd && targetIsInd);
+    if(bt<0 && !directOk) continue;
     // l'entrepôt en dernier recours ; les logements déjà pleins après ceux qui grandissent
     const rcc = BUILD[c.type].resid;
     const full = !!rcc && c.pop >= rcc.popCap;
@@ -1366,15 +1383,14 @@ function tryDispatch(b,res){
     const stockRatio = (rcc && res === 'goods')
       ? ((c.storage[res]||0) + (c.inc[res]||0)) / (rcc.stockCap || 1)
       : 0;
-    const score = bd + (isStorageHub(c) ? 500 : 0) + (full ? 200 : 0) + stockRatio * 150;
+    // distance réelle pour le score : route si disponible, sinon vol direct
+    const distScore = bt >= 0 ? bd : Math.round(Math.hypot(
+      centerOfBuilding(c).x - senderCenter.x,
+      centerOfBuilding(c).y - senderCenter.y));
+    const score = distScore + (isStorageHub(c) ? 500 : 0) + (full ? 200 : 0) + stockRatio * 150;
     if(score<bestScore){ bestScore = score; bestB = c; bestTile = bt; }
   }
   if(!bestB) return false;
-
-  const path = [];
-  let t = bestTile;
-  while(t!==-1){ path.push(t); t = prev[t]; }
-  path.reverse();
 
   const amt = Math.min(TRUCK_LOAD, b.storage[res]);
   b.storage[res] -= amt;
@@ -1382,11 +1398,25 @@ function tryDispatch(b,res){
   bestB.inc[res] = (bestB.inc[res]||0) + amt;
 
   const C = i => ({ x:(i%N)*TILE+TILE/2, y:((i/N)|0)*TILE+TILE/2 });
-  const pts = [
-    { x:(b.x+b.w/2)*TILE, y:(b.y+b.h/2)*TILE },
-    ...path.map(C),
-    { x:(bestB.x+bestB.w/2)*TILE, y:(bestB.y+bestB.h/2)*TILE },
-  ];
+  let pts;
+  if(bestTile >= 0){
+    // chemin routier
+    const path = [];
+    let t = bestTile;
+    while(t!==-1){ path.push(t); t = prev[t]; }
+    path.reverse();
+    pts = [
+      { x:(b.x+b.w/2)*TILE, y:(b.y+b.h/2)*TILE },
+      ...path.map(C),
+      { x:(bestB.x+bestB.w/2)*TILE, y:(bestB.y+bestB.h/2)*TILE },
+    ];
+  } else {
+    // vol direct (pas de route vers la cible)
+    pts = [
+      { x:(b.x+b.w/2)*TILE, y:(b.y+b.h/2)*TILE },
+      { x:(bestB.x+bestB.w/2)*TILE, y:(bestB.y+bestB.h/2)*TILE },
+    ];
+  }
   trucks.push({ pts, seg:0, t:0, res, amt, target:bestB, from:b });
   return true;
 }
@@ -1519,9 +1549,12 @@ function updateVehicles(dt){
         v.currentBuilding = v.source;
         // Charger la ressource
         const src = v.source;
+        const isInterPlayer = src.owner != null && src.owner !== (v.garageRef.owner ?? null);
         let res = null, maxAmt = 0;
         for(const r of vt.resources){
-          const amt = src.storage[r]||0;
+          // Respecter le seuil minimum de vente si c'est un commerce inter-joueurs
+          const minStock = isInterPlayer ? (src.sellMin?.[r] || 0) : 0;
+          const amt = Math.max(0, (src.storage[r]||0) - minStock);
           if(amt > maxAmt){ maxAmt = amt; res = r; }
         }
         if(res && maxAmt > 0){
@@ -1585,7 +1618,7 @@ function update(dt){
     const r = recipeOf(b);
     if(r && !b.paused){
       let outOK = true, inOK = true;
-      for(const k in r.out) if((b.storage[k]||0) >= OUTCAP) outOK = false;
+      for(const k in r.out) if((b.storage[k]||0) >= capOf(b,k)) outOK = false;
       for(const k in r.in)  if((b.storage[k]||0) <  r.in[k]) inOK = false;
       if(outOK && inOK){
         b.prog += dt * (workersRequiredOf(b) ? workersAllocatedOf(b) / workersRequiredOf(b) : w.eff);
@@ -2821,7 +2854,7 @@ function statusOf(b){
   if(b.paused) return 'En pause — ouvriers libérés';
   const r = recipeOf(b);
   if(!r) return '';
-  for(const k in r.out) if((b.storage[k]||0) >= OUTCAP) return 'Stock de sortie plein';
+  for(const k in r.out) if((b.storage[k]||0) >= capOf(b,k)) return 'Stock de sortie plein';
   for(const k in r.in)  if((b.storage[k]||0) <  r.in[k]) return 'Manque : '+RES[k].n;
   const req = workersRequiredOf(b);
   if(req && workersAllocatedOf(b) < req)
@@ -2937,7 +2970,13 @@ function renderInfo(){
   }
   if(d.resid)
     h += '<div class="row"><span>Rayon travail</span><b>'+workRadiusOf(b)+' cases</b></div>';
-  const keys = Object.keys(b.storage).filter(k=>b.storage[k]>0 || (b.inc[k]||0)>0);
+  // Pour les bâtiments industriels : toujours afficher les ressources de la recette (même à 0)
+  const r2 = recipeOf(b);
+  const forcedKeys = d.ind && r2 ? new Set([...Object.keys(r2.in||{}), ...Object.keys(r2.out||{})]) : new Set();
+  const keys = [...new Set([
+    ...Object.keys(b.storage).filter(k=>b.storage[k]>0 || (b.inc[k]||0)>0),
+    ...forcedKeys,
+  ])];
   if(keys.length){
     h += '<div style="margin-top:8px;color:#8fa3bf">Stocks</div>';
     for(const k of keys){
@@ -2963,17 +3002,25 @@ function renderInfo(){
     const isOwner = !b.owner || b.owner === myOid;
     if(isOwner){
       h += '<div style="margin-top:8px;color:#f0c060;font-size:11px">🛒 Vente aux autres joueurs</div>';
-      h += '<div style="font-size:10px;color:#8fa3bf;margin-bottom:3px">Prix par unité · cliquer pour activer/désactiver</div><div>';
+      h += '<div style="font-size:10px;color:#8fa3bf;margin-bottom:3px">Prix par unité · cliquer pour activer/désactiver</div>';
       for(const k in RES){
         if(k === 'water') continue;
         const on = !!b.sellTo?.[k];
         const price = TRADE_PRICES[k];
-        h += '<button class="tbtn sell-toggle'+(on?' on':'')+'" data-sell="'+k+'" style="'
+        const minStock = b.sellMin?.[k] || 0;
+        h += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">'
+           + '<button class="tbtn sell-toggle'+(on?' on':'')+'" data-sell="'+k+'" style="flex:1;'
            + (on ? 'border-color:#f0c060;color:#f0c060' : '')+'">'
            + '<span class="dot" style="background:'+RES[k].c+'"></span>'
            + RES[k].n+' <span style="color:#8fa3bf">'+price+' $</span></button>';
+        if(on){
+          h += '<span style="color:#8fa3bf;font-size:10px;white-space:nowrap">Min stock</span>'
+             + '<button class="tbtn sell-min-dec" data-sell-min="'+k+'" style="padding:2px 6px">−</button>'
+             + '<span style="min-width:24px;text-align:center;font-size:11px">'+minStock+'</span>'
+             + '<button class="tbtn sell-min-inc" data-sell-min="'+k+'" style="padding:2px 6px">+</button>';
+        }
+        h += '</div>';
       }
-      h += '</div>';
     }
   }
   if(b.type==='tank'){
@@ -3057,6 +3104,22 @@ function renderInfo(){
     btn.onclick = ()=>{
       if(!b.sellTo) b.sellTo = {};
       b.sellTo[btn.dataset.sell] = !b.sellTo[btn.dataset.sell];
+      p._html = null;
+    };
+  });
+  p.querySelectorAll('.sell-min-dec').forEach(btn=>{
+    btn.onclick = ()=>{
+      if(!b.sellMin) b.sellMin = {};
+      const k = btn.dataset.sellMin;
+      b.sellMin[k] = Math.max(0, (b.sellMin[k]||0) - 10);
+      p._html = null;
+    };
+  });
+  p.querySelectorAll('.sell-min-inc').forEach(btn=>{
+    btn.onclick = ()=>{
+      if(!b.sellMin) b.sellMin = {};
+      const k = btn.dataset.sellMin;
+      b.sellMin[k] = (b.sellMin[k]||0) + 10;
       p._html = null;
     };
   });
@@ -3409,7 +3472,7 @@ function serializeState(){
       prog:b.prog||0, trucksOut:b.trucksOut||0,
       pop:b.pop||0, protectedPop:b.protectedPop||0,
       ct:b.ct||0, pending:b.pending||0, pendingProtected:b.pendingProtected||0, starve:b.starve||0,
-      ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, paused:b.paused||false, owner:b.owner||null,
+      ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, sellMin:b.sellMin||null, paused:b.paused||false, owner:b.owner||null,
       starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
@@ -3456,13 +3519,14 @@ function applySnapshot(d){
     const b = newBuilding(o.type, o.x, o.y, o.w, o.h);
     Object.assign(b, {
       storage:o.storage||{}, inc:o.inc||{},
-      prog:o.prog||0, trucksOut:o.trucksOut||0,
+      prog:o.prog||0, trucksOut:0,
       pop:o.pop||0, protectedPop:o.protectedPop||0,
       ct:o.ct||0, pending:o.pending||0, pendingProtected:o.pendingProtected||0, starve:o.starve||0,
     });
     if(o.ore)   b.ore   = o.ore;
     if(o.allow) b.allow = o.allow;
     if(o.sellTo) b.sellTo = o.sellTo;
+    if(o.sellMin) b.sellMin = o.sellMin;
     if(o.paused != null) b.paused = o.paused;
     if(o.owner  != null) b.owner  = o.owner;
     if(o.starterHome) b.starterHome = true;
