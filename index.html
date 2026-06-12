@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Factopolis — extrais, produis, transporte, peuple</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#10151f;color:#e8eef7;
+    font-family:"Segoe UI",system-ui,sans-serif;user-select:none}
+  #cv{display:block;width:100vw;height:100vh;cursor:crosshair}
+  .panel{position:fixed;background:rgba(13,18,28,.92);border:1px solid #36465e;
+    border-radius:12px;box-shadow:0 4px 18px rgba(0,0,0,.45);backdrop-filter:blur(5px)}
+
+  /* ---- barre du haut ---- */
+  #topbar{top:10px;left:50%;transform:translateX(-50%);display:flex;gap:16px;
+    align-items:center;padding:8px 16px;font-size:14px;white-space:nowrap;z-index:10}
+  #topbar .stat{display:flex;gap:5px;align-items:center}
+  #topbar .stat b{font-variant-numeric:tabular-nums}
+  #topbar .sep{width:1px;height:18px;background:#36465e}
+  .tbtn{background:#1d2939;border:1px solid #36465e;color:#e8eef7;border-radius:7px;
+    padding:3px 9px;cursor:pointer;font-size:13px}
+  .tbtn:hover{background:#2a3a52}
+  .tbtn.on{background:#2f6fd6;border-color:#5b93e8}
+
+  /* ---- barre d'outils ---- */
+  #toolbar{bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:6px;
+    padding:8px;z-index:10}
+  .tool{width:74px;padding:7px 2px 5px;border-radius:9px;border:1px solid #36465e;
+    background:#1d2939;color:#e8eef7;cursor:pointer;text-align:center;font-size:11px;
+    display:flex;flex-direction:column;gap:2px;line-height:1.25}
+  .tool:hover{background:#2a3a52}
+  .tool.on{background:#2f6fd6;border-color:#7fb0ff}
+  .tool .ic{font-size:22px}
+  .tool .cost{color:#ffd87a;font-size:10px}
+  .tool.on .cost{color:#ffe9b0}
+  .tool .hk{color:#8fa3bf;font-size:9px}
+
+  /* ---- panneau d'info ---- */
+  #info{top:70px;right:12px;width:240px;padding:12px 14px;font-size:13px;display:none;z-index:10}
+  #info h3{margin:0 0 6px;font-size:15px;display:flex;gap:8px;align-items:center}
+  #info .row{display:flex;justify-content:space-between;margin:3px 0}
+  #info .bar{height:7px;border-radius:4px;background:#243246;overflow:hidden;margin:2px 0 7px}
+  #info .bar i{display:block;height:100%}
+  #info .status{color:#9fc1ef;margin:7px 0;font-style:italic}
+  #info .warn{color:#ffb04d}
+  #info button{margin-top:8px;width:100%}
+  #info .flt{display:inline-flex;align-items:center;gap:5px;width:auto;
+    margin:3px 3px 0 0;padding:2px 8px;font-size:11px;opacity:.4}
+  #info .flt.on{opacity:1;border-color:#5b93e8}
+  #info .flt .dot{width:8px;height:8px;border-radius:50%;display:inline-block;
+    border:1px solid rgba(255,255,255,.35)}
+
+  /* ---- panneau finances ---- */
+  #sMoney{cursor:pointer;border-bottom:1px dashed transparent}
+  #sMoney:hover{border-bottom-color:#8fa3bf}
+  #finance{top:62px;left:50%;transform:translateX(-50%);width:340px;
+    padding:12px 16px;font-size:13px;display:none;z-index:15}
+  #finance h3{margin:0 0 8px;font-size:15px;display:flex;justify-content:space-between;align-items:center}
+  #finance h3 .tbtn{width:auto;margin:0;padding:1px 8px}
+  #finance table{width:100%;border-collapse:collapse}
+  #finance td{padding:3px 0}
+  #finance td.r{text-align:right;font-variant-numeric:tabular-nums;padding-left:10px}
+  #finance .in td.r{color:#9fe8a0}
+  #finance .out td.r{color:#ff9a8a}
+  #finance .hdr td{color:#8fa3bf;font-size:11px;padding-bottom:5px}
+  #finance .net td{border-top:1px solid #36465e;font-weight:bold;padding-top:6px}
+
+  /* ---- toasts ---- */
+  #toasts{position:fixed;bottom:108px;left:50%;transform:translateX(-50%);
+    display:flex;flex-direction:column;gap:6px;align-items:center;z-index:20;pointer-events:none}
+  .toast{background:rgba(13,18,28,.95);border:1px solid #36465e;border-radius:8px;
+    padding:7px 16px;font-size:13px;animation:tin .2s ease-out;white-space:nowrap}
+  .toast.err{border-color:#a0522d;color:#ffc6a0}
+  .toast.win{border-color:#d6a82f;color:#ffe9a0;font-size:15px}
+  @keyframes tin{from{opacity:0;transform:translateY(8px)}to{opacity:1}}
+
+  /* ---- aide ---- */
+  #help{top:50%;left:50%;transform:translate(-50%,-50%);width:520px;max-width:92vw;
+    padding:22px 26px;font-size:14px;line-height:1.55;z-index:30;display:none}
+  #help h2{margin:0 0 10px;font-size:20px}
+  #help .chain{background:#16202f;border-radius:8px;padding:10px 14px;margin:10px 0;
+    font-size:15px;text-align:center;line-height:2}
+  #help kbd{background:#243246;border-radius:4px;padding:1px 6px;font-size:12px;
+    border:1px solid #36465e}
+  #help .go{display:block;margin:14px auto 0;font-size:15px;padding:8px 28px}
+  #help ul{margin:8px 0;padding-left:20px}
+  #help li{margin:3px 0}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="topbar" class="panel">
+  <span class="stat" id="sMoney" title="Cliquer : détail des gains et dépenses">💰 <b id="hMoney">0</b> $</span>
+  <span class="stat" title="Population / logements">👥 <b id="hPop">0</b></span>
+  <span class="stat" title="Ouvriers employés / emplois — en dessous de 100 %, les usines ralentissent">🛠️ <b id="hJobs">0</b></span>
+  <span class="stat" title="Camions en circulation">🚚 <b id="hTrucks">0</b></span>
+  <span class="sep"></span>
+  <button class="tbtn" id="bRotL" title="Pivoter la vue à gauche (Maj+R)">⟲</button>
+  <button class="tbtn" id="bRotR" title="Pivoter la vue à droite (R)">⟳</button>
+  <span class="sep"></span>
+  <button class="tbtn" id="bPause" title="Pause (Espace)">⏸</button>
+  <button class="tbtn spd on" data-s="1">1×</button>
+  <button class="tbtn spd" data-s="2">2×</button>
+  <button class="tbtn spd" data-s="3">3×</button>
+  <span class="sep"></span>
+  <button class="tbtn" id="bSave" title="Sauvegarder">💾</button>
+  <button class="tbtn" id="bLoad" title="Charger">📂</button>
+  <button class="tbtn" id="bNew" title="Nouveau monde">🌍</button>
+  <button class="tbtn" id="bHelp" title="Aide (H)">❓</button>
+</div>
+
+<div id="toolbar" class="panel"></div>
+<div id="finance" class="panel"></div>
+<div id="info" class="panel"></div>
+<div id="toasts"></div>
+
+<div id="help" class="panel">
+  <h2>🏗️ Factopolis</h2>
+  <p>Bâtis une chaîne industrielle, relie tout par la route, et fais grandir ta ville.
+     Les camions transportent automatiquement les ressources entre bâtiments connectés.</p>
+  <div class="chain">
+    ⛏️ Mine (fer) + ⛏️ Mine (charbon) → 🔥 Fonderie → acier<br>
+    🪓 Bûcheron → bois &nbsp;•&nbsp; acier + bois → 🏭 Usine → marchandises<br>
+    marchandises → 🏠 Maisons → 👥 habitants + 💰 argent + 🛠️ ouvriers
+  </div>
+  <ul>
+    <li>Chaque bâtiment doit toucher une <b>route</b> (sinon ⚠️ : aucun camion ne passe).</li>
+    <li>Les usines ont besoin d'<b>ouvriers</b> : sans assez d'habitants, elles tournent au ralenti.</li>
+    <li>Les maisons consomment les marchandises → <b>+1 habitant</b> et <b>+25 $</b> par unité.</li>
+    <li>Sans marchandises trop longtemps, un logement se <b>dégrade</b> : les bâtiments
+        fusionnés se séparent en maisons et les habitants en trop quittent la ville à pied.</li>
+    <li>Des logements <b>pleins et approvisionnés</b> couvrant un rectangle fusionnent en niveau supérieur :
+        🏡 jumelée (2×1) → 🏘️ rangée (3×1) → 🏨 résidence (4×1), et
+        🏢 immeuble (2×2) → 🏬 grand immeuble (3×2) → 🏙️ gratte-ciel (4×4, 150 hab).</li>
+    <li>Les bâtiments de production <b>identiques</b> côte à côte fusionnent aussi
+        (2×1 … 4×4) : production = cases × facteur croissant, plus de stock et de camions.</li>
+    <li>L'industrie a un <b>coût d'entretien</b> périodique qui grandit plus vite que sa
+        taille — un empire industriel doit être rentable !</li>
+    <li>L'📦 entrepôt stocke tout et redistribue.</li>
+  </ul>
+  <p>🖱️ Clic gauche : construire / inspecter — glisser pour tracer les routes<br>
+     🖱️ Clic droit (glisser) : déplacer la caméra — molette : zoom<br>
+     ⌨️ <kbd>R</kbd> / <kbd>Maj+R</kbd> : pivoter la vue — <kbd>Z Q S D</kbd>/flèches : caméra<br>
+     ⌨️ <kbd>1</kbd>–<kbd>9</kbd> : outils — <kbd>Échap</kbd> : annuler — <kbd>Espace</kbd> : pause</p>
+  <button class="tbtn go" id="bGo">C'est parti !</button>
+</div>
+
+<script src="config.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

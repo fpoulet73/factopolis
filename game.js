@@ -1,0 +1,1513 @@
+'use strict';
+/* ===================== Factopolis =====================
+   Factorio (chaînes de production) + City builder (population/ouvriers)
+   + Transport Tycoon (camions sur routes).
+   Rendu isométrique 2.5D rotatif (touche R). Canvas 2D, zéro dépendance. */
+
+// ---------- configuration (voir config.js) ----------
+const CFG = (typeof CONFIG !== 'undefined') ? CONFIG : {};
+function _resid(c, def){
+  c = c || {};
+  return {
+    interval: c.intervalleConsommation ?? def.interval,
+    income:   c.revenuParUnite        ?? def.income,
+    popCap:   c.habitantsMax          ?? def.popCap,
+    stockCap: c.stockMax              ?? def.stockCap,
+  };
+}
+const ECO = {
+  taxe:         CFG.economie?.taxeParHabitant ?? 2,
+  taxeInterval: CFG.economie?.intervalleTaxes ?? 10,
+};
+
+// ---------- constantes ----------
+const N = 64;            // taille de la carte (tuiles)
+const TILE = 36;         // taille d'une tuile en px monde (simulation)
+const TW = 64, TH = 32;  // taille d'une tuile iso à l'écran
+const TW2 = TW/2, TH2 = TH/2;
+const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4 };
+const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+const OUTCAP = 12;       // stock max de sortie par ressource
+const INCAP = 12;        // stock max d'entrée par ressource
+const TRUCK_LOAD  = CFG.camions?.capacite ?? 6; // cargaison max d'un camion
+const TRUCK_SPEED = CFG.camions?.vitesse ?? 3.4;// tuiles / seconde
+const WALK_SPEED  = CFG.habitants?.vitesseMarche ?? 1.3; // piétons, tuiles / seconde
+const STARVE_DELAY = CFG.penurie?.delai ?? 30; // secondes sans marchandises avant dégradation
+const WALKER_COLS = ['#e2574c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#ececec'];
+
+const RES = {
+  iron:  { n:'Fer',          c:'#d98a4f' },
+  coal:  { n:'Charbon',      c:'#454552' },
+  wood:  { n:'Bois',         c:'#a4713d' },
+  steel: { n:'Acier',        c:'#a8bdd2' },
+  goods: { n:'Marchandises', c:'#e6c84f' },
+};
+
+const BUILD = {
+  select:  { n:'Inspecter', ic:'🔍', hk:'1', desc:'Cliquer sur un bâtiment pour voir ses stocks.' },
+  road:    { n:'Route',     ic:'🛣️', hk:'2', cost:10,
+             desc:'Relie les bâtiments — les camions y circulent. Glisser pour tracer.' },
+  mine:    { n:'Mine',      ic:'⛏️', hk:'3', cost:150, workers:3, time:2.2, col:'#7d6457', hgt:16, ind:true, upkeep:2,
+             desc:'À placer sur un gisement (fer ou charbon).' },
+  lumber:  { n:'Bûcheron',  ic:'🪓', hk:'4', cost:120, workers:2, time:2.8, col:'#5e7a3a', hgt:16, ind:true, upkeep:1.5,
+             recipe:{ in:{}, out:{wood:1} },
+             desc:'À placer à 2 cases ou moins d’arbres. Produit du bois.' },
+  smelter: { n:'Fonderie',  ic:'🔥', hk:'5', cost:300, workers:4, time:3.5, col:'#8a4f3d', hgt:26, ind:true, upkeep:3,
+             recipe:{ in:{iron:1, coal:1}, out:{steel:1} },
+             desc:'Fer + charbon → acier.' },
+  factory: { n:'Usine',     ic:'🏭', hk:'6', cost:450, workers:5, time:4, col:'#5a6a86', hgt:30, ind:true, upkeep:4,
+             recipe:{ in:{steel:1, wood:1}, out:{goods:1} },
+             desc:'Acier + bois → marchandises.' },
+  house:   { n:'Maison',    ic:'🏠', hk:'7', cost:100, col:'#9a7e5f', hgt:18, desc:'' },
+  depot:   { n:'Entrepôt',  ic:'📦', hk:'8', cost:250, col:'#7a7048', hgt:22,
+             desc:'Stocke et redistribue. Cliquer dessus pour choisir les ressources acceptées.' },
+  bulldoze:{ n:'Démolir',   ic:'🧨', hk:'9', desc:'Détruit routes, bâtiments (30 % remboursés) et arbres.' },
+};
+// ---------- niveaux résidentiels ----------
+// Un rectangle entièrement couvert de logements PLEINS plus petits fusionne
+// en bâtiment du niveau correspondant (les deux orientations comptent).
+const LEVELS = [
+  { key:'house',     cfg:CFG.maison,                     n:'Maison',            ic:'🏠', shapes:[[1,1]],       col:'#9a7e5f', hgt:18,
+    def:{ interval:8, income:25, popCap:5,   stockCap:10 } },
+  { key:'duplex',    cfg:CFG.residentiel?.duplex,        n:'Maison jumelée',    ic:'🏡', shapes:[[2,1],[1,2]], col:'#8d7a52', hgt:24,
+    def:{ interval:7, income:27, popCap:12,  stockCap:14 } },
+  { key:'row',       cfg:CFG.residentiel?.rangee,        n:'Maisons en rangée', ic:'🏘️', shapes:[[3,1],[1,3]], col:'#97705a', hgt:27,
+    def:{ interval:6, income:28, popCap:20,  stockCap:18 } },
+  { key:'residence', cfg:CFG.residentiel?.residence,     n:'Résidence',         ic:'🏨', shapes:[[4,1],[1,4]], col:'#7a6a8a', hgt:34,
+    def:{ interval:5, income:30, popCap:28,  stockCap:22 } },
+  { key:'tower',     cfg:CFG.immeuble,                   n:'Immeuble',          ic:'🏢', shapes:[[2,2]],       col:'#6b5d8c', hgt:58,
+    def:{ interval:4, income:25, popCap:30,  stockCap:25 } },
+  { key:'bigtower',  cfg:CFG.residentiel?.grandImmeuble, n:'Grand immeuble',    ic:'🏬', shapes:[[3,2],[2,3]], col:'#5d6da0', hgt:84,
+    def:{ interval:3, income:28, popCap:60,  stockCap:40 } },
+  { key:'sky',       cfg:CFG.residentiel?.gratteCiel,    n:'Gratte-ciel',       ic:'🏙️', shapes:[[4,4]],       col:'#4a5a78', hgt:130,
+    def:{ interval:2, income:30, popCap:150, stockCap:80 } },
+].map(L=> ({ key:L.key, n:L.n, ic:L.ic, col:L.col, hgt:L.hgt,
+             shapes: L.cfg?.formes ?? L.shapes,
+             resid: _resid(L.cfg, L.def) }));
+
+(function applyLevels(){
+  for(const L of LEVELS){
+    const area = L.shapes[0][0]*L.shapes[0][1];
+    if(L.key==='house'){
+      Object.assign(BUILD.house, { resid:L.resid, area:1 });
+      BUILD.house.desc = 'Consomme des marchandises → +1 habitant et +'+L.resid.income
+        +' $ par unité. Les logements pleins adjacents fusionnent en niveaux supérieurs.';
+      continue;
+    }
+    BUILD[L.key] = { n:L.n, ic:L.ic, col:L.col, hgt:L.hgt, cost:100*area, area,
+      size:L.shapes[0][0], resid:L.resid,
+      desc:'Fusion de logements pleins ('+L.shapes.map(s=>s[0]+'×'+s[1]).join(' ou ')
+        +'). '+L.resid.popCap+' habitants.' };
+  }
+})();
+// niveaux fusionnables, du plus grand au plus petit
+const MERGE_ORDER = LEVELS.filter(L=>L.key!=='house')
+  .sort((a,b)=> b.shapes[0][0]*b.shapes[0][1] - a.shapes[0][0]*a.shapes[0][1]);
+
+// ---------- fusion industrielle ----------
+// production d'un bâtiment fusionné = cases × facteur (palier ≤ taille)
+const IND_SHAPES = [[4,4],[3,2],[2,3],[2,2],[4,1],[1,4],[3,1],[1,3],[2,1],[1,2]];
+const IND_FACTORS = CFG.industrie?.facteurs ?? { 2:1.15, 3:1.3, 4:1.5, 6:1.75, 16:2.5 };
+function indFactor(area){
+  if(area <= 1) return 1;
+  let f = 1;
+  for(const k in IND_FACTORS) if(+k <= area) f = IND_FACTORS[k];
+  return f;
+}
+const prodMult = b => b.w*b.h*indFactor(b.w*b.h);
+// entretien : base × cases × facteur — grandit plus vite que la taille
+const IND_UPKEEP_INTERVAL = CFG.industrie?.intervalleEntretien ?? 10;
+const PAUSE_UPKEEP = CFG.industrie?.entretienEnPause ?? 0.5;
+const upkeepOf = b => (BUILD[b.type].upkeep||0) * b.w*b.h * indFactor(b.w*b.h)
+                      * (b.paused ? PAUSE_UPKEEP : 1);
+(function applyUpkeepConfig(){
+  const e = CFG.industrie?.entretien || {};
+  const map = { mine:'mine', bucheron:'lumber', fonderie:'smelter', usine:'factory' };
+  for(const fr in map) if(e[fr]!=null) BUILD[map[fr]].upkeep = e[fr];
+})();
+
+// surcharge des recettes par config.js (clés françaises)
+(function applyProductionConfig(){
+  const p = CFG.production || {};
+  const map = { mine:'mine', bucheron:'lumber', fonderie:'smelter', usine:'factory' };
+  for(const fr in map){
+    const c = p[fr];
+    if(!c) continue;
+    const b = BUILD[map[fr]];
+    if(c.temps != null) b.time = c.temps;
+    if(fr==='mine'){ if(c.quantite != null) b.qty = c.quantite; continue; }
+    if(c.entree) b.recipe.in  = c.entree;
+    if(c.sortie) b.recipe.out = c.sortie;
+  }
+})();
+
+const TOOL_ORDER = ['select','road','mine','lumber','smelter','factory','house','depot','bulldoze'];
+const MILESTONES = [25, 50, 100, 200, 400];
+
+// ---------- état ----------
+let terrain, road, bgrid, buildings, trucks, walkers, floats;
+let money, basePop, gtime, eff = 1, mi = 0;
+let selected = null, tool = 'select';
+let speed = 1, paused = false;
+let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0;
+let fin, finHist, finTimer = 0; // grand livre : cumuls par catégorie + instantanés (1/s)
+const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0 });
+let rot = 0; // orientation de la vue (0..3)
+const cam = { x:0, y:0, z:1 };
+
+// BFS réutilisables
+const dist = new Int32Array(N*N);
+const prev = new Int32Array(N*N);
+
+// ---------- canvas ----------
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+function resize(){
+  DPR = window.devicePixelRatio || 1;
+  W = innerWidth; H = innerHeight;
+  cv.width = W*DPR; cv.height = H*DPR;
+}
+addEventListener('resize', resize); resize();
+
+// ---------- projection isométrique rotative ----------
+// indices de tuile : monde -> tourné
+function rotIdx(x,y){
+  switch(rot){
+    case 0:  return [x, y];
+    case 1:  return [y, N-1-x];
+    case 2:  return [N-1-x, N-1-y];
+    default: return [N-1-y, x];
+  }
+}
+function invRotIdx(rx,ry){
+  switch(rot){
+    case 0:  return [rx, ry];
+    case 1:  return [N-1-ry, rx];
+    case 2:  return [N-1-rx, N-1-ry];
+    default: return [ry, N-1-rx];
+  }
+}
+// coordonnées continues (en tuiles) : monde -> tourné
+function rotF(tx,ty){
+  switch(rot){
+    case 0:  return [tx, ty];
+    case 1:  return [ty, N-tx];
+    case 2:  return [N-tx, N-ty];
+    default: return [N-ty, tx];
+  }
+}
+function invRotF(u,v){
+  switch(rot){
+    case 0:  return [u, v];
+    case 1:  return [N-v, u];
+    case 2:  return [N-u, N-v];
+    default: return [v, N-u];
+  }
+}
+// tuile tournée (continue) -> px iso
+const iso = (u,v)=> [ (u-v)*TW2, (u+v)*TH2 ];
+function worldPxToIso(wx,wy){
+  const [u,v] = rotF(wx/TILE, wy/TILE);
+  return iso(u,v);
+}
+// rotation d'un vecteur direction monde -> tourné
+function rotDir(dx,dy){
+  switch(rot){
+    case 0:  return [dx, dy];
+    case 1:  return [dy, -dx];
+    case 2:  return [-dx, -dy];
+    default: return [-dy, dx];
+  }
+}
+function screenCenterWorldPx(){
+  const ix = cam.x + (W/2)/cam.z, iy = cam.y + (H/2)/cam.z;
+  const u = (ix/TW2 + iy/TH2)/2, v = (iy/TH2 - ix/TW2)/2;
+  const [tx,ty] = invRotF(u,v);
+  return [tx*TILE, ty*TILE];
+}
+function centerOn(wx,wy){
+  const p = worldPxToIso(wx,wy);
+  cam.x = p[0] - W/(2*cam.z);
+  cam.y = p[1] - H/(2*cam.z);
+  clampCam();
+}
+function rotate(d){
+  const c = screenCenterWorldPx();
+  rot = (rot + d + 4) & 3;
+  centerOn(c[0], c[1]);
+}
+
+// ---------- génération du monde ----------
+function valueNoise(cell){
+  const gs = Math.floor(N/cell)+3;
+  const g = new Float32Array(gs*gs);
+  for(let i=0;i<g.length;i++) g[i] = Math.random();
+  const sm = t => t*t*(3-2*t);
+  return (x,y)=>{
+    const gx = x/cell, gy = y/cell;
+    const x0 = Math.floor(gx), y0 = Math.floor(gy);
+    const fx = sm(gx-x0), fy = sm(gy-y0);
+    const a = g[y0*gs+x0],     b = g[y0*gs+x0+1];
+    const c = g[(y0+1)*gs+x0], d = g[(y0+1)*gs+x0+1];
+    return a + (b-a)*fx + (c-a)*fy + (a-b-c+d)*fx*fy;
+  };
+}
+
+function genWorld(){
+  terrain = new Uint8Array(N*N);
+  road = new Uint8Array(N*N);
+  bgrid = new Array(N*N).fill(null);
+  buildings = []; trucks = []; walkers = []; floats = [];
+  money = 2500; basePop = 10; gtime = 0; mi = 0;
+  selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0;
+  fin = FIN_ZERO(); finHist = []; finTimer = 0;
+
+  const n1 = valueNoise(16), n2 = valueNoise(7), n3 = valueNoise(3);
+  const tn = valueNoise(9);
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    const h = 0.55*n1(x,y) + 0.30*n2(x,y) + 0.15*n3(x,y);
+    let t = T.GRASS;
+    if(h < 0.40) t = T.WATER;
+    else if(tn(x,y) > 0.58 && Math.random() < 0.6) t = T.TREE;
+    terrain[y*N+x] = t;
+  }
+  // gisements en taches
+  const patch = (type, count)=>{
+    for(let k=0;k<count;k++){
+      let cx, cy, tries = 0;
+      do { cx = 3+(Math.random()*(N-6))|0; cy = 3+(Math.random()*(N-6))|0; }
+      while(terrain[cy*N+cx] === T.WATER && ++tries < 300);
+      const r = 1 + (Math.random()*2)|0;
+      for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
+        const x = cx+dx, y = cy+dy;
+        if(x<0||y<0||x>=N||y>=N) continue;
+        if(dx*dx+dy*dy > r*r+0.5) continue;
+        if(terrain[y*N+x] !== T.WATER && Math.random() < 0.85) terrain[y*N+x] = type;
+      }
+    }
+  };
+  patch(T.IRON, 9);
+  patch(T.COAL, 8);
+
+  // caméra : centrée sur une zone d'herbe proche du milieu
+  let sx = N>>1, sy = N>>1;
+  outer:
+  for(let r=0;r<N>>1;r++)
+    for(let y=(N>>1)-r;y<=(N>>1)+r;y++)
+      for(let x=(N>>1)-r;x<=(N>>1)+r;x++)
+        if(x>=0&&y>=0&&x<N&&y<N && terrain[y*N+x]===T.GRASS){ sx=x; sy=y; break outer; }
+  cam.z = 1;
+  centerOn(sx*TILE+TILE/2, sy*TILE+TILE/2);
+}
+
+// ---------- aides ----------
+const inMap = (x,y)=> x>=0 && y>=0 && x<N && y<N;
+const popTotal = ()=> basePop + buildings.reduce((s,b)=> s+(b.pop||0), 0);
+const housingCap = ()=> 10 + buildings.reduce((s,b)=>
+  s + (BUILD[b.type].resid ? BUILD[b.type].resid.popCap : 0), 0);
+const jobsTotal = ()=> buildings.reduce((s,b)=>
+  s + (b.paused ? 0 : (BUILD[b.type].workers||0)*b.w*b.h), 0);
+
+function newBuilding(type,x,y,w,h){
+  const d = BUILD[type];
+  const b = { type, x, y, w:w||d.size||1, h:h||d.size||1,
+              storage:{}, inc:{}, prog:0, trucksOut:0, dead:false };
+  if(type==='mine')  b.ore = terrain[y*N+x]===T.IRON ? 'iron' : 'coal';
+  if(type==='depot'){ b.allow = {}; for(const k in RES) b.allow[k] = true; }
+  if(d.ind) b.paused = false;
+  if(d.resid){ b.pop = 0; b.ct = 0; b.pending = 0; b.starve = 0; }
+  return b;
+}
+
+function setGrid(b,val){
+  for(let y=b.y; y<b.y+b.h; y++)
+    for(let x=b.x; x<b.x+b.w; x++) bgrid[y*N+x] = val;
+}
+
+function recipeOf(b){
+  const d = BUILD[b.type];
+  if(b.type==='mine') return { in:{}, out:{ [b.ore]: d.qty||1 }, time:d.time/prodMult(b) };
+  if(d.recipe) return { in:d.recipe.in, out:d.recipe.out, time:d.time/prodMult(b) };
+  return null;
+}
+
+function adjRoadTiles(b){
+  const a = [], w = b.w||1, h = b.h||1;
+  for(let x=b.x; x<b.x+w; x++){
+    if(inMap(x,b.y-1) && road[(b.y-1)*N+x]) a.push((b.y-1)*N+x);
+    if(inMap(x,b.y+h) && road[(b.y+h)*N+x]) a.push((b.y+h)*N+x);
+  }
+  for(let y=b.y; y<b.y+h; y++){
+    if(inMap(b.x-1,y) && road[y*N+b.x-1]) a.push(y*N+b.x-1);
+    if(inMap(b.x+w,y) && road[y*N+b.x+w]) a.push(y*N+b.x+w);
+  }
+  return a;
+}
+
+function capOf(b,res){
+  const rc = BUILD[b.type].resid;
+  if(rc) return rc.stockCap;
+  if(b.type==='depot') return 20;
+  const r = recipeOf(b);
+  // les stocks des bâtiments industriels fusionnés grandissent avec leur taille
+  return ((r && res in r.out) ? OUTCAP : INCAP) * (BUILD[b.type].ind ? b.w*b.h : 1);
+}
+
+function accepts(b,res){
+  if(b.paused) return false; // un site en pause ne reçoit plus de livraisons
+  if(b.type==='depot') return b.allow?.[res] !== false;
+  if(BUILD[b.type].resid) return res==='goods';
+  const r = recipeOf(b);
+  return !!(r && res in r.in);
+}
+const space = (b,res)=> capOf(b,res) - (b.storage[res]||0) - (b.inc[res]||0);
+
+function treeNear(x,y,r){
+  for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
+    const a = x+dx, c = y+dy;
+    if(inMap(a,c) && terrain[c*N+a]===T.TREE) return true;
+  }
+  return false;
+}
+
+// ---------- construction ----------
+function canPlace(t,x,y){
+  if(!inMap(x,y)) return { ok:false };
+  const i = y*N+x, ter = terrain[i];
+  if(t==='bulldoze') return { ok: !!(road[i] || bgrid[i] || ter===T.TREE) };
+  if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
+  if(ter===T.WATER) return { ok:false, msg:'Impossible de construire sur l’eau' };
+  if(t==='road'){
+    if(ter!==T.GRASS) return { ok:false, msg:'Les routes se posent sur l’herbe (démolis les arbres)' };
+    return { ok:true };
+  }
+  if(t==='mine'){
+    if(ter!==T.IRON && ter!==T.COAL) return { ok:false, msg:'La mine doit être sur un gisement' };
+    return { ok:true };
+  }
+  if(ter!==T.GRASS) return { ok:false, msg:'Terrain non constructible' };
+  if(t==='lumber' && !treeNear(x,y,2)) return { ok:false, msg:'Aucun arbre à moins de 2 cases' };
+  return { ok:true };
+}
+
+function clickAt(x,y){
+  if(!inMap(x,y)) return;
+  const i = y*N+x;
+  if(tool==='select'){
+    selected = bgrid[i];
+    return;
+  }
+  if(tool==='bulldoze'){
+    if(bgrid[i]){
+      const b = bgrid[i];
+      b.dead = true;
+      buildings.splice(buildings.indexOf(b),1);
+      setGrid(b,null);
+      if(selected===b) selected = null;
+      const refund = Math.floor((BUILD[b.type].cost||0)*0.3);
+      money += refund; fin.rembours += refund;
+      if(refund) addFloat(x,y,'+'+refund+' $','#9fe89f');
+    } else if(road[i]){
+      road[i] = 0; money += 3; fin.rembours += 3;
+    } else if(terrain[i]===T.TREE){
+      terrain[i] = T.GRASS;
+    }
+    return;
+  }
+  // outil de construction
+  const v = canPlace(tool,x,y);
+  if(!v.ok){
+    if(bgrid[i]){ selected = bgrid[i]; }       // clic sur bâtiment existant → inspecter
+    else if(v.msg) toast(v.msg,'err');
+    return;
+  }
+  const cost = BUILD[tool].cost;
+  if(money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
+  money -= cost; fin.construction += cost;
+  if(tool==='road'){ road[i] = 1; return; }
+  const b = newBuilding(tool,x,y);
+  buildings.push(b);
+  bgrid[i] = b;
+  selected = b;
+}
+
+// ---------- logistique (camions) ----------
+function tryDispatch(b,res){
+  const starts = adjRoadTiles(b);
+  if(!starts.length) return false;
+  dist.fill(-1);
+  const q = [];
+  for(const s of starts){ dist[s] = 0; prev[s] = -1; q.push(s); }
+  for(let qi=0; qi<q.length; qi++){
+    const c = q[qi], cx = c%N, cy = (c/N)|0;
+    for(const [dx,dy] of DIRS){
+      const x = cx+dx, y = cy+dy;
+      if(!inMap(x,y)) continue;
+      const ni = y*N+x;
+      if(road[ni] && dist[ni]<0){ dist[ni] = dist[c]+1; prev[ni] = c; q.push(ni); }
+    }
+  }
+  let bestB = null, bestScore = Infinity, bestTile = -1;
+  for(const c of buildings){
+    if(c===b || c.dead || !accepts(c,res) || space(c,res)<=0) continue;
+    if(b.type==='depot' && c.type==='depot') continue;
+    let bd = Infinity, bt = -1;
+    for(const t of adjRoadTiles(c))
+      if(dist[t]>=0 && dist[t]<bd){ bd = dist[t]; bt = t; }
+    if(bt<0) continue;
+    // l'entrepôt en dernier recours ; les logements déjà pleins après ceux qui grandissent
+    const rcc = BUILD[c.type].resid;
+    const full = !!rcc && c.pop >= rcc.popCap;
+    const score = bd + (c.type==='depot' ? 500 : 0) + (full ? 200 : 0);
+    if(score<bestScore){ bestScore = score; bestB = c; bestTile = bt; }
+  }
+  if(!bestB) return false;
+
+  const path = [];
+  let t = bestTile;
+  while(t!==-1){ path.push(t); t = prev[t]; }
+  path.reverse();
+
+  const amt = Math.min(TRUCK_LOAD, b.storage[res]);
+  b.storage[res] -= amt;
+  b.trucksOut++;
+  bestB.inc[res] = (bestB.inc[res]||0) + amt;
+
+  const C = i => ({ x:(i%N)*TILE+TILE/2, y:((i/N)|0)*TILE+TILE/2 });
+  const pts = [
+    { x:(b.x+b.w/2)*TILE, y:(b.y+b.h/2)*TILE },
+    ...path.map(C),
+    { x:(bestB.x+bestB.w/2)*TILE, y:(bestB.y+bestB.h/2)*TILE },
+  ];
+  trucks.push({ pts, seg:0, t:0, res, amt, target:bestB, from:b });
+  return true;
+}
+
+function updateTrucks(dt){
+  for(let i=trucks.length-1;i>=0;i--){
+    const tk = trucks[i];
+    let move = TRUCK_SPEED*TILE*dt;
+    while(move>0 && tk.seg < tk.pts.length-1){
+      const a = tk.pts[tk.seg], b = tk.pts[tk.seg+1];
+      const d = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+      const remain = (1-tk.t)*d;
+      if(move >= remain){ move -= remain; tk.seg++; tk.t = 0; }
+      else { tk.t += move/d; move = 0; }
+    }
+    if(tk.seg >= tk.pts.length-1){
+      let tg = tk.target;
+      if(!tg.dead){
+        tg.inc[tk.res] = Math.max(0, (tg.inc[tk.res]||0) - tk.amt);
+      } else {
+        // la cible a disparu (ex. maisons fusionnées en immeuble) → livrer le remplaçant
+        const rep = bgrid[tg.y*N+tg.x];
+        tg = (rep && !rep.dead && accepts(rep,tk.res)) ? rep : null;
+      }
+      if(tg){
+        const room = capOf(tg,tk.res) - (tg.storage[tk.res]||0);
+        tg.storage[tk.res] = (tg.storage[tk.res]||0) + Math.min(room, tk.amt);
+      }
+      if(!tk.from.dead) tk.from.trucksOut--;
+      trucks.splice(i,1);
+    }
+  }
+}
+
+// ---------- simulation ----------
+function update(dt){
+  gtime += dt;
+  let starved = null;
+  const jobs = jobsTotal();
+  eff = jobs>0 ? Math.min(1, popTotal()/jobs) : 1;
+
+  for(const b of buildings){
+    const r = recipeOf(b);
+    if(r && !b.paused){
+      let outOK = true, inOK = true;
+      for(const k in r.out) if((b.storage[k]||0) >= OUTCAP) outOK = false;
+      for(const k in r.in)  if((b.storage[k]||0) <  r.in[k]) inOK = false;
+      if(outOK && inOK){
+        b.prog += dt*eff;
+        if(b.prog >= r.time){
+          b.prog = 0;
+          for(const k in r.in)  b.storage[k] -= r.in[k];
+          for(const k in r.out) b.storage[k] = (b.storage[k]||0) + r.out[k];
+        }
+      }
+    }
+    const rc = BUILD[b.type].resid;
+    if(rc && (b.storage.goods||0) > 0){
+      b.starve = 0;
+      b.ct += dt;
+      if(b.ct >= rc.interval){
+        b.ct = 0;
+        b.storage.goods--;
+        money += rc.income; fin.ventes += rc.income;
+        addFloat(b.x + (b.w-1)/2, b.y, '+'+rc.income+' $', '#ffe9a0');
+        if(b.pop + b.pending < rc.popCap) spawnWalker(b);
+      }
+    } else if(rc && b.pop > 0){
+      // pénurie : sans marchandises, le logement se dégrade
+      b.starve += dt;
+      if(b.starve >= STARVE_DELAY){
+        b.starve = 0;
+        (starved ||= []).push(b);
+      }
+    }
+  }
+  // dégradations hors de la boucle : la défusion modifie la liste des bâtiments
+  if(starved) for(const b of starved){
+    if(b.dead) continue;
+    if(b.w*b.h > 1) splitBuilding(b);
+    else leaveOne(b);
+  }
+
+  mergeTimer += dt;
+  if(mergeTimer >= 1){ mergeTimer = 0; tryMerge(); tryMergeInd(); }
+
+  dispatchTimer += dt;
+  if(dispatchTimer >= 0.7){
+    dispatchTimer = 0;
+    for(const b of buildings){
+      if(b.trucksOut >= 2 + ((b.w*b.h)>>1)) continue; // les gros sites ont plus de camions
+      const r = recipeOf(b);
+      let best = null, amt = 0;
+      for(const k in b.storage){
+        if(b.storage[k] < 3) continue;
+        const shippable = b.type==='depot' || (r && k in r.out);
+        if(shippable && b.storage[k] > amt){ best = k; amt = b.storage[k]; }
+      }
+      if(best) tryDispatch(b,best);
+    }
+  }
+
+  updateTrucks(dt);
+  updateWalkers(dt);
+
+  taxTimer += dt;
+  if(taxTimer >= ECO.taxeInterval){
+    taxTimer = 0;
+    const t = ECO.taxe*popTotal();
+    money += t; fin.taxes += t;
+  }
+
+  upkeepTimer += dt;
+  if(upkeepTimer >= IND_UPKEEP_INTERVAL){
+    upkeepTimer = 0;
+    for(const b of buildings){
+      const u = upkeepOf(b);
+      if(u <= 0) continue;
+      money -= u; fin.entretien += u;
+      addFloat(b.x+(b.w-1)/2, b.y, '−'+(Math.round(u*10)/10)+' $', '#ff9a8a');
+    }
+  }
+
+  finTimer += dt;
+  if(finTimer >= 1){
+    finTimer = 0;
+    finHist.push({ ...fin });
+    if(finHist.length > 61) finHist.shift(); // fenêtre glissante d'une minute
+  }
+
+  if(mi < MILESTONES.length && popTotal() >= MILESTONES[mi]){
+    toast('🎉 '+MILESTONES[mi]+' habitants ! Ta ville prospère.','win');
+    mi++;
+  }
+
+  for(let i=floats.length-1;i>=0;i--){
+    floats[i].life -= dt;
+    if(floats[i].life <= 0) floats.splice(i,1);
+  }
+}
+
+// un rectangle w×h entièrement couvert de logements pleins strictement plus
+// petits → fusion en bâtiment de niveau supérieur
+function checkRect(x,y,w,h){
+  const area = w*h, set = [];
+  for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++){
+    const b = bgrid[yy*N+xx];
+    if(!b) return null;
+    const rc = BUILD[b.type].resid;
+    if(!rc) return null;                                        // pas un logement
+    if(b.w*b.h >= area) return null;                            // pas plus petit
+    if(b.x<x || b.y<y || b.x+b.w>x+w || b.y+b.h>y+h) return null; // déborde du rectangle
+    if(b.pop < rc.popCap) return null;                          // pas plein
+    if((b.storage.goods||0) <= 0) return null;                  // pas approvisionné
+    if(!set.includes(b)) set.push(b);
+  }
+  return set;
+}
+
+// rectangle couvert de bâtiments de production IDENTIQUES plus petits → fusion
+function checkRectInd(x,y,w,h){
+  const area = w*h;
+  const first = bgrid[y*N+x];
+  if(!first || !BUILD[first.type].ind) return null;
+  const type = first.type, ore = first.ore;
+  const set = [];
+  for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++){
+    const b = bgrid[yy*N+xx];
+    if(!b || b.type!==type || b.paused) return null;
+    if(b.w*b.h >= area) return null;
+    if(b.x<x || b.y<y || b.x+b.w>x+w || b.y+b.h>y+h) return null;
+    if(type==='mine' && b.ore!==ore) return null;
+    if(!set.includes(b)) set.push(b);
+  }
+  return set;
+}
+
+function tryMergeInd(){
+  for(const [w,h] of IND_SHAPES){
+    for(let y=0; y<=N-h; y++) for(let x=0; x<=N-w; x++){
+      const set = checkRectInd(x,y,w,h);
+      if(!set) continue;
+      const type = set[0].type, ore = set[0].ore;
+      const store = {};
+      let wasSel = false;
+      for(const o of set){
+        for(const k in o.storage) store[k] = (store[k]||0) + o.storage[k];
+        if(o===selected) wasSel = true;
+        o.dead = true;
+        setGrid(o,null);
+      }
+      buildings = buildings.filter(o=> !o.dead);
+      const t = newBuilding(type, x, y, w, h);
+      if(ore) t.ore = ore;
+      for(const k in store) t.storage[k] = Math.min(capOf(t,k), store[k]);
+      buildings.push(t);
+      setGrid(t,t);
+      if(wasSel) selected = t;
+      toast('🏭 '+set.length+' × '+BUILD[type].n+' → '+w+'×'+h
+        +' — production ×'+prodMult(t).toFixed(1)+' !','win');
+      return true;
+    }
+  }
+  return false;
+}
+
+function tryMerge(){
+  for(const L of MERGE_ORDER){
+    for(const [w,h] of L.shapes){
+      for(let y=0; y<=N-h; y++) for(let x=0; x<=N-w; x++){
+        const set = checkRect(x,y,w,h);
+        if(!set) continue;
+        const d = BUILD[L.key];
+        let goods = 0, pop = 0, wasSel = false;
+        for(const o of set){
+          goods += o.storage.goods||0;
+          pop += o.pop;
+          if(o===selected) wasSel = true;
+          o.dead = true;
+          setGrid(o,null);
+        }
+        buildings = buildings.filter(o=> !o.dead);
+        const t = newBuilding(L.key, x, y, w, h);
+        t.pop = Math.min(d.resid.popCap, pop);
+        t.storage.goods = Math.min(d.resid.stockCap, goods);
+        buildings.push(t);
+        setGrid(t,t);
+        if(wasSel) selected = t;
+        toast('🏗️ '+set.length+' logements pleins → '+d.n+' ('+w+'×'+h+') !','win');
+        return; // une fusion à la fois : la liste vient d'être modifiée
+      }
+    }
+  }
+}
+
+// ---------- piétons (nouveaux habitants) ----------
+function growPop(b){
+  const rc = BUILD[b.type].resid;
+  if(b.pop < rc.popCap){
+    b.pop++;
+    addFloat(b.x+(b.w-1)/2, b.y-0.5, '+1 👤', '#9fe8c9');
+  }
+}
+
+// Dijkstra du pourtour du logement vers le bord de carte le plus accessible
+// (routes : rapides, herbe : moyen, forêt : lent ; eau et bâtiments bloquent)
+// renvoie les étapes du bord de la carte jusqu'au bâtiment, ou null si enclavé
+function pathToEdge(b){
+  const walkable = i => terrain[i]!==T.WATER && !bgrid[i];
+  const costOf = i => road[i] ? 1 : (terrain[i]===T.TREE ? 6 : 3);
+
+  dist.fill(-1);
+  const heap = [];
+  const hpush = (c,i)=>{
+    heap.push([c,i]);
+    let j = heap.length-1;
+    while(j>0){
+      const p = (j-1)>>1;
+      if(heap[p][0] <= heap[j][0]) break;
+      [heap[p],heap[j]] = [heap[j],heap[p]]; j = p;
+    }
+  };
+  const hpop = ()=>{
+    const top = heap[0], last = heap.pop();
+    if(heap.length){
+      heap[0] = last;
+      let j = 0;
+      for(;;){
+        const l = 2*j+1, r = l+1;
+        let m = j;
+        if(l<heap.length && heap[l][0]<heap[m][0]) m = l;
+        if(r<heap.length && heap[r][0]<heap[m][0]) m = r;
+        if(m===j) break;
+        [heap[m],heap[j]] = [heap[j],heap[m]]; j = m;
+      }
+    }
+    return top;
+  };
+
+  for(let y=b.y-1; y<=b.y+b.h; y++) for(let x=b.x-1; x<=b.x+b.w; x++){
+    if(!inMap(x,y)) continue;
+    if(x>=b.x && x<b.x+b.w && y>=b.y && y<b.y+b.h) continue; // intérieur du bâtiment
+    const i = y*N+x;
+    if(!walkable(i)) continue;
+    dist[i] = costOf(i); prev[i] = -1; hpush(dist[i], i);
+  }
+
+  let goal = -1;
+  while(heap.length){
+    const [c,i] = hpop();
+    if(c > dist[i]) continue;
+    const x = i%N, y = (i/N)|0;
+    if(x===0 || y===0 || x===N-1 || y===N-1){ goal = i; break; }
+    for(const [dx,dy] of DIRS){
+      const nx = x+dx, ny = y+dy;
+      if(!inMap(nx,ny)) continue;
+      const ni = ny*N+nx;
+      if(!walkable(ni)) continue;
+      const nc = c + costOf(ni);
+      if(dist[ni]<0 || nc<dist[ni]){ dist[ni] = nc; prev[ni] = i; hpush(nc,ni); }
+    }
+  }
+  if(goal < 0) return null; // enclavé
+
+  // prev pointe vers la maison → suivre depuis le bord donne l'ordre de marche
+  const pts = [];
+  for(let t=goal; t!==-1; t=prev[t])
+    pts.push({ x:(t%N)*TILE+TILE/2, y:((t/N)|0)*TILE+TILE/2 });
+  pts.push({ x:(b.x+b.w/2)*TILE, y:(b.y+b.h/2)*TILE });
+  return pts;
+}
+
+function spawnWalker(b){
+  if(walkers.length > 80){ growPop(b); return; }
+  const pts = pathToEdge(b);
+  if(!pts){ growPop(b); return; } // logement enclavé : arrivée instantanée
+  b.pending++;
+  walkers.push({ pts, seg:0, t:0, target:b,
+                 col: WALKER_COLS[(Math.random()*WALKER_COLS.length)|0],
+                 phase: Math.random()*7 });
+}
+
+// n habitants quittent le bâtiment à pied (la population est déjà décomptée)
+function spawnLeavers(b, n){
+  for(let i=0; i<n && walkers.length<=80; i++){
+    const pts = pathToEdge(b);
+    if(!pts) return;
+    walkers.push({ pts:[...pts].reverse(), seg:0, t:0, target:null, leaving:true,
+                   col: WALKER_COLS[(Math.random()*WALKER_COLS.length)|0],
+                   phase: Math.random()*7 });
+  }
+}
+
+// pénurie : un bâtiment fusionné se sépare en maisons individuelles,
+// l'excédent d'habitants quitte la ville
+function splitBuilding(b){
+  const houseCap = BUILD.house.resid.popCap;
+  const wasSel = selected===b;
+  let pop = b.pop;
+  const excess = Math.max(0, pop - b.w*b.h*houseCap);
+  b.dead = true;
+  buildings.splice(buildings.indexOf(b),1);
+  setGrid(b,null);
+  pop -= excess;
+  for(let y=b.y; y<b.y+b.h; y++) for(let x=b.x; x<b.x+b.w; x++){
+    const h = newBuilding('house',x,y);
+    h.pop = Math.min(houseCap, pop);
+    pop -= h.pop;
+    h.starve = 0; // sursis avant la prochaine dégradation
+    buildings.push(h);
+    setGrid(h,h);
+    if(wasSel && x===b.x && y===b.y) selected = h;
+  }
+  if(excess > 0) spawnLeavers(bgrid[b.y*N+b.x], excess);
+  toast('📉 '+BUILD[b.type].n+' sans marchandises : défusion'
+    + (excess>0 ? ', '+excess+' habitants s’en vont' : ''),'err');
+  if(excess > 0) addFloat(b.x+(b.w-1)/2, b.y, '−'+excess+' 👤', '#ff9a8a');
+}
+
+// pénurie d'une maison simple : un habitant part
+function leaveOne(b){
+  if(b.pop <= 0) return;
+  b.pop--;
+  addFloat(b.x, b.y-0.5, '−1 👤', '#ff9a8a');
+  spawnLeavers(b, 1);
+}
+
+function updateWalkers(dt){
+  for(let i=walkers.length-1;i>=0;i--){
+    const wk = walkers[i];
+    let move = WALK_SPEED*TILE*dt;
+    while(move>0 && wk.seg < wk.pts.length-1){
+      const a = wk.pts[wk.seg], b = wk.pts[wk.seg+1];
+      const d = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+      const remain = (1-wk.t)*d;
+      if(move >= remain){ move -= remain; wk.seg++; wk.t = 0; }
+      else { wk.t += move/d; move = 0; }
+    }
+    if(wk.seg >= wk.pts.length-1){
+      if(wk.leaving){ walkers.splice(i,1); continue; } // parti pour de bon
+      let tg = wk.target;
+      if(tg.dead){
+        // le logement a fusionné en immeuble pendant le trajet → y emménager
+        const rep = bgrid[tg.y*N+tg.x];
+        tg = (rep && !rep.dead && BUILD[rep.type].resid) ? rep : null;
+      } else tg.pending--;
+      if(tg) growPop(tg);
+      walkers.splice(i,1);
+    }
+  }
+}
+
+function addFloat(x,y,txt,col){
+  if(floats.length > 60) return;
+  floats.push({ x:x*TILE+TILE/2, y:y*TILE, txt, col, life:1.3 });
+}
+
+// ---------- rendu isométrique ----------
+function hash(x,y){ return ((x*73856093) ^ (y*19349663)) >>> 0; }
+
+const _shadeCache = {};
+function shade(hex,f){
+  const k = hex+f;
+  let c = _shadeCache[k];
+  if(c) return c;
+  const n = parseInt(hex.slice(1),16);
+  let r = n>>16&255, g = n>>8&255, b = n&255;
+  if(f>=0){ r += (255-r)*f; g += (255-g)*f; b += (255-b)*f; }
+  else    { r *= 1+f; g *= 1+f; b *= 1+f; }
+  return _shadeCache[k] = 'rgb('+(r|0)+','+(g|0)+','+(b|0)+')';
+}
+
+function quad(a,b,c,d){
+  ctx.beginPath();
+  ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]);
+  ctx.lineTo(c[0],c[1]); ctx.lineTo(d[0],d[1]);
+  ctx.closePath(); ctx.fill();
+}
+
+// prisme iso : base [u0,v0]-[u1,v1] (tuiles tournées), hauteur hp px, surélévation lift
+// renvoie le centre du toit
+function prism(u0,v0,u1,v1,hp,col,lift){
+  lift = lift||0;
+  const lf = p=> [p[0], p[1]-lift];
+  const A = lf(iso(u0,v0)), B = lf(iso(u1,v0)), C = lf(iso(u1,v1)), D = lf(iso(u0,v1));
+  const up = p=> [p[0], p[1]-hp];
+  ctx.fillStyle = shade(col,-0.22); quad(B,C,up(C),up(B));        // face droite
+  ctx.fillStyle = shade(col,-0.45); quad(C,D,up(D),up(C));        // face gauche
+  ctx.fillStyle = shade(col, 0.20); quad(up(A),up(B),up(C),up(D)); // toit
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(...up(A)); ctx.lineTo(...up(B)); ctx.lineTo(...up(C)); ctx.lineTo(...up(D));
+  ctx.closePath(); ctx.stroke();
+  return [ (A[0]+C[0])/2, (A[1]+C[1])/2 - hp ];
+}
+
+function diamond(rx,ry,w,h){
+  w = w||1; h = h||w;
+  const A = iso(rx,ry), B = iso(rx+w,ry), C = iso(rx+w,ry+h), D = iso(rx,ry+h);
+  ctx.beginPath();
+  ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]);
+  ctx.lineTo(C[0],C[1]); ctx.lineTo(D[0],D[1]);
+  ctx.closePath();
+}
+
+const GRASS_COLS = ['#74b048','#6ea944','#7ab84d','#68a23f'];
+const WATER_COLS = ['#3590cf','#3187c2'];
+
+function drawTree(rx,ry,x,y){
+  const c = iso(rx+0.5, ry+0.5);
+  const h = 13 + (hash(x,y)&7);
+  ctx.fillStyle = 'rgba(0,0,0,.16)';
+  ctx.beginPath(); ctx.ellipse(c[0]+2, c[1]+2, 9, 4.5, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#6b4a2a';
+  ctx.fillRect(c[0]-1.5, c[1]-h*0.4, 3, h*0.4+1);
+  const tri = (top, base, hw, col)=>{
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(c[0], c[1]-top);
+    ctx.lineTo(c[0]+hw, c[1]-base);
+    ctx.lineTo(c[0]-hw, c[1]-base);
+    ctx.closePath(); ctx.fill();
+  };
+  tri(h+9,  h*0.25, 9.5, '#2e7d32');
+  tri(h+14, h*0.55, 6.5, '#43a047');
+}
+
+function drawBuilding(b){
+  const d = BUILD[b.type];
+  const [r1x,r1y] = rotIdx(b.x, b.y);
+  const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
+  const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
+  // l'empreinte tournée échange largeur et profondeur selon l'orientation
+  const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
+  // les sites industriels fusionnés gagnent en hauteur avec leur taille
+  const hgt = d.ind ? d.hgt*(1+0.18*(Math.max(b.w,b.h)-1)) : d.hgt;
+  const tc = prism(rx0, ry0, rx0+rw, ry0+rh, hgt, d.col);
+
+  // fenêtres éclairées sur les faces des grands logements
+  if(d.resid && d.hgt >= 40){
+    const B = iso(rx0+rw,ry0), C = iso(rx0+rw,ry0+rh), D = iso(rx0,ry0+rh);
+    const rows = Math.max(3, Math.min(9, Math.floor(d.hgt/14)));
+    const face = (P,Q,tiles,seed)=>{
+      const cols = Math.min(8, 3*tiles);
+      for(let r=0;r<rows;r++) for(let cI=0;cI<cols;cI++){
+        const s0 = (cI+0.25)/cols, s1 = (cI+0.80)/cols;
+        const t0 = (0.08 + r*0.86/rows)*d.hgt, t1 = t0 + 0.45*0.86/rows*d.hgt;
+        const p0 = [P[0]+(Q[0]-P[0])*s0, P[1]+(Q[1]-P[1])*s0];
+        const p1 = [P[0]+(Q[0]-P[0])*s1, P[1]+(Q[1]-P[1])*s1];
+        ctx.fillStyle = (hash(b.x*7+r+seed, b.y*13+cI)&3)
+          ? 'rgba(255,236,170,.65)' : 'rgba(22,32,48,.55)';
+        quad([p0[0],p0[1]-t0],[p1[0],p1[1]-t0],[p1[0],p1[1]-t1],[p0[0],p0[1]-t1]);
+      }
+    };
+    face(B,C,rh,1); face(C,D,rw,2);
+  }
+
+  // icône sur le toit
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = (TH*(0.62+0.28*(Math.max(b.w,b.h)-1)))+'px "Segoe UI Emoji",sans-serif';
+  ctx.fillText(d.ic, tc[0], tc[1]+1);
+
+  // barre de progression
+  const r = recipeOf(b);
+  if(r && b.prog>0){
+    const bw = TW*0.42*b.w;
+    ctx.fillStyle = 'rgba(0,0,0,.45)';
+    ctx.fillRect(tc[0]-bw/2, tc[1]+TH*0.36, bw, 4);
+    ctx.fillStyle = '#7fd96a';
+    ctx.fillRect(tc[0]-bw/2, tc[1]+TH*0.36, bw*Math.min(1,b.prog/r.time), 4);
+  }
+  // habitants
+  if(d.resid && b.pop>0){
+    ctx.font = 'bold 11px sans-serif';
+    ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 3;
+    ctx.strokeText('👤'+b.pop, tc[0], tc[1]-TH*0.55);
+    ctx.fillStyle = '#ffe9a0';
+    ctx.fillText('👤'+b.pop, tc[0], tc[1]-TH*0.55);
+  }
+  // pas de route adjacente
+  if(!adjRoadTiles(b).length){
+    ctx.font = '14px "Segoe UI Emoji",sans-serif';
+    ctx.fillText('⚠️', tc[0], tc[1]-TH*0.95);
+  }
+  // sélection : contour au sol
+  if(b===selected){
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    diamond(rx0, ry0, rw, rh); ctx.stroke();
+  }
+}
+
+function drawWalker(wk){
+  const a = wk.pts[wk.seg], b = wk.pts[Math.min(wk.seg+1, wk.pts.length-1)];
+  const wx = a.x + (b.x-a.x)*wk.t, wy = a.y + (b.y-a.y)*wk.t;
+  const [u,v] = rotF(wx/TILE, wy/TILE);
+  const c = iso(u,v);
+  const bob = Math.sin(gtime*12 + wk.phase)*1.1;
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  ctx.beginPath(); ctx.ellipse(c[0], c[1]+1, 3.2, 1.7, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = wk.col;                       // corps
+  ctx.fillRect(c[0]-2, c[1]-8+bob, 4, 7);
+  ctx.fillStyle = '#f0c8a0';                    // tête
+  ctx.beginPath(); ctx.arc(c[0], c[1]-10+bob, 2.5, 0, 7); ctx.fill();
+}
+
+function drawTruck(tk){
+  const a = tk.pts[tk.seg], b = tk.pts[Math.min(tk.seg+1, tk.pts.length-1)];
+  const wx = a.x + (b.x-a.x)*tk.t, wy = a.y + (b.y-a.y)*tk.t;
+  const [u,v] = rotF(wx/TILE, wy/TILE);
+  const [du,dv] = rotDir(b.x-a.x, b.y-a.y);
+  const alongU = Math.abs(du) >= Math.abs(dv);
+  const au = alongU ? 0.26 : 0.14, av = alongU ? 0.14 : 0.26;
+  const c = iso(u,v);
+  ctx.fillStyle = 'rgba(0,0,0,.20)';
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 11, 5, 0, 0, 7); ctx.fill();
+  prism(u-au, v-av, u+au, v+av, 5, '#39404c');
+  prism(u-au*0.72, v-av*0.72, u+au*0.72, v+av*0.72, 7, RES[tk.res].c, 5);
+}
+
+function draw(){
+  // ciel
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  const sky = ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#1c2740');
+  sky.addColorStop(1,'#0b101a');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0,0,W,H);
+
+  const z = cam.z;
+  ctx.setTransform(DPR*z,0,0,DPR*z, -cam.x*DPR*z, -cam.y*DPR*z);
+
+  // fenêtre visible en px iso
+  const vx0 = cam.x - TW, vx1 = cam.x + W/z + TW;
+  const vy0 = cam.y - TH*3 - 160, vy1 = cam.y + H/z + TH*2; // marge haute = gratte-ciel
+
+  const sprites = [];
+
+  // --- passe 1 : sol (ordre ligne par ligne = peintre) ---
+  for(let ry=0; ry<N; ry++) for(let rx=0; rx<N; rx++){
+    const px = (rx-ry)*TW2, py = (rx+ry)*TH2;
+    if(px < vx0-TW || px > vx1 || py < vy0 || py > vy1) continue;
+    const [x,y] = invRotIdx(rx,ry);
+    const i = y*N+x, t = terrain[i];
+
+    if(t===T.WATER){
+      ctx.fillStyle = WATER_COLS[hash(x,y)&1];
+      diamond(rx,ry); ctx.fill();
+    } else {
+      ctx.fillStyle = GRASS_COLS[hash(x,y)&3];
+      diamond(rx,ry); ctx.fill();
+      if(t===T.IRON || t===T.COAL){
+        ctx.fillStyle = t===T.IRON ? '#c0763a' : '#23232b';
+        const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
+        for(let k=0;k<4;k++){
+          const ox = ((hs>>(k*4))&7)/7*TW*0.36 - TW*0.18;
+          const oy = ((hs>>(k*4+8))&7)/7*TH*0.36 - TH*0.18;
+          ctx.beginPath(); ctx.ellipse(c[0]+ox, c[1]+oy, 4.2, 2.6, 0, 0, 7); ctx.fill();
+        }
+      }
+    }
+
+    // routes
+    if(road[i]){
+      ctx.fillStyle = '#33373e';
+      diamond(rx,ry); ctx.fill();
+      const c = iso(rx+0.5, ry+0.5);
+      let links = 0;
+      ctx.lineCap = 'round';
+      for(const [dx,dy] of DIRS){
+        const nx = x+dx, ny = y+dy;
+        if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
+        links++;
+        const [du,dv] = rotDir(dx,dy);
+        const m = iso(rx+0.5+du*0.5, ry+0.5+dv*0.5);
+        ctx.strokeStyle = '#4c525c'; ctx.lineWidth = 12;
+        ctx.beginPath(); ctx.moveTo(c[0],c[1]); ctx.lineTo(m[0],m[1]); ctx.stroke();
+        ctx.strokeStyle = 'rgba(200,206,214,.55)'; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(c[0],c[1]); ctx.lineTo(m[0],m[1]); ctx.stroke();
+      }
+      if(!links){
+        ctx.fillStyle = '#4c525c';
+        ctx.beginPath(); ctx.ellipse(c[0], c[1], 8, 4.5, 0, 0, 7); ctx.fill();
+      }
+    }
+
+    // falaises au bord de la carte
+    const D = 15;
+    const cliff = t===T.WATER ? '#1c557f' : '#6f5236';
+    if(ry===N-1){
+      const Cc = iso(rx+1,ry+1), Dd = iso(rx,ry+1);
+      ctx.fillStyle = shade(cliff,-0.15);
+      quad(Cc, Dd, [Dd[0],Dd[1]+D], [Cc[0],Cc[1]+D]);
+    }
+    if(rx===N-1){
+      const Bb = iso(rx+1,ry), Cc = iso(rx+1,ry+1);
+      ctx.fillStyle = shade(cliff,-0.35);
+      quad(Bb, Cc, [Cc[0],Cc[1]+D], [Bb[0],Bb[1]+D]);
+    }
+
+    // collecte des sprites (arbres / bâtiments) au passage
+    if(t===T.TREE){
+      sprites.push({ k:ry*1024+rx, f:()=>drawTree(rx,ry,x,y) });
+    }
+    const b = bgrid[i];
+    if(b){
+      const [r1x,r1y] = rotIdx(b.x, b.y);
+      const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
+      // dessiné une seule fois, depuis sa tuile la plus « en avant »
+      if(rx===Math.max(r1x,r2x) && ry===Math.max(r1y,r2y))
+        sprites.push({ k:ry*1024+rx, f:()=>drawBuilding(b) });
+    }
+  }
+
+  // camions
+  for(const tk of trucks){
+    const a = tk.pts[tk.seg], b = tk.pts[Math.min(tk.seg+1, tk.pts.length-1)];
+    const wx = a.x + (b.x-a.x)*tk.t, wy = a.y + (b.y-a.y)*tk.t;
+    const [u,v] = rotF(wx/TILE, wy/TILE);
+    sprites.push({ k:Math.floor(v)*1024 + Math.floor(u) + 0.5, f:()=>drawTruck(tk) });
+  }
+
+  // piétons
+  for(const wk of walkers){
+    const a = wk.pts[wk.seg], b = wk.pts[Math.min(wk.seg+1, wk.pts.length-1)];
+    const wx = a.x + (b.x-a.x)*wk.t, wy = a.y + (b.y-a.y)*wk.t;
+    const [u,v] = rotF(wx/TILE, wy/TILE);
+    sprites.push({ k:Math.floor(v)*1024 + Math.floor(u) + 0.6, f:()=>drawWalker(wk) });
+  }
+
+  // --- passe 2 : sprites triés arrière → avant ---
+  sprites.sort((a,b)=> a.k-b.k);
+  for(const s of sprites) s.f();
+
+  // fantôme de placement
+  if(tool!=='select' && inMap(mouse.tx,mouse.ty)){
+    const va = canPlace(tool, mouse.tx, mouse.ty);
+    const [grx,gry] = rotIdx(mouse.tx, mouse.ty);
+    ctx.fillStyle = va.ok ? 'rgba(110,230,120,.4)' : 'rgba(235,80,80,.4)';
+    diamond(grx,gry); ctx.fill();
+    const d = BUILD[tool];
+    if(va.ok && d.hgt){
+      ctx.globalAlpha = 0.55;
+      const tc = prism(grx, gry, grx+1, gry+1, d.hgt, d.col);
+      ctx.font = (TH*0.62)+'px "Segoe UI Emoji",sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(d.ic, tc[0], tc[1]+1);
+      ctx.globalAlpha = 1;
+    }
+  } else if(tool==='select' && inMap(mouse.tx,mouse.ty)){
+    const [grx,gry] = rotIdx(mouse.tx, mouse.ty);
+    ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1.5;
+    diamond(grx,gry); ctx.stroke();
+  }
+
+  // textes flottants
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for(const f of floats){
+    const p = worldPxToIso(f.x, f.y);
+    ctx.globalAlpha = Math.min(1, f.life);
+    ctx.fillStyle = f.col;
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText(f.txt, p[0], p[1] - 20 - (1.3-f.life)*26);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- HUD ----------
+const $ = id => document.getElementById(id);
+let hudTimer = 0;
+function updateHUD(dt){
+  hudTimer -= dt;
+  if(hudTimer > 0) return;
+  hudTimer = 0.2;
+  const pop = popTotal(), jobs = jobsTotal();
+  const mEl = $('hMoney');
+  mEl.textContent = Math.floor(money).toLocaleString('fr-FR');
+  mEl.style.color = money < 0 ? '#ff8a7a' : '';
+  $('hPop').textContent = pop + ' / ' + housingCap();
+  $('hJobs').textContent = Math.min(pop,jobs) + ' / ' + jobs;
+  $('hTrucks').textContent = trucks.length;
+  renderInfo();
+  renderFinance();
+}
+
+// ---------- panneau finances ----------
+function toggleFinance(){
+  const p = $('finance');
+  p.style.display = p.style.display==='block' ? 'none' : 'block';
+  renderFinance();
+}
+function renderFinance(){
+  const p = $('finance');
+  if(p.style.display !== 'block') return;
+  const base = finHist[0] || fin;
+  const w = Math.max(1, finHist.length);               // secondes couvertes par la fenêtre
+  const rate = c => (fin[c]-base[c])*60/w;             // $ par minute
+  const fmt = n => Math.round(Math.abs(n)).toLocaleString('fr-FR');
+  const row = (lbl,c,sign,cls)=>
+    '<tr class="'+cls+'"><td>'+lbl+'</td>'
+    + '<td class="r">'+sign+fmt(fin[c])+' $</td>'
+    + '<td class="r">'+sign+fmt(rate(c))+' $</td></tr>';
+  const netT = fin.ventes+fin.taxes+fin.rembours-fin.construction-fin.entretien;
+  const netR = rate('ventes')+rate('taxes')+rate('rembours')
+             - rate('construction')-rate('entretien');
+  const sgn = n => n>=0 ? '+' : '−';
+  p.innerHTML =
+    '<h3>💰 Finances <button class="tbtn" id="bFinX">✕</button></h3>'
+    + '<table>'
+    + '<tr class="hdr"><td></td><td class="r">Total</td><td class="r">Par minute</td></tr>'
+    + row('Ventes de marchandises','ventes','+','in')
+    + row('Taxes des habitants','taxes','+','in')
+    + row('Remboursements','rembours','+','in')
+    + row('Construction','construction','−','out')
+    + row('Entretien industriel','entretien','−','out')
+    + '<tr class="net"><td>Bilan</td><td class="r">'+sgn(netT)+fmt(netT)+' $</td>'
+    + '<td class="r">'+sgn(netR)+fmt(netR)+' $</td></tr>'
+    + '</table>';
+}
+
+function statusOf(b){
+  if(BUILD[b.type].resid){
+    if((b.storage.goods||0) > 0) return 'Consomme des marchandises…';
+    if(b.pop > 0 && b.starve > 0)
+      return '⚠️ Pénurie ! Dégradation dans '+Math.max(0,Math.ceil(STARVE_DELAY-b.starve))+' s';
+    return 'Attend des marchandises';
+  }
+  if(b.type==='depot') return 'Stocke et redistribue';
+  const r = recipeOf(b);
+  if(!r) return '';
+  for(const k in r.out) if((b.storage[k]||0) >= OUTCAP) return 'Stock de sortie plein';
+  for(const k in r.in)  if((b.storage[k]||0) <  r.in[k]) return 'Manque : '+RES[k].n;
+  if(eff < 1) return 'Production à '+Math.round(eff*100)+' % (manque d’ouvriers)';
+  return 'En production';
+}
+
+function renderInfo(){
+  const p = $('info');
+  if(!selected || selected.dead){ p.style.display = 'none'; return; }
+  const b = selected, d = BUILD[b.type];
+  let h = '<h3><span style="font-size:22px">'+d.ic+'</span>'+d.n+'</h3>';
+  h += '<div class="status">'+statusOf(b)+'</div>';
+  if(!adjRoadTiles(b).length)
+    h += '<div class="warn">⚠️ Aucune route adjacente — pas de camions !</div>';
+  if(d.workers) h += '<div class="row"><span>Ouvriers requis</span><b>'+(d.workers*b.w*b.h)+'</b></div>';
+  if(d.ind && b.w*b.h>1)
+    h += '<div class="row"><span>Taille / production</span><b>'+b.w+'×'+b.h
+       + ' — ×'+prodMult(b).toFixed(1)+'</b></div>';
+  if(d.ind)
+    h += '<div class="row"><span>Entretien</span><b>'+(Math.round(upkeepOf(b)*10)/10)
+       + ' $ / '+IND_UPKEEP_INTERVAL+' s</b></div>';
+  if(d.resid)
+    h += '<div class="row"><span>Habitants</span><b>'+b.pop+' / '+d.resid.popCap+'</b></div>';
+  const keys = Object.keys(b.storage).filter(k=>b.storage[k]>0 || (b.inc[k]||0)>0);
+  if(keys.length){
+    h += '<div style="margin-top:8px;color:#8fa3bf">Stocks</div>';
+    for(const k of keys){
+      const cap = capOf(b,k), val = b.storage[k]||0;
+      h += '<div class="row"><span>'+RES[k].n+'</span><b>'+val+' / '+cap+'</b></div>';
+      h += '<div class="bar"><i style="width:'+Math.min(100,100*val/cap)+'%;background:'+RES[k].c+'"></i></div>';
+    }
+  }
+  if(b.type==='depot'){
+    h += '<div style="margin-top:8px;color:#8fa3bf">Ressources acceptées</div><div>';
+    for(const k in RES){
+      const on = b.allow?.[k] !== false;
+      h += '<button class="tbtn flt'+(on?' on':'')+'" data-r="'+k+'">'
+         + '<span class="dot" style="background:'+RES[k].c+'"></span>'+RES[k].n+'</button>';
+    }
+    h += '</div>';
+  }
+  h += '<button class="tbtn" id="bDemol">🧨 Démolir (+'+Math.floor((d.cost||0)*0.3)+' $)</button>';
+  p.style.display = 'block';
+  if(p._html === h && p._b === b) return; // ne pas reconstruire le DOM sous la souris
+  p._html = h; p._b = b;
+  p.innerHTML = h;
+  p.querySelectorAll('.flt').forEach(btn=>{
+    btn.onclick = ()=>{
+      b.allow[btn.dataset.r] = b.allow[btn.dataset.r] === false;
+      p._html = null; // forcer le rafraîchissement
+    };
+  });
+  $('bDemol').onclick = ()=>{
+    b.dead = true;
+    buildings.splice(buildings.indexOf(b),1);
+    setGrid(b,null);
+    const refund = Math.floor((d.cost||0)*0.3);
+    money += refund; fin.rembours += refund;
+    selected = null;
+  };
+}
+
+// ---------- toasts ----------
+function toast(msg, cls){
+  const t = document.createElement('div');
+  t.className = 'toast' + (cls ? ' '+cls : '');
+  t.textContent = msg;
+  const box = $('toasts');
+  box.appendChild(t);
+  while(box.children.length > 4) box.removeChild(box.firstChild);
+  setTimeout(()=>{ t.style.transition = 'opacity .4s'; t.style.opacity = '0'; }, 2400);
+  setTimeout(()=> t.remove(), 2900);
+}
+
+// ---------- barre d'outils ----------
+function buildToolbar(){
+  const bar = $('toolbar');
+  for(const k of TOOL_ORDER){
+    const d = BUILD[k];
+    const btn = document.createElement('button');
+    btn.className = 'tool' + (k===tool ? ' on' : '');
+    btn.dataset.t = k;
+    btn.title = d.desc || '';
+    btn.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
+      + (d.cost ? '<span class="cost">'+d.cost+' $</span>' : '<span class="cost">&nbsp;</span>')
+      + '<span class="hk">['+d.hk+']</span>';
+    btn.onclick = ()=> setTool(k);
+    bar.appendChild(btn);
+  }
+}
+function setTool(k){
+  tool = k;
+  document.querySelectorAll('.tool').forEach(b=> b.classList.toggle('on', b.dataset.t===k));
+}
+
+// ---------- souris / clavier ----------
+const mouse = { x:0, y:0, tx:-1, ty:-1, lDown:false, rDown:false, rMoved:0, lastX:0, lastY:0 };
+
+function updateMouseTile(e){
+  mouse.x = e.clientX; mouse.y = e.clientY;
+  const ix = cam.x + e.clientX/cam.z, iy = cam.y + e.clientY/cam.z;
+  const u = (ix/TW2 + iy/TH2)/2, v = (iy/TH2 - ix/TW2)/2;
+  const [tx,ty] = invRotF(u,v);
+  mouse.tx = Math.floor(tx); mouse.ty = Math.floor(ty);
+}
+
+cv.addEventListener('mousedown', e=>{
+  updateMouseTile(e);
+  if(e.button===0){
+    mouse.lDown = true;
+    clickAt(mouse.tx, mouse.ty);
+  } else if(e.button===2 || e.button===1){
+    mouse.rDown = true; mouse.rMoved = 0;
+    mouse.lastX = e.clientX; mouse.lastY = e.clientY;
+  }
+});
+addEventListener('mousemove', e=>{
+  const ptx = mouse.tx, pty = mouse.ty;
+  updateMouseTile(e);
+  if(mouse.rDown){
+    const dx = e.clientX-mouse.lastX, dy = e.clientY-mouse.lastY;
+    mouse.rMoved += Math.abs(dx)+Math.abs(dy);
+    cam.x -= dx/cam.z; cam.y -= dy/cam.z;
+    clampCam();
+    mouse.lastX = e.clientX; mouse.lastY = e.clientY;
+  }
+  if(mouse.lDown && (tool==='road'||tool==='bulldoze') && (mouse.tx!==ptx || mouse.ty!==pty))
+    clickAt(mouse.tx, mouse.ty);
+});
+addEventListener('mouseup', e=>{
+  if(e.button===0) mouse.lDown = false;
+  if(e.button===2 || e.button===1){
+    if(e.button===2 && mouse.rMoved < 6) setTool('select'); // clic droit simple = annuler
+    mouse.rDown = false;
+  }
+});
+cv.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const f = e.deltaY < 0 ? 1.15 : 1/1.15;
+  const z2 = Math.min(2.4, Math.max(0.35, cam.z*f));
+  // garder le point sous le curseur fixe
+  cam.x += e.clientX/cam.z - e.clientX/z2;
+  cam.y += e.clientY/cam.z - e.clientY/z2;
+  cam.z = z2;
+  clampCam();
+},{ passive:false });
+cv.addEventListener('contextmenu', e=> e.preventDefault());
+
+function clampCam(){
+  const m = TW*4;
+  cam.x = Math.min(N*TW2+m - W/cam.z, Math.max(-N*TW2-m, cam.x));
+  cam.y = Math.min(N*TH+m - H/cam.z, Math.max(-m-200, cam.y));
+}
+
+const keys = new Set();
+addEventListener('keydown', e=>{
+  if(e.target.tagName==='INPUT') return;
+  keys.add(e.code);
+  if(e.code==='Space'){ e.preventDefault(); togglePause(); }
+  if(e.code==='Escape'){ setTool('select'); selected = null; }
+  if(e.code==='KeyH') toggleHelp();
+  if(e.code==='KeyR') rotate(e.shiftKey ? -1 : 1);
+  if(e.code.startsWith('Digit')){
+    const num = +e.code.slice(5) - 1;
+    if(num>=0 && num<TOOL_ORDER.length) setTool(TOOL_ORDER[num]);
+  }
+});
+addEventListener('keyup', e=> keys.delete(e.code));
+
+function panKeys(dt){
+  const s = 520*dt/cam.z;
+  if(keys.has('ArrowLeft') || keys.has('KeyA') || keys.has('KeyQ')) cam.x -= s;
+  if(keys.has('ArrowRight')|| keys.has('KeyD')) cam.x += s;
+  if(keys.has('ArrowUp')   || keys.has('KeyW') || keys.has('KeyZ')) cam.y -= s;
+  if(keys.has('ArrowDown') || keys.has('KeyS')) cam.y += s;
+  clampCam();
+}
+
+// ---------- boutons du haut ----------
+function togglePause(){
+  paused = !paused;
+  $('bPause').textContent = paused ? '▶' : '⏸';
+  $('bPause').classList.toggle('on', paused);
+}
+$('bPause').onclick = togglePause;
+document.querySelectorAll('.spd').forEach(b=>{
+  b.onclick = ()=>{
+    speed = +b.dataset.s;
+    document.querySelectorAll('.spd').forEach(x=> x.classList.toggle('on', x===b));
+    if(paused) togglePause();
+  };
+});
+$('bRotL').onclick = ()=> rotate(-1);
+$('bRotR').onclick = ()=> rotate(1);
+$('sMoney').onclick = toggleFinance;
+// délégation : le ✕ survit aux reconstructions du panneau (rafraîchi 5×/s)
+$('finance').onclick = e=>{ if(e.target.id==='bFinX') toggleFinance(); };
+
+const SAVE_KEY = 'factopolis-save';
+$('bSave').onclick = ()=>{
+  const data = {
+    terrain:Array.from(terrain), road:Array.from(road),
+    money, basePop, fin,
+    buildings:buildings.map(b=>({ type:b.type, x:b.x, y:b.y, w:b.w, h:b.h,
+                                  storage:b.storage, pop:b.pop||0, ore:b.ore||null,
+                                  allow:b.allow||null })),
+  };
+  localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  toast('💾 Partie sauvegardée');
+};
+$('bLoad').onclick = ()=>{
+  const s = localStorage.getItem(SAVE_KEY);
+  if(!s){ toast('Aucune sauvegarde','err'); return; }
+  const d = JSON.parse(s);
+  terrain = Uint8Array.from(d.terrain);
+  road = Uint8Array.from(d.road);
+  money = d.money; basePop = d.basePop;
+  fin = Object.assign(FIN_ZERO(), d.fin||{}); finHist = []; finTimer = 0;
+  buildings = []; trucks = []; walkers = []; floats = [];
+  bgrid = new Array(N*N).fill(null);
+  for(const o of d.buildings){
+    if(!BUILD[o.type]) continue;
+    const b = newBuilding(o.type, o.x, o.y, o.w, o.h);
+    b.storage = o.storage || {};
+    // clamp si la config a réduit les capacités depuis la sauvegarde
+    if(o.pop) b.pop = Math.min(o.pop, BUILD[o.type].resid?.popCap ?? o.pop);
+    if(o.allow) b.allow = o.allow;
+    if(o.ore) b.ore = o.ore;
+    buildings.push(b);
+    setGrid(b,b);
+  }
+  selected = null;
+  mi = MILESTONES.findIndex(m=> popTotal() < m);
+  if(mi<0) mi = MILESTONES.length;
+  toast('📂 Partie chargée');
+};
+$('bNew').onclick = ()=>{
+  if(confirm('Générer un nouveau monde ? (la partie en cours sera perdue)')) genWorld();
+};
+function toggleHelp(){
+  const h = $('help');
+  h.style.display = h.style.display==='block' ? 'none' : 'block';
+}
+$('bHelp').onclick = toggleHelp;
+$('bGo').onclick = ()=> $('help').style.display = 'none';
+
+// ---------- boucle principale ----------
+let last = performance.now();
+function frame(now){
+  const rdt = Math.min(0.05, (now-last)/1000);
+  last = now;
+  panKeys(rdt);
+  if(!paused) update(rdt*speed);
+  draw();
+  updateHUD(rdt);
+  requestAnimationFrame(frame);
+}
+
+buildToolbar();
+genWorld();
+$('help').style.display = 'block';
+requestAnimationFrame(frame);
