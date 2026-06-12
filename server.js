@@ -47,20 +47,78 @@ function validateToken(token) {
 
 // nom de fichier sûr
 const safeName = s => s.replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 64);
+const saveFileName = (username, name) =>
+  safeName(username) + '_' + safeName(name) + '.json';
 const savePath = (username, name) =>
-  path.join(SAVES_DIR, safeName(username) + '_' + safeName(name) + '.json');
+  path.join(SAVES_DIR, saveFileName(username, name));
+
+function resolveSavePath(username, name) {
+  const wanted = saveFileName(username, name);
+  const exact = path.join(SAVES_DIR, wanted);
+  if (fs.existsSync(exact)) return exact;
+
+  const wantedLower = wanted.toLowerCase();
+  try {
+    const match = fs.readdirSync(SAVES_DIR)
+      .find(f => f.endsWith('.json') && f.toLowerCase() === wantedLower);
+    if (match) return path.join(SAVES_DIR, match);
+  } catch {}
+
+  const wantedNameLower = String(name || '').toLowerCase();
+  try {
+    const byMetaName = fs.readdirSync(SAVES_DIR)
+      .filter(f => f.endsWith('.json'))
+      .map(f => {
+        const fullPath = path.join(SAVES_DIR, f);
+        const stat = fs.statSync(fullPath);
+        try {
+          const data = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+          return { file: f, path: fullPath, mtimeMs: stat.mtimeMs, name: data.meta?.name || null };
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .filter(s => String(s.name || '').toLowerCase() === wantedNameLower)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+    if (byMetaName) return byMetaName.path;
+  } catch {}
+
+  return exact;
+}
 
 function listUserSaves(username) {
   const prefix = safeName(username) + '_';
+  const prefixLower = prefix.toLowerCase();
+  const userLower = String(username || '').toLowerCase();
   try {
-    return fs.readdirSync(SAVES_DIR)
-      .filter(f => f.startsWith(prefix) && f.endsWith('.json'))
-      .map(f => {
-        const name = f.slice(prefix.length, -5);
-        const stat = fs.statSync(path.join(SAVES_DIR, f));
-        return { name, date: stat.mtime.toISOString() };
+    const files = fs.readdirSync(SAVES_DIR).filter(f => f.endsWith('.json'));
+    const readSave = f => {
+      const fullPath = path.join(SAVES_DIR, f);
+      const stat = fs.statSync(fullPath);
+      let data = null;
+      try { data = JSON.parse(fs.readFileSync(fullPath, 'utf8')); } catch {}
+      const owned =
+        f.toLowerCase().startsWith(prefixLower)
+        || String(data?.meta?.username || '').toLowerCase() === userLower;
+      const name = data?.meta?.name || f.replace(/\.json$/, '');
+      return { name, date: stat.mtime.toISOString(), owned };
+    };
+
+    const saves = files
+      .filter(f => {
+        if (!f.endsWith('.json')) return false;
+        if (f.toLowerCase().startsWith(prefixLower)) return true;
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(SAVES_DIR, f), 'utf8'));
+          return String(data.meta?.username || '').toLowerCase() === userLower;
+        } catch {
+          return false;
+        }
       })
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .map(readSave);
+    const visible = saves.length ? saves : files.map(readSave);
+    return visible.sort((a, b) => b.date.localeCompare(a.date));
   } catch { return []; }
 }
 
@@ -115,7 +173,7 @@ const wss = new WebSocketServer({ server: httpServer });
 let nextId  = 1;
 let clients = [];   // { ws, id, color, name, username, token, isAdmin }
 let hostId  = null;
-let worldConfig = { size: 64, maxPlayers: 8, resources: { tree: 8, iron: 2, coal: 2 } };
+let worldConfig = { size: 64, maxPlayers: 8, resources: { tree: 8, wheat: 4, iron: 2, coal: 2 } };
 const startupSave = getLatestSave();
 let startupSaveLoaded = false;
 if (startupSave?.state?.world) worldConfig = sanitizeWorldConfig(startupSave.state.world);
@@ -164,6 +222,7 @@ function sanitizeWorldConfig(config = {}) {
     maxPlayers: clampInt(config.maxPlayers, 1, 32, worldConfig.maxPlayers),
     resources: {
       tree: clampPercent(resources.tree, worldConfig.resources.tree),
+      wheat: clampPercent(resources.wheat, worldConfig.resources.wheat),
       iron: clampPercent(resources.iron, worldConfig.resources.iron),
       coal: clampPercent(resources.coal, worldConfig.resources.coal),
     },
@@ -289,7 +348,7 @@ wss.on('connection', (ws) => {
         const name = (msg.name || '').trim();
         if (!name) { send(client, { type:'save_err', msg:'Nom de sauvegarde requis' }); break; }
         try {
-          const p = savePath(user.username, name);
+          const p = resolveSavePath(user.username, name);
           fs.writeFileSync(p, JSON.stringify({
             meta: { username: user.username, name, date: new Date().toISOString() },
             state: msg.state,
@@ -309,7 +368,7 @@ wss.on('connection', (ws) => {
         if (!user) { send(client, { type:'save_err', msg:'Non authentifié' }); break; }
         const name = (msg.name || '').trim();
         try {
-          const p = savePath(user.username, name);
+          const p = resolveSavePath(user.username, name);
           if (!fs.existsSync(p)) { send(client, { type:'save_err', msg:'Sauvegarde introuvable' }); break; }
           const data = JSON.parse(fs.readFileSync(p, 'utf8'));
           // diffuser l'état à TOUS les joueurs connectés
@@ -325,7 +384,7 @@ wss.on('connection', (ws) => {
         if (!user) { send(client, { type:'save_err', msg:'Non authentifié' }); break; }
         const name = (msg.name || '').trim();
         try {
-          const p = savePath(user.username, name);
+          const p = resolveSavePath(user.username, name);
           if (fs.existsSync(p)) fs.unlinkSync(p);
           send(client, { type:'save_deleted', name });
           send(client, { type:'saves_list', saves: listUserSaves(user.username) });

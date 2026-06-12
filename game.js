@@ -25,7 +25,7 @@ let N = 64;              // taille de la carte (tuiles)
 const TILE = 36;         // taille d'une tuile en px monde (simulation)
 const TW = 64, TH = 32;  // taille d'une tuile iso à l'écran
 const TW2 = TW/2, TH2 = TH/2;
-const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4 };
+const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4, WHEAT:5 };
 const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
 const OUTCAP = 12;       // stock max de sortie par ressource
 const INCAP = 12;        // stock max d'entrée par ressource
@@ -44,10 +44,11 @@ const TOWN_RADIUS        = 20;  // cases — rayon d'appartenance à un village
 // ---------- véhicules persistants ----------
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
-  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', acier:'#7a8fa0', marchandises:'#e6c84f' };
+  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', ble:'#d7b348', acier:'#7a8fa0', marchandises:'#e6c84f' };
   const DEFS = {
     minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal'], cost:800,  capacite:15, speed:4.0 },
     bois:        { nom:'Camion bois',         icone:'🚜', resources:['wood'],        cost:600,  capacite:15, speed:4.0 },
+    ble:         { nom:'Camion blé',          icone:'🚜', resources:['wheat'],       cost:550,  capacite:15, speed:4.0 },
     acier:       { nom:'Camion acier',        icone:'🚚', resources:['steel'],       cost:1000, capacite:12, speed:3.5 },
     marchandises:{ nom:'Camion marchandises', icone:'🚐', resources:['goods'],       cost:700,  capacite:12, speed:3.5 },
   };
@@ -72,6 +73,7 @@ const RES = {
   iron:  { n:'Fer',          c:'#d98a4f' },
   coal:  { n:'Charbon',      c:'#454552' },
   wood:  { n:'Bois',         c:'#a4713d' },
+  wheat: { n:'Blé',          c:'#d7b348' },
   steel: { n:'Acier',        c:'#a8bdd2' },
   goods: { n:'Marchandises', c:'#e6c84f' },
 };
@@ -83,6 +85,7 @@ const TRADE_PRICES = (()=>{
     iron:  cfg.fer          ?? 8,
     coal:  cfg.charbon      ?? 6,
     wood:  cfg.bois         ?? 5,
+    wheat: cfg.ble          ?? 4,
     steel: cfg.acier        ?? 14,
     goods: cfg.marchandises ?? 10,
   };
@@ -101,25 +104,30 @@ const BUILD = {
              upkeep: CFG.production?.bucheron?.entretien ?? 1.5,
              recipe:{ in:{}, out:{wood:1} },
              desc:"À placer à 2 cases ou moins d'arbres. Produit du bois." },
-  smelter: { n:'Fonderie',  ic:'🔥', hk:'5', cost: CFG.production?.fonderie?.cout ?? 900,
+  farm:    { n:'Ferme',     ic:'🌾', hk:'5', cost: CFG.production?.ferme?.cout    ?? 300,
+             workers:2, time:3.0, col:'#9b8a3d', hgt:12, ind:true,
+             upkeep: CFG.production?.ferme?.entretien ?? 1.2,
+             recipe:{ in:{}, out:{wheat:1} },
+             desc:"À placer à 2 cases ou moins d'un champ de blé. Produit du blé." },
+  smelter: { n:'Fonderie',  ic:'🔥', hk:'6', cost: CFG.production?.fonderie?.cout ?? 900,
              workers:4, time:3.5, col:'#8a4f3d', hgt:26, ind:true,
              upkeep: CFG.production?.fonderie?.entretien ?? 3,
              recipe:{ in:{iron:1, coal:1}, out:{steel:1} },
              desc:'Fer + charbon → acier.' },
-  factory: { n:'Usine',     ic:'🏭', hk:'6', cost: CFG.production?.usine?.cout    ?? 1400,
+  factory: { n:'Usine',     ic:'🏭', hk:'7', cost: CFG.production?.usine?.cout    ?? 1400,
              workers:5, time:4, col:'#5a6a86', hgt:30, ind:true,
              upkeep: CFG.production?.usine?.entretien    ?? 4,
              recipe:{ in:{steel:1, wood:1}, out:{goods:1} },
              desc:'Acier + bois → marchandises.' },
-  house:   { n:'Maison',    ic:'🏠', hk:'7', cost: CFG.batiments?.maison?.cout    ?? 100,
+  house:   { n:'Maison',    ic:'🏠', hk:'8', cost: CFG.batiments?.maison?.cout    ?? 100,
              col:'#9a7e5f', hgt:18, desc:'' },
-  depot:   { n:'Entrepôt',        ic:'📦', hk:'8', cost: CFG.batiments?.entrepot?.cout  ?? 400,
+  depot:   { n:'Entrepôt',        ic:'📦', hk:'9', cost: CFG.batiments?.entrepot?.cout  ?? 400,
              col:'#7a7048', hgt:22,
              desc:'Stocke et redistribue. Cliquer dessus pour choisir les ressources acceptées.' },
   garage:  { n:'Dépôt véhicules', ic:'🏪', hk:'0', cost: GARAGE_COST, col:'#3d4f6b', hgt:20,
              desc:'Achète et gère des véhicules de transport spécialisés.' },
-  bulldoze: { n:'Démolir',    ic:'🧨', hk:'9', desc:'Détruit routes, bâtiments (30 % remboursés) et arbres.' },
-  terraform:{ n:'Bulldozer',  ic:'🚜', hk:'-', desc:'Rase les gisements (fer/charbon) et les sapins en herbe.' },
+  bulldoze: { n:'Démolir',    ic:'🧨', hk:'B', desc:'Détruit routes, bâtiments (30 % remboursés) et arbres.' },
+  terraform:{ n:'Bulldozer',  ic:'🚜', hk:'-', desc:'Rase les gisements (fer/charbon), les champs et les sapins en herbe.' },
 };
 // ---------- niveaux résidentiels ----------
 // Un rectangle entièrement couvert de logements PLEINS plus petits fusionne
@@ -219,6 +227,7 @@ function assignBuildingToTown(b, silent = false){
     const t = { id: nextTownId++, name, cx: bx, cy: by };
     towns.push(t);
     b.townId = t.id;
+    if(selectedTownId == null && ownedBy(b, myOwner())) selectedTownId = t.id;
     if(!silent) toast('🏘️ Nouveau village : ' + name, 'win');
   }
 }
@@ -227,6 +236,7 @@ function assignBuildingToTown(b, silent = false){
 const IND_NAMES = {
   mine:    ['Mine de Fer','Puits Noir','Mine Profonde','Mine Royale','Vieux Puits','Mine du Nord','Carrière Centrale','Mine de l\'Ouest','Mine des Anciens','Mine du Pic'],
   lumber:  ['Scierie du Bois','Bûcherie Verte','Scierie des Pins','Grand Moulin','Scierie Royale','Scierie du Moulin','Bûcherie Centrale','Scierie du Nord','Vieille Scierie','Bûcherie des Chênes'],
+  farm:    ['Ferme des Blés','Domaine Doré','Ferme du Moulin','Grange Centrale','Ferme de la Plaine','Domaine des Épis','Ferme du Nord','Métairie Royale','Champ Fleuri','Ferme des Moissons'],
   smelter: ['Grande Forge','Fonderie du Feu','Forge Ardente','Forge du Roi','Fonderie Centrale','Vieille Forge','Forge des Maîtres','Fonderie du Nord','Forge Royale','Forge de la Vallée'],
   factory: ['Manufacture Centrale','Atelier du Peuple','Grande Usine','Fabrique Royale','Usine Municipale','Atelier des Arts','Grande Fabrique','Usine Centrale','Fabrique du Nord','Manufacture Royale'],
 };
@@ -342,14 +352,14 @@ function tryMergeDepot(){
 }
 (function applyUpkeepConfig(){
   const p = CFG.production || {};
-  const map = { mine:'mine', bucheron:'lumber', fonderie:'smelter', usine:'factory' };
+  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', fonderie:'smelter', usine:'factory' };
   for(const fr in map) if(p[fr]?.entretien != null) BUILD[map[fr]].upkeep = p[fr].entretien;
 })();
 
 // surcharge des recettes et coûts par config.js (clés françaises)
 (function applyProductionConfig(){
   const p = CFG.production || {};
-  const map = { mine:'mine', bucheron:'lumber', fonderie:'smelter', usine:'factory' };
+  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', fonderie:'smelter', usine:'factory' };
   for(const fr in map){
     const c = p[fr];
     if(!c) continue;
@@ -367,7 +377,7 @@ function tryMergeDepot(){
   if(bats.entrepot?.cout != null) BUILD.depot.cost  = bats.entrepot.cout;
 })();
 
-const TOOL_ORDER = ['select','road','mine','lumber','smelter','factory','house','depot','garage','bulldoze','terraform'];
+const TOOL_ORDER = ['select','road','mine','lumber','farm','smelter','factory','house','depot','garage','bulldoze','terraform'];
 const MILESTONES = [25, 50, 100, 200, 400];
 const COLORS = ['#e25e4c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#f0a040','#40d0c0','#e0e0e0'];
 
@@ -379,6 +389,8 @@ let selectedVehicle = null;  // véhicule sélectionné
 let nextVehicleId = 0;
 let towns = [];           // villages / villes
 let nextTownId = 0;
+let selectedTownId = null;
+let townLabelHits = [];
 let gtime = 0, eff = 1; // eff = snapshot du wallet courant, gardé pour statusOf
 let selected = null, tool = 'select';
 let speed = 1, paused = false;
@@ -427,7 +439,7 @@ let prev = new Int32Array(N*N);
 const WORLD_DEFAULTS = {
   size: 64,
   maxPlayers: 8,
-  resources: { tree: 8, iron: 2, coal: 2 },
+  resources: { tree: 8, wheat: 4, iron: 2, coal: 2 },
 };
 let WORLD = JSON.parse(JSON.stringify(WORLD_DEFAULTS));
 
@@ -445,6 +457,7 @@ function normalizeWorldConfig(config){
     maxPlayers: Math.round(clampNum(c.maxPlayers, 1, 32, WORLD_DEFAULTS.maxPlayers)),
     resources: {
       tree: clampNum(r.tree, 0, 40, WORLD_DEFAULTS.resources.tree),
+      wheat: clampNum(r.wheat, 0, 40, WORLD_DEFAULTS.resources.wheat),
       iron: clampNum(r.iron, 0, 40, WORLD_DEFAULTS.resources.iron),
       coal: clampNum(r.coal, 0, 40, WORLD_DEFAULTS.resources.coal),
     },
@@ -561,7 +574,7 @@ function genWorld(config){
   bgrid = new Array(N*N).fill(null);
   buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
   vehicles = []; vehicleRouteMode = null; selectedVehicle = null; nextVehicleId = 0;
-  towns = []; nextTownId = 0;
+  towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = [];
   WALLETS = {}; gtime = 0;
   selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0;
 
@@ -583,7 +596,7 @@ function genWorld(config){
     const c = treeCandidates[i];
     terrain[c.y*N+c.x] = T.TREE;
   }
-  // gisements en taches
+  // champs et gisements en taches
   const placePatch = (type, count)=>{
     for(let k=0;k<count;k++){
       let cx, cy, tries = 0;
@@ -599,6 +612,7 @@ function genWorld(config){
     }
   };
   const patchCount = pct => Math.round(N*N * pct / 100 / 8);
+  placePatch(T.WHEAT, patchCount(WORLD.resources.wheat));
   placePatch(T.IRON, patchCount(WORLD.resources.iron));
   placePatch(T.COAL, patchCount(WORLD.resources.coal));
 
@@ -636,8 +650,76 @@ const buildingDistance = (a,b)=>{
   return Math.max(Math.abs(ca.x-cb.x), Math.abs(ca.y-cb.y));
 };
 
+function townOwnedBy(t, oid=myOwner()){
+  return buildings.some(b=>!b.dead && b.townId === t.id && BUILD[b.type]?.resid && ownedBy(b, oid));
+}
+
+function townHasResidents(t){
+  return buildings.some(b=>!b.dead && b.townId === t.id && BUILD[b.type]?.resid);
+}
+
+function ownTowns(oid=myOwner()){
+  return towns
+    .filter(t=>townOwnedBy(t, oid))
+    .sort((a,b)=> a.id-b.id);
+}
+
+function ensureSelectedTown(){
+  const list = ownTowns();
+  if(selectedTownId != null){
+    const selectedTown = towns.find(t=>t.id === selectedTownId) || null;
+    if(selectedTown && (list.some(t=>t.id === selectedTownId) || (!list.length && townHasResidents(selectedTown))))
+      return selectedTown;
+  }
+  const first = list[0] || towns.filter(t=>townHasResidents(t)).sort((a,b)=>a.id-b.id)[0] || null;
+  selectedTownId = first ? first.id : null;
+  return first;
+}
+
+function resetSelectedTown(){
+  selectedTownId = null;
+  return ensureSelectedTown();
+}
+
+function townHomes(townId, oid=myOwner()){
+  const owned = buildings.filter(b=>!b.dead && b.townId === townId && BUILD[b.type]?.resid && ownedBy(b, oid));
+  if(owned.length) return owned;
+  return buildings.filter(b=>!b.dead && b.townId === townId && BUILD[b.type]?.resid);
+}
+
+function townPopTotal(townId){
+  return townHomes(townId).reduce((s,b)=>s+(b.pop||0), 0);
+}
+
+function townHousingCap(townId){
+  return townHomes(townId).reduce((s,b)=>s+BUILD[b.type].resid.popCap, 0);
+}
+
+function townReachableJobs(townId){
+  const homes = townHomes(townId);
+  const seen = new Set();
+  let total = 0;
+  for(const home of homes){
+    const radius = workRadiusOf(home);
+    for(const job of buildings){
+      if(job.dead || job.paused || !ownedBy(job, home.owner)) continue;
+      const req = workersRequiredOf(job);
+      if(req <= 0 || seen.has(job)) continue;
+      if(buildingDistance(home, job) <= radius){
+        seen.add(job);
+        total += req;
+      }
+    }
+  }
+  return total;
+}
+
+function townAllocatedWorkers(townId){
+  return buildings.reduce((s,b)=>s+((b.workersByTown && b.workersByTown[townId]) || 0), 0);
+}
+
 function refreshWorkerAllocation(){
-  for(const b of buildings) b.workersAssigned = 0;
+  for(const b of buildings){ b.workersAssigned = 0; b.workersByTown = {}; }
   const jobs = buildings
     .filter(b=>!b.dead && !b.paused && workersRequiredOf(b)>0)
     .sort((a,b)=> (a.y-b.y) || (a.x-b.x));
@@ -655,6 +737,8 @@ function refreshWorkerAllocation(){
       const need = workersRequiredOf(job) - workersAllocatedOf(job);
       const take = Math.min(available, need);
       job.workersAssigned = (job.workersAssigned||0) + take;
+      if(home.townId != null)
+        job.workersByTown[home.townId] = (job.workersByTown[home.townId]||0) + take;
       available -= take;
     }
   }
@@ -772,6 +856,14 @@ function treeNear(x,y,r){
   for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
     const a = x+dx, c = y+dy;
     if(inMap(a,c) && terrain[c*N+a]===T.TREE) return true;
+  }
+  return false;
+}
+
+function fieldNear(x,y,r){
+  for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
+    const a = x+dx, c = y+dy;
+    if(inMap(a,c) && terrain[c*N+a]===T.WHEAT) return true;
   }
   return false;
 }
@@ -974,12 +1066,12 @@ function nearbyEnemyOwner(myId, cx, cy){
 function canPlace(t,x,y){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
-  if(t==='bulldoze') return { ok: !!(road[i] || bgrid[i] || ter===T.TREE) };
-  if(t==='terraform') return { ok: !bgrid[i] && (ter===T.TREE || ter===T.IRON || ter===T.COAL) };
+  if(t==='bulldoze') return { ok: !!(road[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT) };
+  if(t==='terraform') return { ok: !bgrid[i] && (ter===T.TREE || ter===T.WHEAT || ter===T.IRON || ter===T.COAL) };
   if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
   if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
   if(t==='road'){
-    if(ter!==T.GRASS) return { ok:false, msg:"Les routes se posent sur l'herbe (démolis les arbres)" };
+    if(ter!==T.GRASS) return { ok:false, msg:"Les routes se posent sur l'herbe (démolis les arbres ou champs)" };
     return { ok:true };
   }
   if(t==='mine'){
@@ -987,6 +1079,7 @@ function canPlace(t,x,y){
   } else {
     if(ter!==T.GRASS) return { ok:false, msg:'Terrain non constructible' };
     if(t==='lumber' && !treeNear(x,y,2)) return { ok:false, msg:"Aucun arbre à moins de 2 cases" };
+    if(t==='farm' && !fieldNear(x,y,2)) return { ok:false, msg:"Aucun champ de blé à moins de 2 cases" };
   }
   // zone d'exclusion multijoueur
   if(MP.connected && nearbyEnemyOwner(MP.myId, x, y))
@@ -1062,7 +1155,7 @@ function clickAt(x,y){
       if(refund) addFloat(x,y,'+'+refund+' $','#9fe89f');
     } else if(road[i]){
       road[i] = 0; earnMoney(3, 'rembours');
-    } else if(terrain[i]===T.TREE){
+    } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT){
       terrain[i] = T.GRASS;
     }
     return;
@@ -1070,7 +1163,7 @@ function clickAt(x,y){
   if(tool==='terraform'){
     const ter = terrain[i];
     if(bgrid[i]){ toast('⛔ Démolissez d\'abord le bâtiment','err'); return; }
-    if(ter===T.TREE || ter===T.IRON || ter===T.COAL){
+    if(ter===T.TREE || ter===T.WHEAT || ter===T.IRON || ter===T.COAL){
       terrain[i] = T.GRASS;
       if(MP.connected) netSend({ type:'terraform', i });
     }
@@ -1657,7 +1750,7 @@ function growPop(b, protectedResident=false){
 // renvoie les étapes du bord de la carte jusqu'au bâtiment, ou null si enclavé
 function pathToEdge(b){
   const walkable = i => terrain[i]!==T.WATER && !bgrid[i];
-  const costOf = i => road[i] ? 1 : (terrain[i]===T.TREE ? 6 : 3);
+  const costOf = i => road[i] ? 1 : (terrain[i]===T.TREE ? 6 : (terrain[i]===T.WHEAT ? 4 : 3));
 
   dist.fill(-1);
   const heap = [];
@@ -1969,13 +2062,6 @@ function drawBuilding(b){
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.fillText(d.ic, tc[0], tc[1]+1);
-    // petit badge minerai sous l'icône
-    ctx.font = 'bold 9px sans-serif';
-    ctx.fillStyle = oreColor;
-    ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.lineWidth = 2.5;
-    const label = b.ore === 'iron' ? 'FER' : 'CHARBON';
-    ctx.strokeText(label, tc[0], tc[1] + fs*0.62 + 5);
-    ctx.fillText(label, tc[0], tc[1] + fs*0.62 + 5);
     ctx.restore();
   } else {
     ctx.fillText(d.ic, tc[0], tc[1]+1);
@@ -2137,11 +2223,14 @@ function drawVehicleRoute(veh){
 }
 
 function drawTownLabels(){
+  townLabelHits = [];
   if(!towns.length) return;
   const z = cam.z;
   for(const t of towns){
     const members = buildings.filter(b => !b.dead && b.townId === t.id && BUILD[b.type]?.resid);
     if(!members.length) continue;
+    const isOwn = townOwnedBy(t);
+    const isSelectedTown = t.id === selectedTownId;
 
     const pop = members.reduce((s, b) => s + (b.pop||0), 0);
 
@@ -2178,24 +2267,25 @@ function drawTownLabels(){
     const tw = ctx.measureText(label).width;
     const pw = tw + 18, ph = 20;
     const bx = cssX - pw/2, by = cssY - ph/2;
+    townLabelHits.push({ id:t.id, x:bx, y:by, w:pw, h:ph });
 
     // Fond pilule
-    ctx.globalAlpha = 0.88;
-    ctx.fillStyle = '#0c1a2b';
+    ctx.globalAlpha = isSelectedTown ? 0.96 : 0.88;
+    ctx.fillStyle = isSelectedTown ? '#143659' : '#0c1a2b';
     ctx.beginPath();
     if(ctx.roundRect) ctx.roundRect(bx, by, pw, ph, 5);
     else ctx.rect(bx, by, pw, ph);
     ctx.fill();
 
     // Bordure dorée
-    ctx.globalAlpha = 0.65;
-    ctx.strokeStyle = '#c9a830';
-    ctx.lineWidth = 1;
+    ctx.globalAlpha = isSelectedTown ? 0.95 : 0.65;
+    ctx.strokeStyle = isSelectedTown ? '#7fb0ff' : (isOwn ? '#c9a830' : '#6e7480');
+    ctx.lineWidth = isSelectedTown ? 2 : 1;
     ctx.stroke();
 
     // Texte
     ctx.globalAlpha = 1;
-    ctx.fillStyle = '#f0dc90';
+    ctx.fillStyle = isSelectedTown ? '#ffffff' : '#f0dc90';
     ctx.fillText(label, cssX, cssY);
     ctx.restore();
   }
@@ -2295,6 +2385,19 @@ function draw(){
     } else {
       ctx.fillStyle = GRASS_COLS[hash(x,y)&3];
       diamond(rx,ry); ctx.fill();
+      if(!drawFast && t===T.WHEAT){
+        const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
+        ctx.strokeStyle = '#d7b348';
+        ctx.lineWidth = 1.2;
+        for(let k=0;k<6;k++){
+          const ox = ((hs>>(k*3))&7)/7*TW*0.42 - TW*0.21;
+          const oy = ((hs>>(k*3+6))&7)/7*TH*0.34 - TH*0.17;
+          ctx.beginPath();
+          ctx.moveTo(c[0]+ox, c[1]+oy+5);
+          ctx.lineTo(c[0]+ox+((k&1)?2:-2), c[1]+oy-4);
+          ctx.stroke();
+        }
+      }
       if(!drawFast && (t===T.IRON || t===T.COAL)){
         ctx.fillStyle = t===T.IRON ? '#c0763a' : '#23232b';
         const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
@@ -2389,7 +2492,7 @@ function draw(){
   }
 
   // en mode placement d'industrie : afficher tous les rayons industriels existants
-  if(['mine','lumber','smelter','factory'].includes(tool) && !drawFast){
+  if(['mine','lumber','farm','smelter','factory'].includes(tool) && !drawFast){
     for(const b of buildings){
       if(!BUILD[b.type]?.ind || b.dead) continue;
       ctx.globalAlpha = 0.35;
@@ -2494,13 +2597,19 @@ function updateHUD(dt){
   hudTimer -= dt;
   if(hudTimer > 0) return;
   hudTimer = 0.2;
-  const pop = popTotal(), jobs = jobsTotal();
+  const town = ensureSelectedTown();
+  const pop = town ? townPopTotal(town.id) : popTotal();
+  const cap = town ? townHousingCap(town.id) : housingCap();
+  const jobs = town ? townReachableJobs(town.id) : jobsTotal();
+  const workers = town ? townAllocatedWorkers(town.id) : Math.min(popTotal(), jobs);
   const mEl = $('hMoney');
   const myMoney = myWallet().money;
   mEl.textContent = Math.floor(myMoney).toLocaleString('fr-FR');
   mEl.style.color = myMoney < 0 ? '#ff8a7a' : '';
-  $('hPop').textContent = pop + ' / ' + housingCap();
-  $('hJobs').textContent = Math.min(pop,jobs) + ' / ' + jobs;
+  const townEl = $('hTown');
+  if(townEl) townEl.textContent = town ? town.name : '—';
+  $('hPop').textContent = pop + ' / ' + cap;
+  $('hJobs').textContent = workers + ' / ' + jobs;
   $('hTrucks').textContent = trucks.length;
   // Compteur sauvegarde auto
   const cdEl = $('autoSaveCountdown');
@@ -2878,6 +2987,19 @@ function updateMouseTile(e){
   updateMouseTileAt(e.clientX, e.clientY);
 }
 
+function selectTownLabelAt(x,y){
+  for(let i=townLabelHits.length-1; i>=0; i--){
+    const h = townLabelHits[i];
+    if(x >= h.x && x <= h.x+h.w && y >= h.y && y <= h.y+h.h){
+      selectedTownId = h.id;
+      const t = towns.find(t=>t.id === h.id);
+      if(t) toast('🏘️ Village sélectionné : ' + t.name);
+      return true;
+    }
+  }
+  return false;
+}
+
 // clickFn : indirection pour permettre au module multijoueur d'intercepter les clics
 let clickFn = clickAt;
 
@@ -2885,6 +3007,7 @@ cv.addEventListener('mousedown', e=>{
   updateMouseTile(e);
   if(e.button===0){
     mouse.lDown = true;
+    if(selectTownLabelAt(e.clientX, e.clientY)){ mouse.lDown = false; return; }
     clickFn(mouse.tx, mouse.ty);
   } else if(e.button===2 || e.button===1){
     mouse.rDown = true; mouse.rMoved = 0;
@@ -2960,6 +3083,7 @@ addEventListener('keydown', e=>{
   if(e.code==='Escape'){ setTool('select'); selected = null; vehicleRouteMode = null; selectedVehicle = null; }
   if(e.code==='KeyH') toggleHelp();
   if(e.code==='KeyR') rotate(e.shiftKey ? -1 : 1);
+  if(e.code==='KeyB') setTool('bulldoze');
   if(e.code.startsWith('Digit')){
     const d = +e.code.slice(5);
     // Digit0 → 'garage', Digit1-9 → TOOL_ORDER[d-1]
@@ -3121,7 +3245,7 @@ function applySnapshot(d){
 
   buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
   vehicles = []; vehicleRouteMode = null; nextVehicleId = 0;
-  towns = []; nextTownId = 0;
+  towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = [];
   bgrid = new Array(N*N).fill(null);
   selected = null;
 
@@ -3157,6 +3281,7 @@ function applySnapshot(d){
     if(BUILD[b.type]?.resid && b.townId == null) assignBuildingToTown(b, true);
     if(BUILD[b.type]?.ind   && !b.name)          assignIndustryName(b);
   }
+  ensureSelectedTown();
   for(const k in WALLETS) WALLETS[k].starterHomes = 0;
   for(const b of buildings){
     if(!b.starterHome) continue;
@@ -3316,6 +3441,7 @@ function mpConnect(url){
         if(msg.worldConfig) WORLD = normalizeWorldConfig(msg.worldConfig);
         adoptSoloHomeless(MP.myId);
         ensureHomelessForOwner(MP.myId);
+        resetSelectedTown();
         toast((msg.role==='host' ? '👑 Tu es l\'hôte' : '👥 Tu as rejoint la partie')+' (#'+msg.id+')');
         mpUpdateUI();
         break;
@@ -3353,6 +3479,7 @@ function mpConnect(url){
       case 'snapshot':
         // l'invité reçoit l'état initial
         applySnapshot(msg.state);
+        resetSelectedTown();
         toast('📥 Carte synchronisée');
         break;
 
@@ -3384,6 +3511,7 @@ function mpConnect(url){
         for(const p of MP.players) ensureHomelessForOwner(p.id);
         for(const h of homeless) h.col = playerColor(h.owner);
         for(const p of MP.players) assignHomelessToHousing(p.id);
+        ensureSelectedTown();
         mpUpdateUI();
         mpRenderPlayerList();
         // mettre à jour les couleurs des curseurs
@@ -3460,12 +3588,14 @@ function mpConnect(url){
 
       case 'game_loaded':
         applySnapshot(msg.state);
+        resetSelectedTown();
         toast('📂 Partie "'+msg.name+'" chargée par '+msg.loadedBy);
         break;
 
       case 'game_new_world':
         applySnapshot(msg.state);
         if(msg.config) WORLD = normalizeWorldConfig(msg.config);
+        resetSelectedTown();
         toast('🌍 Nouvelle carte créée par '+msg.createdBy);
         mpUpdateUI();
         break;
@@ -3518,7 +3648,7 @@ clickFn = function(x,y){
       netSend({ type:'bulldoze_bld', bx:bgrid[i].x, by:bgrid[i].y });
     } else if(road[i]){
       netSend({ type:'bulldoze_road', i });
-    } else if(terrain[i]===T.TREE){
+    } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT){
       netSend({ type:'bulldoze_tree', i });
     }
     clickAt(x,y);
@@ -3526,7 +3656,7 @@ clickFn = function(x,y){
   }
   if(tool==='terraform'){
     const ter = terrain[i];
-    if(!bgrid[i] && (ter===T.TREE || ter===T.IRON || ter===T.COAL)){
+    if(!bgrid[i] && (ter===T.TREE || ter===T.WHEAT || ter===T.IRON || ter===T.COAL)){
       netSend({ type:'terraform', i });
       clickAt(x,y);
     }
@@ -3651,6 +3781,8 @@ function mpInjectUI(){
     <input id="mpMaxPlayers" type="number" min="1" max="32" step="1" style="${INP}">
     <label style="display:block;color:#8fa3bf;font-size:11px">Arbres / bois (%)</label>
     <input id="mpResTree" type="number" min="0" max="40" step="0.5" style="${INP}">
+    <label style="display:block;color:#8fa3bf;font-size:11px">Champs de blé (%)</label>
+    <input id="mpResWheat" type="number" min="0" max="40" step="0.5" style="${INP}">
     <label style="display:block;color:#8fa3bf;font-size:11px">Fer (%)</label>
     <input id="mpResIron" type="number" min="0" max="40" step="0.5" style="${INP}">
     <label style="display:block;color:#8fa3bf;font-size:11px">Charbon (%)</label>
@@ -3737,6 +3869,7 @@ function mpInjectUI(){
       maxPlayers: $('mpMaxPlayers').value,
       resources: {
         tree: $('mpResTree').value,
+        wheat: $('mpResWheat').value,
         iron: $('mpResIron').value,
         coal: $('mpResCoal').value,
       },
@@ -3804,6 +3937,7 @@ function mpSyncWorldInputs(){
   $('mpWorldSize').value = WORLD.size;
   $('mpMaxPlayers').value = WORLD.maxPlayers;
   $('mpResTree').value = WORLD.resources.tree;
+  $('mpResWheat').value = WORLD.resources.wheat;
   $('mpResIron').value = WORLD.resources.iron;
   $('mpResCoal').value = WORLD.resources.coal;
 }

@@ -4,7 +4,7 @@
 
    Identifiants de ressources à utiliser dans les recettes :
      iron  = fer          coal  = charbon       wood = bois
-     steel = acier        goods = marchandises
+     wheat = blé          steel = acier         goods = marchandises
    ============================================================ */
 const CONFIG = {
 
@@ -18,6 +18,7 @@ const CONFIG = {
   production: {
     mine:     { temps: 2.2, quantite: 1,                                         cout: 450,  entretien: 2   },
     bucheron: { temps: 2.8, sortie: { wood: 1 },                                 cout: 350,  entretien: 1.5 },
+    ferme:    { temps: 3.0, sortie: { wheat: 1 },                                cout: 300,  entretien: 1.2 },
     fonderie: { temps: 3.5, entree: { iron: 1, coal: 1 }, sortie: { steel: 1 },  cout: 900,  entretien: 3   },
     usine:    { temps: 4.0, entree: { steel: 1, wood: 1 }, sortie: { goods: 1 }, cout: 1400, entretien: 4   },
   },
@@ -118,6 +119,7 @@ const CONFIG = {
     vehicules: {
       minerai:      { nom:'Camion minerai',      icone:'🚛', ressources:['iron','coal'], cout:800,  capacite:15, vitesse:4.0 },
       bois:         { nom:'Camion bois',          icone:'🚜', ressources:['wood'],        cout:600,  capacite:15, vitesse:4.0 },
+      ble:          { nom:'Camion blé',           icone:'🚜', ressources:['wheat'],       cout:550,  capacite:15, vitesse:4.0 },
       acier:        { nom:'Camion acier',         icone:'🚚', ressources:['steel'],       cout:1000, capacite:12, vitesse:3.5 },
       marchandises: { nom:'Camion marchandises',  icone:'🚐', ressources:['goods'],       cout:700,  capacite:12, vitesse:3.5 },
     },
