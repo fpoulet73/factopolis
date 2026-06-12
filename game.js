@@ -44,11 +44,14 @@ const TOWN_RADIUS        = 20;  // cases — rayon d'appartenance à un village
 // ---------- véhicules persistants ----------
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
-  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', ble:'#d7b348', acier:'#7a8fa0', marchandises:'#e6c84f' };
+  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', ble:'#d7b348', farine:'#eadfa8', citerne:'#64b7e8', pain:'#d99a45', acier:'#7a8fa0', marchandises:'#e6c84f' };
   const DEFS = {
     minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal'], cost:800,  capacite:15, speed:4.0 },
     bois:        { nom:'Camion bois',         icone:'🚜', resources:['wood'],        cost:600,  capacite:15, speed:4.0 },
     ble:         { nom:'Camion blé',          icone:'🚜', resources:['wheat'],       cost:550,  capacite:15, speed:4.0 },
+    farine:      { nom:'Camion farine',       icone:'🚚', resources:['flour'],       cost:650,  capacite:15, speed:3.8 },
+    citerne:     { nom:'Camion citerne',      icone:'🚛', resources:['water'],       cost:750,  capacite:20, speed:3.5 },
+    pain:        { nom:'Camion pain',         icone:'🚚', resources:['bread'],       cost:700,  capacite:15, speed:3.8 },
     acier:       { nom:'Camion acier',        icone:'🚚', resources:['steel'],       cost:1000, capacite:12, speed:3.5 },
     marchandises:{ nom:'Camion marchandises', icone:'🚐', resources:['goods'],       cost:700,  capacite:12, speed:3.5 },
   };
@@ -74,6 +77,9 @@ const RES = {
   coal:  { n:'Charbon',      c:'#454552' },
   wood:  { n:'Bois',         c:'#a4713d' },
   wheat: { n:'Blé',          c:'#d7b348' },
+  flour: { n:'Farine',       c:'#eadfa8' },
+  water: { n:'Eau',          c:'#64b7e8' },
+  bread: { n:'Pain',         c:'#d99a45' },
   steel: { n:'Acier',        c:'#a8bdd2' },
   goods: { n:'Marchandises', c:'#e6c84f' },
 };
@@ -86,6 +92,9 @@ const TRADE_PRICES = (()=>{
     coal:  cfg.charbon      ?? 6,
     wood:  cfg.bois         ?? 5,
     wheat: cfg.ble          ?? 4,
+    flour: cfg.farine       ?? 7,
+    water: cfg.eau          ?? 2,
+    bread: cfg.pain         ?? 12,
     steel: cfg.acier        ?? 14,
     goods: cfg.marchandises ?? 10,
   };
@@ -109,6 +118,21 @@ const BUILD = {
              upkeep: CFG.production?.ferme?.entretien ?? 1.2,
              recipe:{ in:{}, out:{wheat:1} },
              desc:"À placer à 2 cases ou moins d'un champ de blé. Produit du blé." },
+  pump:    { n:'Pompe',     ic:'💧', hk:'9', cost: CFG.production?.pompe?.cout    ?? 500,
+             workers:1, time:2.5, col:'#4f86a8', hgt:14, ind:true,
+             upkeep: CFG.production?.pompe?.entretien ?? 1.5,
+             recipe:{ in:{}, out:{water:1} },
+             desc:"À placer sur l'herbe au bord de l'eau. Produit de l'eau." },
+  mill:    { n:'Moulin',    ic:'⚙️', hk:'', cost: CFG.production?.moulin?.cout   ?? 650,
+             workers:3, time:3.2, col:'#b9a77a', hgt:24, ind:true,
+             upkeep: CFG.production?.moulin?.entretien ?? 2,
+             recipe:{ in:{wheat:1}, out:{flour:1} },
+             desc:'Blé → farine.' },
+  bakery:  { n:'Boulangerie', ic:'🥖', hk:'', cost: CFG.production?.boulangerie?.cout ?? 950,
+             workers:4, time:3.5, col:'#c18149', hgt:24, ind:true,
+             upkeep: CFG.production?.boulangerie?.entretien ?? 2.5,
+             recipe:{ in:{flour:1, water:1}, out:{bread:1} },
+             desc:'Farine + eau → pain. Nécessite une citerne proche pour recevoir l’eau.' },
   smelter: { n:'Fonderie',  ic:'🔥', hk:'6', cost: CFG.production?.fonderie?.cout ?? 900,
              workers:4, time:3.5, col:'#8a4f3d', hgt:26, ind:true,
              upkeep: CFG.production?.fonderie?.entretien ?? 3,
@@ -119,15 +143,28 @@ const BUILD = {
              upkeep: CFG.production?.usine?.entretien    ?? 4,
              recipe:{ in:{steel:1, wood:1}, out:{goods:1} },
              desc:'Acier + bois → marchandises.' },
-  house:   { n:'Maison',    ic:'🏠', hk:'8', cost: CFG.batiments?.maison?.cout    ?? 100,
+  plant:   { n:'Usine',     ic:'🏚️', hk:'5', cost: 0, col:'#4e5663', hgt:18,
+             desc:'Usine abandonnée. À convertir ensuite en aciérie, ferme, moulin, boulangerie ou usine de marchandises.' },
+  house:   { n:'Maison',    ic:'🏠', hk:'6', cost: CFG.batiments?.maison?.cout    ?? 100,
              col:'#9a7e5f', hgt:18, desc:'' },
-  depot:   { n:'Entrepôt',        ic:'📦', hk:'9', cost: CFG.batiments?.entrepot?.cout  ?? 400,
+  depot:   { n:'Entrepôt',        ic:'📦', hk:'7', cost: CFG.batiments?.entrepot?.cout  ?? 400,
              col:'#7a7048', hgt:22,
              desc:'Stocke et redistribue. Cliquer dessus pour choisir les ressources acceptées.' },
+  tank:    { n:'Entrepôt citerne', ic:'🛢️', hk:'8', cost: CFG.batiments?.citerne?.cout ?? 450,
+             col:'#3f6f8f', hgt:18,
+             desc:'Stocke uniquement l’eau. À placer près des boulangeries.' },
   garage:  { n:'Dépôt véhicules', ic:'🏪', hk:'0', cost: GARAGE_COST, col:'#3d4f6b', hgt:20,
              desc:'Achète et gère des véhicules de transport spécialisés.' },
   bulldoze: { n:'Démolir',    ic:'🧨', hk:'B', desc:'Détruit routes, bâtiments (30 % remboursés) et arbres.' },
   terraform:{ n:'Bulldozer',  ic:'🚜', hk:'-', desc:'Rase les gisements (fer/charbon), les champs et les sapins en herbe.' },
+};
+
+const PLANT_UPGRADES = {
+  smelter: { label:'Aciérie',       type:'smelter', icon:'🔥' },
+  farm:    { label:'Ferme',         type:'farm',    icon:'🌾' },
+  mill:    { label:'Moulin',        type:'mill',    icon:'⚙️' },
+  bakery:  { label:'Boulangerie',   type:'bakery',  icon:'🥖' },
+  factory: { label:'Marchandises',  type:'factory', icon:'🏭' },
 };
 // ---------- niveaux résidentiels ----------
 // Un rectangle entièrement couvert de logements PLEINS plus petits fusionne
@@ -237,6 +274,9 @@ const IND_NAMES = {
   mine:    ['Mine de Fer','Puits Noir','Mine Profonde','Mine Royale','Vieux Puits','Mine du Nord','Carrière Centrale','Mine de l\'Ouest','Mine des Anciens','Mine du Pic'],
   lumber:  ['Scierie du Bois','Bûcherie Verte','Scierie des Pins','Grand Moulin','Scierie Royale','Scierie du Moulin','Bûcherie Centrale','Scierie du Nord','Vieille Scierie','Bûcherie des Chênes'],
   farm:    ['Ferme des Blés','Domaine Doré','Ferme du Moulin','Grange Centrale','Ferme de la Plaine','Domaine des Épis','Ferme du Nord','Métairie Royale','Champ Fleuri','Ferme des Moissons'],
+  pump:    ['Pompe du Lac','Station des Rives','Pompe Centrale','Station Bleue','Pompe du Canal','Pompe des Berges','Station du Nord','Pompe Royale','Station Claire','Pompe de la Source'],
+  mill:    ['Moulin des Blés','Moulin Blanc','Moulin du Pont','Grand Moulin','Moulin de la Plaine','Moulin des Épis','Moulin du Nord','Moulin Royal','Moulin de la Vallée','Vieux Moulin'],
+  bakery:  ['Boulangerie Centrale','Four des Blés','Boulangerie du Pont','Pain Doré','Boulangerie Royale','Fournil du Nord','Maison du Pain','Boulangerie des Épis','Grand Fournil','Pain de la Vallée'],
   smelter: ['Grande Forge','Fonderie du Feu','Forge Ardente','Forge du Roi','Fonderie Centrale','Vieille Forge','Forge des Maîtres','Fonderie du Nord','Forge Royale','Forge de la Vallée'],
   factory: ['Manufacture Centrale','Atelier du Peuple','Grande Usine','Fabrique Royale','Usine Municipale','Atelier des Arts','Grande Fabrique','Usine Centrale','Fabrique du Nord','Manufacture Royale'],
 };
@@ -292,6 +332,12 @@ const DEPOT_STOCK_PER_CELL  = CFG.entrepot?.stockParCase ?? 20;
 const DEPOT_RADIUS_BASE     = CFG.entrepot?.rayonBase    ?? 5;
 const DEPOT_RADIUS_FACTOR   = CFG.entrepot?.rayonFacteur ?? 3;
 const depotRadiusOf = b => Math.round(DEPOT_RADIUS_BASE + Math.sqrt(b.w * b.h) * DEPOT_RADIUS_FACTOR);
+const TANK_STOCK_PER_CELL  = CFG.citerne?.stockParCase ?? 40;
+const TANK_RADIUS_BASE     = CFG.citerne?.rayonBase    ?? 5;
+const TANK_RADIUS_FACTOR   = CFG.citerne?.rayonFacteur ?? 3;
+const BAKERY_TANK_RADIUS   = CFG.citerne?.rayonBoulangerie ?? 8;
+const tankRadiusOf = b => Math.round(TANK_RADIUS_BASE + Math.sqrt(b.w * b.h) * TANK_RADIUS_FACTOR);
+const isStorageHub = b => b && (b.type === 'depot' || b.type === 'tank');
 // génère les deux orientations et déduplique, triées du plus grand au plus petit
 const DEPOT_SHAPES = (()=>{
   const raw = CFG.entrepot?.formesFusion ?? [[2,1],[3,1],[2,2],[3,2],[3,3],[4,4]];
@@ -352,14 +398,14 @@ function tryMergeDepot(){
 }
 (function applyUpkeepConfig(){
   const p = CFG.production || {};
-  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', fonderie:'smelter', usine:'factory' };
+  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', pompe:'pump', moulin:'mill', boulangerie:'bakery', fonderie:'smelter', usine:'factory' };
   for(const fr in map) if(p[fr]?.entretien != null) BUILD[map[fr]].upkeep = p[fr].entretien;
 })();
 
 // surcharge des recettes et coûts par config.js (clés françaises)
 (function applyProductionConfig(){
   const p = CFG.production || {};
-  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', fonderie:'smelter', usine:'factory' };
+  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', pompe:'pump', moulin:'mill', boulangerie:'bakery', fonderie:'smelter', usine:'factory' };
   for(const fr in map){
     const c = p[fr];
     if(!c) continue;
@@ -375,9 +421,10 @@ function tryMergeDepot(){
   if(bats.route?.cout    != null) BUILD.road.cost   = bats.route.cout;
   if(bats.maison?.cout   != null) BUILD.house.cost  = bats.maison.cout;
   if(bats.entrepot?.cout != null) BUILD.depot.cost  = bats.entrepot.cout;
+  if(bats.citerne?.cout  != null) BUILD.tank.cost   = bats.citerne.cout;
 })();
 
-const TOOL_ORDER = ['select','road','mine','lumber','farm','smelter','factory','house','depot','garage','bulldoze','terraform'];
+const TOOL_ORDER = ['select','road','mine','lumber','plant','house','depot','tank','pump','garage','bulldoze','terraform'];
 const MILESTONES = [25, 50, 100, 200, 400];
 const COLORS = ['#e25e4c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#f0a040','#40d0c0','#e0e0e0'];
 
@@ -756,7 +803,14 @@ function newBuilding(type,x,y,w,h){
   const b = { type, x, y, w:w||d.size||1, h:h||d.size||1,
               storage:{}, inc:{}, prog:0, trucksOut:0, dead:false, owner:null };
   if(type==='mine')  b.ore = terrain[y*N+x]===T.IRON ? 'iron' : 'coal';
-  if(type==='depot'){ b.allow = {}; b.sellTo = {}; for(const k in RES){ b.allow[k] = true; b.sellTo[k] = false; } }
+  if(type==='depot'){
+    b.allow = {}; b.sellTo = {};
+    for(const k in RES){ b.allow[k] = k !== 'water'; b.sellTo[k] = false; }
+  }
+  if(type==='tank'){
+    b.allow = { water:true };
+    b.sellTo = { water:false };
+  }
   if(type==='garage') b.vehicles = [];
   if(d.ind) b.paused = false;
   if(d.resid){ b.pop = 0; b.protectedPop = 0; b.ct = 0; b.bonusCt = 0; b.pending = 0; b.pendingProtected = 0; b.starve = 0; }
@@ -848,6 +902,7 @@ function adjRoadTiles(b){
 function capOf(b,res){
   const rc = BUILD[b.type].resid;
   if(rc) return rc.stockCap;
+  if(b.type==='tank') return res === 'water' ? TANK_STOCK_PER_CELL * b.w * b.h : 0;
   if(b.type==='depot') return DEPOT_STOCK_PER_CELL * b.w * b.h;
   const r = recipeOf(b);
   // les stocks des bâtiments industriels fusionnés grandissent avec leur taille
@@ -856,6 +911,12 @@ function capOf(b,res){
 
 function accepts(b,res){
   if(b.paused) return false; // un site en pause ne reçoit plus de livraisons
+  if(res === 'water'){
+    if(b.type === 'tank') return true;
+    if(b.type === 'bakery') return tankNear(b);
+    return false;
+  }
+  if(b.type==='tank') return false;
   if(b.type==='depot') return b.allow?.[res] !== false;
   if(BUILD[b.type].resid){
     if(res !== 'goods') return false;
@@ -881,6 +942,24 @@ function fieldNear(x,y,r){
     if(inMap(a,c) && terrain[c*N+a]===T.WHEAT) return true;
   }
   return false;
+}
+
+function waterNear(x,y,r){
+  for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
+    const a = x+dx, c = y+dy;
+    if(inMap(a,c) && terrain[c*N+a]===T.WATER) return true;
+  }
+  return false;
+}
+
+function tankNear(b){
+  const center = centerOfBuilding(b);
+  return buildings.some(o => {
+    if(o.dead || o.type !== 'tank') return false;
+    if(!ownedBy(o, b.owner)) return false;
+    const oc = centerOfBuilding(o);
+    return Math.max(Math.abs(oc.x - center.x), Math.abs(oc.y - center.y)) <= BAKERY_TANK_RADIUS;
+  });
 }
 
 function playerColor(owner){
@@ -1052,6 +1131,28 @@ function setBuildingPaused(b, pausedState, broadcastChange=true){
   }
 }
 
+function plantUpgradeError(b, targetType){
+  if(!b || b.dead || b.type !== 'plant') return 'Usine déjà spécialisée';
+  if(!PLANT_UPGRADES[targetType]) return 'Type d\'usine invalide';
+  if(targetType === 'farm' && !fieldNear(b.x, b.y, 2))
+    return 'Aucun champ de blé à moins de 2 cases';
+  return '';
+}
+
+function applyPlantUpgrade(b, targetType){
+  const err = plantUpgradeError(b, targetType);
+  if(err) return err;
+  b.type = targetType;
+  b.storage = {};
+  b.inc = {};
+  b.prog = 0;
+  b.trucksOut = 0;
+  b.paused = false;
+  b.name = null;
+  assignIndustryName(b);
+  return '';
+}
+
 // ---------- construction ----------
 
 // état multijoueur — déclaré ici car utilisé dans canPlace, clickAt et drawBuilding
@@ -1059,6 +1160,8 @@ const MP = {
   ws: null, myId: null, myColor: '#ffffff', myName: 'Moi',
   role: null, isAdmin: false, players: [], cursors: {}, chat: [], connected: false,
   username: null, token: null, saves: [],
+  shutdownNotice: false,
+  shutdownMessage: '',
 };
 
 const mpHasAdminRights = () => MP.connected && (MP.role === 'host' || MP.isAdmin);
@@ -1095,6 +1198,7 @@ function canPlace(t,x,y){
     if(ter!==T.GRASS) return { ok:false, msg:'Terrain non constructible' };
     if(t==='lumber' && !treeNear(x,y,2)) return { ok:false, msg:"Aucun arbre à moins de 2 cases" };
     if(t==='farm' && !fieldNear(x,y,2)) return { ok:false, msg:"Aucun champ de blé à moins de 2 cases" };
+    if(t==='pump' && !waterNear(x,y,1)) return { ok:false, msg:"La pompe doit être au bord de l'eau" };
   }
   // zone d'exclusion multijoueur
   if(MP.connected && nearbyEnemyOwner(MP.myId, x, y))
@@ -1224,15 +1328,16 @@ function tryDispatch(b,res){
   }
   let bestB = null, bestScore = Infinity, bestTile = -1;
   // rayon d'action de l'expéditeur
-  const senderIsDepot = b.type === 'depot';
+  const senderIsDepot = isStorageHub(b);
   const senderIsInd   = !!BUILD[b.type]?.ind;
-  const senderRadius  = senderIsDepot ? depotRadiusOf(b)
+  const senderRadius  = senderIsDepot ? (b.type === 'tank' ? tankRadiusOf(b) : depotRadiusOf(b))
                       : senderIsInd   ? indRadiusOf(b)
                       : Infinity;
   const senderCenter = centerOfBuilding(b);
   for(const c of buildings){
     if(c===b || c.dead || !accepts(c,res) || space(c,res)<=0) continue;
-    if(b.type==='depot' && c.type==='depot') continue;
+    if(res === 'water' && b.type === 'pump' && c.type === 'bakery') continue;
+    if(isStorageHub(b) && isStorageHub(c)) continue;
     // vérifier le rayon de l'expéditeur
     if(senderRadius < Infinity){
       const d2 = Math.max(Math.abs(centerOfBuilding(c).x - senderCenter.x),
@@ -1240,10 +1345,10 @@ function tryDispatch(b,res){
       if(d2 > senderRadius) continue;
     }
     // vérifier le rayon de la cible si c'est un entrepôt ou un bâtiment industriel
-    if(c.type === 'depot'){
+    if(isStorageHub(c)){
       const d2 = Math.max(Math.abs(centerOfBuilding(b).x - centerOfBuilding(c).x),
                           Math.abs(centerOfBuilding(b).y - centerOfBuilding(c).y));
-      if(d2 > depotRadiusOf(c)) continue;
+      if(d2 > (c.type === 'tank' ? tankRadiusOf(c) : depotRadiusOf(c))) continue;
     }
     if(BUILD[c.type]?.ind){
       const d2 = Math.max(Math.abs(centerOfBuilding(b).x - centerOfBuilding(c).x),
@@ -1261,7 +1366,7 @@ function tryDispatch(b,res){
     const stockRatio = (rcc && res === 'goods')
       ? ((c.storage[res]||0) + (c.inc[res]||0)) / (rcc.stockCap || 1)
       : 0;
-    const score = bd + (c.type==='depot' ? 500 : 0) + (full ? 200 : 0) + stockRatio * 150;
+    const score = bd + (isStorageHub(c) ? 500 : 0) + (full ? 200 : 0) + stockRatio * 150;
     if(score<bestScore){ bestScore = score; bestB = c; bestTile = bt; }
   }
   if(!bestB) return false;
@@ -1449,7 +1554,9 @@ function updateVehicles(dt){
         // Décharger la cargaison
         if(v.cargo > 0 && v.res){
           const dst = v.dest;
-          const room = Math.max(0, capOf(dst, v.res) - (dst.storage[v.res]||0));
+          const canDeposit = accepts(dst, v.res)
+            && !(v.res === 'water' && v.source?.type === 'pump' && dst.type === 'bakery');
+          const room = canDeposit ? Math.max(0, capOf(dst, v.res) - (dst.storage[v.res]||0)) : 0;
           const deposit = Math.min(v.cargo, room);
           if(deposit > 0) dst.storage[v.res] = (dst.storage[v.res]||0) + deposit;
           v.cargo = 0; v.res = null;
@@ -1549,13 +1656,13 @@ function update(dt){
   if(dispatchTimer >= 0.7){
     dispatchTimer = 0;
     for(const b of buildings){
-      const maxTrucks = b.type === 'depot'
+      const maxTrucks = isStorageHub(b)
         ? 4 + b.w * b.h          // entrepôt : plus de camions pour servir plusieurs destinations
         : 2 + ((b.w*b.h)>>1);    // production : limite standard
       if(b.trucksOut >= maxTrucks) continue;
       const r = recipeOf(b);
 
-      if(b.type === 'depot'){
+      if(isStorageHub(b)){
         // entrepôt : dispatcher toutes les ressources avec demande, seuil = 1 unité
         for(const k in b.storage){
           if(b.trucksOut >= maxTrucks) break;
@@ -2382,6 +2489,10 @@ function draw(){
     center: centerOfBuilding(selected),
     r: depotRadiusOf(selected),
   } : null;
+  const tankRadiusSel = selected && !selected.dead && selected.type === 'tank' ? {
+    center: centerOfBuilding(selected),
+    r: tankRadiusOf(selected),
+  } : null;
   const indRadiusSel = selected && !selected.dead && BUILD[selected.type]?.ind ? {
     center: centerOfBuilding(selected),
     r: indRadiusOf(selected),
@@ -2487,6 +2598,10 @@ function draw(){
   if(depotRadiusSel)
     drawWorkRadiusOverlay(depotRadiusSel.center, depotRadiusSel.r, '#ffd700', minRx, maxRx, minRy, maxRy);
 
+  // rayon de la citerne sélectionnée (bleu)
+  if(tankRadiusSel)
+    drawWorkRadiusOverlay(tankRadiusSel.center, tankRadiusSel.r, '#64b7e8', minRx, maxRx, minRy, maxRy);
+
   // rayon de l'industrie sélectionnée (orange)
   if(indRadiusSel)
     drawWorkRadiusOverlay(indRadiusSel.center, indRadiusSel.r, '#ff8c42', minRx, maxRx, minRy, maxRy);
@@ -2506,8 +2621,22 @@ function draw(){
     }
   }
 
+  // en mode placement de citerne : afficher tous les rayons existants
+  if(tool === 'tank' && !drawFast){
+    for(const b of buildings){
+      if(b.type !== 'tank' || b.dead) continue;
+      ctx.globalAlpha = 0.45;
+      drawWorkRadiusOverlay(centerOfBuilding(b), tankRadiusOf(b), '#64b7e8', minRx, maxRx, minRy, maxRy);
+      ctx.globalAlpha = 1;
+    }
+    if(inMap(mouse.tx, mouse.ty)){
+      const ghost = { type:'tank', x:mouse.tx, y:mouse.ty, w:1, h:1 };
+      drawWorkRadiusOverlay(centerOfBuilding(ghost), tankRadiusOf(ghost), '#64b7e8', minRx, maxRx, minRy, maxRy);
+    }
+  }
+
   // en mode placement d'industrie : afficher tous les rayons industriels existants
-  if(['mine','lumber','farm','smelter','factory'].includes(tool) && !drawFast){
+  if(['mine','lumber','farm','pump','mill','bakery','smelter','factory'].includes(tool) && !drawFast){
     for(const b of buildings){
       if(!BUILD[b.type]?.ind || b.dead) continue;
       ctx.globalAlpha = 0.35;
@@ -2682,10 +2811,13 @@ function statusOf(b){
     return 'Attend des marchandises';
   }
   if(b.type==='depot') return 'Stocke et redistribue';
+  if(b.type==='tank') return 'Stocke l’eau pour les boulangeries proches';
   if(b.type==='garage'){
     const active = (b.vehicles||[]).filter(v=>v.state!=='idle').length;
     return active > 0 ? active+' véhicule(s) en tournée' : 'Aucun véhicule en service';
   }
+  if(b.type === 'plant') return 'Usine abandonnée — choisir une spécialisation';
+  if(b.type === 'bakery' && !tankNear(b)) return '⚠️ Aucune citerne proche pour recevoir l’eau';
   if(b.paused) return 'En pause — ouvriers libérés';
   const r = recipeOf(b);
   if(!r) return '';
@@ -2760,6 +2892,21 @@ function renderInfo(){
   h += '<div class="status">'+statusOf(b)+'</div>';
   if(!adjRoadTiles(b).length)
     h += '<div class="warn">⚠️ Aucune route adjacente — pas de camions !</div>';
+  if(b.type === 'plant'){
+    const canUpgrade = !MP.connected || !b.owner || b.owner === MP.myId;
+    h += '<div style="margin-top:8px;color:#8fa3bf">Spécialisation</div>';
+    h += '<div style="font-size:11px;color:#8fa3bf;margin-bottom:4px">Choisir une seule fois le type d\'usine.</div>';
+    for(const key in PLANT_UPGRADES){
+      const opt = PLANT_UPGRADES[key];
+      const d2 = BUILD[opt.type];
+      const err = plantUpgradeError(b, opt.type);
+      h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:3px" data-plant-upgrade="'+opt.type+'"'
+        + (!canUpgrade || err ? ' disabled' : '') + '>'
+        + opt.icon+' '+opt.label+' <span style="color:#8fa3bf">— '+(d2.cost||0)+' $</span>'
+        + (err ? ' <span style="color:#ff9a8a">('+escHtml(err)+')</span>' : '')
+        + '</button>';
+    }
+  }
   if(d.workers) h += '<div class="row"><span>Ouvriers</span><b>'+workersAllocatedOf(b)+' / '+workersRequiredOf(b)+'</b></div>';
   if(d.ind && b.w*b.h>1)
     h += '<div class="row"><span>Taille / production</span><b>'+b.w+'×'+b.h
@@ -2771,6 +2918,9 @@ function renderInfo(){
     h += '<div class="row"><span>Nom</span><b style="color:#9fd4f0">🏭 '+escHtml(b.name)+'</b></div>';
   if(d.ind)
     h += '<div class="row"><span>Rayon d\'action</span><b style="color:#ff8c42">'+indRadiusOf(b)+' cases</b></div>';
+  if(b.type === 'bakery')
+    h += '<div class="row"><span>Citerne proche</span><b style="color:'+(tankNear(b) ? '#9fe8a0' : '#ff9a8a')+'">'
+       + (tankNear(b) ? 'oui' : 'non') + ' / '+BAKERY_TANK_RADIUS+' cases</b></div>';
   if(d.resid)
     h += '<div class="row"><span>Habitants</span><b>'+b.pop+' / '+d.resid.popCap+'</b></div>';
   if(d.resid){
@@ -2802,6 +2952,7 @@ function renderInfo(){
       h += '<div class="row"><span>Taille</span><b>'+b.w+'×'+b.h+'</b></div>';
     h += '<div style="margin-top:8px;color:#8fa3bf">Ressources acceptées</div><div>';
     for(const k in RES){
+      if(k === 'water') continue;
       const on = b.allow?.[k] !== false;
       h += '<button class="tbtn flt'+(on?' on':'')+'" data-r="'+k+'">'
          + '<span class="dot" style="background:'+RES[k].c+'"></span>'+RES[k].n+'</button>';
@@ -2814,6 +2965,7 @@ function renderInfo(){
       h += '<div style="margin-top:8px;color:#f0c060;font-size:11px">🛒 Vente aux autres joueurs</div>';
       h += '<div style="font-size:10px;color:#8fa3bf;margin-bottom:3px">Prix par unité · cliquer pour activer/désactiver</div><div>';
       for(const k in RES){
+        if(k === 'water') continue;
         const on = !!b.sellTo?.[k];
         const price = TRADE_PRICES[k];
         h += '<button class="tbtn sell-toggle'+(on?' on':'')+'" data-sell="'+k+'" style="'
@@ -2823,6 +2975,10 @@ function renderInfo(){
       }
       h += '</div>';
     }
+  }
+  if(b.type==='tank'){
+    h += '<div class="row"><span>Rayon d\'action</span><b style="color:#64b7e8">'+tankRadiusOf(b)+' cases</b></div>';
+    h += '<div class="row"><span>Stockage</span><b>Eau uniquement</b></div>';
   }
   if(b.type==='garage'){
     const bvehicles = b.vehicles || [];
@@ -2868,6 +3024,29 @@ function renderInfo(){
   if(p._html === h && p._b === b) return; // ne pas reconstruire le DOM sous la souris
   p._html = h; p._b = b;
   p.innerHTML = h;
+  p.querySelectorAll('[data-plant-upgrade]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const targetType = btn.dataset.plantUpgrade;
+      const err = plantUpgradeError(b, targetType);
+      if(err){ toast('⛔ '+err, 'err'); return; }
+      if(MP.connected && b.owner && b.owner !== MP.myId){
+        toast('⛔ Ce bâtiment appartient à un autre joueur','err'); return;
+      }
+      const targetDef = BUILD[targetType];
+      const cost = targetDef.cost || 0;
+      if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
+      const label = (PLANT_UPGRADES[targetType]||{}).label || targetDef.n;
+      if(!confirm('Créer '+label+' pour '+cost+' $ ? Ce choix sera définitif.')) return;
+      spendMoney(cost, 'construction');
+      const upgradeErr = applyPlantUpgrade(b, targetType);
+      if(upgradeErr){ toast('⛔ '+upgradeErr, 'err'); return; }
+      if(MP.connected) netSend({ type:'upgrade_plant', x:b.x, y:b.y, targetType });
+      selected = b;
+      p._html = null;
+      renderInfo();
+      toast('🏭 Usine créée : '+targetDef.n, 'win');
+    };
+  });
   p.querySelectorAll('.flt').forEach(btn=>{
     btn.onclick = ()=>{
       b.allow[btn.dataset.r] = b.allow[btn.dataset.r] === false;
@@ -3103,9 +3282,9 @@ addEventListener('keydown', e=>{
   if(e.code==='KeyB') setTool('bulldoze');
   if(e.code.startsWith('Digit')){
     const d = +e.code.slice(5);
-    // Digit0 → 'garage', Digit1-9 → TOOL_ORDER[d-1]
-    const idx = d === 0 ? TOOL_ORDER.indexOf('garage') : d - 1;
-    if(idx >= 0 && idx < TOOL_ORDER.length) setTool(TOOL_ORDER[idx]);
+    const key = String(d);
+    const toolKey = TOOL_ORDER.find(k => BUILD[k]?.hk === key);
+    if(toolKey) setTool(toolKey);
   }
 });
 addEventListener('keyup', e=> keys.delete(e.code));
@@ -3398,6 +3577,19 @@ function applyAction(msg){
       b.paused = !!act.paused;
       break;
     }
+    case 'upgrade_plant': {
+      const b = bgrid[act.y*N+act.x];
+      if(!b || b.owner !== msg.from) break;
+      const targetType = act.targetType;
+      const err = plantUpgradeError(b, targetType);
+      if(err) break;
+      const cost = BUILD[targetType].cost || 0;
+      const wSender = walletOf(msg.from);
+      wSender.money -= cost;
+      wSender.fin.construction = (wSender.fin.construction||0) + cost;
+      applyPlantUpgrade(b, targetType);
+      break;
+    }
     case 'pause': togglePause(); break;
     case 'speed': {
       speed = act.s; paused = false;
@@ -3423,6 +3615,8 @@ function mpConnect(url){
 
   ws.onopen = () => {
     MP.connected = true;
+    MP.shutdownNotice = false;
+    MP.shutdownMessage = '';
     toast('🌐 Connecté au serveur multijoueur');
     mpUpdateUI();
     // tentative de reprise de session via token stocké
@@ -3431,14 +3625,21 @@ function mpConnect(url){
   };
 
   ws.onclose = () => {
+    const stopped = MP.shutdownNotice;
     MP.connected = false;
     MP.role = null;
     MP.isAdmin = false;
+    MP.players = [];
+    MP.cursors = {};
     MP.username = null;
     MP.token = null;
     MP.saves = [];
-    toast('🔌 Déconnecté du serveur','err');
+    MP.shutdownNotice = false;
+    const closeMsg = MP.shutdownMessage || 'Serveur arrêté';
+    MP.shutdownMessage = '';
+    toast(stopped ? '🔌 '+closeMsg : '🔌 Déconnecté du serveur','err');
     mpUpdateUI();
+    mpRenderPlayerList();
   };
 
   ws.onerror = () => {
@@ -3620,6 +3821,12 @@ function mpConnect(url){
 
       case 'server_full':
         toast('⛔ '+msg.msg, 'err');
+        break;
+
+      case 'server_shutdown':
+        MP.shutdownNotice = true;
+        MP.shutdownMessage = msg.msg || 'Serveur arrêté';
+        if(MP.ws) MP.ws.close();
         break;
     }
   };

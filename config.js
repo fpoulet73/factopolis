@@ -4,7 +4,8 @@
 
    Identifiants de ressources à utiliser dans les recettes :
      iron  = fer          coal  = charbon       wood = bois
-     wheat = blé          steel = acier         goods = marchandises
+     wheat = blé          flour = farine        water = eau
+     bread = pain         steel = acier         goods = marchandises
    ============================================================ */
 const CONFIG = {
 
@@ -19,6 +20,9 @@ const CONFIG = {
     mine:     { temps: 2.2, quantite: 1,                                         cout: 450,  entretien: 2   },
     bucheron: { temps: 2.8, sortie: { wood: 1 },                                 cout: 350,  entretien: 1.5 },
     ferme:    { temps: 3.0, sortie: { wheat: 1 },                                cout: 300,  entretien: 1.2 },
+    pompe:    { temps: 2.5, sortie: { water: 1 },                                cout: 500,  entretien: 1.5 },
+    moulin:   { temps: 3.2, entree: { wheat: 1 }, sortie: { flour: 1 },          cout: 650,  entretien: 2   },
+    boulangerie:{ temps: 3.5, entree: { flour: 1, water: 1 }, sortie: { bread: 1 }, cout: 950, entretien: 2.5 },
     fonderie: { temps: 3.5, entree: { iron: 1, coal: 1 }, sortie: { steel: 1 },  cout: 900,  entretien: 3   },
     usine:    { temps: 4.0, entree: { steel: 1, wood: 1 }, sortie: { goods: 1 }, cout: 1400, entretien: 4   },
   },
@@ -28,6 +32,7 @@ const CONFIG = {
     route:    { cout: 10  },
     maison:   { cout: 100 },
     entrepot: { cout: 400 },
+    citerne:  { cout: 450 },
   },
 
   /* ---------- MAISONS ---------- */
@@ -113,6 +118,14 @@ const CONFIG = {
     formesFusion: [[2,1],[3,1],[2,2],[3,2],[3,3],[4,4]],
   },
 
+  /* ---------- CITERNE D'EAU ---------- */
+  citerne: {
+    stockParCase: 40,
+    rayonBase: 5,
+    rayonFacteur: 3,
+    rayonBoulangerie: 8,
+  },
+
   /* ---------- LOGISTIQUE ---------- */
   logistique: {
     garage: { cout: 1200 },
@@ -120,6 +133,9 @@ const CONFIG = {
       minerai:      { nom:'Camion minerai',      icone:'🚛', ressources:['iron','coal'], cout:800,  capacite:15, vitesse:4.0 },
       bois:         { nom:'Camion bois',          icone:'🚜', ressources:['wood'],        cout:600,  capacite:15, vitesse:4.0 },
       ble:          { nom:'Camion blé',           icone:'🚜', ressources:['wheat'],       cout:550,  capacite:15, vitesse:4.0 },
+      farine:       { nom:'Camion farine',        icone:'🚚', ressources:['flour'],       cout:650,  capacite:15, vitesse:3.8 },
+      citerne:      { nom:'Camion citerne',       icone:'🚛', ressources:['water'],       cout:750,  capacite:20, vitesse:3.5 },
+      pain:         { nom:'Camion pain',          icone:'🚚', ressources:['bread'],       cout:700,  capacite:15, vitesse:3.8 },
       acier:        { nom:'Camion acier',         icone:'🚚', ressources:['steel'],       cout:1000, capacite:12, vitesse:3.5 },
       marchandises: { nom:'Camion marchandises',  icone:'🚐', ressources:['goods'],       cout:700,  capacite:12, vitesse:3.5 },
     },

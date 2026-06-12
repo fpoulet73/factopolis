@@ -11,6 +11,7 @@ const http   = require('http');
 const fs     = require('fs');
 const path   = require('path');
 const crypto = require('crypto');
+const readline = require('readline');
 const { WebSocketServer } = require('ws');
 
 const PORT      = process.env.PORT || process.argv[2] || 8765;
@@ -184,6 +185,8 @@ if (startupSave) {
 const send = (c, msg) => { if (c.ws.readyState === 1) c.ws.send(JSON.stringify(msg)); };
 const broadcastAll  = msg => { const r = JSON.stringify(msg); clients.forEach(c => { if(c.ws.readyState===1) c.ws.send(r); }); };
 const broadcast     = (msg, excludeId) => { const r = JSON.stringify(msg); clients.forEach(c => { if(c.id!==excludeId && c.ws.readyState===1) c.ws.send(r); }); };
+let shuttingDown = false;
+let consoleRl = null;
 
 function broadcastPlayerList() {
   const list = clients.map(c => ({
@@ -230,6 +233,12 @@ function sanitizeWorldConfig(config = {}) {
 }
 
 wss.on('connection', (ws) => {
+  if (shuttingDown) {
+    ws.send(JSON.stringify({ type: 'server_shutdown', msg: 'Serveur arrêté' }));
+    ws.close(1001, 'server_shutdown');
+    return;
+  }
+
   if (clients.length >= worldConfig.maxPlayers) {
     ws.send(JSON.stringify({ type: 'server_full', msg: 'Serveur complet' }));
     ws.close();
@@ -455,8 +464,169 @@ wss.on('connection', (ws) => {
   });
 });
 
+function printConsoleHelp() {
+  console.log('Commandes console:');
+  console.log('  help                         Affiche cette aide');
+  console.log('  players                      Liste les joueurs connectés');
+  console.log('  world                        Affiche la configuration du monde');
+  console.log('  saves [username]             Liste les sauvegardes visibles');
+  console.log('  system <message>             Envoie un message système dans le chat');
+  console.log('  kick <id> [raison]           Déconnecte un joueur');
+  console.log('  promote <id>                 Donne les droits admin à un joueur');
+  console.log('  stop                         Arrête proprement le serveur');
+}
+
+function handleConsoleCommand(line) {
+  const input = String(line || '').trim();
+  if (!input) return;
+
+  const [cmdRaw, ...args] = input.split(/\s+/);
+  const cmd = cmdRaw.toLowerCase();
+  const rest = input.slice(cmdRaw.length).trim();
+
+  switch (cmd) {
+    case 'help':
+    case '?':
+      printConsoleHelp();
+      break;
+
+    case 'players':
+      if (!clients.length) {
+        console.log('Aucun joueur connecté.');
+        break;
+      }
+      clients.forEach(c => {
+        const flags = [
+          c.id === hostId ? 'hôte' : '',
+          c.isAdmin ? 'admin' : '',
+          c.username ? `compte:${c.username}` : '',
+        ].filter(Boolean).join(', ');
+        console.log(`#${c.id} ${c.name}${flags ? ' (' + flags + ')' : ''}`);
+      });
+      break;
+
+    case 'world':
+      console.log(JSON.stringify(worldConfig, null, 2));
+      break;
+
+    case 'saves': {
+      const username = args[0] || 'Fabrice';
+      const saves = listUserSaves(username);
+      if (!saves.length) {
+        console.log(`Aucune sauvegarde pour ${username}.`);
+        break;
+      }
+      saves.forEach(s => console.log(`${s.date}  ${s.owned ? ' ' : '*'} ${s.name}`));
+      break;
+    }
+
+    case 'say':
+    case 'system':
+      if (!rest) {
+        console.log('Usage: system <message>');
+        break;
+      }
+      broadcastAll({ type: 'chat', from: 0, name: 'Système', text: rest });
+      console.log(`[système] ${rest}`);
+      break;
+
+    case 'kick': {
+      const id = Number(args[0]);
+      const target = clients.find(c => c.id === id);
+      if (!target) {
+        console.log('Joueur introuvable.');
+        break;
+      }
+      const reason = args.slice(1).join(' ') || 'Déconnecté par le serveur';
+      send(target, { type: 'server_shutdown', msg: reason });
+      target.ws.close(1000, 'kicked');
+      console.log(`[kick] #${target.id} ${target.name}: ${reason}`);
+      break;
+    }
+
+    case 'promote': {
+      const id = Number(args[0]);
+      const target = clients.find(c => c.id === id);
+      if (!target) {
+        console.log('Joueur introuvable.');
+        break;
+      }
+      if (target.id === hostId) {
+        console.log('Ce joueur est déjà hôte.');
+        break;
+      }
+      target.isAdmin = true;
+      send(target, { type:'admin_promoted' });
+      broadcastAll({ type:'admin_changed', playerId: target.id, isAdmin: true, by: 'console serveur' });
+      broadcastPlayerList();
+      console.log(`[admin] ${target.name} promu depuis la console`);
+      break;
+    }
+
+    case 'stop':
+    case 'exit':
+    case 'quit':
+      shutdown('console');
+      break;
+
+    default:
+      console.log(`Commande inconnue: ${cmd}. Tape "help" pour la liste.`);
+      break;
+  }
+}
+
+function startConsole() {
+  if (!process.stdin.isTTY || consoleRl) return;
+  consoleRl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: 'factopolis> ',
+  });
+  console.log('Console serveur prête. Tape "help" pour les commandes.');
+  consoleRl.prompt();
+  consoleRl.on('line', line => {
+    handleConsoleCommand(line);
+    if (!shuttingDown) consoleRl.prompt();
+  });
+  consoleRl.on('SIGINT', () => shutdown('SIGINT'));
+}
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} reçu, déconnexion des joueurs...`);
+  if (consoleRl) {
+    consoleRl.close();
+    consoleRl = null;
+  }
+
+  const notice = JSON.stringify({ type: 'server_shutdown', msg: 'Serveur arrêté' });
+  for (const client of clients) {
+    if (client.ws.readyState === 1) {
+      client.ws.send(notice);
+      client.ws.close(1001, 'server_shutdown');
+    }
+  }
+
+  wss.close(() => {
+    httpServer.close(() => {
+      console.log('[shutdown] serveur arrêté');
+      process.exit(0);
+    });
+  });
+
+  setTimeout(() => {
+    console.log('[shutdown] arrêt forcé');
+    process.exit(0);
+  }, 1000).unref();
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Factopolis serveur lancé — http://0.0.0.0:${PORT}`);
   console.log(`WebSocket sur ws://0.0.0.0:${PORT}`);
   console.log(`Données dans : ${DATA_DIR}`);
+  startConsole();
 });
