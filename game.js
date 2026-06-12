@@ -32,7 +32,7 @@ const INCAP = 12;        // stock max d'entrée par ressource
 const TRUCK_LOAD  = CFG.camions?.capacite ?? 6; // cargaison max d'un camion
 const TRUCK_SPEED = CFG.camions?.vitesse ?? 3.4;// tuiles / seconde
 const WALK_SPEED  = CFG.habitants?.vitesseMarche ?? 1.3; // piétons, tuiles / seconde
-const STARVE_DELAY = CFG.penurie?.delai ?? 30; // secondes sans marchandises avant dégradation
+const STARVE_DELAY = CFG.penurie?.delai ?? 30; // secondes sans outils avant dégradation
 const BONUS_GROWTH_THRESHOLD = CFG.habitants?.croissanceBonus?.seuilStock ?? 0.5;
 const BONUS_GROWTH_INTERVAL  = CFG.habitants?.croissanceBonus?.intervalle  ?? 30;
 const WALKER_COLS = ['#e2574c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#ececec'];
@@ -53,7 +53,7 @@ const VEHICLE_TYPES = (()=>{
     citerne:     { nom:'Camion citerne',      icone:'🚛', resources:['water'],       cost:750,  capacite:20, speed:3.5 },
     pain:        { nom:'Camion pain',         icone:'🚚', resources:['bread'],       cost:700,  capacite:15, speed:3.8 },
     acier:       { nom:'Camion acier',        icone:'🚚', resources:['steel'],       cost:1000, capacite:12, speed:3.5 },
-    marchandises:{ nom:'Camion marchandises', icone:'🚐', resources:['goods'],       cost:700,  capacite:12, speed:3.5 },
+    marchandises:{ nom:'Camion outils',        icone:'🚐', resources:['goods'],       cost:700,  capacite:12, speed:3.5 },
   };
   const out = {};
   for(const k in DEFS){
@@ -81,7 +81,7 @@ const RES = {
   water: { n:'Eau',          c:'#64b7e8' },
   bread: { n:'Pain',         c:'#d99a45' },
   steel: { n:'Acier',        c:'#a8bdd2' },
-  goods: { n:'Marchandises', c:'#e6c84f' },
+  goods: { n:'Outils de construction', c:'#e6c84f' },
 };
 
 // Prix de vente inter-joueurs (par unité)
@@ -142,9 +142,9 @@ const BUILD = {
              workers:5, time:4, col:'#5a6a86', hgt:30, ind:true,
              upkeep: CFG.production?.usine?.entretien    ?? 4,
              recipe:{ in:{steel:1, wood:1}, out:{goods:1} },
-             desc:'Acier + bois → marchandises.' },
+             desc:'Acier + bois → outils de construction.' },
   plant:   { n:'Usine',     ic:'🏚️', hk:'5', cost: 0, col:'#4e5663', hgt:18,
-             desc:'Usine abandonnée. À convertir ensuite en aciérie, ferme, moulin, boulangerie ou usine de marchandises.' },
+             desc:"Usine abandonnée. À convertir ensuite en aciérie, ferme, moulin, boulangerie ou usine d'outils." },
   house:   { n:'Maison',    ic:'🏠', hk:'6', cost: CFG.batiments?.maison?.cout    ?? 100,
              col:'#9a7e5f', hgt:18, desc:'' },
   depot:   { n:'Entrepôt',        ic:'📦', hk:'7', cost: CFG.batiments?.entrepot?.cout  ?? 400,
@@ -164,7 +164,7 @@ const PLANT_UPGRADES = {
   farm:    { label:'Ferme',         type:'farm',    icon:'🌾' },
   mill:    { label:'Moulin',        type:'mill',    icon:'⚙️' },
   bakery:  { label:'Boulangerie',   type:'bakery',  icon:'🥖' },
-  factory: { label:'Marchandises',  type:'factory', icon:'🏭' },
+  factory: { label:'Outils de construction', type:'factory', icon:'🏭' },
 };
 // ---------- niveaux résidentiels ----------
 // Un rectangle entièrement couvert de logements PLEINS plus petits fusionne
@@ -193,8 +193,8 @@ const LEVELS = [
     const area = L.shapes[0][0]*L.shapes[0][1];
     if(L.key==='house'){
       Object.assign(BUILD.house, { resid:L.resid, area:1 });
-      BUILD.house.desc = 'Consomme des marchandises → +1 habitant et +'+L.resid.income
-        +' $ par habitant présent. Les logements pleins adjacents fusionnent en niveaux supérieurs.';
+      BUILD.house.desc = 'Consomme outils de construction (+ pain si disponible) → +1 habitant et +'+L.resid.income
+        +' $ par habitant. Pain requis pour monter en niveau.';
       continue;
     }
     BUILD[L.key] = { n:L.n, ic:L.ic, col:L.col, hgt:L.hgt, cost:100*area, area,
@@ -922,8 +922,8 @@ function accepts(b,res){
   if(b.type==='tank') return false;
   if(b.type==='depot') return b.allow?.[res] !== false;
   if(BUILD[b.type].resid){
-    if(res !== 'goods') return false;
-    if(b.starterHome) return false; // maisons protégées : pas besoin de marchandises
+    if(res !== 'goods' && res !== 'bread') return false;
+    if(b.starterHome) return false; // maisons protégées : pas besoin de ravitaillement
     return true;
   }
   const r = recipeOf(b);
@@ -1379,9 +1379,12 @@ function tryDispatch(b,res){
     // l'entrepôt en dernier recours ; les logements déjà pleins après ceux qui grandissent
     const rcc = BUILD[c.type].resid;
     const full = !!rcc && c.pop >= rcc.popCap;
-    // pour les marchandises vers les logements : priorité au stock le plus bas
-    const stockRatio = (rcc && res === 'goods')
-      ? ((c.storage[res]||0) + (c.inc[res]||0)) / (rcc.stockCap || 1)
+    // pour les ressources vers les logements : priorité au stock le plus bas des deux ressources vitales
+    const stockRatio = rcc
+      ? Math.min(
+          ((c.storage.goods||0) + (c.inc.goods||0)) / (rcc.stockCap || 1),
+          ((c.storage.bread||0) + (c.inc.bread||0)) / (rcc.stockCap || 1)
+        )
       : 0;
     // distance réelle pour le score : route si disponible, sinon vol direct
     const distScore = bt >= 0 ? bd : Math.round(Math.hypot(
@@ -1636,6 +1639,7 @@ function update(dt){
       if(b.ct >= rc.interval){
         b.ct = 0;
         b.storage.goods--;
+        if((b.storage.bread||0) > 0) b.storage.bread--; // consommé si présent, pas obligatoire
         const income = rc.income * Math.max(1, b.pop);
         earnMoney(income, 'ventes', w);
         addFloat(b.x + (b.w-1)/2, b.y, '+'+income+' $', '#ffe9a0');
@@ -1799,7 +1803,7 @@ function checkRect(x,y,w,h){
     if(b.w*b.h >= area) return null;                            // pas plus petit
     if(b.x<x || b.y<y || b.x+b.w>x+w || b.y+b.h>y+h) return null; // déborde du rectangle
     if(b.pop < rc.popCap) return null;                          // pas plein
-    if(!b.starterHome && (b.storage.goods||0) <= 0) return null; // pas approvisionné (hors maisons protégées)
+    if(!b.starterHome && ((b.storage.goods||0) <= 0 || (b.storage.bread||0) <= 0)) return null; // pas approvisionné (hors maisons protégées)
     if(!set.includes(b)) set.push(b);
   }
   return set;
@@ -1860,10 +1864,11 @@ function tryMerge(){
         const set = checkRect(x,y,w,h);
         if(!set) continue;
         const d = BUILD[L.key];
-        let goods = 0, pop = 0, protectedPop = 0, wasSel = false;
+        let goods = 0, bread = 0, pop = 0, protectedPop = 0, wasSel = false;
         const owner = set[0].owner||null;
         for(const o of set){
           goods += o.storage.goods||0;
+          bread += o.storage.bread||0;
           pop += o.pop;
           protectedPop += o.protectedPop||0;
           if(o===selected) wasSel = true;
@@ -1880,6 +1885,7 @@ function tryMerge(){
         // Conserver le nombre total de slots de départ absorbés
         t.starterSlots = set.reduce((s, o) => s + (o.starterSlots || (o.starterHome ? 1 : 0)), 0);
         t.storage.goods = Math.min(d.resid.stockCap, goods);
+        t.storage.bread = Math.min(d.resid.stockCap, bread);
         buildings.push(t);
         setGrid(t,t);
         if(wasSel) selected = t;
@@ -2000,6 +2006,7 @@ function splitBuilding(b){
   let pop = b.pop;
   let protectedPop = b.protectedPop||0;
   let goodsPool = b.storage.goods||0;
+  let breadPool = b.storage.bread||0;
   const area = b.w * b.h;
   const excess = Math.max(0, pop - area * houseCap);
   b.dead = true;
@@ -2016,10 +2023,13 @@ function splitBuilding(b){
     h.starterHome = h.protectedPop > 0;
     protectedPop -= h.protectedPop;
     h.starve = 0;
-    // distribuer les marchandises équitablement entre les nouvelles maisons
-    const share = Math.min(houseStockCap, Math.floor(goodsPool / area));
-    h.storage.goods = share;
-    goodsPool -= share;
+    // distribuer marchandises et pain équitablement entre les nouvelles maisons
+    const shareG = Math.min(houseStockCap, Math.floor(goodsPool / area));
+    const shareB = Math.min(houseStockCap, Math.floor(breadPool / area));
+    h.storage.goods = shareG;
+    h.storage.bread = shareB;
+    goodsPool -= shareG;
+    breadPool  -= shareB;
     buildings.push(h);
     setGrid(h,h);
     newHouses.push(h);
@@ -2027,14 +2037,20 @@ function splitBuilding(b){
   }
   // donner le reste aux premières maisons
   for(const h of newHouses){
-    if(goodsPool <= 0) break;
-    const space = houseStockCap - (h.storage.goods||0);
-    const give = Math.min(space, goodsPool);
-    h.storage.goods += give;
-    goodsPool -= give;
+    if(goodsPool <= 0 && breadPool <= 0) break;
+    if(goodsPool > 0){
+      const space = houseStockCap - (h.storage.goods||0);
+      const give = Math.min(space, goodsPool);
+      h.storage.goods += give; goodsPool -= give;
+    }
+    if(breadPool > 0){
+      const space = houseStockCap - (h.storage.bread||0);
+      const give = Math.min(space, breadPool);
+      h.storage.bread += give; breadPool -= give;
+    }
   }
   if(excess > 0) spawnLeavers(bgrid[b.y*N+b.x], excess);
-  toast('📉 '+BUILD[b.type].n+' sans marchandises : défusion'
+  toast('📉 '+BUILD[b.type].n+' sans outils : défusion'
     + (excess>0 ? ', '+excess+" habitants s'en vont" : ''),'err');
   if(excess > 0) addFloat(b.x+(b.w-1)/2, b.y, '−'+excess+' 👤', '#ff9a8a');
   // tenter de remplir les maisons incomplètes avec les sans-abri disponibles
@@ -2825,7 +2841,7 @@ function renderFinance(){
     '<h3>💰 Finances <button class="tbtn" id="bFinX">✕</button></h3>'
     + '<table>'
     + '<tr class="hdr"><td></td><td class="r">Total</td><td class="r">Par minute</td></tr>'
-    + row('Ventes de marchandises','ventes','+','in')
+    + row('Ventes d\'outils','ventes','+','in')
     + row('Taxes des habitants','taxes','+','in')
     + row('Remboursements','rembours','+','in')
     + row('Construction','construction','−','out')
@@ -2837,11 +2853,13 @@ function renderFinance(){
 
 function statusOf(b){
   if(BUILD[b.type].resid){
-    if(b.starterHome) return 'Maison de départ protégée (pas besoin de marchandises)';
-    if((b.storage.goods||0) > 0) return 'Consomme des marchandises…';
+    if(b.starterHome) return 'Maison de départ protégée (pas besoin de ravitaillement)';
+    const hasGoods = (b.storage.goods||0) > 0, hasBread = (b.storage.bread||0) > 0;
+    if(hasGoods && hasBread) return 'Consomme outils + pain…';
+    if(hasGoods) return 'Consomme outils… — manque de pain (montée en niveau bloquée)';
     if(b.pop > (b.protectedPop||0) && b.starve > 0)
-      return '⚠️ Pénurie ! Dégradation dans '+Math.max(0,Math.ceil(STARVE_DELAY-b.starve))+' s';
-    return 'Attend des marchandises';
+      return '⚠️ Pénurie d\'outils ! Dégradation dans '+Math.max(0,Math.ceil(STARVE_DELAY-b.starve))+' s';
+    return 'Attend des outils de construction';
   }
   if(b.type==='depot') return 'Stocke et redistribue';
   if(b.type==='tank') return 'Stocke l’eau pour les boulangeries proches';
@@ -2964,25 +2982,48 @@ function renderInfo(){
   if(d.resid && !b.starterHome){
     const incomePerCycle = d.resid.income * Math.max(1, b.pop);
     const ratePerMin = b.pop > 0 ? Math.round(incomePerCycle / d.resid.interval * 60) : 0;
-    h += '<div class="row"><span>Revenu / marchandise</span><b>'+incomePerCycle+' $</b></div>';
+    h += '<div class="row"><span>Revenu / outil livré</span><b>'+incomePerCycle+' $</b></div>';
     h += '<div class="row"><span>Intervalle conso.</span><b>'+d.resid.interval+' s</b></div>';
     h += '<div class="row"><span>Revenu / min</span><b style="color:#9fe8a0">~'+ratePerMin+' $</b></div>';
   }
   if(d.resid)
     h += '<div class="row"><span>Rayon travail</span><b>'+workRadiusOf(b)+' cases</b></div>';
-  // Pour les bâtiments industriels : toujours afficher les ressources de la recette (même à 0)
+  // Stocks : pour les usines, séparer entrée / recette / sortie
   const r2 = recipeOf(b);
-  const forcedKeys = d.ind && r2 ? new Set([...Object.keys(r2.in||{}), ...Object.keys(r2.out||{})]) : new Set();
-  const keys = [...new Set([
-    ...Object.keys(b.storage).filter(k=>b.storage[k]>0 || (b.inc[k]||0)>0),
-    ...forcedKeys,
-  ])];
-  if(keys.length){
-    h += '<div style="margin-top:8px;color:#8fa3bf">Stocks</div>';
-    for(const k of keys){
-      const cap = capOf(b,k), val = b.storage[k]||0;
-      h += '<div class="row"><span>'+RES[k].n+'</span><b>'+val+' / '+cap+'</b></div>';
-      h += '<div class="bar"><i style="width:'+Math.min(100,100*val/cap)+'%;background:'+RES[k].c+'"></i></div>';
+  const inKeys  = d.ind && r2 ? Object.keys(r2.in||{})  : [];
+  const outKeys = d.ind && r2 ? Object.keys(r2.out||{}) : [];
+  const inSet   = new Set(inKeys), outSet = new Set(outKeys);
+  const extraKeys = Object.keys(b.storage).filter(k => b.storage[k]>0 && !inSet.has(k) && !outSet.has(k));
+  const showStock = (k) => {
+    const cap = capOf(b,k), val = b.storage[k]||0;
+    h += '<div class="row"><span>'+RES[k].n+'</span><b>'+val+' / '+cap+'</b></div>';
+    h += '<div class="bar"><i style="width:'+Math.min(100,100*val/cap)+'%;background:'+RES[k].c+'"></i></div>';
+  };
+  if(d.ind && r2){
+    // entrées (toujours affichées)
+    if(inKeys.length) h += '<div style="margin-top:8px"></div>';
+    inKeys.forEach(showStock);
+    // recette
+    const fmt = obj => Object.entries(obj).map(([k,v]) => (v>1?v+'×':'')+RES[k].n).join(' + ');
+    const lhs  = inKeys.length ? fmt(r2.in)+' → ' : '';
+    const time = Math.round(r2.time*10)/10;
+    h += '<div class="row" style="margin:6px 0 2px"><span style="color:#8fa3bf">Recette</span>'
+       + '<b style="color:#d4e8ff">'+lhs+fmt(r2.out)
+       + ' <span style="color:#8fa3bf;font-weight:normal">/ '+time+'s</span></b></div>';
+    // sortie (toujours affichée)
+    outKeys.forEach(showStock);
+    // ressources hors recette (rare)
+    if(extraKeys.length){
+      extraKeys.forEach(showStock);
+    }
+  } else {
+    // bâtiments non-industriels (logements, entrepôts…)
+    const allKeys = [...new Set([
+      ...Object.keys(b.storage).filter(k=>b.storage[k]>0 || (b.inc[k]||0)>0),
+    ])];
+    if(allKeys.length){
+      h += '<div style="margin-top:8px;color:#8fa3bf">Stocks</div>';
+      allKeys.forEach(showStock);
     }
   }
   if(b.type==='depot'){
