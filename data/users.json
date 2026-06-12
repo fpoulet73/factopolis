@@ -6,5 +6,13 @@
   "fab": {
     "passwordHash": "d6bab02b61a75f0c418eb36e8db80d4cd42ae154cd1fb720c0165438210648e2",
     "color": "#58c470"
+  },
+  "Fabrice": {
+    "passwordHash": "80e1e9bf72dacc29c47a4aae7dbf8a236ccfea5a4e6a7d6ab84ebead1681e1e6",
+    "color": "#e2a93f"
+  },
+  "gege": {
+    "passwordHash": "e7f63be25caefa4d8cff32f04757b158f73c50ae313668a07dc8ee9bec9b43de",
+    "color": "#e0e0e0"
   }
 }

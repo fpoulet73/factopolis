@@ -67,6 +67,8 @@ const CONFIG = {
     facteurs: { 2:1.15, 3:1.3, 4:1.5, 6:1.75, 16:2.5 },
     intervalleEntretien: 10,    // secondes entre deux prélèvements d'entretien
     entretienEnPause: 0.5,      // fraction de l'entretien payée par un site mis en pause
+    rayonBase:    6,            // rayon minimal (bâtiment 1×1)
+    rayonFacteur: 4,            // ajout par racine carrée de l'aire
   },
 
   /* ---------- PÉNURIE ----------
@@ -104,7 +106,20 @@ const CONFIG = {
   /* ---------- ENTREPÔT ---------- */
   entrepot: {
     stockParCase: 20,           // capacité par ressource et par case de l'entrepôt
+    rayonBase:    5,            // rayon minimal (entrepôt 1×1)
+    rayonFacteur: 3,            // ajout par racine carrée de l'aire (formule : base + √aire × facteur)
     // formes de fusion (largeur × hauteur, les deux orientations sont gérées automatiquement)
     formesFusion: [[2,1],[3,1],[2,2],[3,2],[3,3],[4,4]],
+  },
+
+  /* ---------- LOGISTIQUE ---------- */
+  logistique: {
+    garage: { cout: 1200 },
+    vehicules: {
+      minerai:      { nom:'Camion minerai',      icone:'🚛', ressources:['iron','coal'], cout:800,  capacite:15, vitesse:4.0 },
+      bois:         { nom:'Camion bois',          icone:'🚜', ressources:['wood'],        cout:600,  capacite:15, vitesse:4.0 },
+      acier:        { nom:'Camion acier',         icone:'🚚', ressources:['steel'],       cout:1000, capacite:12, vitesse:3.5 },
+      marchandises: { nom:'Camion marchandises',  icone:'🚐', ressources:['goods'],       cout:700,  capacite:12, vitesse:3.5 },
+    },
   },
 };

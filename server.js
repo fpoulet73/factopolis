@@ -396,8 +396,8 @@ wss.on('connection', (ws) => {
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Factopolis serveur lancé — http://localhost:${PORT}`);
-  console.log(`WebSocket sur ws://localhost:${PORT}`);
+httpServer.listen(PORT, '0.0.0.0', () => {
+  console.log(`Factopolis serveur lancé — http://0.0.0.0:${PORT}`);
+  console.log(`WebSocket sur ws://0.0.0.0:${PORT}`);
   console.log(`Données dans : ${DATA_DIR}`);
 });

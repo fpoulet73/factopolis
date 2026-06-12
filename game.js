@@ -36,6 +36,37 @@ const STARVE_DELAY = CFG.penurie?.delai ?? 30; // secondes sans marchandises ava
 const BONUS_GROWTH_THRESHOLD = CFG.habitants?.croissanceBonus?.seuilStock ?? 0.5;
 const BONUS_GROWTH_INTERVAL  = CFG.habitants?.croissanceBonus?.intervalle  ?? 30;
 const WALKER_COLS = ['#e2574c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#ececec'];
+const AUTO_SAVE_INTERVAL = 300; // secondes (5 minutes)
+const AUTO_SAVE_MAX      = 5;   // nombre d'emplacements conservés
+const AUTO_SAVE_KEY      = 'factopolis_autosaves';
+const TOWN_RADIUS        = 20;  // cases — rayon d'appartenance à un village
+
+// ---------- véhicules persistants ----------
+const VEHICLE_TYPES = (()=>{
+  const cfgV = CFG.logistique?.vehicules || {};
+  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', acier:'#7a8fa0', marchandises:'#e6c84f' };
+  const DEFS = {
+    minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal'], cost:800,  capacite:15, speed:4.0 },
+    bois:        { nom:'Camion bois',         icone:'🚜', resources:['wood'],        cost:600,  capacite:15, speed:4.0 },
+    acier:       { nom:'Camion acier',        icone:'🚚', resources:['steel'],       cost:1000, capacite:12, speed:3.5 },
+    marchandises:{ nom:'Camion marchandises', icone:'🚐', resources:['goods'],       cost:700,  capacite:12, speed:3.5 },
+  };
+  const out = {};
+  for(const k in DEFS){
+    const d = DEFS[k], c = cfgV[k] || {};
+    out[k] = {
+      nom:      c.nom       ?? d.nom,
+      icone:    c.icone     ?? d.icone,
+      resources: c.ressources ?? d.resources,
+      cost:     c.cout      ?? d.cost,
+      capacite: c.capacite  ?? d.capacite,
+      speed:    c.vitesse   ?? d.speed,
+      color:    COLOR_MAP[k],
+    };
+  }
+  return out;
+})();
+const GARAGE_COST = CFG.logistique?.garage?.cout ?? 1200;
 
 const RES = {
   iron:  { n:'Fer',          c:'#d98a4f' },
@@ -44,6 +75,18 @@ const RES = {
   steel: { n:'Acier',        c:'#a8bdd2' },
   goods: { n:'Marchandises', c:'#e6c84f' },
 };
+
+// Prix de vente inter-joueurs (par unité)
+const TRADE_PRICES = (()=>{
+  const cfg = CFG.commerce?.prix || {};
+  return {
+    iron:  cfg.fer          ?? 8,
+    coal:  cfg.charbon      ?? 6,
+    wood:  cfg.bois         ?? 5,
+    steel: cfg.acier        ?? 14,
+    goods: cfg.marchandises ?? 10,
+  };
+})();
 
 const BUILD = {
   select:  { n:'Inspecter', ic:'🔍', hk:'1', desc:'Cliquer sur un bâtiment pour voir ses stocks.' },
@@ -70,10 +113,13 @@ const BUILD = {
              desc:'Acier + bois → marchandises.' },
   house:   { n:'Maison',    ic:'🏠', hk:'7', cost: CFG.batiments?.maison?.cout    ?? 100,
              col:'#9a7e5f', hgt:18, desc:'' },
-  depot:   { n:'Entrepôt',  ic:'📦', hk:'8', cost: CFG.batiments?.entrepot?.cout  ?? 400,
+  depot:   { n:'Entrepôt',        ic:'📦', hk:'8', cost: CFG.batiments?.entrepot?.cout  ?? 400,
              col:'#7a7048', hgt:22,
              desc:'Stocke et redistribue. Cliquer dessus pour choisir les ressources acceptées.' },
-  bulldoze:{ n:'Démolir',   ic:'🧨', hk:'9', desc:'Détruit routes, bâtiments (30 % remboursés) et arbres.' },
+  garage:  { n:'Dépôt véhicules', ic:'🏪', hk:'0', cost: GARAGE_COST, col:'#3d4f6b', hgt:20,
+             desc:'Achète et gère des véhicules de transport spécialisés.' },
+  bulldoze: { n:'Démolir',    ic:'🧨', hk:'9', desc:'Détruit routes, bâtiments (30 % remboursés) et arbres.' },
+  terraform:{ n:'Bulldozer',  ic:'🚜', hk:'-', desc:'Rase les gisements (fer/charbon) et les sapins en herbe.' },
 };
 // ---------- niveaux résidentiels ----------
 // Un rectangle entièrement couvert de logements PLEINS plus petits fusionne
@@ -130,11 +176,112 @@ const prodMult = b => b.w*b.h*indFactor(b.w*b.h);
 // entretien : base × cases × facteur — grandit plus vite que la taille
 const IND_UPKEEP_INTERVAL = CFG.industrie?.intervalleEntretien ?? 10;
 const PAUSE_UPKEEP = CFG.industrie?.entretienEnPause ?? 0.5;
+const IND_RADIUS_BASE   = CFG.industrie?.rayonBase    ?? 6;
+const IND_RADIUS_FACTOR = CFG.industrie?.rayonFacteur ?? 4;
+const indRadiusOf = b => Math.round(IND_RADIUS_BASE + Math.sqrt(b.w * b.h) * IND_RADIUS_FACTOR);
 const upkeepOf = b => (BUILD[b.type].upkeep||0) * b.w*b.h * indFactor(b.w*b.h)
                       * (b.paused ? PAUSE_UPKEEP : 1);
 
+// ---------- système de villes / villages ----------
+const TOWN_P1     = ['Beau','Grand','Mont','Val','Haut','Bois','Clair','Fort','Pierre','Roche',
+                     'Belle','Fleury','Vic','Bar','Vau','Isle','Pont','Char','Mar','Bray'];
+const TOWN_P2     = ['ville','bourg','mont','court','val','lac','ay','ac','ieu','ois','en',
+                     'tot','eux','eau','ef','ais'];
+const TOWN_SAINTS = ['Pierre','Paul','Jean','Louis','Martin','Nicolas','Étienne','Michel',
+                     'Georges','André','Luc','Marc','Rémi','Denis','Julien'];
+const TOWN_LA     = ['Rochelle','Forêt','Plaine','Croix','Chapelle','Ferté','Tour','Motte'];
+const TOWN_LE     = ['Bourg','Moulin','Château','Hameau','Plessis','Mesnil'];
+
+function generateTownName(seedX, seedY){
+  // Hash déterministe basé sur la position (cohérence multijoueur)
+  let s = (Math.imul(seedX, 73856093) ^ Math.imul(seedY, 19349663)) >>> 0;
+  s = Math.imul(s ^ (s >>> 16), 0x45d9f3b) >>> 0;
+  const r = n => { s = (Math.imul(s ^ (s >>> 13), 0x9e3779b9 + s)) >>> 0; return s % n; };
+  const type = r(5);
+  if(type === 0) return 'Saint-' + TOWN_SAINTS[r(TOWN_SAINTS.length)];
+  if(type === 1) return 'La '    + TOWN_LA[r(TOWN_LA.length)];
+  if(type === 2) return 'Le '    + TOWN_LE[r(TOWN_LE.length)];
+  return TOWN_P1[r(TOWN_P1.length)] + TOWN_P2[r(TOWN_P2.length)];
+}
+
+function assignBuildingToTown(b, silent = false){
+  if(!BUILD[b.type]?.resid) return;
+  const bx = b.x + b.w/2, by = b.y + b.h/2;
+  let nearest = null, nearestDist = Infinity;
+  for(const t of towns){
+    const d = Math.hypot(bx - t.cx, by - t.cy);
+    if(d < nearestDist){ nearestDist = d; nearest = t; }
+  }
+  if(nearest && nearestDist <= TOWN_RADIUS){
+    b.townId = nearest.id;
+  } else {
+    const name = generateTownName(Math.round(bx), Math.round(by));
+    const t = { id: nextTownId++, name, cx: bx, cy: by };
+    towns.push(t);
+    b.townId = t.id;
+    if(!silent) toast('🏘️ Nouveau village : ' + name, 'win');
+  }
+}
+
+// ---------- noms d'industrie par village ----------
+const IND_NAMES = {
+  mine:    ['Mine de Fer','Puits Noir','Mine Profonde','Mine Royale','Vieux Puits','Mine du Nord','Carrière Centrale','Mine de l\'Ouest','Mine des Anciens','Mine du Pic'],
+  lumber:  ['Scierie du Bois','Bûcherie Verte','Scierie des Pins','Grand Moulin','Scierie Royale','Scierie du Moulin','Bûcherie Centrale','Scierie du Nord','Vieille Scierie','Bûcherie des Chênes'],
+  smelter: ['Grande Forge','Fonderie du Feu','Forge Ardente','Forge du Roi','Fonderie Centrale','Vieille Forge','Forge des Maîtres','Fonderie du Nord','Forge Royale','Forge de la Vallée'],
+  factory: ['Manufacture Centrale','Atelier du Peuple','Grande Usine','Fabrique Royale','Usine Municipale','Atelier des Arts','Grande Fabrique','Usine Centrale','Fabrique du Nord','Manufacture Royale'],
+};
+const IND_AREA_RADIUS = 30; // rayon de déduplication des noms
+
+function assignIndustryName(b){
+  if(!BUILD[b.type]?.ind) return;
+  const names = IND_NAMES[b.type];
+  if(!names || b.name) return;
+  const bx = b.x + (b.w||1)/2, by = b.y + (b.h||1)/2;
+  // Noms déjà utilisés par des industries du même type dans le même secteur
+  const used = new Set(
+    buildings
+      .filter(o => !o.dead && o.type === b.type && o.name)
+      .filter(o => Math.hypot((o.x+(o.w||1)/2) - bx, (o.y+(o.h||1)/2) - by) <= IND_AREA_RADIUS)
+      .map(o => o.name)
+  );
+  const pick = names.find(n => !used.has(n));
+  b.name = pick || (names[0] + ' ' + (used.size + 1));
+}
+
+function getTownOf(b){
+  if(b.townId != null) return towns.find(t => t.id === b.townId) || null;
+  const bx = b.x + b.w/2, by = b.y + b.h/2;
+  let nearest = null, nearestDist = Infinity;
+  for(const t of towns){
+    const d = Math.hypot(bx - t.cx, by - t.cy);
+    if(d < nearestDist){ nearestDist = d; nearest = t; }
+  }
+  return nearest && nearestDist <= TOWN_RADIUS ? nearest : null;
+}
+
+function townCenterOf(t){
+  // Centroïde des bâtiments résidentiels vivants de ce village
+  let sx = 0, sy = 0, n = 0;
+  for(const b of buildings){
+    if(b.dead || b.townId !== t.id || !BUILD[b.type]?.resid) continue;
+    sx += b.x + b.w/2; sy += b.y + b.h/2; n++;
+  }
+  return n > 0 ? [sx/n, sy/n] : [t.cx, t.cy];
+}
+
+function townPopulation(t){
+  let pop = 0;
+  for(const b of buildings){
+    if(!b.dead && b.townId === t.id && BUILD[b.type]?.resid) pop += b.pop||0;
+  }
+  return pop;
+}
+
 // ---------- fusion entrepôt ----------
-const DEPOT_STOCK_PER_CELL = CFG.entrepot?.stockParCase ?? 20;
+const DEPOT_STOCK_PER_CELL  = CFG.entrepot?.stockParCase ?? 20;
+const DEPOT_RADIUS_BASE     = CFG.entrepot?.rayonBase    ?? 5;
+const DEPOT_RADIUS_FACTOR   = CFG.entrepot?.rayonFacteur ?? 3;
+const depotRadiusOf = b => Math.round(DEPOT_RADIUS_BASE + Math.sqrt(b.w * b.h) * DEPOT_RADIUS_FACTOR);
 // génère les deux orientations et déduplique, triées du plus grand au plus petit
 const DEPOT_SHAPES = (()=>{
   const raw = CFG.entrepot?.formesFusion ?? [[2,1],[3,1],[2,2],[3,2],[3,3],[4,4]];
@@ -220,15 +367,23 @@ function tryMergeDepot(){
   if(bats.entrepot?.cout != null) BUILD.depot.cost  = bats.entrepot.cout;
 })();
 
-const TOOL_ORDER = ['select','road','mine','lumber','smelter','factory','house','depot','bulldoze'];
+const TOOL_ORDER = ['select','road','mine','lumber','smelter','factory','house','depot','garage','bulldoze','terraform'];
 const MILESTONES = [25, 50, 100, 200, 400];
+const COLORS = ['#e25e4c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#f0a040','#40d0c0','#e0e0e0'];
 
 // ---------- état ----------
 let terrain, road, bgrid, buildings, trucks, walkers, homeless, floats;
+let vehicles = [];        // véhicules persistants
+let vehicleRouteMode = null; // { vehicle, step:'source'|'dest' } ou null
+let selectedVehicle = null;  // véhicule sélectionné
+let nextVehicleId = 0;
+let towns = [];           // villages / villes
+let nextTownId = 0;
 let gtime = 0, eff = 1; // eff = snapshot du wallet courant, gardé pour statusOf
 let selected = null, tool = 'select';
 let speed = 1, paused = false;
 let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0;
+let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
 const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0 });
 const START_HOMELESS = 10;
 let rot = 0; // orientation de la vue (0..3)
@@ -252,17 +407,14 @@ let zoomActiveUntil = 0;
 let drawFast = false;
 
 // ---------- wallets (économie par joueur) ----------
-// Clé : MP.myId en multijoueur, 0 en solo.
 let WALLETS = {};
-const SOLO_KEY = 0;
-const walletKey = () => (MP.connected && MP.myId != null) ? MP.myId : SOLO_KEY;
 const walletOf  = oid => {
-  const k = (oid == null) ? SOLO_KEY : oid;
+  const k = oid ?? MP.myId ?? 0;
   if(!WALLETS[k]) WALLETS[k] = { money:2500, fin:FIN_ZERO(), finHist:[], finTimer:0, mi:0, eff:1, homelessSeeded:false, starterHomes:0 };
   if(WALLETS[k].starterHomes == null) WALLETS[k].starterHomes = 0;
   return WALLETS[k];
 };
-const myWallet  = () => walletOf(walletKey());
+const myWallet  = () => walletOf(MP.myId);
 // accesseurs rétro-compatibles (lecture/écriture du wallet courant)
 const getMoney   = ()    => myWallet().money;
 const spendMoney = (n,cat)=>{ const w=myWallet(); w.money-=n; w.fin[cat]=(w.fin[cat]||0)+n; };
@@ -408,6 +560,8 @@ function genWorld(config){
   road = new Uint8Array(N*N);
   bgrid = new Array(N*N).fill(null);
   buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
+  vehicles = []; vehicleRouteMode = null; selectedVehicle = null; nextVehicleId = 0;
+  towns = []; nextTownId = 0;
   WALLETS = {}; gtime = 0;
   selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0;
 
@@ -505,7 +659,7 @@ function refreshWorkerAllocation(){
     }
   }
   for(const k in WALLETS){
-    const oid = +k === SOLO_KEY ? null : +k;
+    const oid = +k;
     const req = jobsTotal(oid);
     const assigned = buildings.filter(b=>ownedBy(b,oid)).reduce((s,b)=>s+workersAllocatedOf(b),0);
     WALLETS[k].eff = req > 0 ? Math.min(1, assigned / req) : 1;
@@ -517,7 +671,8 @@ function newBuilding(type,x,y,w,h){
   const b = { type, x, y, w:w||d.size||1, h:h||d.size||1,
               storage:{}, inc:{}, prog:0, trucksOut:0, dead:false, owner:null };
   if(type==='mine')  b.ore = terrain[y*N+x]===T.IRON ? 'iron' : 'coal';
-  if(type==='depot'){ b.allow = {}; for(const k in RES) b.allow[k] = true; }
+  if(type==='depot'){ b.allow = {}; b.sellTo = {}; for(const k in RES){ b.allow[k] = true; b.sellTo[k] = false; } }
+  if(type==='garage') b.vehicles = [];
   if(d.ind) b.paused = false;
   if(d.resid){ b.pop = 0; b.protectedPop = 0; b.ct = 0; b.bonusCt = 0; b.pending = 0; b.pendingProtected = 0; b.starve = 0; }
   return b;
@@ -525,41 +680,45 @@ function newBuilding(type,x,y,w,h){
 
 function markStarterHomeIfNeeded(b){
   if(!b || b.type !== 'house') return;
-  const w = walletOf(b.owner ?? SOLO_KEY);
-  if(w.starterHomes >= 2) return;
+  const w = walletOf(b.owner);
   b.starterHome = true;
+  b.starterSlots = 1; // 1 slot de départ par maison initiale
   b.protectedPop = b.protectedPop || 0;
   w.starterHomes++;
 }
 
 function ensureStarterProtectionForOwner(owner){
-  const key = owner ?? SOLO_KEY;
+  const key = owner ?? MP.myId;
   const w = walletOf(key);
-  let protectedHomes = buildings.filter(b=>
-    !b.dead && ownedBy(b, owner) && BUILD[b.type].resid && b.starterHome
+  const starterBuildings = buildings.filter(b=>
+    !b.dead && ownedBy(b, owner) && BUILD[b.type]?.resid && b.starterHome
   );
-  if(protectedHomes.length < 2){
+  // Compter les slots utilisés : un bâtiment fusionné peut représenter N slots
+  let usedSlots = starterBuildings.reduce((s, b) => s + (b.starterSlots || 1), 0);
+  if(usedSlots < 2){
     const candidates = buildings
-      .filter(b=>!b.dead && ownedBy(b, owner) && BUILD[b.type].resid && !b.starterHome)
+      .filter(b=>!b.dead && ownedBy(b, owner) && BUILD[b.type]?.resid && !b.starterHome)
       .sort((a,b)=> (a.y-b.y) || (a.x-b.x));
     for(const b of candidates){
-      if(protectedHomes.length >= 2) break;
+      if(usedSlots >= 2) break;
       b.starterHome = true;
-      protectedHomes.push(b);
+      b.starterSlots = 1;
+      starterBuildings.push(b);
+      usedSlots++;
     }
   }
-  w.starterHomes = Math.min(2, protectedHomes.length);
-  for(const b of protectedHomes.slice(0,2)){
+  w.starterHomes = Math.min(2, usedSlots);
+  for(const b of starterBuildings){
     if((b.pop||0) > 0 && (b.protectedPop||0) < 1) b.protectedPop = 1;
   }
 }
 
 function ensureAllStarterProtections(){
   const owners = new Set();
-  for(const b of buildings) if(BUILD[b.type].resid) owners.add(b.owner ?? SOLO_KEY);
-  for(const h of homeless) owners.add(h.owner ?? SOLO_KEY);
-  if(MP.connected && MP.myId != null) owners.add(MP.myId);
-  for(const o of owners) ensureStarterProtectionForOwner(o === SOLO_KEY ? null : o);
+  for(const b of buildings) if(BUILD[b.type].resid) owners.add(b.owner ?? MP.myId);
+  for(const h of homeless) owners.add(h.owner ?? MP.myId);
+  if(MP.myId != null) owners.add(MP.myId);
+  for(const o of owners) ensureStarterProtectionForOwner(o);
 }
 
 function setGrid(b,val){
@@ -641,12 +800,12 @@ function findEmptySpawnTiles(owner, count){
 }
 
 function ensureHomelessForOwner(owner){
-  const key = owner ?? SOLO_KEY;
+  const key = owner ?? MP.myId;
   const w = walletOf(key);
   if(w.homelessSeeded) return;
   const hasPresence =
-    homeless.some(h=> (h.owner ?? SOLO_KEY) === key)
-    || walkers.some(wk=>wk.fromHomeless && wk.target && (wk.target.owner ?? SOLO_KEY) === key)
+    homeless.some(h=> (h.owner ?? MP.myId) === key)
+    || walkers.some(wk=>wk.fromHomeless && wk.target && (wk.target.owner ?? MP.myId) === key)
     || buildings.some(b=>ownedBy(b, owner) && BUILD[b.type].resid && ((b.pop||0) > 0 || (b.pending||0) > 0));
   if(hasPresence){ w.homelessSeeded = true; return; }
   w.homelessSeeded = true;
@@ -676,21 +835,21 @@ function adoptSoloHomeless(owner){
   if(adopted){
     const w = walletOf(owner);
     w.homelessSeeded = true;
-    if(WALLETS[SOLO_KEY]) WALLETS[SOLO_KEY].homelessSeeded = true;
+    if(WALLETS[MP.myId ?? 0]) WALLETS[MP.myId ?? 0].homelessSeeded = true;
   }
 }
 
 function assignHomelessToHousing(owner){
   if(!homeless?.length) return;
   for(const h of homeless)
-    if((h.owner ?? SOLO_KEY) === (owner ?? SOLO_KEY)) h.col = playerColor(owner);
+    if(h.owner === owner) h.col = playerColor(owner);
   const homes = buildings
     .filter(b=>!b.dead && BUILD[b.type].resid && ownedBy(b, owner))
     .sort((a,b)=> (b.starterHome?1:0)-(a.starterHome?1:0) || (a.y-b.y) || (a.x-b.x));
   for(const home of homes){
     const rc = BUILD[home.type].resid;
     while(home.pop + home.pending < rc.popCap){
-      const idx = homeless.findIndex(h=> (h.owner ?? SOLO_KEY) === (owner ?? SOLO_KEY));
+      const idx = homeless.findIndex(h=> h.owner === owner);
       if(idx < 0) return;
       const h = homeless.splice(idx, 1)[0];
       const protectedResident = !!home.starterHome && (home.protectedPop||0) + (home.pendingProtected||0) < 1;
@@ -756,13 +915,24 @@ function makeResidentsHomeless(b){
 function demolishBuilding(b, refundOwner){
   if(!b || b.dead) return 0;
   const owner = b.owner ?? null;
+  const townId = b.townId ?? null;
   const evicted = makeResidentsHomeless(b);
   b.dead = true;
   buildings.splice(buildings.indexOf(b),1);
   setGrid(b,null);
   if(selected===b) selected = null;
+  // retirer les véhicules du garage démoli
+  if(b.type === 'garage' && b.vehicles){
+    vehicles = vehicles.filter(v => v.garageRef !== b);
+    if(vehicleRouteMode && vehicleRouteMode.vehicle.garageRef === b) vehicleRouteMode = null;
+  }
+  // supprimer la ville si tous ses bâtiments résidentiels sont détruits
+  if(BUILD[b.type]?.resid && townId != null){
+    const stillHasHouses = buildings.some(bl => !bl.dead && bl.townId === townId && BUILD[bl.type]?.resid);
+    if(!stillHasHouses) towns = towns.filter(t => t.id !== townId);
+  }
   const refund = Math.floor((BUILD[b.type].cost||0)*0.3);
-  earnMoney(refund, 'rembours', walletOf(refundOwner ?? owner ?? SOLO_KEY));
+  earnMoney(refund, 'rembours', walletOf(refundOwner ?? owner));
   routeUnhousedResidents(owner, evicted);
   return refund;
 }
@@ -805,6 +975,7 @@ function canPlace(t,x,y){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
   if(t==='bulldoze') return { ok: !!(road[i] || bgrid[i] || ter===T.TREE) };
+  if(t==='terraform') return { ok: !bgrid[i] && (ter===T.TREE || ter===T.IRON || ter===T.COAL) };
   if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
   if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
   if(t==='road'){
@@ -826,12 +997,58 @@ function canPlace(t,x,y){
 function clickAt(x,y){
   if(!inMap(x,y)) return;
   const i = y*N+x;
-  if(tool==='select'){
-    selected = bgrid[i];
+
+  // Mode assignation de route véhicule (intercepte avant tout le reste)
+  if(vehicleRouteMode && tool === 'select'){
+    const b = bgrid[i];
+    if(b && !b.dead){
+      if(vehicleRouteMode.step === 'source'){
+        const v = vehicleRouteMode.vehicle;
+        const vt = VEHICLE_TYPES[v.vtype];
+        const myOwner = MP.myId;
+        // Dépôt d'un autre joueur : autorisé seulement si sellTo actif pour ce véhicule
+        if(b.owner !== myOwner && b.owner != null){
+          if(b.type !== 'depot') return;
+          const hasSellRes = vt.resources.some(r => b.sellTo?.[r]);
+          if(!hasSellRes){
+            toast('⛔ Ce dépôt ne vend pas les ressources de ce véhicule.','err'); return;
+          }
+          vehicleRouteMode.vehicle.source = b;
+          vehicleRouteMode.step = 'dest';
+          toast('🛒 Source (achat) : dépôt de '+(MP.players.find(p=>p.id===b.owner)||{}).name+'. Clique sur ta destination.');
+        } else {
+          vehicleRouteMode.vehicle.source = b;
+          vehicleRouteMode.step = 'dest';
+          toast('Source définie : '+BUILD[b.type].n+'. Clique sur la destination.');
+        }
+      } else {
+        const vRef = vehicleRouteMode.vehicle;
+        vRef.dest = b;
+        vehicleRouteMode = null;
+        startVehicleRoute(vRef);
+        toast('Route définie ! Le véhicule commence sa tournée.','win');
+      }
+    }
     return;
   }
-  if(!MP.connected){
-    toast('🌐 Connecte-toi au serveur multijoueur pour construire','err');
+
+  if(tool==='select'){
+    // Détecter si on clique sur un véhicule en mouvement (priorité sur les bâtiments)
+    if(!vehicleRouteMode){
+      const clickWx = x * TILE + TILE/2, clickWy = y * TILE + TILE/2;
+      for(const veh of vehicles){
+        if(!veh.pts || !veh.pts.length) continue;
+        const a = veh.pts[veh.seg], bp = veh.pts[Math.min(veh.seg+1, veh.pts.length-1)];
+        const wx = a.x + (bp.x-a.x)*veh.t, wy = a.y + (bp.y-a.y)*veh.t;
+        if(Math.hypot(wx - clickWx, wy - clickWy) < TILE * 1.5){
+          selectedVehicle = veh;
+          selected = null;
+          return;
+        }
+      }
+    }
+    selectedVehicle = null;
+    selected = bgrid[i];
     return;
   }
   if(tool==='bulldoze'){
@@ -850,6 +1067,15 @@ function clickAt(x,y){
     }
     return;
   }
+  if(tool==='terraform'){
+    const ter = terrain[i];
+    if(bgrid[i]){ toast('⛔ Démolissez d\'abord le bâtiment','err'); return; }
+    if(ter===T.TREE || ter===T.IRON || ter===T.COAL){
+      terrain[i] = T.GRASS;
+      if(MP.connected) netSend({ type:'terraform', i });
+    }
+    return;
+  }
   // outil de construction
   const v = canPlace(tool,x,y);
   if(!v.ok){
@@ -862,8 +1088,10 @@ function clickAt(x,y){
   spendMoney(cost, 'construction');
   if(tool==='road'){ road[i] = 1; return; }
   const b = newBuilding(tool,x,y);
-  b.owner = MP.connected ? MP.myId : null;
+  b.owner = MP.myId;
   markStarterHomeIfNeeded(b);
+  assignBuildingToTown(b);
+  assignIndustryName(b);
   buildings.push(b);
   bgrid[i] = b;
   selected = b;
@@ -887,9 +1115,33 @@ function tryDispatch(b,res){
     }
   }
   let bestB = null, bestScore = Infinity, bestTile = -1;
+  // rayon d'action de l'expéditeur
+  const senderIsDepot = b.type === 'depot';
+  const senderIsInd   = !!BUILD[b.type]?.ind;
+  const senderRadius  = senderIsDepot ? depotRadiusOf(b)
+                      : senderIsInd   ? indRadiusOf(b)
+                      : Infinity;
+  const senderCenter = centerOfBuilding(b);
   for(const c of buildings){
     if(c===b || c.dead || !accepts(c,res) || space(c,res)<=0) continue;
     if(b.type==='depot' && c.type==='depot') continue;
+    // vérifier le rayon de l'expéditeur
+    if(senderRadius < Infinity){
+      const d2 = Math.max(Math.abs(centerOfBuilding(c).x - senderCenter.x),
+                          Math.abs(centerOfBuilding(c).y - senderCenter.y));
+      if(d2 > senderRadius) continue;
+    }
+    // vérifier le rayon de la cible si c'est un entrepôt ou un bâtiment industriel
+    if(c.type === 'depot'){
+      const d2 = Math.max(Math.abs(centerOfBuilding(b).x - centerOfBuilding(c).x),
+                          Math.abs(centerOfBuilding(b).y - centerOfBuilding(c).y));
+      if(d2 > depotRadiusOf(c)) continue;
+    }
+    if(BUILD[c.type]?.ind){
+      const d2 = Math.max(Math.abs(centerOfBuilding(b).x - centerOfBuilding(c).x),
+                          Math.abs(centerOfBuilding(b).y - centerOfBuilding(c).y));
+      if(d2 > indRadiusOf(c)) continue;
+    }
     let bd = Infinity, bt = -1;
     for(const t of adjRoadTiles(c))
       if(dist[t]>=0 && dist[t]<bd){ bd = dist[t]; bt = t; }
@@ -956,6 +1208,153 @@ function updateTrucks(dt){
   }
 }
 
+// ---------- logistique (véhicules persistants) ----------
+function findRoadPath(fromB, toB){
+  const starts = adjRoadTiles(fromB);
+  if(!starts.length) return null;
+  dist.fill(-1);
+  const q = [];
+  for(const s of starts){ dist[s] = 0; prev[s] = -1; q.push(s); }
+  for(let qi=0; qi<q.length; qi++){
+    const c = q[qi], cx = c%N, cy = (c/N)|0;
+    for(const [dx,dy] of DIRS){
+      const x = cx+dx, y = cy+dy;
+      if(!inMap(x,y)) continue;
+      const ni = y*N+x;
+      if(road[ni] && dist[ni]<0){ dist[ni] = dist[c]+1; prev[ni] = c; q.push(ni); }
+    }
+  }
+  let bestTile = -1, bestDist = Infinity;
+  for(const t of adjRoadTiles(toB))
+    if(dist[t]>=0 && dist[t]<bestDist){ bestDist = dist[t]; bestTile = t; }
+  if(bestTile < 0) return null;
+  const path = [];
+  let t = bestTile;
+  while(t !== -1){ path.push(t); t = prev[t]; }
+  path.reverse();
+  const C = idx => ({ x:(idx%N)*TILE+TILE/2, y:((idx/N)|0)*TILE+TILE/2 });
+  return [
+    { x:(fromB.x+fromB.w/2)*TILE, y:(fromB.y+fromB.h/2)*TILE },
+    ...path.map(C),
+    { x:(toB.x+toB.w/2)*TILE, y:(toB.y+toB.h/2)*TILE },
+  ];
+}
+
+function startVehicleRoute(v){
+  if(!v.source || !v.dest || v.source.dead || v.dest.dead){ v.state = 'idle'; return; }
+  // Cache la route complète pour la visualisation (style Transport Tycoon)
+  const fwd = findRoadPath(v.source, v.dest);
+  const bwd = findRoadPath(v.dest, v.source);
+  v.vizRoute = { fwd: fwd || [], bwd: bwd || [] };
+  const pts = findRoadPath(v.garageRef, v.source);
+  if(!pts){ v.waitTimer = 5; v.currentBuilding = v.garageRef; return; }
+  v.state = 'to_source';
+  v.pts = pts; v.seg = 0; v.t = 0;
+  v.cargo = 0; v.res = null;
+  v.currentBuilding = null;
+}
+
+function returnToGarage(v){
+  if(v.state === 'idle' || v.state === 'returning') return;
+  const from = v.currentBuilding || v.garageRef;
+  v.source = null; v.dest = null;
+  v.vizRoute = null;
+  v.cargo = 0; v.res = null;
+  const pts = findRoadPath(from, v.garageRef);
+  if(pts){
+    v.state = 'returning';
+    v.pts = pts; v.seg = 0; v.t = 0;
+  } else {
+    v.state = 'idle'; v.pts = [];
+  }
+}
+
+function updateVehicles(dt){
+  for(const v of vehicles){
+    if(v.state === 'idle') continue;
+    if(v.state !== 'returning' && (!v.source || v.source.dead || !v.dest || v.dest.dead)){
+      v.state = 'idle'; v.cargo = 0; v.res = null; v.pts = []; continue;
+    }
+    // Timer d'attente (chemin non trouvé)
+    if(v.waitTimer > 0){
+      v.waitTimer -= dt;
+      if(v.waitTimer > 0) continue;
+      const from = v.currentBuilding || v.garageRef;
+      const to = v.state === 'to_source' ? v.source : v.dest;
+      const pts = findRoadPath(from, to);
+      if(!pts){ v.waitTimer = 5; continue; }
+      v.pts = pts; v.seg = 0; v.t = 0;
+      // fall through to movement
+    }
+    if(!v.pts || !v.pts.length){ v.waitTimer = 5; continue; }
+    const vt = VEHICLE_TYPES[v.vtype];
+    let move = vt.speed * TILE * dt;
+    while(move > 0 && v.seg < v.pts.length-1){
+      const a = v.pts[v.seg], b = v.pts[v.seg+1];
+      const d = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+      const remain = (1-v.t)*d;
+      if(move >= remain){ move -= remain; v.seg++; v.t = 0; }
+      else { v.t += move/d; move = 0; }
+    }
+    if(v.seg >= v.pts.length-1){
+      if(v.state === 'returning'){
+        v.state = 'idle'; v.pts = [];
+        v.currentBuilding = v.garageRef;
+        continue;
+      }
+      if(v.state === 'to_source'){
+        v.currentBuilding = v.source;
+        // Charger la ressource
+        const src = v.source;
+        let res = null, maxAmt = 0;
+        for(const r of vt.resources){
+          const amt = src.storage[r]||0;
+          if(amt > maxAmt){ maxAmt = amt; res = r; }
+        }
+        if(res && maxAmt > 0){
+          const take = Math.min(vt.capacite, maxAmt);
+          // Commerce inter-joueurs : paiement si la source appartient à un autre joueur
+          if(src.owner != null && src.owner !== (v.garageRef.owner ?? null)){
+            const cost = take * (TRADE_PRICES[res] || 0);
+            const buyerWallet  = walletOf(v.garageRef.owner);
+            const sellerWallet = walletOf(src.owner);
+            if(buyerWallet.money < cost){
+              // Pas assez d'argent : attendre
+              v.waitTimer = 5; continue;
+            }
+            buyerWallet.money  -= cost;
+            buyerWallet.fin.construction = (buyerWallet.fin.construction||0) + cost; // colonne "achats"
+            sellerWallet.money += cost;
+            sellerWallet.fin.ventes = (sellerWallet.fin.ventes||0) + cost;
+          }
+          src.storage[res] -= take;
+          v.cargo = take; v.res = res;
+        } else {
+          v.cargo = 0; v.res = null;
+        }
+        const pts = findRoadPath(v.source, v.dest);
+        if(!pts){ v.waitTimer = 5; continue; }
+        v.state = 'to_dest';
+        v.pts = pts; v.seg = 0; v.t = 0;
+      } else {
+        v.currentBuilding = v.dest;
+        // Décharger la cargaison
+        if(v.cargo > 0 && v.res){
+          const dst = v.dest;
+          const room = Math.max(0, capOf(dst, v.res) - (dst.storage[v.res]||0));
+          const deposit = Math.min(v.cargo, room);
+          if(deposit > 0) dst.storage[v.res] = (dst.storage[v.res]||0) + deposit;
+          v.cargo = 0; v.res = null;
+        }
+        const pts = findRoadPath(v.dest, v.source);
+        if(!pts){ v.waitTimer = 5; continue; }
+        v.state = 'to_source';
+        v.pts = pts; v.seg = 0; v.t = 0;
+      }
+    }
+  }
+}
+
 // ---------- simulation ----------
 function update(dt){
   gtime += dt;
@@ -967,7 +1366,7 @@ function update(dt){
   eff = myWallet().eff;
 
   for(const b of buildings){
-    const w = walletOf(b.owner ?? SOLO_KEY); // wallet du propriétaire du bâtiment
+    const w = walletOf(b.owner); // wallet du propriétaire du bâtiment
     const r = recipeOf(b);
     if(r && !b.paused){
       let outOK = true, inOK = true;
@@ -1069,16 +1468,30 @@ function update(dt){
   }
 
   updateTrucks(dt);
+  updateVehicles(dt);
   updateWalkers(dt);
 
   taxTimer += dt;
   if(taxTimer >= ECO.taxeInterval){
     taxTimer = 0;
-    // taxes par wallet : chaque joueur reçoit les taxes de ses habitants
+    // taxes par wallet : taux plein si l'habitant travaille, /3 sinon
     for(const k in WALLETS){
-      const oid = +k === SOLO_KEY ? null : +k;
+      const oid = +k;
       const w = WALLETS[k];
-      const t = ECO.taxe * popTotal(oid);
+      // Travailleurs effectivement actifs (industrie non pausée et stock de sortie non plein)
+      let activeWorkers = 0;
+      for(const b of buildings){
+        if(b.dead || !ownedBy(b, oid) || !BUILD[b.type]?.ind || b.paused) continue;
+        const r = recipeOf(b);
+        if(!r) continue;
+        let outFull = true;
+        for(const rk in r.out){ if((b.storage[rk]||0) < OUTCAP){ outFull = false; break; } }
+        if(!outFull) activeWorkers += workersAllocatedOf(b);
+      }
+      const total   = popTotal(oid);
+      const working = Math.min(total, activeWorkers);
+      const idle    = total - working;
+      const t = ECO.taxe * working + (ECO.taxe / 3) * idle;
       earnMoney(t, 'taxes', w);
     }
   }
@@ -1089,7 +1502,7 @@ function update(dt){
     for(const b of buildings){
       const u = upkeepOf(b);
       if(u <= 0) continue;
-      const w = walletOf(b.owner ?? SOLO_KEY);
+      const w = walletOf(b.owner);
       w.money -= u; w.fin.entretien += u;
       addFloat(b.x+(b.w-1)/2, b.y, '−'+(Math.round(u*10)/10)+' $', '#ff9a8a');
     }
@@ -1109,12 +1522,12 @@ function update(dt){
 
   // milestones par wallet
   for(const k in WALLETS){
-    const oid = +k === SOLO_KEY ? null : +k;
+    const oid = +k;
     const w = WALLETS[k];
     if(w.mi == null) w.mi = 0;
     // n'afficher le toast que si c'est le joueur courant
     if(w.mi < MILESTONES.length && popTotal(oid) >= MILESTONES[w.mi]){
-      if(+k === walletKey())
+      if(+k === MP.myId)
         toast('🎉 '+MILESTONES[w.mi]+' habitants ! Ta ville prospère.','win');
       w.mi++;
     }
@@ -1212,9 +1625,12 @@ function tryMerge(){
         buildings = buildings.filter(o=> !o.dead);
         const t = newBuilding(L.key, x, y, w, h);
         t.owner = owner;
+        t.townId = set[0].townId ?? null; // hériter le village du premier composant
         t.pop = Math.min(d.resid.popCap, pop);
         t.protectedPop = Math.min(t.pop, protectedPop);
-        t.starterHome = t.protectedPop > 0;
+        t.starterHome = t.protectedPop > 0 || set.some(o => o.starterHome);
+        // Conserver le nombre total de slots de départ absorbés
+        t.starterSlots = set.reduce((s, o) => s + (o.starterSlots || (o.starterHome ? 1 : 0)), 0);
         t.storage.goods = Math.min(d.resid.stockCap, goods);
         buildings.push(t);
         setGrid(t,t);
@@ -1513,7 +1929,9 @@ function drawBuilding(b){
   const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
   // les sites industriels fusionnés gagnent en hauteur avec leur taille
   const hgt = d.ind ? d.hgt*(1+0.18*(Math.max(b.w,b.h)-1)) : d.hgt;
-  const tc = prism(rx0, ry0, rx0+rw, ry0+rh, hgt, d.col);
+  // Couleur spécifique pour les mines selon le minerai
+  const bCol = (b.type==='mine' && b.ore) ? (b.ore==='iron' ? '#8a5c3a' : '#4a4a5a') : d.col;
+  const tc = prism(rx0, ry0, rx0+rw, ry0+rh, hgt, bCol);
 
   // fenêtres éclairées sur les faces des grands logements
   if(!drawFast && d.resid && d.hgt >= 40){
@@ -1537,7 +1955,31 @@ function drawBuilding(b){
   // icône sur le toit
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.font = (TH*(0.62+0.28*(Math.max(b.w,b.h)-1)))+'px "Segoe UI Emoji",sans-serif';
-  ctx.fillText(d.ic, tc[0], tc[1]+1);
+  if(b.type === 'mine' && b.ore){
+    // Pioche colorée selon le minerai (fer = orange, charbon = gris clair)
+    const oreColor = b.ore === 'iron' ? '#d98a4f' : '#b0b0c0';
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = oreColor;
+    // fond coloré rond derrière l'icône
+    const fs = TH*(0.62+0.28*(Math.max(b.w,b.h)-1));
+    ctx.beginPath();
+    ctx.arc(tc[0], tc[1], fs*0.55, 0, Math.PI*2);
+    ctx.globalAlpha = 0.28;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillText(d.ic, tc[0], tc[1]+1);
+    // petit badge minerai sous l'icône
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillStyle = oreColor;
+    ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.lineWidth = 2.5;
+    const label = b.ore === 'iron' ? 'FER' : 'CHARBON';
+    ctx.strokeText(label, tc[0], tc[1] + fs*0.62 + 5);
+    ctx.fillText(label, tc[0], tc[1] + fs*0.62 + 5);
+    ctx.restore();
+  } else {
+    ctx.fillText(d.ic, tc[0], tc[1]+1);
+  }
 
   // barre de progression
   const r = recipeOf(b);
@@ -1578,6 +2020,27 @@ function drawBuilding(b){
   if(b===selected && MP.connected){
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
     diamond(rx0, ry0, rw, rh); ctx.stroke();
+  }
+  // Indicateur "en vente" : petit $ doré sur le dépôt
+  if(!drawFast && b.type === 'depot' && b.sellTo && Object.values(b.sellTo).some(v=>v)){
+    ctx.save();
+    ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#f0c060';
+    ctx.fillText('$', tc[0] + TW*rw*0.3, tc[1] - 3);
+    ctx.restore();
+  }
+  // Contour vert clignotant sur les dépôts éligibles lors de l'assignation de route (source)
+  if(vehicleRouteMode && vehicleRouteMode.step === 'source' && b.type === 'depot'){
+    const myOid = MP.connected ? MP.myId : null;
+    if(b.owner != null && b.owner !== myOid){
+      const vt = VEHICLE_TYPES[vehicleRouteMode.vehicle.vtype];
+      if(vt.resources.some(r => b.sellTo?.[r])){
+        ctx.strokeStyle = '#f0c060'; ctx.lineWidth = 1.5;
+        ctx.setLineDash([4,3]);
+        diamond(rx0, ry0, rw, rh); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
   }
 }
 
@@ -1636,6 +2099,140 @@ function drawTruck(tk){
   prism(u-au*0.72, v-av*0.72, u+au*0.72, v+av*0.72, 7, RES[tk.res].c, 5);
 }
 
+function drawVehicleRoute(veh){
+  if(!veh.vizRoute) return;
+  const drawPath = (pts, color) => {
+    if(!pts || pts.length < 2) return;
+    ctx.beginPath();
+    let first = true;
+    for(const pt of pts){
+      const [sx, sy] = worldPxToIso(pt.x, pt.y);
+      if(first){ ctx.moveTo(sx, sy); first = false; }
+      else ctx.lineTo(sx, sy);
+    }
+    ctx.save();
+    ctx.strokeStyle = color; ctx.lineWidth = 3;
+    ctx.globalAlpha = 0.82;
+    ctx.setLineDash([10, 6]);
+    ctx.stroke();
+    ctx.restore();
+  };
+  drawPath(veh.vizRoute.fwd, '#4dd9ff');   // cyan  : source → dest
+  drawPath(veh.vizRoute.bwd, '#ffaa44');   // orange: dest   → source
+
+  // Surligner les bâtiments source et destination
+  const highlightBld = (b, col) => {
+    if(!b || b.dead) return;
+    const [r1x,r1y] = rotIdx(b.x, b.y);
+    const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
+    const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
+    const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
+    ctx.save();
+    ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.globalAlpha = 0.9;
+    diamond(rx0, ry0, rw, rh); ctx.stroke();
+    ctx.restore();
+  };
+  highlightBld(veh.source, '#4dd9ff');
+  highlightBld(veh.dest,   '#ffaa44');
+}
+
+function drawTownLabels(){
+  if(!towns.length) return;
+  const z = cam.z;
+  for(const t of towns){
+    const members = buildings.filter(b => !b.dead && b.townId === t.id && BUILD[b.type]?.resid);
+    if(!members.length) continue;
+
+    const pop = members.reduce((s, b) => s + (b.pop||0), 0);
+
+    // Centroïde en tiles → position X centrale du label
+    let sx = 0, sy = 0;
+    for(const b of members){ sx += b.x + b.w/2; sy += b.y + b.h/2; }
+    const cx = sx / members.length, cy = sy / members.length;
+    const [ruc, rvc] = rotF(cx, cy);
+    const [ix] = iso(ruc, rvc);
+
+    // Trouver le point le plus haut (min Y iso) parmi tous les bâtiments du village
+    let topIsoY = Infinity;
+    for(const b of members){
+      const [ru, rv] = rotF(b.x + b.w/2, b.y + b.h/2);
+      const [, biy] = iso(ru, rv);
+      const bTop = biy - BUILD[b.type].hgt;
+      if(bTop < topIsoY) topIsoY = bTop;
+    }
+    const labelIy = topIsoY - 14; // marge au-dessus du toit le plus haut
+
+    // Conversion iso → CSS pixels
+    const cssX = (ix  - cam.x) * z;
+    const cssY = (labelIy - cam.y) * z;
+
+    if(cssX < -300 || cssX > W + 300 || cssY < -60 || cssY > H + 20) continue;
+
+    const label = t.name + (pop > 0 ? ' · ' + pop + ' 👤' : '');
+
+    ctx.save();
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 12px "Segoe UI Emoji","Segoe UI",sans-serif';
+    const tw = ctx.measureText(label).width;
+    const pw = tw + 18, ph = 20;
+    const bx = cssX - pw/2, by = cssY - ph/2;
+
+    // Fond pilule
+    ctx.globalAlpha = 0.88;
+    ctx.fillStyle = '#0c1a2b';
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(bx, by, pw, ph, 5);
+    else ctx.rect(bx, by, pw, ph);
+    ctx.fill();
+
+    // Bordure dorée
+    ctx.globalAlpha = 0.65;
+    ctx.strokeStyle = '#c9a830';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Texte
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#f0dc90';
+    ctx.fillText(label, cssX, cssY);
+    ctx.restore();
+  }
+}
+
+function drawVehicle(veh){
+  if(!veh.pts || !veh.pts.length) return;
+  const a = veh.pts[veh.seg], b = veh.pts[Math.min(veh.seg+1, veh.pts.length-1)];
+  const wx = a.x + (b.x-a.x)*veh.t, wy = a.y + (b.y-a.y)*veh.t;
+  const [u,v] = rotF(wx/TILE, wy/TILE);
+  const [du,dv] = rotDir(b.x-a.x, b.y-a.y);
+  const alongU = Math.abs(du) >= Math.abs(dv);
+  const au = alongU ? 0.30 : 0.18, av = alongU ? 0.18 : 0.30;
+  const vt = VEHICLE_TYPES[veh.vtype];
+  const c = iso(u, v);
+  ctx.fillStyle = 'rgba(0,0,0,.20)';
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 13, 6, 0, 0, 7); ctx.fill();
+  prism(u-au, v-av, u+au, v+av, 6, '#39404c');
+  prism(u-au*0.72, v-av*0.72, u+au*0.72, v+av*0.72, 9, vt.color, 6);
+  if(!drawFast && veh.cargo > 0){
+    const label = vt.icone + ' ' + veh.cargo;
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 2;
+    ctx.strokeText(label, c[0], c[1] - TH);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, c[0], c[1] - TH);
+  }
+  // Cercle blanc si sélectionné
+  if(veh === selectedVehicle){
+    ctx.save();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.globalAlpha = 0.9;
+    ctx.beginPath(); ctx.ellipse(c[0], c[1], 16, 8, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+}
+
 function draw(){
   drawFast = performance.now() < zoomActiveUntil || Math.abs(targetCam.z - cam.z) > 0.006;
   // ciel
@@ -1675,6 +2272,14 @@ function draw(){
     center: centerOfBuilding(selected),
     r: workRadiusOf(selected),
     color: playerColor(selected.owner),
+  } : null;
+  const depotRadiusSel = selected && !selected.dead && selected.type === 'depot' ? {
+    center: centerOfBuilding(selected),
+    r: depotRadiusOf(selected),
+  } : null;
+  const indRadiusSel = selected && !selected.dead && BUILD[selected.type]?.ind ? {
+    center: centerOfBuilding(selected),
+    r: indRadiusOf(selected),
   } : null;
 
   // --- passe 1 : sol (ordre ligne par ligne = peintre) ---
@@ -1760,6 +2365,43 @@ function draw(){
   if(radiusSel)
     drawWorkRadiusOverlay(radiusSel.center, radiusSel.r, radiusSel.color, minRx, maxRx, minRy, maxRy);
 
+  // rayon du dépôt sélectionné (jaune)
+  if(depotRadiusSel)
+    drawWorkRadiusOverlay(depotRadiusSel.center, depotRadiusSel.r, '#ffd700', minRx, maxRx, minRy, maxRy);
+
+  // rayon de l'industrie sélectionnée (orange)
+  if(indRadiusSel)
+    drawWorkRadiusOverlay(indRadiusSel.center, indRadiusSel.r, '#ff8c42', minRx, maxRx, minRy, maxRy);
+
+  // en mode placement d'entrepôt : afficher tous les rayons existants (semi-transparent)
+  if(tool === 'depot' && !drawFast){
+    for(const b of buildings){
+      if(b.type !== 'depot' || b.dead) continue;
+      ctx.globalAlpha = 0.45;
+      drawWorkRadiusOverlay(centerOfBuilding(b), depotRadiusOf(b), '#ffd700', minRx, maxRx, minRy, maxRy);
+      ctx.globalAlpha = 1;
+    }
+    // rayon du futur entrepôt sous le curseur
+    if(inMap(mouse.tx, mouse.ty)){
+      const ghost = { type:'depot', x:mouse.tx, y:mouse.ty, w:1, h:1 };
+      drawWorkRadiusOverlay(centerOfBuilding(ghost), depotRadiusOf(ghost), '#ffd700', minRx, maxRx, minRy, maxRy);
+    }
+  }
+
+  // en mode placement d'industrie : afficher tous les rayons industriels existants
+  if(['mine','lumber','smelter','factory'].includes(tool) && !drawFast){
+    for(const b of buildings){
+      if(!BUILD[b.type]?.ind || b.dead) continue;
+      ctx.globalAlpha = 0.35;
+      drawWorkRadiusOverlay(centerOfBuilding(b), indRadiusOf(b), '#ff8c42', minRx, maxRx, minRy, maxRy);
+      ctx.globalAlpha = 1;
+    }
+    if(inMap(mouse.tx, mouse.ty)){
+      const ghost = { type:tool, x:mouse.tx, y:mouse.ty, w:1, h:1 };
+      drawWorkRadiusOverlay(centerOfBuilding(ghost), indRadiusOf(ghost), '#ff8c42', minRx, maxRx, minRy, maxRy);
+    }
+  }
+
   // camions
   if(!drawFast){
     for(const h of homeless){
@@ -1774,6 +2416,14 @@ function draw(){
       sprites.push({ k:Math.floor(v)*1024 + Math.floor(u) + 0.5, f:()=>drawTruck(tk) });
     }
 
+    for(const veh of vehicles){
+      if(veh.state === 'idle' || !veh.pts || !veh.pts.length) continue;
+      const a = veh.pts[veh.seg], b = veh.pts[Math.min(veh.seg+1, veh.pts.length-1)];
+      const wx = a.x + (b.x-a.x)*veh.t, wy = a.y + (b.y-a.y)*veh.t;
+      const [u,v] = rotF(wx/TILE, wy/TILE);
+      sprites.push({ k:Math.floor(v)*1024 + Math.floor(u) + 0.52, f:()=>drawVehicle(veh) });
+    }
+
     // piétons
     for(const wk of walkers){
       const a = wk.pts[wk.seg], b = wk.pts[Math.min(wk.seg+1, wk.pts.length-1)];
@@ -1786,6 +2436,13 @@ function draw(){
   // --- passe 2 : sprites triés arrière → avant ---
   sprites.sort((a,b)=> a.k-b.k);
   for(const s of sprites) s.f();
+
+  // Parcours du véhicule sélectionné (style Transport Tycoon)
+  if(selectedVehicle && !selectedVehicle.garageRef?.dead)
+    drawVehicleRoute(selectedVehicle);
+
+  // Noms des villages au centre de chaque groupe de maisons
+  drawTownLabels();
 
   // fantôme de placement
   if(tool!=='select' && inMap(mouse.tx,mouse.ty)){
@@ -1845,6 +2502,12 @@ function updateHUD(dt){
   $('hPop').textContent = pop + ' / ' + housingCap();
   $('hJobs').textContent = Math.min(pop,jobs) + ' / ' + jobs;
   $('hTrucks').textContent = trucks.length;
+  // Compteur sauvegarde auto
+  const cdEl = $('autoSaveCountdown');
+  if(cdEl){
+    const s = Math.ceil(autoSaveTimer);
+    cdEl.textContent = s >= 60 ? 'dans '+(Math.ceil(s/60))+' min' : 'dans '+s+' s';
+  }
   renderInfo();
   renderFinance();
 }
@@ -1895,6 +2558,10 @@ function statusOf(b){
     return 'Attend des marchandises';
   }
   if(b.type==='depot') return 'Stocke et redistribue';
+  if(b.type==='garage'){
+    const active = (b.vehicles||[]).filter(v=>v.state!=='idle').length;
+    return active > 0 ? active+' véhicule(s) en tournée' : 'Aucun véhicule en service';
+  }
   if(b.paused) return 'En pause — ouvriers libérés';
   const r = recipeOf(b);
   if(!r) return '';
@@ -1908,6 +2575,61 @@ function statusOf(b){
 
 function renderInfo(){
   const p = $('info');
+
+  // --- Véhicule sélectionné ---
+  if(selectedVehicle){
+    if(selectedVehicle.garageRef?.dead){ selectedVehicle = null; }
+    else {
+      const veh = selectedVehicle;
+      const vt = VEHICLE_TYPES[veh.vtype];
+      const stateLabel = { idle:'En attente 💤', to_source:'Vers source 🔵', to_dest:'Vers destination 🟠', returning:'Retour au dépôt 🏪' }[veh.state] || veh.state;
+      const srcName = veh.source && !veh.source.dead ? BUILD[veh.source.type].n : '—';
+      const dstName = veh.dest   && !veh.dest.dead   ? BUILD[veh.dest.type].n  : '—';
+      let h = '<h3><span style="font-size:22px">'+vt.icone+'</span> '+vt.nom+'</h3>';
+      h += '<div class="status">'+stateLabel+'</div>';
+      h += '<div class="row"><span>Cargaison</span><b>'+(veh.cargo > 0 ? veh.cargo+' '+(veh.res ? RES[veh.res].n : '') : 'Vide')+'</b></div>';
+      h += '<div class="row"><span>Source</span><b style="color:#4dd9ff">'+srcName+'</b></div>';
+      h += '<div class="row"><span>Destination</span><b style="color:#ffaa44">'+dstName+'</b></div>';
+      h += '<div class="row"><span>Capacité</span><b>'+vt.capacite+'</b></div>';
+      h += '<div class="row"><span>Vitesse</span><b>'+vt.speed+' cases/s</b></div>';
+      h += '<div style="margin-top:8px;display:flex;gap:4px">'
+         + '<button class="tbtn" style="flex:1" id="bVehRoute">🔁 Nouvelle route</button>'
+         + '</div>';
+      if(veh.state !== 'idle' && veh.state !== 'returning')
+        h += '<button class="tbtn" style="width:100%;margin-top:4px" id="bVehReturn">🏪 Retour au dépôt</button>';
+      h += '<button class="tbtn" style="width:100%;margin-top:4px;color:#ff9a8a" id="bVehSell">🗑️ Vendre (+'
+         + Math.floor(vt.cost*0.5)+' $)</button>';
+      p.style.display = 'block';
+      if(p._html === h) return;
+      p._html = h; p._b = null;
+      p.innerHTML = h;
+      $('bVehRoute').onclick = ()=>{
+        vehicleRouteMode = { vehicle:veh, step:'source' };
+        setTool('select');
+        toast('🔁 Clique sur le bâtiment SOURCE pour '+vt.nom+'.');
+        p._html = null;
+      };
+      const retBtn = $('bVehReturn');
+      if(retBtn) retBtn.onclick = ()=>{
+        returnToGarage(veh);
+        toast('🏪 '+vt.nom+' retourne au dépôt.');
+        p._html = null;
+      };
+      $('bVehSell').onclick = ()=>{
+        const refund = Math.floor(vt.cost * 0.5);
+        earnMoney(refund, 'rembours');
+        vehicles.splice(vehicles.indexOf(veh), 1);
+        const g = veh.garageRef;
+        if(g) g.vehicles = (g.vehicles||[]).filter(v=>v!==veh);
+        if(vehicleRouteMode?.vehicle === veh) vehicleRouteMode = null;
+        selectedVehicle = null;
+        toast('🗑️ Véhicule vendu (+'+refund+' $)');
+        p._html = null;
+      };
+      return;
+    }
+  }
+
   if(!selected || selected.dead){ p.style.display = 'none'; return; }
   const b = selected, d = BUILD[b.type];
   let h = '<h3><span style="font-size:22px">'+d.ic+'</span>'+d.n+'</h3>';
@@ -1921,8 +2643,17 @@ function renderInfo(){
   if(d.ind)
     h += '<div class="row"><span>Entretien</span><b>'+(Math.round(upkeepOf(b)*10)/10)
        + ' $ / '+IND_UPKEEP_INTERVAL+' s</b></div>';
+  if(d.ind && b.name)
+    h += '<div class="row"><span>Nom</span><b style="color:#9fd4f0">🏭 '+escHtml(b.name)+'</b></div>';
+  if(d.ind)
+    h += '<div class="row"><span>Rayon d\'action</span><b style="color:#ff8c42">'+indRadiusOf(b)+' cases</b></div>';
   if(d.resid)
     h += '<div class="row"><span>Habitants</span><b>'+b.pop+' / '+d.resid.popCap+'</b></div>';
+  if(d.resid){
+    const town = getTownOf(b);
+    if(town) h += '<div class="row"><span>Village</span><b style="color:#e8d48b">🏘️ '+escHtml(town.name)
+      +'</b></div>';
+  }
   if(d.resid && !b.starterHome){
     const incomePerCycle = d.resid.income * Math.max(1, b.pop);
     const ratePerMin = b.pop > 0 ? Math.round(incomePerCycle / d.resid.interval * 60) : 0;
@@ -1942,6 +2673,9 @@ function renderInfo(){
     }
   }
   if(b.type==='depot'){
+    h += '<div class="row"><span>Rayon d\'action</span><b style="color:#ffd700">'+depotRadiusOf(b)+' cases</b></div>';
+    if(b.w*b.h > 1)
+      h += '<div class="row"><span>Taille</span><b>'+b.w+'×'+b.h+'</b></div>';
     h += '<div style="margin-top:8px;color:#8fa3bf">Ressources acceptées</div><div>';
     for(const k in RES){
       const on = b.allow?.[k] !== false;
@@ -1949,8 +2683,60 @@ function renderInfo(){
          + '<span class="dot" style="background:'+RES[k].c+'"></span>'+RES[k].n+'</button>';
     }
     h += '</div>';
+    // Section vente inter-joueurs (toujours visible pour permettre l'accès solo aussi)
+    const myOid = MP.myId;
+    const isOwner = !b.owner || b.owner === myOid;
+    if(isOwner){
+      h += '<div style="margin-top:8px;color:#f0c060;font-size:11px">🛒 Vente aux autres joueurs</div>';
+      h += '<div style="font-size:10px;color:#8fa3bf;margin-bottom:3px">Prix par unité · cliquer pour activer/désactiver</div><div>';
+      for(const k in RES){
+        const on = !!b.sellTo?.[k];
+        const price = TRADE_PRICES[k];
+        h += '<button class="tbtn sell-toggle'+(on?' on':'')+'" data-sell="'+k+'" style="'
+           + (on ? 'border-color:#f0c060;color:#f0c060' : '')+'">'
+           + '<span class="dot" style="background:'+RES[k].c+'"></span>'
+           + RES[k].n+' <span style="color:#8fa3bf">'+price+' $</span></button>';
+      }
+      h += '</div>';
+    }
   }
-  const canControl = !MP.connected || !b.owner || b.owner === MP.myId;
+  if(b.type==='garage'){
+    const bvehicles = b.vehicles || [];
+    h += '<div class="row"><span>Véhicules</span><b>'+bvehicles.length+'</b></div>';
+    // Instruction mode assignation route
+    if(vehicleRouteMode && bvehicles.some(v=>v===vehicleRouteMode.vehicle)){
+      const step = vehicleRouteMode.step;
+      h += '<div class="warn" style="background:#1a2e1a;border-color:#3d8c3d;color:#9fe8a0">'
+         + (step==='source' ? '🔁 Clique sur le bâtiment SOURCE' : '🔁 Clique sur la DESTINATION')
+         + '</div>';
+    }
+    if(bvehicles.length){
+      h += '<div style="margin-top:8px;color:#8fa3bf">Véhicules assignés</div>';
+      for(const v of bvehicles){
+        const vt = VEHICLE_TYPES[v.vtype];
+        const srcName = v.source && !v.source.dead ? BUILD[v.source.type].n : '—';
+        const dstName = v.dest   && !v.dest.dead   ? BUILD[v.dest.type].n  : '—';
+        const stateLabel = v.state==='idle' ? 'En attente'
+          : v.state==='to_source' ? 'Vers source' : 'Vers destination';
+        const cargoStr = v.cargo > 0 ? ' · '+v.cargo+(v.res ? ' '+RES[v.res].n : '') : '';
+        h += '<div style="padding:5px 0;border-bottom:1px solid #2a3a50">'
+           + '<div>'+vt.icone+' <b>'+vt.nom+'</b></div>'
+           + '<div style="font-size:11px;color:#8fa3bf">'+stateLabel+cargoStr+'</div>'
+           + '<div style="font-size:11px;color:#8fa3bf">'+srcName+' → '+dstName+'</div>'
+           + '<div style="display:flex;gap:4px;margin-top:3px">'
+           + '<button class="tbtn" style="flex:1;font-size:11px" data-route-v="'+v.id+'">🔁 Route</button>'
+           + '<button class="tbtn" style="font-size:11px;color:#ff9a8a" data-sell-v="'+v.id+'">🗑️ Vendre</button>'
+           + '</div></div>';
+      }
+    }
+    h += '<div style="margin-top:8px;color:#8fa3bf">Acheter un véhicule</div>';
+    for(const vk in VEHICLE_TYPES){
+      const vt = VEHICLE_TYPES[vk];
+      h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:2px" data-buy-v="'+vk+'">'
+         + vt.icone+' '+vt.nom+' <span style="color:#8fa3bf">— '+vt.cost+' $</span></button>';
+    }
+  }
+  const canControl = !b.owner || b.owner === MP.myId;
   if(d.ind && canControl)
     h += '<button class="tbtn" id="bPauseBld">'+(b.paused ? '▶ Reprendre' : '⏸ Mettre en pause')+'</button>';
   h += '<button class="tbtn" id="bDemol">🧨 Démolir (+'+Math.floor((d.cost||0)*0.3)+' $)</button>';
@@ -1964,6 +2750,65 @@ function renderInfo(){
       p._html = null; // forcer le rafraîchissement
     };
   });
+  p.querySelectorAll('.sell-toggle').forEach(btn=>{
+    btn.onclick = ()=>{
+      if(!b.sellTo) b.sellTo = {};
+      b.sellTo[btn.dataset.sell] = !b.sellTo[btn.dataset.sell];
+      p._html = null;
+    };
+  });
+  if(b.type === 'garage'){
+    p.querySelectorAll('[data-route-v]').forEach(btn=>{
+      btn.onclick = ()=>{
+        const vid = +btn.dataset.routeV;
+        const v = vehicles.find(vv=>vv.id===vid);
+        if(!v) return;
+        vehicleRouteMode = { vehicle:v, step:'source' };
+        setTool('select');
+        toast('🔁 Clique sur le bâtiment SOURCE pour '+VEHICLE_TYPES[v.vtype].nom+'.');
+        p._html = null;
+      };
+    });
+    p.querySelectorAll('[data-sell-v]').forEach(btn=>{
+      btn.onclick = ()=>{
+        const vid = +btn.dataset.sellV;
+        const v = vehicles.find(vv=>vv.id===vid);
+        if(!v) return;
+        const refund = Math.floor(VEHICLE_TYPES[v.vtype].cost * 0.5);
+        earnMoney(refund, 'rembours');
+        vehicles.splice(vehicles.indexOf(v), 1);
+        b.vehicles = (b.vehicles||[]).filter(vv=>vv!==v);
+        if(vehicleRouteMode && vehicleRouteMode.vehicle===v) vehicleRouteMode = null;
+        toast('🗑️ Véhicule vendu (+'+refund+' $)');
+        p._html = null;
+      };
+    });
+    p.querySelectorAll('[data-buy-v]').forEach(btn=>{
+      btn.onclick = ()=>{
+        const vtype = btn.dataset.buyV;
+        const vt = VEHICLE_TYPES[vtype];
+        if(!vt) return;
+        if(myWallet().money < vt.cost){ toast('Fonds insuffisants ('+vt.cost+' $)','err'); return; }
+        spendMoney(vt.cost, 'construction');
+        const v = {
+          id: nextVehicleId++,
+          vtype,
+          garageRef: b,
+          source: null, dest: null,
+          state: 'idle',
+          cargo: 0, res: null,
+          pts: [], seg: 0, t: 0,
+          waitTimer: 0,
+          currentBuilding: b,
+        };
+        vehicles.push(v);
+        b.vehicles = b.vehicles || [];
+        b.vehicles.push(v);
+        toast(vt.icone+' '+vt.nom+' acheté ! Définis sa route avec 🔁 Route.','win');
+        p._html = null;
+      };
+    });
+  }
   const pauseBtn = $('bPauseBld');
   if(pauseBtn) pauseBtn.onclick = ()=>{
     setBuildingPaused(b, !b.paused);
@@ -1996,6 +2841,12 @@ function toast(msg, cls){
 function buildToolbar(){
   const bar = $('toolbar');
   for(const k of TOOL_ORDER){
+    if(k === 'garage'){
+      const sep = document.createElement('div');
+      sep.style.cssText = 'padding:4px 6px 2px;font-size:10px;color:#8fa3bf;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap';
+      sep.textContent = '🚛 Logistique';
+      bar.appendChild(sep);
+    }
     const d = BUILD[k];
     const btn = document.createElement('button');
     btn.className = 'tool' + (k===tool ? ' on' : '');
@@ -2051,7 +2902,7 @@ addEventListener('mousemove', e=>{
     syncTargetCam();
     mouse.lastX = e.clientX; mouse.lastY = e.clientY;
   }
-  if(mouse.lDown && (tool==='road'||tool==='bulldoze') && (mouse.tx!==ptx || mouse.ty!==pty))
+  if(mouse.lDown && (tool==='road'||tool==='bulldoze'||tool==='terraform') && (mouse.tx!==ptx || mouse.ty!==pty))
     clickFn(mouse.tx, mouse.ty);
 });
 addEventListener('mouseup', e=>{
@@ -2106,12 +2957,14 @@ addEventListener('keydown', e=>{
   if(e.target.tagName==='INPUT') return;
   keys.add(e.code);
   if(e.code==='Space'){ e.preventDefault(); togglePause(); }
-  if(e.code==='Escape'){ setTool('select'); selected = null; }
+  if(e.code==='Escape'){ setTool('select'); selected = null; vehicleRouteMode = null; selectedVehicle = null; }
   if(e.code==='KeyH') toggleHelp();
   if(e.code==='KeyR') rotate(e.shiftKey ? -1 : 1);
   if(e.code.startsWith('Digit')){
-    const num = +e.code.slice(5) - 1;
-    if(num>=0 && num<TOOL_ORDER.length) setTool(TOOL_ORDER[num]);
+    const d = +e.code.slice(5);
+    // Digit0 → 'garage', Digit1-9 → TOOL_ORDER[d-1]
+    const idx = d === 0 ? TOOL_ORDER.indexOf('garage') : d - 1;
+    if(idx >= 0 && idx < TOOL_ORDER.length) setTool(TOOL_ORDER[idx]);
   }
 });
 addEventListener('keyup', e=> keys.delete(e.code));
@@ -2200,12 +3053,19 @@ function frame(now){
   if(!paused) update(rdt*speed);
   drawFn();
   updateHUD(rdt);
+  // Décompte sauvegarde auto (temps réel, pas affecté par speed/pause)
+  autoSaveTimer -= rdt;
+  if(autoSaveTimer <= 0){
+    autoSaveTimer = AUTO_SAVE_INTERVAL;
+    performAutoSave();
+  }
   requestAnimationFrame(frame);
 }
 
 buildToolbar();
 genWorld();
 $('help').style.display = 'block';
+renderAutoSaves();
 requestAnimationFrame(frame);
 
 // ======================================================================
@@ -2229,8 +3089,19 @@ function serializeState(){
       prog:b.prog||0, trucksOut:b.trucksOut||0,
       pop:b.pop||0, protectedPop:b.protectedPop||0,
       ct:b.ct||0, pending:b.pending||0, pendingProtected:b.pendingProtected||0, starve:b.starve||0,
-      ore:b.ore||null, allow:b.allow||null, paused:b.paused||false, owner:b.owner||null,
-      starterHome:!!b.starterHome,
+      ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, paused:b.paused||false, owner:b.owner||null,
+      starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
+    })),
+    towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
+    nextTownId,
+    vehicles: vehicles.map(v => ({
+      id: v.id, vtype: v.vtype,
+      garageX: v.garageRef.x, garageY: v.garageRef.y,
+      sourceX: v.source && !v.source.dead ? v.source.x : null,
+      sourceY: v.source && !v.source.dead ? v.source.y : null,
+      destX:   v.dest   && !v.dest.dead   ? v.dest.x   : null,
+      destY:   v.dest   && !v.dest.dead   ? v.dest.y   : null,
+      state: v.state, cargo: v.cargo, res: v.res || null,
     })),
   };
 }
@@ -2249,8 +3120,16 @@ function applySnapshot(d){
   document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===speed));
 
   buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
+  vehicles = []; vehicleRouteMode = null; nextVehicleId = 0;
+  towns = []; nextTownId = 0;
   bgrid = new Array(N*N).fill(null);
   selected = null;
+
+  // Restaurer les villes
+  if(Array.isArray(d.towns)){
+    towns = d.towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy }));
+    nextTownId = d.nextTownId ?? (towns.reduce((m,t)=>Math.max(m,t.id),-1) + 1);
+  }
 
   for(const o of d.buildings){
     if(!BUILD[o.type]) continue;
@@ -2263,17 +3142,27 @@ function applySnapshot(d){
     });
     if(o.ore)   b.ore   = o.ore;
     if(o.allow) b.allow = o.allow;
+    if(o.sellTo) b.sellTo = o.sellTo;
     if(o.paused != null) b.paused = o.paused;
     if(o.owner  != null) b.owner  = o.owner;
     if(o.starterHome) b.starterHome = true;
+    if(o.starterSlots) b.starterSlots = o.starterSlots;
+    if(o.townId != null) b.townId = o.townId;
+    if(o.name   != null) b.name   = o.name;
     buildings.push(b);
     setGrid(b,b);
+  }
+  // Migration : assign townId aux maisons sans village et noms aux industries sans nom
+  for(const b of buildings){
+    if(BUILD[b.type]?.resid && b.townId == null) assignBuildingToTown(b, true);
+    if(BUILD[b.type]?.ind   && !b.name)          assignIndustryName(b);
   }
   for(const k in WALLETS) WALLETS[k].starterHomes = 0;
   for(const b of buildings){
     if(!b.starterHome) continue;
-    const w = walletOf(b.owner ?? SOLO_KEY);
-    w.starterHomes = Math.min(2, (w.starterHomes||0) + Math.max(1, b.protectedPop||0));
+    const w = walletOf(b.owner);
+    const slots = b.starterSlots || Math.max(1, b.protectedPop || 0);
+    w.starterHomes = Math.min(2, (w.starterHomes||0) + slots);
   }
   ensureAllStarterProtections();
   if(Array.isArray(d.homeless)){
@@ -2285,7 +3174,43 @@ function applySnapshot(d){
     }));
     if(MP.connected && MP.role === 'host' && MP.myId != null) adoptSoloHomeless(MP.myId);
     for(const h of homeless) h.col = playerColor(h.owner);
-    for(const h of homeless) walletOf(h.owner ?? SOLO_KEY).homelessSeeded = true;
+    for(const h of homeless) walletOf(h.owner).homelessSeeded = true;
+  }
+  // Restaurer les véhicules persistants
+  if(Array.isArray(d.vehicles)){
+    for(const sv of d.vehicles){
+      if(!VEHICLE_TYPES[sv.vtype]) continue;
+      const garage = buildings.find(b=>b.x===sv.garageX && b.y===sv.garageY && b.type==='garage');
+      if(!garage) continue;
+      const source = sv.sourceX != null ? buildings.find(b=>b.x===sv.sourceX && b.y===sv.sourceY) : null;
+      const dest   = sv.destX   != null ? buildings.find(b=>b.x===sv.destX   && b.y===sv.destY)   : null;
+      const v = {
+        id: sv.id ?? nextVehicleId,
+        vtype: sv.vtype,
+        garageRef: garage,
+        source: source || null,
+        dest: dest || null,
+        state: 'idle',
+        cargo: sv.cargo || 0, res: sv.res || null,
+        pts: [], seg: 0, t: 0,
+        waitTimer: 0, currentBuilding: garage,
+      };
+      nextVehicleId = Math.max(nextVehicleId, v.id + 1);
+      // Recalculer le chemin si la route était en cours
+      if(source && dest && sv.state !== 'idle'){
+        const from = sv.state === 'to_dest' ? source : garage;
+        const to   = sv.state === 'to_dest' ? dest   : source;
+        const pts = findRoadPath(from, to);
+        if(pts){ v.pts = pts; v.state = sv.state; }
+        // Recompute viz route
+        const fwd = findRoadPath(source, dest);
+        const bwd = findRoadPath(dest, source);
+        v.vizRoute = { fwd: fwd || [], bwd: bwd || [] };
+      }
+      garage.vehicles = garage.vehicles || [];
+      garage.vehicles.push(v);
+      vehicles.push(v);
+    }
   }
 }
 
@@ -2296,6 +3221,7 @@ function applyAction(msg){
     case 'road':   road[act.i] = 1; break;
     case 'bulldoze_road': road[act.i] = 0; earnMoney(3, 'rembours', walletOf(msg.from)); break;
     case 'bulldoze_tree': terrain[act.i] = T.GRASS; break;
+    case 'terraform': terrain[act.i] = T.GRASS; break;
     case 'bulldoze_bld': {
       const b = bgrid[act.by*N+act.bx];
       if(!b) break;
@@ -2315,6 +3241,8 @@ function applyAction(msg){
       const b = newBuilding(act.btype, act.x, act.y);
       b.owner = msg.from;
       markStarterHomeIfNeeded(b);
+      assignBuildingToTown(b);
+      assignIndustryName(b);
       buildings.push(b); bgrid[act.y*N+act.x] = b;
       wSender.money -= cost; wSender.fin.construction += cost;
       if(BUILD[b.type].resid) assignHomelessToHousing(b.owner);
@@ -2505,6 +3433,7 @@ function mpConnect(url){
       case 'saves_list':
         MP.saves = msg.saves || [];
         mpRenderSaves();
+        renderAutoSaves();
         break;
 
       case 'save_ok':
@@ -2593,6 +3522,14 @@ clickFn = function(x,y){
       netSend({ type:'bulldoze_tree', i });
     }
     clickAt(x,y);
+    return;
+  }
+  if(tool==='terraform'){
+    const ter = terrain[i];
+    if(!bgrid[i] && (ter===T.TREE || ter===T.IRON || ter===T.COAL)){
+      netSend({ type:'terraform', i });
+      clickAt(x,y);
+    }
     return;
   }
   const v = canPlace(tool,x,y);
@@ -2737,6 +3674,13 @@ function mpInjectUI(){
 
 <!-- joueurs connectés -->
 <div style="border-top:1px solid #36465e;margin:8px 0"></div>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+  <div style="color:#8fa3bf;font-size:11px">🔄 Sauvegardes auto</div>
+  <span id="autoSaveCountdown" style="color:#6e8aa0;font-size:10px"></span>
+</div>
+<div id="autoSaveList" style="max-height:130px;overflow-y:auto;margin-bottom:4px"></div>
+
+<div style="border-top:1px solid #36465e;margin:8px 0"></div>
 <div style="color:#8fa3bf;font-size:11px;margin-bottom:4px">👥 Joueurs</div>
 <div id="mpPlayers" style="margin-bottom:6px"></div>
 
@@ -2845,6 +3789,7 @@ function mpUpdateUI(){
   }
   mpSyncWorldInputs();
   mpRenderNewCollapse();
+  renderAutoSaves();
 }
 
 function mpRenderNewCollapse(){
@@ -2891,11 +3836,12 @@ function mpRenderPlayerList(){
 function mpRenderSaves(){
   const el = $('mpSaveList');
   if(!el) return;
-  if(!MP.saves.length){
+  const saves = MP.saves.filter(s => !/^[\[_]Auto[\]_ ]/i.test(s.name));
+  if(!saves.length){
     el.innerHTML = '<div style="color:#8fa3bf;font-size:11px;font-style:italic">Aucune sauvegarde</div>';
     return;
   }
-  el.innerHTML = MP.saves.map(s=>{
+  el.innerHTML = saves.map(s=>{
     const d = new Date(s.date);
     const dateStr = d.toLocaleDateString('fr-FR')+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
     return '<div style="display:flex;align-items:center;gap:4px;margin:2px 0;padding:3px 4px;'+
@@ -2932,6 +3878,103 @@ function mpRenderSaves(){
       if(!mpHasAdminRights()) return;
       if(!confirm('Supprimer "'+btn.dataset.del+'" ?')) return;
       MP.ws.send(JSON.stringify({ type:'delete_save', token:MP.token, name:btn.dataset.del }));
+    };
+  });
+}
+
+// ---------- sauvegarde automatique ----------
+function loadAutoSaves(){
+  try { return JSON.parse(localStorage.getItem(AUTO_SAVE_KEY) || '[]'); } catch(e){ return []; }
+}
+
+function performAutoSave(){
+  if(!buildings.length) return; // monde non initialisé
+  const saves = loadAutoSaves();
+  const lastSlot = saves.length > 0 ? saves[saves.length - 1].slot : 0;
+  const nextSlot = (lastSlot % AUTO_SAVE_MAX) + 1;
+  const entry = { slot: nextSlot, date: new Date().toISOString(), state: serializeState() };
+  const updated = saves.filter(s => s.slot !== nextSlot);
+  updated.push(entry);
+  // conserver uniquement les MAX dernières
+  const trimmed = updated.slice(-AUTO_SAVE_MAX);
+  try {
+    localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify(trimmed));
+  } catch(e){
+    toast('⚠️ Sauvegarde auto impossible (stockage plein)', 'err');
+    return;
+  }
+  renderAutoSaves();
+  toast('💾 Sauvegarde auto — emplacement '+nextSlot+'/'+AUTO_SAVE_MAX);
+  // Envoyer aussi au serveur si connecté et admin
+  if(MP.connected && mpHasAdminRights() && MP.token){
+    MP.ws.send(JSON.stringify({
+      type: 'save_game', token: MP.token,
+      name: '[Auto] ' + nextSlot,
+      state: serializeState(),
+    }));
+  }
+}
+
+function renderAutoSaves(){
+  const el = $('autoSaveList');
+  if(!el) return;
+  const localSaves = loadAutoSaves().sort((a,b)=> new Date(b.date) - new Date(a.date));
+  // sauvegardes auto côté serveur (noms correspondant au pattern _Auto_*)
+  const serverAutoSaves = (MP.saves || []).filter(s => /^[\[_]Auto[\]_ ]/i.test(s.name))
+    .sort((a,b) => new Date(b.date) - new Date(a.date));
+
+  if(!localSaves.length && !serverAutoSaves.length){
+    el.innerHTML = '<div style="color:#8fa3bf;font-size:11px;font-style:italic">Aucune sauvegarde auto</div>';
+    return;
+  }
+
+  const localHtml = localSaves.map(s => {
+    const d = new Date(s.date);
+    const dateStr = d.toLocaleDateString('fr-FR')+' '
+      + d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+    return '<div style="display:flex;align-items:center;gap:4px;margin:2px 0;padding:3px 4px;'
+      + 'background:#1d2939;border-radius:5px">'
+      + '<span style="flex:1;font-size:12px">🔄 Auto-'+s.slot+'</span>'
+      + '<span style="color:#8fa3bf;font-size:10px;white-space:nowrap">'+dateStr+'</span>'
+      + '<button class="tbtn" style="padding:1px 6px;font-size:11px" data-autoload="'+s.slot+'">▶</button>'
+      + '</div>';
+  }).join('');
+
+  const serverHtml = serverAutoSaves.map(s => {
+    const d = new Date(s.date);
+    const dateStr = d.toLocaleDateString('fr-FR')+' '
+      + d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+    return '<div style="display:flex;align-items:center;gap:4px;margin:2px 0;padding:3px 4px;'
+      + 'background:#1d2939;border-radius:5px">'
+      + '<span style="flex:1;font-size:12px">🌐 '+escHtml(s.name)+'</span>'
+      + '<span style="color:#8fa3bf;font-size:10px;white-space:nowrap">'+escHtml(dateStr)+'</span>'
+      + '<button class="tbtn" style="padding:1px 6px;font-size:11px" data-svautoload="'+escHtml(s.name)+'"'
+      + (mpHasAdminRights() ? '' : ' disabled') + '>▶</button>'
+      + '</div>';
+  }).join('');
+
+  el.innerHTML = localHtml + serverHtml;
+
+  el.querySelectorAll('[data-autoload]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const slot = +btn.dataset.autoload;
+      const sv = loadAutoSaves().find(s => s.slot === slot);
+      if(!sv) return;
+      const d = new Date(sv.date);
+      const label = d.toLocaleDateString('fr-FR')+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+      if(!confirm('Charger la sauvegarde automatique du '+label+' ?')) return;
+      applySnapshot(sv.state);
+      autoSaveTimer = AUTO_SAVE_INTERVAL;
+      toast('📥 Sauvegarde auto chargée', 'win');
+    };
+  });
+
+  el.querySelectorAll('[data-svautoload]').forEach(btn=>{
+    btn.onclick = ()=>{
+      if(!mpHasAdminRights()) return;
+      const name = btn.dataset.svautoload;
+      if(!confirm('Charger "'+name+'" ? La partie en cours sera remplacée pour tous les joueurs.')) return;
+      MP.ws.send(JSON.stringify({ type:'load_game', token:MP.token, name }));
     };
   });
 }
