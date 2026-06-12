@@ -424,6 +424,7 @@ const walletOf  = oid => {
   const k = oid ?? MP.myId ?? 0;
   if(!WALLETS[k]) WALLETS[k] = { money:2500, fin:FIN_ZERO(), finHist:[], finTimer:0, mi:0, eff:1, homelessSeeded:false, starterHomes:0 };
   if(WALLETS[k].starterHomes == null) WALLETS[k].starterHomes = 0;
+  if(WALLETS[k].starterHomesGranted == null) WALLETS[k].starterHomesGranted = WALLETS[k].starterHomes || 0;
   return WALLETS[k];
 };
 const myWallet  = () => walletOf(MP.myId);
@@ -668,7 +669,7 @@ function ensureSelectedTown(){
   const list = ownTowns();
   if(selectedTownId != null){
     const selectedTown = towns.find(t=>t.id === selectedTownId) || null;
-    if(selectedTown && (list.some(t=>t.id === selectedTownId) || (!list.length && townHasResidents(selectedTown))))
+    if(selectedTown && townHasResidents(selectedTown))
       return selectedTown;
   }
   const first = list[0] || towns.filter(t=>townHasResidents(t)).sort((a,b)=>a.id-b.id)[0] || null;
@@ -765,36 +766,47 @@ function newBuilding(type,x,y,w,h){
 function markStarterHomeIfNeeded(b){
   if(!b || b.type !== 'house') return;
   const w = walletOf(b.owner);
+  if((w.starterHomesGranted||0) >= 2) return;
   b.starterHome = true;
   b.starterSlots = 1; // 1 slot de départ par maison initiale
   b.protectedPop = b.protectedPop || 0;
-  w.starterHomes++;
+  w.starterHomes = (w.starterHomes||0) + 1;
+  w.starterHomesGranted = (w.starterHomesGranted||0) + 1;
 }
 
 function ensureStarterProtectionForOwner(owner){
-  const key = owner ?? MP.myId;
-  const w = walletOf(key);
   const starterBuildings = buildings.filter(b=>
     !b.dead && ownedBy(b, owner) && BUILD[b.type]?.resid && b.starterHome
   );
-  // Compter les slots utilisés : un bâtiment fusionné peut représenter N slots
-  let usedSlots = starterBuildings.reduce((s, b) => s + (b.starterSlots || 1), 0);
-  if(usedSlots < 2){
-    const candidates = buildings
-      .filter(b=>!b.dead && ownedBy(b, owner) && BUILD[b.type]?.resid && !b.starterHome)
-      .sort((a,b)=> (a.y-b.y) || (a.x-b.x));
-    for(const b of candidates){
-      if(usedSlots >= 2) break;
-      b.starterHome = true;
-      b.starterSlots = 1;
-      starterBuildings.push(b);
-      usedSlots++;
-    }
-  }
-  w.starterHomes = Math.min(2, usedSlots);
   for(const b of starterBuildings){
     if((b.pop||0) > 0 && (b.protectedPop||0) < 1) b.protectedPop = 1;
   }
+}
+
+function normalizeStarterProtectionForOwner(owner){
+  const owned = buildings
+    .filter(b=>!b.dead && ownedBy(b, owner) && BUILD[b.type]?.resid)
+    .sort((a,b)=> (a.y-b.y) || (a.x-b.x));
+  let remaining = 2;
+  for(const b of owned){
+    const slots = b.starterHome ? Math.max(1, b.starterSlots || (b.protectedPop||0) || 1) : 0;
+    if(slots > 0 && remaining > 0){
+      const keep = Math.min(slots, remaining);
+      b.starterHome = true;
+      b.starterSlots = keep;
+      b.protectedPop = Math.min(Math.max(b.protectedPop||0, Math.min(keep, b.pop||0)), b.pop||0);
+      remaining -= keep;
+    } else {
+      b.starterHome = false;
+      b.starterSlots = 0;
+      b.protectedPop = 0;
+      b.pendingProtected = 0;
+    }
+  }
+  const current = 2 - remaining;
+  const w = walletOf(owner);
+  w.starterHomes = current;
+  w.starterHomesGranted = Math.max(w.starterHomesGranted||0, current);
 }
 
 function ensureAllStarterProtections(){
@@ -802,7 +814,10 @@ function ensureAllStarterProtections(){
   for(const b of buildings) if(BUILD[b.type].resid) owners.add(b.owner ?? MP.myId);
   for(const h of homeless) owners.add(h.owner ?? MP.myId);
   if(MP.myId != null) owners.add(MP.myId);
-  for(const o of owners) ensureStarterProtectionForOwner(o);
+  for(const o of owners){
+    normalizeStarterProtectionForOwner(o);
+    ensureStarterProtectionForOwner(o);
+  }
 }
 
 function setGrid(b,val){
@@ -2994,6 +3009,8 @@ function selectTownLabelAt(x,y){
       selectedTownId = h.id;
       const t = towns.find(t=>t.id === h.id);
       if(t) toast('🏘️ Village sélectionné : ' + t.name);
+      hudTimer = 0;
+      updateHUD(0);
       return true;
     }
   }
@@ -3288,6 +3305,7 @@ function applySnapshot(d){
     const w = walletOf(b.owner);
     const slots = b.starterSlots || Math.max(1, b.protectedPop || 0);
     w.starterHomes = Math.min(2, (w.starterHomes||0) + slots);
+    w.starterHomesGranted = Math.max(w.starterHomesGranted||0, w.starterHomes);
   }
   ensureAllStarterProtections();
   if(Array.isArray(d.homeless)){
