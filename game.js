@@ -21,7 +21,7 @@ const ECO = {
 };
 
 // ---------- constantes ----------
-const N = 64;            // taille de la carte (tuiles)
+let N = 64;              // taille de la carte (tuiles)
 const TILE = 36;         // taille d'une tuile en px monde (simulation)
 const TW = 64, TH = 32;  // taille d'une tuile iso à l'écran
 const TW2 = TW/2, TH2 = TH/2;
@@ -51,7 +51,7 @@ const BUILD = {
              desc:'À placer sur un gisement (fer ou charbon).' },
   lumber:  { n:'Bûcheron',  ic:'🪓', hk:'4', cost:120, workers:2, time:2.8, col:'#5e7a3a', hgt:16, ind:true, upkeep:1.5,
              recipe:{ in:{}, out:{wood:1} },
-             desc:'À placer à 2 cases ou moins d’arbres. Produit du bois.' },
+             desc:"À placer à 2 cases ou moins d'arbres. Produit du bois." },
   smelter: { n:'Fonderie',  ic:'🔥', hk:'5', cost:300, workers:4, time:3.5, col:'#8a4f3d', hgt:26, ind:true, upkeep:3,
              recipe:{ in:{iron:1, coal:1}, out:{steel:1} },
              desc:'Fer + charbon → acier.' },
@@ -146,18 +146,66 @@ const MILESTONES = [25, 50, 100, 200, 400];
 
 // ---------- état ----------
 let terrain, road, bgrid, buildings, trucks, walkers, floats;
-let money, basePop, gtime, eff = 1, mi = 0;
+let gtime = 0, eff = 1; // eff = snapshot du wallet courant, gardé pour statusOf
 let selected = null, tool = 'select';
 let speed = 1, paused = false;
 let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0;
-let fin, finHist, finTimer = 0; // grand livre : cumuls par catégorie + instantanés (1/s)
 const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0 });
 let rot = 0; // orientation de la vue (0..3)
 const cam = { x:0, y:0, z:1 };
 
+// ---------- wallets (économie par joueur) ----------
+// Clé : MP.myId en multijoueur, 0 en solo.
+let WALLETS = {};
+const SOLO_KEY = 0;
+const walletKey = () => (MP.connected && MP.myId != null) ? MP.myId : SOLO_KEY;
+const walletOf  = oid => {
+  const k = (oid == null) ? SOLO_KEY : oid;
+  if(!WALLETS[k]) WALLETS[k] = { money:2500, basePop:10, fin:FIN_ZERO(), finHist:[], finTimer:0, mi:0, eff:1 };
+  return WALLETS[k];
+};
+const myWallet  = () => walletOf(walletKey());
+// accesseurs rétro-compatibles (lecture/écriture du wallet courant)
+const getMoney   = ()    => myWallet().money;
+const spendMoney = (n,cat)=>{ const w=myWallet(); w.money-=n; w.fin[cat]=(w.fin[cat]||0)+n; };
+const earnMoney  = (n,cat,w=myWallet())=>{ w.money+=n; w.fin[cat]=(w.fin[cat]||0)+n; };
+
 // BFS réutilisables
-const dist = new Int32Array(N*N);
-const prev = new Int32Array(N*N);
+let dist = new Int32Array(N*N);
+let prev = new Int32Array(N*N);
+
+const WORLD_DEFAULTS = {
+  size: 64,
+  maxPlayers: 8,
+  resources: { tree: 8, iron: 2, coal: 2 },
+};
+let WORLD = JSON.parse(JSON.stringify(WORLD_DEFAULTS));
+
+function clampNum(v, min, max, def){
+  v = Number(v);
+  if(!Number.isFinite(v)) return def;
+  return Math.max(min, Math.min(max, v));
+}
+
+function normalizeWorldConfig(config){
+  const c = config || {};
+  const r = c.resources || {};
+  return {
+    size: Math.round(clampNum(c.size, 32, 128, WORLD_DEFAULTS.size)),
+    maxPlayers: Math.round(clampNum(c.maxPlayers, 1, 32, WORLD_DEFAULTS.maxPlayers)),
+    resources: {
+      tree: clampNum(r.tree, 0, 40, WORLD_DEFAULTS.resources.tree),
+      iron: clampNum(r.iron, 0, 40, WORLD_DEFAULTS.resources.iron),
+      coal: clampNum(r.coal, 0, 40, WORLD_DEFAULTS.resources.coal),
+    },
+  };
+}
+
+function setMapSize(size){
+  N = Math.round(clampNum(size, 32, 128, WORLD_DEFAULTS.size));
+  dist = new Int32Array(N*N);
+  prev = new Int32Array(N*N);
+}
 
 // ---------- canvas ----------
 const cv = document.getElementById('cv');
@@ -254,14 +302,15 @@ function valueNoise(cell){
   };
 }
 
-function genWorld(){
+function genWorld(config){
+  WORLD = normalizeWorldConfig(config || WORLD);
+  setMapSize(WORLD.size);
   terrain = new Uint8Array(N*N);
   road = new Uint8Array(N*N);
   bgrid = new Array(N*N).fill(null);
   buildings = []; trucks = []; walkers = []; floats = [];
-  money = 2500; basePop = 10; gtime = 0; mi = 0;
+  WALLETS = {}; gtime = 0;
   selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0;
-  fin = FIN_ZERO(); finHist = []; finTimer = 0;
 
   const n1 = valueNoise(16), n2 = valueNoise(7), n3 = valueNoise(3);
   const tn = valueNoise(9);
@@ -269,11 +318,20 @@ function genWorld(){
     const h = 0.55*n1(x,y) + 0.30*n2(x,y) + 0.15*n3(x,y);
     let t = T.GRASS;
     if(h < 0.40) t = T.WATER;
-    else if(tn(x,y) > 0.58 && Math.random() < 0.6) t = T.TREE;
     terrain[y*N+x] = t;
   }
+  const treeCandidates = [];
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    if(terrain[y*N+x] !== T.GRASS) continue;
+    treeCandidates.push({ x, y, score: tn(x,y) + Math.random()*0.25 });
+  }
+  treeCandidates.sort((a,b)=> b.score - a.score);
+  for(let i=0, n=Math.min(treeCandidates.length, Math.round(N*N*WORLD.resources.tree/100)); i<n; i++){
+    const c = treeCandidates[i];
+    terrain[c.y*N+c.x] = T.TREE;
+  }
   // gisements en taches
-  const patch = (type, count)=>{
+  const placePatch = (type, count)=>{
     for(let k=0;k<count;k++){
       let cx, cy, tries = 0;
       do { cx = 3+(Math.random()*(N-6))|0; cy = 3+(Math.random()*(N-6))|0; }
@@ -287,8 +345,9 @@ function genWorld(){
       }
     }
   };
-  patch(T.IRON, 9);
-  patch(T.COAL, 8);
+  const patchCount = pct => Math.round(N*N * pct / 100 / 8);
+  placePatch(T.IRON, patchCount(WORLD.resources.iron));
+  placePatch(T.COAL, patchCount(WORLD.resources.coal));
 
   // caméra : centrée sur une zone d'herbe proche du milieu
   let sx = N>>1, sy = N>>1;
@@ -303,16 +362,21 @@ function genWorld(){
 
 // ---------- aides ----------
 const inMap = (x,y)=> x>=0 && y>=0 && x<N && y<N;
-const popTotal = ()=> basePop + buildings.reduce((s,b)=> s+(b.pop||0), 0);
-const housingCap = ()=> 10 + buildings.reduce((s,b)=>
-  s + (BUILD[b.type].resid ? BUILD[b.type].resid.popCap : 0), 0);
-const jobsTotal = ()=> buildings.reduce((s,b)=>
-  s + (b.paused ? 0 : (BUILD[b.type].workers||0)*b.w*b.h), 0);
+// Filtres par owner : en solo (owner null) on compte tout, en MP on filtre
+const myOwner   = () => (MP.connected && MP.myId != null) ? MP.myId : null;
+const ownedBy   = (b, oid) => oid == null ? (b.owner == null) : (b.owner === oid);
+const popTotal  = (oid=myOwner()) => walletOf(oid ?? SOLO_KEY).basePop
+  + buildings.filter(b=>ownedBy(b,oid)).reduce((s,b)=> s+(b.pop||0), 0);
+const housingCap= (oid=myOwner()) => 10
+  + buildings.filter(b=>ownedBy(b,oid)).reduce((s,b)=>
+      s + (BUILD[b.type].resid ? BUILD[b.type].resid.popCap : 0), 0);
+const jobsTotal = (oid=myOwner()) => buildings.filter(b=>ownedBy(b,oid))
+  .reduce((s,b)=> s + (b.paused ? 0 : (BUILD[b.type].workers||0)*b.w*b.h), 0);
 
 function newBuilding(type,x,y,w,h){
   const d = BUILD[type];
   const b = { type, x, y, w:w||d.size||1, h:h||d.size||1,
-              storage:{}, inc:{}, prog:0, trucksOut:0, dead:false };
+              storage:{}, inc:{}, prog:0, trucksOut:0, dead:false, owner:null };
   if(type==='mine')  b.ore = terrain[y*N+x]===T.IRON ? 'iron' : 'coal';
   if(type==='depot'){ b.allow = {}; for(const k in RES) b.allow[k] = true; }
   if(d.ind) b.paused = false;
@@ -372,22 +436,50 @@ function treeNear(x,y,r){
 }
 
 // ---------- construction ----------
+
+// état multijoueur — déclaré ici car utilisé dans canPlace, clickAt et drawBuilding
+const MP = {
+  ws: null, myId: null, myColor: '#ffffff', myName: 'Moi',
+  role: null, isAdmin: false, players: [], cursors: {}, chat: [], connected: false,
+  username: null, token: null, saves: [],
+};
+
+const mpHasAdminRights = () => MP.connected && (MP.role === 'host' || MP.isAdmin);
+
+const MP_ZONE = 20; // distance minimale entre bâtiments de joueurs différents
+
+// Retourne l'id du joueur adverse le plus proche ayant un bâtiment à moins de MP_ZONE cases,
+// ou null si la pose est libre.
+function nearbyEnemyOwner(myId, cx, cy){
+  if(!myId) return null; // solo : pas de restriction
+  for(const b of buildings){
+    if(!b.owner || b.owner === myId) continue;
+    // distance Chebyshev (max des axes) entre centres — simple et rapide
+    const bcx = b.x + (b.w-1)/2, bcy = b.y + (b.h-1)/2;
+    if(Math.abs(cx - bcx) <= MP_ZONE && Math.abs(cy - bcy) <= MP_ZONE) return b.owner;
+  }
+  return null;
+}
+
 function canPlace(t,x,y){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
   if(t==='bulldoze') return { ok: !!(road[i] || bgrid[i] || ter===T.TREE) };
   if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
-  if(ter===T.WATER) return { ok:false, msg:'Impossible de construire sur l’eau' };
+  if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
   if(t==='road'){
-    if(ter!==T.GRASS) return { ok:false, msg:'Les routes se posent sur l’herbe (démolis les arbres)' };
+    if(ter!==T.GRASS) return { ok:false, msg:"Les routes se posent sur l'herbe (démolis les arbres)" };
     return { ok:true };
   }
   if(t==='mine'){
     if(ter!==T.IRON && ter!==T.COAL) return { ok:false, msg:'La mine doit être sur un gisement' };
-    return { ok:true };
+  } else {
+    if(ter!==T.GRASS) return { ok:false, msg:'Terrain non constructible' };
+    if(t==='lumber' && !treeNear(x,y,2)) return { ok:false, msg:"Aucun arbre à moins de 2 cases" };
   }
-  if(ter!==T.GRASS) return { ok:false, msg:'Terrain non constructible' };
-  if(t==='lumber' && !treeNear(x,y,2)) return { ok:false, msg:'Aucun arbre à moins de 2 cases' };
+  // zone d'exclusion multijoueur
+  if(MP.connected && nearbyEnemyOwner(MP.myId, x, y))
+    return { ok:false, msg:"Trop proche d'un autre joueur (−"+MP_ZONE+' cases)' };
   return { ok:true };
 }
 
@@ -401,15 +493,19 @@ function clickAt(x,y){
   if(tool==='bulldoze'){
     if(bgrid[i]){
       const b = bgrid[i];
+      // en multijoueur : impossible de démolir le bâtiment d'un autre joueur
+      if(MP.connected && b.owner && b.owner !== MP.myId){
+        toast('⛔ Ce bâtiment appartient à un autre joueur','err'); return;
+      }
       b.dead = true;
       buildings.splice(buildings.indexOf(b),1);
       setGrid(b,null);
       if(selected===b) selected = null;
       const refund = Math.floor((BUILD[b.type].cost||0)*0.3);
-      money += refund; fin.rembours += refund;
+      earnMoney(refund, 'rembours', walletOf(b.owner ?? SOLO_KEY));
       if(refund) addFloat(x,y,'+'+refund+' $','#9fe89f');
     } else if(road[i]){
-      road[i] = 0; money += 3; fin.rembours += 3;
+      road[i] = 0; earnMoney(3, 'rembours');
     } else if(terrain[i]===T.TREE){
       terrain[i] = T.GRASS;
     }
@@ -423,10 +519,11 @@ function clickAt(x,y){
     return;
   }
   const cost = BUILD[tool].cost;
-  if(money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
-  money -= cost; fin.construction += cost;
+  if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
+  spendMoney(cost, 'construction');
   if(tool==='road'){ road[i] = 1; return; }
   const b = newBuilding(tool,x,y);
+  b.owner = MP.connected ? MP.myId : null;
   buildings.push(b);
   bgrid[i] = b;
   selected = b;
@@ -518,17 +615,26 @@ function updateTrucks(dt){
 function update(dt){
   gtime += dt;
   let starved = null;
-  const jobs = jobsTotal();
-  eff = jobs>0 ? Math.min(1, popTotal()/jobs) : 1;
+
+  // eff par owner : pop / jobs, mis à jour pour chaque wallet
+  for(const k in WALLETS){
+    const oid = +k === SOLO_KEY ? null : +k;
+    const w = WALLETS[k];
+    const jobs = jobsTotal(oid);
+    w.eff = jobs > 0 ? Math.min(1, popTotal(oid) / jobs) : 1;
+  }
+  // eff du joueur courant (pour statusOf)
+  eff = myWallet().eff;
 
   for(const b of buildings){
+    const w = walletOf(b.owner ?? SOLO_KEY); // wallet du propriétaire du bâtiment
     const r = recipeOf(b);
     if(r && !b.paused){
       let outOK = true, inOK = true;
       for(const k in r.out) if((b.storage[k]||0) >= OUTCAP) outOK = false;
       for(const k in r.in)  if((b.storage[k]||0) <  r.in[k]) inOK = false;
       if(outOK && inOK){
-        b.prog += dt*eff;
+        b.prog += dt * w.eff;
         if(b.prog >= r.time){
           b.prog = 0;
           for(const k in r.in)  b.storage[k] -= r.in[k];
@@ -543,12 +649,11 @@ function update(dt){
       if(b.ct >= rc.interval){
         b.ct = 0;
         b.storage.goods--;
-        money += rc.income; fin.ventes += rc.income;
+        earnMoney(rc.income, 'ventes', w);
         addFloat(b.x + (b.w-1)/2, b.y, '+'+rc.income+' $', '#ffe9a0');
         if(b.pop + b.pending < rc.popCap) spawnWalker(b);
       }
     } else if(rc && b.pop > 0){
-      // pénurie : sans marchandises, le logement se dégrade
       b.starve += dt;
       if(b.starve >= STARVE_DELAY){
         b.starve = 0;
@@ -556,7 +661,6 @@ function update(dt){
       }
     }
   }
-  // dégradations hors de la boucle : la défusion modifie la liste des bâtiments
   if(starved) for(const b of starved){
     if(b.dead) continue;
     if(b.w*b.h > 1) splitBuilding(b);
@@ -570,7 +674,7 @@ function update(dt){
   if(dispatchTimer >= 0.7){
     dispatchTimer = 0;
     for(const b of buildings){
-      if(b.trucksOut >= 2 + ((b.w*b.h)>>1)) continue; // les gros sites ont plus de camions
+      if(b.trucksOut >= 2 + ((b.w*b.h)>>1)) continue;
       const r = recipeOf(b);
       let best = null, amt = 0;
       for(const k in b.storage){
@@ -588,8 +692,13 @@ function update(dt){
   taxTimer += dt;
   if(taxTimer >= ECO.taxeInterval){
     taxTimer = 0;
-    const t = ECO.taxe*popTotal();
-    money += t; fin.taxes += t;
+    // taxes par wallet : chaque joueur reçoit les taxes de ses habitants
+    for(const k in WALLETS){
+      const oid = +k === SOLO_KEY ? null : +k;
+      const w = WALLETS[k];
+      const t = ECO.taxe * popTotal(oid);
+      earnMoney(t, 'taxes', w);
+    }
   }
 
   upkeepTimer += dt;
@@ -598,21 +707,35 @@ function update(dt){
     for(const b of buildings){
       const u = upkeepOf(b);
       if(u <= 0) continue;
-      money -= u; fin.entretien += u;
+      const w = walletOf(b.owner ?? SOLO_KEY);
+      w.money -= u; w.fin.entretien += u;
       addFloat(b.x+(b.w-1)/2, b.y, '−'+(Math.round(u*10)/10)+' $', '#ff9a8a');
     }
   }
 
-  finTimer += dt;
-  if(finTimer >= 1){
-    finTimer = 0;
-    finHist.push({ ...fin });
-    if(finHist.length > 61) finHist.shift(); // fenêtre glissante d'une minute
+  // historique financier par wallet
+  for(const k in WALLETS){
+    const w = WALLETS[k];
+    w.finTimer = (w.finTimer||0) + dt;
+    if(w.finTimer >= 1){
+      w.finTimer = 0;
+      w.finHist = w.finHist || [];
+      w.finHist.push({ ...w.fin });
+      if(w.finHist.length > 61) w.finHist.shift();
+    }
   }
 
-  if(mi < MILESTONES.length && popTotal() >= MILESTONES[mi]){
-    toast('🎉 '+MILESTONES[mi]+' habitants ! Ta ville prospère.','win');
-    mi++;
+  // milestones par wallet
+  for(const k in WALLETS){
+    const oid = +k === SOLO_KEY ? null : +k;
+    const w = WALLETS[k];
+    if(w.mi == null) w.mi = 0;
+    // n'afficher le toast que si c'est le joueur courant
+    if(w.mi < MILESTONES.length && popTotal(oid) >= MILESTONES[w.mi]){
+      if(+k === walletKey())
+        toast('🎉 '+MILESTONES[w.mi]+' habitants ! Ta ville prospère.','win');
+      w.mi++;
+    }
   }
 
   for(let i=floats.length-1;i>=0;i--){
@@ -662,7 +785,7 @@ function tryMergeInd(){
     for(let y=0; y<=N-h; y++) for(let x=0; x<=N-w; x++){
       const set = checkRectInd(x,y,w,h);
       if(!set) continue;
-      const type = set[0].type, ore = set[0].ore;
+      const type = set[0].type, ore = set[0].ore, owner = set[0].owner||null;
       const store = {};
       let wasSel = false;
       for(const o of set){
@@ -674,6 +797,7 @@ function tryMergeInd(){
       buildings = buildings.filter(o=> !o.dead);
       const t = newBuilding(type, x, y, w, h);
       if(ore) t.ore = ore;
+      t.owner = owner;
       for(const k in store) t.storage[k] = Math.min(capOf(t,k), store[k]);
       buildings.push(t);
       setGrid(t,t);
@@ -694,6 +818,7 @@ function tryMerge(){
         if(!set) continue;
         const d = BUILD[L.key];
         let goods = 0, pop = 0, wasSel = false;
+        const owner = set[0].owner||null;
         for(const o of set){
           goods += o.storage.goods||0;
           pop += o.pop;
@@ -703,6 +828,7 @@ function tryMerge(){
         }
         buildings = buildings.filter(o=> !o.dead);
         const t = newBuilding(L.key, x, y, w, h);
+        t.owner = owner;
         t.pop = Math.min(d.resid.popCap, pop);
         t.storage.goods = Math.min(d.resid.stockCap, goods);
         buildings.push(t);
@@ -826,16 +952,17 @@ function splitBuilding(b){
   pop -= excess;
   for(let y=b.y; y<b.y+b.h; y++) for(let x=b.x; x<b.x+b.w; x++){
     const h = newBuilding('house',x,y);
+    h.owner = b.owner;
     h.pop = Math.min(houseCap, pop);
     pop -= h.pop;
-    h.starve = 0; // sursis avant la prochaine dégradation
+    h.starve = 0;
     buildings.push(h);
     setGrid(h,h);
     if(wasSel && x===b.x && y===b.y) selected = h;
   }
   if(excess > 0) spawnLeavers(bgrid[b.y*N+b.x], excess);
   toast('📉 '+BUILD[b.type].n+' sans marchandises : défusion'
-    + (excess>0 ? ', '+excess+' habitants s’en vont' : ''),'err');
+    + (excess>0 ? ', '+excess+" habitants s'en vont" : ''),'err');
   if(excess > 0) addFloat(b.x+(b.w-1)/2, b.y, '−'+excess+' 👤', '#ff9a8a');
 }
 
@@ -1004,8 +1131,21 @@ function drawBuilding(b){
     ctx.font = '14px "Segoe UI Emoji",sans-serif';
     ctx.fillText('⚠️', tc[0], tc[1]-TH*0.95);
   }
-  // sélection : contour au sol
-  if(b===selected){
+  // contour couleur propriétaire (multijoueur)
+  if(b.owner && MP.connected){
+    const ownerColor = (MP.players.find(p=>p.id===b.owner)||{}).color || '#aaa';
+    ctx.strokeStyle = ownerColor; ctx.lineWidth = b===selected ? 3 : 1.5;
+    diamond(rx0, ry0, rw, rh); ctx.stroke();
+    // petit drapeau couleur en haut à gauche du toit
+    ctx.fillStyle = ownerColor;
+    ctx.beginPath(); ctx.arc(tc[0]-TW*rw*0.28, tc[1]-4, 4, 0, 7); ctx.fill();
+  } else if(b===selected){
+    // sélection solo
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    diamond(rx0, ry0, rw, rh); ctx.stroke();
+  }
+  // sélection par-dessus (multijoueur)
+  if(b===selected && MP.connected){
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
     diamond(rx0, ry0, rw, rh); ctx.stroke();
   }
@@ -1195,8 +1335,9 @@ function updateHUD(dt){
   hudTimer = 0.2;
   const pop = popTotal(), jobs = jobsTotal();
   const mEl = $('hMoney');
-  mEl.textContent = Math.floor(money).toLocaleString('fr-FR');
-  mEl.style.color = money < 0 ? '#ff8a7a' : '';
+  const myMoney = myWallet().money;
+  mEl.textContent = Math.floor(myMoney).toLocaleString('fr-FR');
+  mEl.style.color = myMoney < 0 ? '#ff8a7a' : '';
   $('hPop').textContent = pop + ' / ' + housingCap();
   $('hJobs').textContent = Math.min(pop,jobs) + ' / ' + jobs;
   $('hTrucks').textContent = trucks.length;
@@ -1213,9 +1354,11 @@ function toggleFinance(){
 function renderFinance(){
   const p = $('finance');
   if(p.style.display !== 'block') return;
+  const wt = myWallet();
+  const fin = wt.fin, finHist = wt.finHist || [];
   const base = finHist[0] || fin;
-  const w = Math.max(1, finHist.length);               // secondes couvertes par la fenêtre
-  const rate = c => (fin[c]-base[c])*60/w;             // $ par minute
+  const wl = Math.max(1, finHist.length);
+  const rate = c => (fin[c]-base[c])*60/wl;
   const fmt = n => Math.round(Math.abs(n)).toLocaleString('fr-FR');
   const row = (lbl,c,sign,cls)=>
     '<tr class="'+cls+'"><td>'+lbl+'</td>'
@@ -1251,7 +1394,7 @@ function statusOf(b){
   if(!r) return '';
   for(const k in r.out) if((b.storage[k]||0) >= OUTCAP) return 'Stock de sortie plein';
   for(const k in r.in)  if((b.storage[k]||0) <  r.in[k]) return 'Manque : '+RES[k].n;
-  if(eff < 1) return 'Production à '+Math.round(eff*100)+' % (manque d’ouvriers)';
+  if(eff < 1) return "Production à "+Math.round(eff*100)+" % (manque d'ouvriers)";
   return 'En production';
 }
 
@@ -1306,7 +1449,7 @@ function renderInfo(){
     buildings.splice(buildings.indexOf(b),1);
     setGrid(b,null);
     const refund = Math.floor((d.cost||0)*0.3);
-    money += refund; fin.rembours += refund;
+    earnMoney(refund, 'rembours', walletOf(b.owner ?? SOLO_KEY));
     selected = null;
   };
 }
@@ -1355,11 +1498,14 @@ function updateMouseTile(e){
   mouse.tx = Math.floor(tx); mouse.ty = Math.floor(ty);
 }
 
+// clickFn : indirection pour permettre au module multijoueur d'intercepter les clics
+let clickFn = clickAt;
+
 cv.addEventListener('mousedown', e=>{
   updateMouseTile(e);
   if(e.button===0){
     mouse.lDown = true;
-    clickAt(mouse.tx, mouse.ty);
+    clickFn(mouse.tx, mouse.ty);
   } else if(e.button===2 || e.button===1){
     mouse.rDown = true; mouse.rMoved = 0;
     mouse.lastX = e.clientX; mouse.lastY = e.clientY;
@@ -1376,7 +1522,7 @@ addEventListener('mousemove', e=>{
     mouse.lastX = e.clientX; mouse.lastY = e.clientY;
   }
   if(mouse.lDown && (tool==='road'||tool==='bulldoze') && (mouse.tx!==ptx || mouse.ty!==pty))
-    clickAt(mouse.tx, mouse.ty);
+    clickFn(mouse.tx, mouse.ty);
 });
 addEventListener('mouseup', e=>{
   if(e.button===0) mouse.lDown = false;
@@ -1447,45 +1593,19 @@ $('sMoney').onclick = toggleFinance;
 // délégation : le ✕ survit aux reconstructions du panneau (rafraîchi 5×/s)
 $('finance').onclick = e=>{ if(e.target.id==='bFinX') toggleFinance(); };
 
-const SAVE_KEY = 'factopolis-save';
-$('bSave').onclick = ()=>{
-  const data = {
-    terrain:Array.from(terrain), road:Array.from(road),
-    money, basePop, fin,
-    buildings:buildings.map(b=>({ type:b.type, x:b.x, y:b.y, w:b.w, h:b.h,
-                                  storage:b.storage, pop:b.pop||0, ore:b.ore||null,
-                                  allow:b.allow||null })),
-  };
-  localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-  toast('💾 Partie sauvegardée');
-};
-$('bLoad').onclick = ()=>{
-  const s = localStorage.getItem(SAVE_KEY);
-  if(!s){ toast('Aucune sauvegarde','err'); return; }
-  const d = JSON.parse(s);
-  terrain = Uint8Array.from(d.terrain);
-  road = Uint8Array.from(d.road);
-  money = d.money; basePop = d.basePop;
-  fin = Object.assign(FIN_ZERO(), d.fin||{}); finHist = []; finTimer = 0;
-  buildings = []; trucks = []; walkers = []; floats = [];
-  bgrid = new Array(N*N).fill(null);
-  for(const o of d.buildings){
-    if(!BUILD[o.type]) continue;
-    const b = newBuilding(o.type, o.x, o.y, o.w, o.h);
-    b.storage = o.storage || {};
-    // clamp si la config a réduit les capacités depuis la sauvegarde
-    if(o.pop) b.pop = Math.min(o.pop, BUILD[o.type].resid?.popCap ?? o.pop);
-    if(o.allow) b.allow = o.allow;
-    if(o.ore) b.ore = o.ore;
-    buildings.push(b);
-    setGrid(b,b);
-  }
-  selected = null;
-  mi = MILESTONES.findIndex(m=> popTotal() < m);
-  if(mi<0) mi = MILESTONES.length;
-  toast('📂 Partie chargée');
-};
+// Sauvegarde/chargement solo supprimés — le jeu est multijoueur uniquement.
+// Les sauvegardes se font via le panneau 🌐 Multijoueur.
 $('bNew').onclick = ()=>{
+  if(MP.connected && !mpHasAdminRights()){
+    toast('⛔ Action réservée à l’hôte ou aux administrateurs','err');
+    return;
+  }
+  if(MP.connected){
+    $('mpPanel').style.display = 'block';
+    mpSyncWorldInputs();
+    $('mpNewBlock')?.scrollIntoView({ block:'nearest' });
+    return;
+  }
   if(confirm('Générer un nouveau monde ? (la partie en cours sera perdue)')) genWorld();
 };
 function toggleHelp(){
@@ -1496,13 +1616,16 @@ $('bHelp').onclick = toggleHelp;
 $('bGo').onclick = ()=> $('help').style.display = 'none';
 
 // ---------- boucle principale ----------
+// drawFn est une indirection pour permettre aux extensions (multijoueur) de surcharger draw
+let drawFn = draw;
+
 let last = performance.now();
 function frame(now){
   const rdt = Math.min(0.05, (now-last)/1000);
   last = now;
   panKeys(rdt);
   if(!paused) update(rdt*speed);
-  draw();
+  drawFn();
   updateHUD(rdt);
   requestAnimationFrame(frame);
 }
@@ -1511,3 +1634,647 @@ buildToolbar();
 genWorld();
 $('help').style.display = 'block';
 requestAnimationFrame(frame);
+
+// ======================================================================
+// MULTIJOUEUR — couche réseau WebSocket
+// ======================================================================
+
+// ---- sérialisation de l'état complet (hôte → invité) ----
+function serializeState(){
+  return {
+    world: WORLD,
+    size: N,
+    terrain: Array.from(terrain),
+    road:    Array.from(road),
+    wallets: WALLETS,
+    gtime,
+    paused, speed,
+    buildings: buildings.map(b => ({
+      type:b.type, x:b.x, y:b.y, w:b.w, h:b.h,
+      storage:{...b.storage}, inc:{...b.inc},
+      prog:b.prog||0, trucksOut:b.trucksOut||0,
+      pop:b.pop||0, ct:b.ct||0, pending:b.pending||0, starve:b.starve||0,
+      ore:b.ore||null, allow:b.allow||null, paused:b.paused||false, owner:b.owner||null,
+    })),
+  };
+}
+
+function applySnapshot(d){
+  WORLD = normalizeWorldConfig(d.world || { ...WORLD, size: d.size || WORLD.size });
+  setMapSize(WORLD.size);
+  terrain  = Uint8Array.from(d.terrain);
+  road     = Uint8Array.from(d.road);
+  gtime    = d.gtime || 0;
+  WALLETS  = {};
+  if(d.wallets){ for(const k in d.wallets) WALLETS[k] = d.wallets[k]; }
+  paused   = d.paused;  speed   = d.speed||1;
+  $('bPause').textContent = paused ? '▶' : '⏸';
+  $('bPause').classList.toggle('on', paused);
+  document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===speed));
+
+  buildings = []; trucks = []; walkers = []; floats = [];
+  bgrid = new Array(N*N).fill(null);
+  selected = null;
+
+  for(const o of d.buildings){
+    if(!BUILD[o.type]) continue;
+    const b = newBuilding(o.type, o.x, o.y, o.w, o.h);
+    Object.assign(b, {
+      storage:o.storage||{}, inc:o.inc||{},
+      prog:o.prog||0, trucksOut:o.trucksOut||0,
+      pop:o.pop||0, ct:o.ct||0, pending:o.pending||0, starve:o.starve||0,
+    });
+    if(o.ore)   b.ore   = o.ore;
+    if(o.allow) b.allow = o.allow;
+    if(o.paused != null) b.paused = o.paused;
+    if(o.owner  != null) b.owner  = o.owner;
+    buildings.push(b);
+    setGrid(b,b);
+  }
+}
+
+// ---- patch minimal d'une action entrante ----
+function applyAction(msg){
+  const { act } = msg;
+  switch(act.type){
+    case 'road':   road[act.i] = 1; break;
+    case 'bulldoze_road': road[act.i] = 0; earnMoney(3, 'rembours', walletOf(msg.from)); break;
+    case 'bulldoze_tree': terrain[act.i] = T.GRASS; break;
+    case 'bulldoze_bld': {
+      const b = bgrid[act.by*N+act.bx];
+      if(!b) break;
+      // valider le droit de démolition côté receveur aussi
+      if(b.owner && b.owner !== msg.from) break;
+      b.dead = true;
+      buildings.splice(buildings.indexOf(b),1);
+      setGrid(b,null);
+      if(selected===b) selected = null;
+      const refund = Math.floor((BUILD[b.type].cost||0)*0.3);
+      earnMoney(refund, 'rembours', walletOf(msg.from));
+      break;
+    }
+    case 'build': {
+      const cost = BUILD[act.btype].cost||0;
+      const wSender = walletOf(msg.from);
+      if(act.btype === 'road'){
+        road[act.y*N+act.x] = 1;
+        wSender.money -= cost; wSender.fin.construction += cost;
+        break;
+      }
+      const b = newBuilding(act.btype, act.x, act.y);
+      b.owner = msg.from;
+      buildings.push(b); bgrid[act.y*N+act.x] = b;
+      wSender.money -= cost; wSender.fin.construction += cost;
+      break;
+    }
+    case 'pause': togglePause(); break;
+    case 'speed': {
+      speed = act.s; paused = false;
+      document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===act.s));
+      if($('bPause').textContent==='▶'){ paused=false; $('bPause').textContent='⏸'; $('bPause').classList.remove('on'); }
+      break;
+    }
+    default: break;
+  }
+}
+
+// ---- envoi d'une action au réseau ----
+function netSend(act){
+  if(!MP.ws || !MP.connected) return;
+  MP.ws.send(JSON.stringify({ type:'action', act }));
+}
+
+// ---- connection ----
+function mpConnect(url){
+  if(MP.ws){ MP.ws.close(); }
+  const ws = new WebSocket(url);
+  MP.ws = ws;
+
+  ws.onopen = () => {
+    MP.connected = true;
+    toast('🌐 Connecté au serveur multijoueur');
+    mpUpdateUI();
+    // tentative de reprise de session via token stocké
+    const saved = localStorage.getItem('fp_token');
+    if(saved) ws.send(JSON.stringify({ type:'resume', token:saved }));
+  };
+
+  ws.onclose = () => {
+    MP.connected = false;
+    MP.role = null;
+    MP.isAdmin = false;
+    toast('🔌 Déconnecté du serveur','err');
+    mpUpdateUI();
+  };
+
+  ws.onerror = () => {
+    toast('⚠️ Erreur de connexion','err');
+  };
+
+  ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+
+    switch(msg.type){
+      case 'hello':
+        MP.myId    = msg.id;
+        MP.myColor = msg.color;
+        MP.myName  = msg.name;
+        MP.role    = msg.role;
+        MP.isAdmin = !!msg.isAdmin;
+        if(msg.worldConfig) WORLD = normalizeWorldConfig(msg.worldConfig);
+        toast((msg.role==='host' ? '👑 Tu es l\'hôte' : '👥 Tu as rejoint la partie')+' (#'+msg.id+')');
+        mpUpdateUI();
+        break;
+
+      case 'promoted_host':
+        MP.role = 'host';
+        MP.isAdmin = false;
+        if(msg.worldConfig) WORLD = normalizeWorldConfig(msg.worldConfig);
+        toast('👑 Tu es maintenant l\'hôte de la partie');
+        mpUpdateUI();
+        break;
+
+      case 'admin_promoted':
+        MP.isAdmin = true;
+        toast('🛡️ Tu es maintenant administrateur');
+        mpUpdateUI();
+        break;
+
+      case 'admin_changed':
+        if(msg.playerId === MP.myId) MP.isAdmin = !!msg.isAdmin;
+        toast('🛡️ Un joueur a été promu administrateur');
+        mpUpdateUI();
+        break;
+
+      case 'snapshot_request':
+        // l'hôte envoie l'état complet à un invité
+        if(MP.role === 'host'){
+          MP.ws.send(JSON.stringify({
+            type:'snapshot', forId: msg.forId,
+            state: serializeState(),
+          }));
+        }
+        break;
+
+      case 'snapshot':
+        // l'invité reçoit l'état initial
+        applySnapshot(msg.state);
+        toast('📥 Carte synchronisée');
+        break;
+
+      case 'action':
+        // recevoir une action d'un autre joueur
+        applyAction(msg);
+        break;
+
+      case 'cursor':
+        if(msg.from !== MP.myId)
+          MP.cursors[msg.from] = { tx:msg.tx, ty:msg.ty,
+            color: (MP.players.find(p=>p.id===msg.from)||{}).color || '#fff',
+            name:  (MP.players.find(p=>p.id===msg.from)||{}).name  || '?',
+            ts: Date.now() };
+        break;
+
+      case 'chat': {
+        const entry = { name:msg.name, text:msg.text, col:(MP.players.find(p=>p.id===msg.from)||{}).color||'#fff' };
+        MP.chat.push(entry);
+        if(MP.chat.length > 30) MP.chat.shift();
+        mpRenderChat();
+        toast('💬 '+msg.name+': '+msg.text);
+        break;
+      }
+
+      case 'player_list':
+        MP.players = msg.players;
+        MP.isAdmin = !!(MP.players.find(p=>p.id===MP.myId)||{}).isAdmin;
+        mpUpdateUI();
+        mpRenderPlayerList();
+        // mettre à jour les couleurs des curseurs
+        for(const p of MP.players)
+          if(MP.cursors[p.id]) MP.cursors[p.id].color = p.color;
+        break;
+
+      case 'player_left':
+        delete MP.cursors[msg.id];
+        toast('👤 Joueur #'+msg.id+' a quitté la partie');
+        mpRenderPlayerList();
+        break;
+
+      case 'auth_ok':
+        MP.username = msg.username;
+        MP.token    = msg.token;
+        MP.myColor  = msg.color;
+        MP.myName   = msg.username;
+        localStorage.setItem('fp_token', msg.token);
+        toast('👤 Connecté en tant que ' + msg.username);
+        mpUpdateUI();
+        // récupérer la liste des sauvegardes
+        MP.ws.send(JSON.stringify({ type:'list_saves', token:MP.token }));
+        break;
+
+      case 'auth_err':
+        mpShowAuthError(msg.msg);
+        break;
+
+      case 'saves_list':
+        MP.saves = msg.saves || [];
+        mpRenderSaves();
+        break;
+
+      case 'save_ok':
+        toast('💾 Sauvegarde "'+msg.name+'" enregistrée');
+        $('mpSaveName').value = '';
+        break;
+
+      case 'save_err':
+        toast('💾 ' + msg.msg, 'err');
+        break;
+
+      case 'permission_err':
+        toast('⛔ ' + msg.msg, 'err');
+        break;
+
+      case 'save_deleted':
+        toast('🗑️ Sauvegarde supprimée');
+        break;
+
+      case 'game_saved':
+        if(msg.savedBy !== MP.username)
+          toast('💾 '+msg.savedBy+' a sauvegardé la partie : "'+msg.name+'"');
+        break;
+
+      case 'game_loaded':
+        applySnapshot(msg.state);
+        toast('📂 Partie "'+msg.name+'" chargée par '+msg.loadedBy);
+        break;
+
+      case 'game_new_world':
+        applySnapshot(msg.state);
+        if(msg.config) WORLD = normalizeWorldConfig(msg.config);
+        toast('🌍 Nouvelle carte créée par '+msg.createdBy);
+        mpUpdateUI();
+        break;
+
+      case 'server_full':
+        toast('⛔ '+msg.msg, 'err');
+        break;
+    }
+  };
+}
+
+function mpDisconnect(){
+  if(MP.ws){ MP.ws.close(); MP.ws = null; }
+  MP.connected = false;
+  MP.role = null;
+  MP.isAdmin = false;
+  MP.username = null;
+  MP.token = null;
+  MP.saves = [];
+  mpUpdateUI();
+}
+
+// ---- interception des clics (via clickFn défini plus haut) ----
+clickFn = function(x,y){
+  if(!inMap(x,y)) return;
+  const i = y*N+x;
+  if(!MP.connected){ clickAt(x,y); return; }
+  if(tool==='select'){ clickAt(x,y); return; }
+
+  if(tool==='bulldoze'){
+    if(bgrid[i]){
+      // ne pas envoyer l'action si le bâtiment appartient à quelqu'un d'autre
+      if(bgrid[i].owner && bgrid[i].owner !== MP.myId){ clickAt(x,y); return; }
+      netSend({ type:'bulldoze_bld', bx:bgrid[i].x, by:bgrid[i].y });
+    } else if(road[i]){
+      netSend({ type:'bulldoze_road', i });
+    } else if(terrain[i]===T.TREE){
+      netSend({ type:'bulldoze_tree', i });
+    }
+    clickAt(x,y);
+    return;
+  }
+  const v = canPlace(tool,x,y);
+  if(!v.ok){ clickAt(x,y); return; }
+  if((BUILD[tool].cost||0) > myWallet().money){ clickAt(x,y); return; }
+  netSend({ type:'build', btype:tool, x, y });
+  clickAt(x,y);
+};
+
+// ---- envoi du curseur réseau (ajouté à mousemove existant) ----
+let _lastCursorTx = -1, _lastCursorTy = -1;
+addEventListener('mousemove', () => {
+  if(!MP.connected) return;
+  if(mouse.tx !== _lastCursorTx || mouse.ty !== _lastCursorTy){
+    _lastCursorTx = mouse.tx; _lastCursorTy = mouse.ty;
+    MP.ws.send(JSON.stringify({ type:'cursor', tx:mouse.tx, ty:mouse.ty }));
+  }
+});
+
+// ---- interception pause / speed pour diffusion réseau ----
+$('bPause').onclick = ()=>{ togglePause(); if(MP.connected) netSend({ type:'pause' }); };
+
+document.querySelectorAll('.spd').forEach(b=>{
+  b.onclick = ()=>{
+    speed = +b.dataset.s;
+    document.querySelectorAll('.spd').forEach(x=> x.classList.toggle('on', x===b));
+    if(paused){ paused=false; $('bPause').textContent='⏸'; $('bPause').classList.remove('on'); }
+    if(MP.connected) netSend({ type:'speed', s:speed });
+  };
+});
+
+// ---- rendu des curseurs (via drawFn défini plus haut) ----
+drawFn = function(){
+  draw();
+  if(!MP.connected) return;
+  const now = Date.now();
+  ctx.setTransform(DPR*cam.z, 0, 0, DPR*cam.z, -cam.x*DPR*cam.z, -cam.y*DPR*cam.z);
+  for(const cid in MP.cursors){
+    const c = MP.cursors[cid];
+    if(now - c.ts > 5000) continue;
+    const [rx,ry] = rotIdx(c.tx, c.ty);
+    const pt = iso(rx+0.5, ry+0.5);
+    ctx.save();
+    ctx.globalAlpha = 0.75;
+    ctx.strokeStyle = c.color; ctx.lineWidth = 2;
+    diamond(rx, ry, 1, 1); ctx.stroke();
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillStyle = c.color; ctx.textAlign = 'center';
+    ctx.fillText(c.name, pt[0], pt[1] - TH*0.7);
+    ctx.restore();
+  }
+};
+
+// ---- interface multijoueur ----
+const INP = 'width:100%;box-sizing:border-box;background:#16202f;border:1px solid #36465e;'+
+            'color:#e8eef7;border-radius:6px;padding:5px 8px;font-size:12px;margin-bottom:5px';
+const INP2 = INP.replace('margin-bottom:5px','');
+
+function mpInjectUI(){
+  // bouton dans le topbar
+  const sep = document.createElement('span'); sep.className = 'sep';
+  const btn = document.createElement('button');
+  btn.className = 'tbtn'; btn.id = 'bMP';
+  btn.textContent = '🌐 Multijoueur'; btn.onclick = mpTogglePanel;
+  $('topbar').appendChild(sep); $('topbar').appendChild(btn);
+
+  // panneau principal (scrollable, assez haut)
+  const panel = document.createElement('div');
+  panel.id = 'mpPanel'; panel.className = 'panel';
+  panel.style.cssText =
+    'top:70px;left:12px;width:280px;max-height:calc(100vh - 90px);'+
+    'overflow-y:auto;padding:12px 14px;font-size:13px;display:none;z-index:20';
+
+  panel.innerHTML = `
+<h3 style="margin:0 0 8px;font-size:15px">🌐 Multijoueur</h3>
+
+<!-- connexion au serveur -->
+<div id="mpConnBlock">
+  <input id="mpUrl" type="text" placeholder="ws://localhost:8765"
+    value="ws://${location.hostname}:8765" style="${INP}">
+  <div style="display:flex;gap:6px">
+    <button class="tbtn" id="mpBtnConn" style="flex:1">Connexion</button>
+    <button class="tbtn" id="mpBtnDisc" style="flex:1;display:none">Déconnecter</button>
+  </div>
+</div>
+
+<div id="mpStatus" style="color:#8fa3bf;font-style:italic;margin:6px 0">Non connecté</div>
+
+<!-- auth (visible quand connecté mais non authentifié) -->
+<div id="mpAuthBlock" style="display:none">
+  <div style="color:#8fa3bf;font-size:11px;margin-bottom:4px">Compte joueur</div>
+  <input id="mpAuthUser" type="text"     placeholder="Nom d'utilisateur" style="${INP}">
+  <input id="mpAuthPwd"  type="password" placeholder="Mot de passe"      style="${INP}">
+  <div id="mpAuthErr" style="color:#ff9a8a;font-size:11px;min-height:14px;margin-bottom:4px"></div>
+  <div style="display:flex;gap:6px">
+    <button class="tbtn" id="mpBtnLogin"    style="flex:1">Connexion</button>
+    <button class="tbtn" id="mpBtnRegister" style="flex:1">Créer compte</button>
+  </div>
+</div>
+
+<!-- section saves (visible quand authentifié) -->
+<div id="mpNewBlock" style="display:none">
+  <div style="border-top:1px solid #36465e;margin:8px 0"></div>
+  <div style="color:#8fa3bf;font-size:11px;margin-bottom:4px">🌍 Nouvelle carte</div>
+  <label style="display:block;color:#8fa3bf;font-size:11px">Taille de carte</label>
+  <input id="mpWorldSize" type="number" min="32" max="128" step="8" style="${INP}">
+  <label style="display:block;color:#8fa3bf;font-size:11px">Joueurs max</label>
+  <input id="mpMaxPlayers" type="number" min="1" max="32" step="1" style="${INP}">
+  <label style="display:block;color:#8fa3bf;font-size:11px">Arbres / bois (%)</label>
+  <input id="mpResTree" type="number" min="0" max="40" step="0.5" style="${INP}">
+  <label style="display:block;color:#8fa3bf;font-size:11px">Fer (%)</label>
+  <input id="mpResIron" type="number" min="0" max="40" step="0.5" style="${INP}">
+  <label style="display:block;color:#8fa3bf;font-size:11px">Charbon (%)</label>
+  <input id="mpResCoal" type="number" min="0" max="40" step="0.5" style="${INP}">
+  <button class="tbtn" id="mpBtnNewWorld" style="width:100%">Créer la carte</button>
+  <div id="mpWorldErr" style="color:#ff9a8a;font-size:11px;min-height:14px;margin-top:4px"></div>
+</div>
+
+<div id="mpSaveBlock" style="display:none">
+  <div style="border-top:1px solid #36465e;margin:8px 0"></div>
+  <div style="color:#8fa3bf;font-size:11px;margin-bottom:4px">💾 Sauvegardes <span id="mpSaveLock"></span></div>
+  <div style="display:flex;gap:5px;margin-bottom:5px">
+    <input id="mpSaveName" type="text" placeholder="Nom de la sauvegarde"
+      style="${INP2};flex:1;margin:0">
+    <button class="tbtn" id="mpBtnSave" title="Sauvegarder">💾</button>
+  </div>
+  <div id="mpSaveList" style="max-height:130px;overflow-y:auto;margin-bottom:4px"></div>
+  <div id="mpSaveErr" style="color:#ff9a8a;font-size:11px;min-height:14px"></div>
+</div>
+
+<!-- joueurs connectés -->
+<div style="border-top:1px solid #36465e;margin:8px 0"></div>
+<div style="color:#8fa3bf;font-size:11px;margin-bottom:4px">👥 Joueurs</div>
+<div id="mpPlayers" style="margin-bottom:6px"></div>
+
+<!-- chat -->
+<div style="border-top:1px solid #36465e;margin:8px 0"></div>
+<div id="mpChatBox" style="max-height:100px;overflow-y:auto;margin-bottom:5px;
+     background:#16202f;border-radius:6px;padding:6px;font-size:11px"></div>
+<div style="display:flex;gap:4px">
+  <input id="mpChatIn" type="text" placeholder="Message…"
+    style="flex:1;${INP2}">
+  <button class="tbtn" id="mpBtnSend">↵</button>
+</div>`;
+
+  document.body.appendChild(panel);
+
+  // --- événements ---
+  $('mpBtnConn').onclick = ()=> mpConnect($('mpUrl').value.trim() || 'ws://localhost:8765');
+  $('mpBtnDisc').onclick = mpDisconnect;
+
+  $('mpBtnLogin').onclick = ()=>{
+    const u = $('mpAuthUser').value.trim(), p = $('mpAuthPwd').value;
+    if(!u||!p){ mpShowAuthError('Remplis les deux champs'); return; }
+    MP.ws.send(JSON.stringify({ type:'login', username:u, password:p }));
+  };
+  $('mpBtnRegister').onclick = ()=>{
+    const u = $('mpAuthUser').value.trim(), p = $('mpAuthPwd').value;
+    if(!u||!p){ mpShowAuthError('Remplis les deux champs'); return; }
+    MP.ws.send(JSON.stringify({ type:'register', username:u, password:p }));
+  };
+  $('mpAuthPwd').addEventListener('keydown', e=>{
+    if(e.key==='Enter') $('mpBtnLogin').click();
+  });
+
+  $('mpBtnSave').onclick = ()=>{
+    if(!mpHasAdminRights()){ $('mpSaveErr').textContent = 'Réservé à l’hôte/admin'; return; }
+    const name = $('mpSaveName').value.trim();
+    if(!name){ $('mpSaveErr').textContent = 'Entre un nom'; return; }
+    if(!MP.token){ $('mpSaveErr').textContent = 'Non authentifié'; return; }
+    $('mpSaveErr').textContent = '';
+    MP.ws.send(JSON.stringify({ type:'save_game', token:MP.token, name, state:serializeState() }));
+  };
+  $('mpSaveName').addEventListener('keydown', e=>{ if(e.key==='Enter') $('mpBtnSave').click(); });
+
+  $('mpBtnNewWorld').onclick = ()=>{
+    if(!mpHasAdminRights()){ $('mpWorldErr').textContent = 'Réservé à l’hôte/admin'; return; }
+    if(!confirm('Créer une nouvelle carte ? La partie en cours sera remplacée pour tous les joueurs.')) return;
+    const config = normalizeWorldConfig({
+      size: $('mpWorldSize').value,
+      maxPlayers: $('mpMaxPlayers').value,
+      resources: {
+        tree: $('mpResTree').value,
+        iron: $('mpResIron').value,
+        coal: $('mpResCoal').value,
+      },
+    });
+    genWorld(config);
+    MP.ws.send(JSON.stringify({ type:'new_world', config, state:serializeState() }));
+    $('mpWorldErr').textContent = '';
+  };
+
+  $('mpBtnSend').onclick = mpSendChat;
+  $('mpChatIn').addEventListener('keydown', e=>{ if(e.key==='Enter') mpSendChat(); });
+}
+
+function mpTogglePanel(){
+  const p = $('mpPanel');
+  p.style.display = p.style.display==='block' ? 'none' : 'block';
+  if(p.style.display === 'block') mpSyncWorldInputs();
+}
+
+function mpUpdateUI(){
+  const conn = $('mpBtnConn'), disc = $('mpBtnDisc'), st = $('mpStatus');
+  if(!conn) return;
+
+  if(MP.connected){
+    conn.style.display  = 'none';
+    disc.style.display  = '';
+    $('mpAuthBlock').style.display = MP.username ? 'none' : '';
+    $('mpSaveBlock').style.display = MP.username ? '' : 'none';
+    $('mpNewBlock').style.display = mpHasAdminRights() ? '' : 'none';
+    $('mpBtnSave').disabled = !mpHasAdminRights();
+    $('mpSaveLock').textContent = mpHasAdminRights() ? '' : '(hôte/admin)';
+    if(MP.username){
+      st.textContent = (MP.role==='host'?'👑 ':MP.isAdmin?'🛡️ ':'👥 ')+MP.username;
+      st.style.color = MP.myColor;
+    } else {
+      st.textContent = (MP.role==='host'?'👑 Hôte':MP.isAdmin?'🛡️ Admin':'👥 Invité')+' · non identifié';
+      st.style.color = '#8fa3bf';
+    }
+  } else {
+    conn.style.display = '';
+    disc.style.display = 'none';
+    $('mpAuthBlock').style.display = 'none';
+    $('mpSaveBlock').style.display = 'none';
+    $('mpNewBlock').style.display = 'none';
+    st.textContent = 'Non connecté';
+    st.style.color = '#8fa3bf';
+  }
+  mpSyncWorldInputs();
+}
+
+function mpSyncWorldInputs(){
+  if(!$('mpWorldSize')) return;
+  $('mpWorldSize').value = WORLD.size;
+  $('mpMaxPlayers').value = WORLD.maxPlayers;
+  $('mpResTree').value = WORLD.resources.tree;
+  $('mpResIron').value = WORLD.resources.iron;
+  $('mpResCoal').value = WORLD.resources.coal;
+}
+
+function mpShowAuthError(msg){
+  const el = $('mpAuthErr');
+  if(el) el.textContent = msg;
+}
+
+function mpRenderPlayerList(){
+  const el = $('mpPlayers');
+  if(!el) return;
+  el.innerHTML = MP.players.map(p=>
+    '<div style="display:flex;align-items:center;gap:6px;margin:2px 0">'
+    + '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+p.color+'"></span>'
+    + '<span style="color:'+p.color+';flex:1">'+(p.isHost?'👑 ':p.isAdmin?'🛡️ ':'')
+    + escHtml(p.name) + (p.username ? ' <span style="color:#8fa3bf;font-size:10px">('+escHtml(p.username)+')</span>' : '')
+    + '</span>'
+    + (mpHasAdminRights() && !p.isHost && !p.isAdmin && p.id !== MP.myId
+      ? '<button class="tbtn" style="padding:1px 6px;font-size:11px" data-promote="'+p.id+'">Admin</button>' : '')
+    + '</div>'
+  ).join('');
+  el.querySelectorAll('[data-promote]').forEach(btn=>{
+    btn.onclick = ()=>{
+      MP.ws.send(JSON.stringify({ type:'promote_admin', playerId:+btn.dataset.promote }));
+    };
+  });
+}
+
+function mpRenderSaves(){
+  const el = $('mpSaveList');
+  if(!el) return;
+  if(!MP.saves.length){
+    el.innerHTML = '<div style="color:#8fa3bf;font-size:11px;font-style:italic">Aucune sauvegarde</div>';
+    return;
+  }
+  el.innerHTML = MP.saves.map(s=>{
+    const d = new Date(s.date);
+    const dateStr = d.toLocaleDateString('fr-FR')+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+    return '<div style="display:flex;align-items:center;gap:4px;margin:2px 0;padding:3px 4px;'+
+           'background:#1d2939;border-radius:5px">'
+      + '<span style="flex:1;font-size:12px">📄 '+escHtml(s.name)+'</span>'
+      + '<span style="color:#8fa3bf;font-size:10px;white-space:nowrap">'+escHtml(dateStr)+'</span>'
+      + '<button class="tbtn" style="padding:1px 6px;font-size:11px" data-load="'+escHtml(s.name)+'"'
+      + (mpHasAdminRights() ? '' : ' disabled') + '>▶</button>'
+      + '<button class="tbtn" style="padding:1px 6px;font-size:11px;color:#ff9a8a" data-del="'+escHtml(s.name)+'"'
+      + (mpHasAdminRights() ? '' : ' disabled') + '>✕</button>'
+      + '</div>';
+  }).join('');
+
+  el.querySelectorAll('[data-load]').forEach(btn=>{
+    btn.onclick = ()=>{
+      if(!mpHasAdminRights()) return;
+      if(!confirm('Charger "'+btn.dataset.load+'" ? La partie en cours sera remplacée pour tous les joueurs.')) return;
+      MP.ws.send(JSON.stringify({ type:'load_game', token:MP.token, name:btn.dataset.load }));
+    };
+  });
+  el.querySelectorAll('[data-del]').forEach(btn=>{
+    btn.onclick = ()=>{
+      if(!mpHasAdminRights()) return;
+      if(!confirm('Supprimer "'+btn.dataset.del+'" ?')) return;
+      MP.ws.send(JSON.stringify({ type:'delete_save', token:MP.token, name:btn.dataset.del }));
+    };
+  });
+}
+
+function mpRenderChat(){
+  const el = $('mpChatBox');
+  if(!el) return;
+  el.innerHTML = MP.chat.map(m=>
+    '<div><span style="color:'+m.col+'">'+escHtml(m.name)+'</span>: '+escHtml(m.text)+'</div>'
+  ).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function mpSendChat(){
+  const inp = $('mpChatIn');
+  const text = inp.value.trim();
+  if(!text || !MP.connected) return;
+  MP.ws.send(JSON.stringify({ type:'chat', text }));
+  inp.value = '';
+}
+
+function escHtml(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+mpInjectUI();
