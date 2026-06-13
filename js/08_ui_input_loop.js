@@ -163,23 +163,21 @@ function renderInfo(){
       $('bVehRoute').onclick = ()=>{
         vehicleRouteMode = { vehicle:veh, step:'source' };
         setTool('select');
-        toast('🔁 Clique sur le bâtiment SOURCE pour '+vt.nom+'.');
+        toast('🔁 Clique sur l\'entrepôt source pour '+vt.nom+'.');
         p._html = null;
       };
       const retBtn = $('bVehReturn');
       if(retBtn) retBtn.onclick = ()=>{
         returnToGarage(veh);
+        if(MP.connected) netSend({ type:'return_vehicle', id:veh.id });
         toast('🏪 '+vt.nom+' retourne au dépôt.');
         p._html = null;
       };
       $('bVehSell').onclick = ()=>{
         const refund = Math.floor(vt.cost * 0.5);
         earnMoney(refund, 'rembours');
-        vehicles.splice(vehicles.indexOf(veh), 1);
-        const g = veh.garageRef;
-        if(g) g.vehicles = (g.vehicles||[]).filter(v=>v!==veh);
-        if(vehicleRouteMode?.vehicle === veh) vehicleRouteMode = null;
-        selectedVehicle = null;
+        removePersistentVehicle(veh);
+        if(MP.connected) netSend({ type:'sell_vehicle', id:veh.id });
         toast('🗑️ Véhicule vendu (+'+refund+' $)');
         p._html = null;
       };
@@ -325,7 +323,7 @@ function renderInfo(){
     if(vehicleRouteMode && bvehicles.some(v=>v===vehicleRouteMode.vehicle)){
       const step = vehicleRouteMode.step;
       h += '<div class="warn" style="background:#1a2e1a;border-color:#3d8c3d;color:#9fe8a0">'
-         + (step==='source' ? '🔁 Clique sur le bâtiment SOURCE' : '🔁 Clique sur la DESTINATION')
+         + (step==='source' ? '🔁 Clique sur l\'ENTREPÔT source' : '🔁 Clique sur l\'ENTREPÔT destination')
          + '</div>';
     }
     if(bvehicles.length){
@@ -422,7 +420,7 @@ function renderInfo(){
         if(!v) return;
         vehicleRouteMode = { vehicle:v, step:'source' };
         setTool('select');
-        toast('🔁 Clique sur le bâtiment SOURCE pour '+VEHICLE_TYPES[v.vtype].nom+'.');
+        toast('🔁 Clique sur l\'entrepôt source pour '+VEHICLE_TYPES[v.vtype].nom+'.');
         p._html = null;
       };
     });
@@ -433,9 +431,8 @@ function renderInfo(){
         if(!v) return;
         const refund = Math.floor(VEHICLE_TYPES[v.vtype].cost * 0.5);
         earnMoney(refund, 'rembours');
-        vehicles.splice(vehicles.indexOf(v), 1);
-        b.vehicles = (b.vehicles||[]).filter(vv=>vv!==v);
-        if(vehicleRouteMode && vehicleRouteMode.vehicle===v) vehicleRouteMode = null;
+        removePersistentVehicle(v);
+        if(MP.connected) netSend({ type:'sell_vehicle', id:v.id });
         toast('🗑️ Véhicule vendu (+'+refund+' $)');
         p._html = null;
       };
@@ -447,20 +444,8 @@ function renderInfo(){
         if(!vt) return;
         if(myWallet().money < vt.cost){ toast('Fonds insuffisants ('+vt.cost+' $)','err'); return; }
         spendMoney(vt.cost, 'construction');
-        const v = {
-          id: nextVehicleId++,
-          vtype,
-          garageRef: b,
-          source: null, dest: null,
-          state: 'idle',
-          cargo: 0, res: null,
-          pts: [], seg: 0, t: 0,
-          waitTimer: 0,
-          currentBuilding: b,
-        };
-        vehicles.push(v);
-        b.vehicles = b.vehicles || [];
-        b.vehicles.push(v);
+        const v = createPersistentVehicle(vtype, b);
+        if(MP.connected) netSend({ type:'buy_vehicle', id:v.id, vtype, garageX:b.x, garageY:b.y });
         toast(vt.icone+' '+vt.nom+' acheté ! Définis sa route avec 🔁 Route.','win');
         p._html = null;
       };

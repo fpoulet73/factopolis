@@ -72,6 +72,10 @@ function clickAt(x,y){
   if(vehicleRouteMode && tool === 'select'){
     const b = bgrid[i];
     if(b && !b.dead){
+      if(!vehicleRouteEndpointOk(b)){
+        toast('⛔ Les véhicules ne peuvent utiliser que des entrepôts comme source et destination.','err');
+        return;
+      }
       if(vehicleRouteMode.step === 'source'){
         const v = vehicleRouteMode.vehicle;
         const vt = VEHICLE_TYPES[v.vtype];
@@ -96,6 +100,12 @@ function clickAt(x,y){
         vRef.dest = b;
         vehicleRouteMode = null;
         startVehicleRoute(vRef);
+        if(MP.connected) netSend({
+          type:'route_vehicle',
+          id:vRef.id,
+          sourceX:vRef.source.x, sourceY:vRef.source.y,
+          destX:vRef.dest.x, destY:vRef.dest.y,
+        });
         toast('Route définie ! Le véhicule commence sa tournée.','win');
       }
     }
@@ -167,4 +177,3 @@ function clickAt(x,y){
   selected = b;
   if(BUILD[b.type].resid) assignHomelessToHousing(b.owner);
 }
-

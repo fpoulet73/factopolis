@@ -175,10 +175,15 @@ function drawBuilding(b){
     ctx.fillText('$', tc[0] + TW*rw*0.3, tc[1] - 3);
     ctx.restore();
   }
-  // Contour vert clignotant sur les dépôts éligibles lors de l'assignation de route (source)
-  if(vehicleRouteMode && vehicleRouteMode.step === 'source' && b.type === 'depot'){
+  // Contour vert clignotant sur les entrepôts éligibles lors de l'assignation de route
+  if(vehicleRouteMode && vehicleRouteEndpointOk(b)){
     const myOid = MP.connected ? MP.myId : null;
-    if(b.owner != null && b.owner !== myOid){
+    if(vehicleRouteMode.step === 'dest' || b.owner == null || b.owner === myOid || b.type === 'tank'){
+      ctx.strokeStyle = '#9fe8a0'; ctx.lineWidth = 1.5;
+      ctx.setLineDash([4,3]);
+      diamond(rx0, ry0, rw, rh); ctx.stroke();
+      ctx.setLineDash([]);
+    } else if(b.owner != null && b.owner !== myOid && b.type === 'depot'){
       const vt = VEHICLE_TYPES[vehicleRouteMode.vehicle.vtype];
       if(vt.resources.some(r => b.sellTo?.[r])){
         ctx.strokeStyle = '#f0c060'; ctx.lineWidth = 1.5;
@@ -826,4 +831,3 @@ function draw(){
   }
   ctx.globalAlpha = 1;
 }
-

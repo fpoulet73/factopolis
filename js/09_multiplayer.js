@@ -215,18 +215,12 @@ function applySnapshot(d){
       if(!garage) continue;
       const source = sv.sourceX != null ? buildings.find(b=>b.x===sv.sourceX && b.y===sv.sourceY) : null;
       const dest   = sv.destX   != null ? buildings.find(b=>b.x===sv.destX   && b.y===sv.destY)   : null;
-      const v = {
-        id: sv.id ?? nextVehicleId,
-        vtype: sv.vtype,
-        garageRef: garage,
-        source: source || null,
-        dest: dest || null,
-        state: 'idle',
-        cargo: sv.cargo || 0, res: sv.res || null,
-        pts: [], seg: 0, t: 0,
-        waitTimer: 0, currentBuilding: garage,
-      };
-      nextVehicleId = Math.max(nextVehicleId, v.id + 1);
+      const v = createPersistentVehicle(sv.vtype, garage, sv.id ?? null);
+      if(!v) continue;
+      v.source = source || null;
+      v.dest = dest || null;
+      v.cargo = sv.cargo || 0;
+      v.res = sv.res || null;
       // Recalculer le chemin si la route était en cours
       if(source && dest && sv.state !== 'idle'){
         const from = sv.state === 'to_dest' ? source : garage;
@@ -238,9 +232,6 @@ function applySnapshot(d){
         const bwd = findRoadPath(dest, source);
         v.vizRoute = { fwd: fwd || [], bwd: bwd || [] };
       }
-      garage.vehicles = garage.vehicles || [];
-      garage.vehicles.push(v);
-      vehicles.push(v);
     }
   }
   refreshExpansionSlots();
@@ -300,6 +291,45 @@ function applyAction(msg){
       wSender.money -= cost;
       wSender.fin.construction = (wSender.fin.construction||0) + cost;
       applyPlantUpgrade(b, targetType);
+      break;
+    }
+    case 'buy_vehicle': {
+      if(!VEHICLE_TYPES[act.vtype]) break;
+      const garage = buildings.find(b=>b.x===act.garageX && b.y===act.garageY && b.type==='garage');
+      if(!garage || garage.owner !== msg.from) break;
+      if(vehicles.some(v=>String(v.id) === String(act.id))) break;
+      const cost = VEHICLE_TYPES[act.vtype].cost || 0;
+      const wSender = walletOf(msg.from);
+      wSender.money -= cost;
+      wSender.fin.construction = (wSender.fin.construction||0) + cost;
+      createPersistentVehicle(act.vtype, garage, act.id);
+      break;
+    }
+    case 'sell_vehicle': {
+      const v = vehicles.find(v=>String(v.id) === String(act.id));
+      if(!v || v.garageRef?.owner !== msg.from) break;
+      const refund = Math.floor((VEHICLE_TYPES[v.vtype]?.cost||0) * 0.5);
+      walletOf(msg.from).money += refund;
+      walletOf(msg.from).fin.rembours = (walletOf(msg.from).fin.rembours||0) + refund;
+      removePersistentVehicle(v);
+      break;
+    }
+    case 'route_vehicle': {
+      const v = vehicles.find(v=>String(v.id) === String(act.id));
+      if(!v || v.garageRef?.owner !== msg.from) break;
+      const source = buildings.find(b=>b.x===act.sourceX && b.y===act.sourceY);
+      const dest   = buildings.find(b=>b.x===act.destX   && b.y===act.destY);
+      if(!source || !dest) break;
+      if(!vehicleRouteEndpointOk(source) || !vehicleRouteEndpointOk(dest)) break;
+      v.source = source;
+      v.dest = dest;
+      startVehicleRoute(v);
+      break;
+    }
+    case 'return_vehicle': {
+      const v = vehicles.find(v=>String(v.id) === String(act.id));
+      if(!v || v.garageRef?.owner !== msg.from) break;
+      returnToGarage(v);
       break;
     }
     case 'owner_remap':

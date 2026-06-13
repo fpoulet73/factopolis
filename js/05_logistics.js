@@ -149,6 +149,47 @@ function syncResidentReservations(){
 }
 
 // ---------- logistique (véhicules persistants) ----------
+function vehicleIdSeed(){
+  return MP.connected && MP.myId != null ? MP.myId * 100000 + nextVehicleId : nextVehicleId;
+}
+
+function createPersistentVehicle(vtype, garage, id=null){
+  if(!VEHICLE_TYPES[vtype] || !garage || garage.dead || garage.type !== 'garage') return null;
+  const v = {
+    id: id ?? vehicleIdSeed(),
+    vtype,
+    garageRef: garage,
+    source: null, dest: null,
+    state: 'idle',
+    cargo: 0, res: null,
+    pts: [], seg: 0, t: 0,
+    waitTimer: 0,
+    currentBuilding: garage,
+  };
+  const numericId = Number(v.id);
+  if(Number.isFinite(numericId)) nextVehicleId = Math.max(nextVehicleId, numericId + 1);
+  else nextVehicleId++;
+  vehicles.push(v);
+  garage.vehicles = garage.vehicles || [];
+  garage.vehicles.push(v);
+  return v;
+}
+
+function removePersistentVehicle(v){
+  if(!v) return false;
+  const i = vehicles.indexOf(v);
+  if(i >= 0) vehicles.splice(i, 1);
+  const g = v.garageRef;
+  if(g) g.vehicles = (g.vehicles||[]).filter(vv=>vv!==v);
+  if(vehicleRouteMode && vehicleRouteMode.vehicle===v) vehicleRouteMode = null;
+  if(selectedVehicle === v) selectedVehicle = null;
+  return i >= 0;
+}
+
+function vehicleRouteEndpointOk(b){
+  return isStorageHub(b);
+}
+
 function findRoadPath(fromB, toB){
   const starts = adjRoadTiles(fromB);
   if(!starts.length) return null;
@@ -182,6 +223,10 @@ function findRoadPath(fromB, toB){
 
 function startVehicleRoute(v){
   if(!v.source || !v.dest || v.source.dead || v.dest.dead){ v.state = 'idle'; return; }
+  if(!vehicleRouteEndpointOk(v.source) || !vehicleRouteEndpointOk(v.dest)){
+    v.source = null; v.dest = null; v.state = 'idle'; v.pts = []; v.vizRoute = null;
+    return;
+  }
   // Cache la route complète pour la visualisation (style Transport Tycoon)
   const fwd = findRoadPath(v.source, v.dest);
   const bwd = findRoadPath(v.dest, v.source);
