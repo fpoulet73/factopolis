@@ -15,7 +15,7 @@ Le joueur construit une ville industrielle : extraire fer/charbon/bois, transfor
 
 ## Stack et lancement
 
-- Frontend : `index.html`, `game.js`, `config.js`, Canvas 2D, JavaScript vanilla.
+- Frontend : `index.html`, `config.js`, `js/*.js`, Canvas 2D, JavaScript vanilla.
 - Backend : `server.js`, Node.js, serveur HTTP statique + WebSocket via `ws`.
 - Dependances : seulement `ws` cote serveur.
 - Lancement : `npm start` ou `node server.js [port]`.
@@ -25,16 +25,17 @@ Le joueur construit une ville industrielle : extraire fer/charbon/bois, transfor
 
 ## Fichiers principaux
 
-- `index.html` : structure DOM, styles inline, canvas, topbar, aide, chargement de `config.js` puis `game.js`.
+- `index.html` : structure DOM, styles inline, canvas, topbar, aide, chargement de `config.js` puis des scripts `js/` dans l'ordre numerique.
 - `config.js` : valeurs de gameplay configurables sans modifier le moteur : production, logements, fusions, entretien, penurie, economie, camions.
-- `game.js` : moteur complet client : monde, simulation, rendu, UI, input, multi, serialization.
+- `js/README.md` : carte rapide des fichiers client decoupes.
+- `js/01_definitions.js` a `js/10_saves_chat_console.js` : moteur client decoupe par domaine (definitions, monde, batiments, construction, logistique, simulation, rendu, UI/input, multi, sauvegardes/chat).
 - `server.js` : fichiers statiques, WebSocket, authentification simple, relais multi, sauvegardes JSON.
 - `data/users.json` : cree au runtime, comptes utilisateurs.
 - `data/saves/<user>_<nom>.json` : cree au runtime, sauvegardes par utilisateur.
 
 ## Etat du jeu cote client
 
-Les variables principales de simulation sont globales dans `game.js` :
+Les variables principales de simulation sont globales dans les scripts `js/` charges par `index.html` :
 
 - `terrain` : `Uint8Array` de 64 x 64, types `GRASS`, `WATER`, `TREE`, `IRON`, `COAL`.
 - `road` : `Uint8Array`, routes par tuile.
@@ -215,7 +216,6 @@ Controles :
 
 ## Points d'attention connus
 
-- Dans `game.js`, `clickFn` en mode multi teste `if((BUILD[tool].cost||0) > money)`, mais `money` n'est pas defini. Il faut probablement remplacer par `myWallet().money` ou `getMoney()`.
 - Le serveur relaie les actions sans validation metier complete. Les clients valident aussi certains droits, mais ce n'est pas une securite forte.
 - Les snapshots ne serialisent pas les camions, walkers et floats ; ils sont remis a zero au chargement/synchronisation.
 - Les sauvegardes sont par utilisateur, mais charger une sauvegarde remplace la partie pour tous les clients connectes.
@@ -226,7 +226,7 @@ Controles :
 
 - Garder le projet vanilla et sans build step sauf besoin explicite.
 - Modifier `config.js` pour l'equilibrage gameplay quand c'est possible.
-- Toucher `game.js` pour la simulation, le rendu, l'UI client et le protocole client.
+- Toucher le fichier `js/` correspondant au domaine vise ; voir `js/README.md`.
 - Toucher `server.js` pour auth, sauvegardes, protocole WebSocket et fichiers statiques.
-- Eviter les refactors larges : le code est monolithique mais coherent par sections commentees.
+- Eviter les refactors larges : le client reste en scripts classiques avec globals partages, decoupes par domaines.
 - Tester au minimum avec `npm start`, connexion a `http://localhost:8765`, puis panneau multijoueur sur `ws://localhost:8765`.
