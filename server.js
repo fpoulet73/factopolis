@@ -185,6 +185,8 @@ if (startupSave) {
 const send = (c, msg) => { if (c.ws.readyState === 1) c.ws.send(JSON.stringify(msg)); };
 const broadcastAll  = msg => { const r = JSON.stringify(msg); clients.forEach(c => { if(c.ws.readyState===1) c.ws.send(r); }); };
 const broadcast     = (msg, excludeId) => { const r = JSON.stringify(msg); clients.forEach(c => { if(c.id!==excludeId && c.ws.readyState===1) c.ws.send(r); }); };
+// Mémorise le dernier id de connexion de chaque joueur authentifié (persiste les reconnexions)
+const userOwnerRegistry = new Map(); // username → last connection id
 let shuttingDown = false;
 let consoleRl = null;
 
@@ -247,7 +249,7 @@ wss.on('connection', (ws) => {
   const id    = nextId++;
   const color = COLORS[(id - 1) % COLORS.length];
   const name  = 'Joueur ' + id;
-  const client = { ws, id, color, name, username: null, token: null, isAdmin: false };
+  const client = { ws, id, color, name, username: null, token: null, isAdmin: false, announced: false };
   clients.push(client);
   console.log(`[+] ${name} connecté  (${clients.length} joueurs)`);
 
@@ -258,7 +260,9 @@ wss.on('connection', (ws) => {
       startupSaveLoaded = true;
       const state = startupSave.state;
       state.world = state.world ? sanitizeWorldConfig(state.world) : worldConfig;
-      state.size = state.world.size;
+      // Ne pas écraser state.size : pour le nouveau format, state.size est la taille COMPLÈTE
+      // de la carte (N_FULL), alors que state.world.size est la taille jouable (N_PLAY).
+      // Écraser avec world.size causerait une corruption visuelle dans applySnapshot.
       worldConfig = state.world;
       send(client, {
         type: 'game_loaded',
@@ -273,7 +277,14 @@ wss.on('connection', (ws) => {
     const host = clients.find(c => c.id === hostId);
     if (host) send(host, { type: 'snapshot_request', forId: id });
   }
-  broadcastPlayerList();
+  // Délai de grâce : si le joueur s'authentifie (resume/login), c'est cet handler qui diffuse
+  // la liste avec le bon nom/couleur. Sinon on annonce après 400 ms.
+  setTimeout(() => {
+    if (clients.find(c => c.id === id) && !client.announced) {
+      client.announced = true;
+      broadcastPlayerList();
+    }
+  }, 400);
 
   ws.on('message', (raw) => {
     let msg;
@@ -296,8 +307,10 @@ wss.on('connection', (ws) => {
         users[username] = { passwordHash, color };
         saveUsers(users);
         const token = makeToken(username, passwordHash);
-        Object.assign(client, { username, token, name: username, color });
-        send(client, { type:'auth_ok', username, color, token });
+        const prevOwnerId = userOwnerRegistry.get(username) ?? null;
+        userOwnerRegistry.set(username, client.id);
+        Object.assign(client, { username, token, name: username, color, announced: true });
+        send(client, { type:'auth_ok', username, color, token, prevOwnerId });
         broadcastPlayerList();
         console.log(`[register] ${username}`);
         break;
@@ -312,8 +325,10 @@ wss.on('connection', (ws) => {
         if (users[username].passwordHash !== passwordHash)
           { send(client, { type:'auth_err', msg:'Mot de passe incorrect' }); break; }
         const token = makeToken(username, passwordHash);
-        Object.assign(client, { username, token, name: username, color: users[username].color });
-        send(client, { type:'auth_ok', username, color: users[username].color, token });
+        const prevOwnerId = userOwnerRegistry.get(username) ?? null;
+        userOwnerRegistry.set(username, client.id);
+        Object.assign(client, { username, token, name: username, color: users[username].color, announced: true });
+        send(client, { type:'auth_ok', username, color: users[username].color, token, prevOwnerId });
         broadcastPlayerList();
         console.log(`[login] ${username}`);
         break;
@@ -322,8 +337,10 @@ wss.on('connection', (ws) => {
       case 'resume': {
         const user = validateToken(msg.token);
         if (!user) { send(client, { type:'auth_err', msg:'Session expirée, reconnectez-vous' }); break; }
-        Object.assign(client, { username: user.username, token: msg.token, name: user.username, color: user.color });
-        send(client, { type:'auth_ok', username: user.username, color: user.color, token: msg.token });
+        const prevOwnerId = userOwnerRegistry.get(user.username) ?? null;
+        userOwnerRegistry.set(user.username, client.id);
+        Object.assign(client, { username: user.username, token: msg.token, name: user.username, color: user.color, announced: true });
+        send(client, { type:'auth_ok', username: user.username, color: user.color, token: msg.token, prevOwnerId });
         broadcastPlayerList();
         console.log(`[resume] ${user.username}`);
         break;
@@ -358,9 +375,13 @@ wss.on('connection', (ws) => {
         if (!name) { send(client, { type:'save_err', msg:'Nom de sauvegarde requis' }); break; }
         try {
           const p = resolveSavePath(user.username, name);
+          // Injecter le mapping username→id pour permettre la récupération après redémarrage serveur
+          const stateWithRegistry = Object.assign({}, msg.state, {
+            playerRegistry: Object.fromEntries(userOwnerRegistry),
+          });
           fs.writeFileSync(p, JSON.stringify({
             meta: { username: user.username, name, date: new Date().toISOString() },
-            state: msg.state,
+            state: stateWithRegistry,
           }));
           send(client, { type:'save_ok', name });
           broadcastAll({ type:'game_saved', name, savedBy: user.username });
@@ -405,7 +426,11 @@ wss.on('connection', (ws) => {
       /* ---- jeu ---- */
       case 'snapshot': {
         const target = clients.find(c => c.id === msg.forId);
-        if (target) send(target, msg);
+        if (target) {
+          // Injecter le registry courant du serveur dans le snapshot
+          if (msg.state) msg.state.playerRegistry = Object.fromEntries(userOwnerRegistry);
+          send(target, msg);
+        }
         break;
       }
       case 'new_world': {
@@ -413,7 +438,8 @@ wss.on('connection', (ws) => {
         worldConfig = sanitizeWorldConfig(msg.config);
         const state = msg.state || {};
         state.world = worldConfig;
-        state.size = worldConfig.size;
+        // Ne pas écraser state.size : le client sérialise la taille COMPLÈTE (N_FULL = N_PLAY + 2*EXP_MARGIN)
+        // Écraser avec worldConfig.size (= N_PLAY) provoquerait une corruption chez tous les clients.
         broadcastAll({
           type: 'game_new_world',
           state,
@@ -437,7 +463,7 @@ wss.on('connection', (ws) => {
         console.log(`[admin] ${target.name} promu par ${client.name}`);
         break;
       }
-      case 'action':  broadcast(msg, id); break;
+      case 'action':  msg.from = id; msg.fromUsername = client.username || null; broadcast(msg, id); break;
       case 'cursor':  broadcast(msg, id); break;
       case 'chat':
         msg.from = id;
@@ -459,7 +485,7 @@ wss.on('connection', (ws) => {
         console.log(`[→] ${clients[0].name} promu hôte`);
       } else { hostId = null; }
     }
-    broadcastAll({ type:'player_left', id });
+    broadcastAll({ type:'player_left', id, name: client.name, username: client.username });
     broadcastPlayerList();
   });
 });
@@ -473,6 +499,8 @@ function printConsoleHelp() {
   console.log('  system <message>             Envoie un message système dans le chat');
   console.log('  kick <id> [raison]           Déconnecte un joueur');
   console.log('  promote <id>                 Donne les droits admin à un joueur');
+  console.log('  setmoney <nom> <montant>     Fixe le solde d\'un joueur connecté');
+  console.log('  regenexpansions              Régénère le terrain des zones d\'expansion non achetées');
   console.log('  stop                         Arrête proprement le serveur');
 }
 
@@ -560,6 +588,44 @@ function handleConsoleCommand(line) {
       broadcastAll({ type:'admin_changed', playerId: target.id, isAdmin: true, by: 'console serveur' });
       broadcastPlayerList();
       console.log(`[admin] ${target.name} promu depuis la console`);
+      break;
+    }
+
+    case 'setmoney': {
+      const nameArg  = args[0];
+      const amountArg = args[1];
+      if (!nameArg || amountArg === undefined) {
+        console.log('Usage: setmoney <nom_joueur> <montant>');
+        break;
+      }
+      const amount = Number(amountArg);
+      if (!Number.isFinite(amount)) {
+        console.log('Montant invalide : doit être un nombre.');
+        break;
+      }
+      const nameLower = nameArg.toLowerCase();
+      const target = clients.find(c =>
+        c.name.toLowerCase() === nameLower ||
+        (c.username || '').toLowerCase() === nameLower
+      );
+      if (!target) {
+        console.log(`Joueur "${nameArg}" introuvable. Joueurs connectés :`);
+        clients.forEach(c => console.log(`  #${c.id} ${c.name}${c.username ? ' ('+c.username+')' : ''}`));
+        break;
+      }
+      send(target, { type: 'server_cmd', cmd: 'set_money', amount: Math.round(amount) });
+      console.log(`[setmoney] ${target.name} → ${Math.round(amount).toLocaleString()} $`);
+      break;
+    }
+
+    case 'regenexpansions':
+    case 'regenexp': {
+      if (!clients.length) {
+        console.log('Aucun joueur connecté — commande ignorée.');
+        break;
+      }
+      broadcastAll({ type: 'server_cmd', cmd: 'regen_expansions' });
+      console.log('[regenExpansions] Commande envoyée à tous les clients. Le terrain des zones d\'expansion sera régénéré.');
       break;
     }
 

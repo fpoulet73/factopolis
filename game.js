@@ -40,6 +40,8 @@ const AUTO_SAVE_INTERVAL = 300; // secondes (5 minutes)
 const AUTO_SAVE_MAX      = 5;   // nombre d'emplacements conservés
 const AUTO_SAVE_KEY      = 'factopolis_autosaves';
 const TOWN_RADIUS        = 20;  // cases — rayon d'appartenance à un village
+const EXP_DEPTH  = 16;   // profondeur d'une tranche d'expansion (tuiles)
+const EXP_MARGIN = 48;   // marge pré-générée de chaque côté (max 3 expansions / bord)
 
 // ---------- véhicules persistants ----------
 const VEHICLE_TYPES = (()=>{
@@ -438,12 +440,19 @@ let towns = [];           // villages / villes
 let nextTownId = 0;
 let selectedTownId = null;
 let townLabelHits = [];
+let mapBounds = { x0:0, y0:0, x1:64, y1:64 }; // boîte englobante jouable (caméra, clamps)
+let mapMask = null;         // Uint8Array(N*N) : 1 = tuile jouable
+let expansions = [];        // pièces d'expansion disponibles (chacune achetable individuellement)
+let expansionLevels = { left:0, right:0, top:0, bottom:0 }; // niveaux de bandes complètes achetées
+let purchasedPieces = new Set(); // pièces en cours (ex: "right-0", "top-left")
+let hoveredExpansion = null;
+let selectedExpansion = null;
 let gtime = 0, eff = 1; // eff = snapshot du wallet courant, gardé pour statusOf
 let selected = null, tool = 'select';
 let speed = 1, paused = false;
 let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0;
 let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
-const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0 });
+const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0, expansion:0 });
 const START_HOMELESS = 10;
 let rot = 0; // orientation de la vue (0..3)
 const cam = { x:0, y:0, z:1 };
@@ -513,9 +522,10 @@ function normalizeWorldConfig(config){
 }
 
 function setMapSize(size){
-  N = Math.round(clampNum(size, 32, 128, WORLD_DEFAULTS.size));
+  N = Math.max(32, Math.round(size));
   dist = new Int32Array(N*N);
   prev = new Int32Array(N*N);
+  mapMask = new Uint8Array(N*N);
 }
 
 // ---------- canvas ----------
@@ -616,7 +626,9 @@ function valueNoise(cell){
 
 function genWorld(config){
   WORLD = normalizeWorldConfig(config || WORLD);
-  setMapSize(WORLD.size);
+  const N_PLAY = WORLD.size;
+  const N_FULL_MAP = N_PLAY + 2 * EXP_MARGIN;
+  setMapSize(N_FULL_MAP);
   terrain = new Uint8Array(N*N);
   road = new Uint8Array(N*N);
   bgrid = new Array(N*N).fill(null);
@@ -625,6 +637,15 @@ function genWorld(config){
   towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = [];
   WALLETS = {}; gtime = 0;
   selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0;
+  mapBounds = { x0: EXP_MARGIN, y0: EXP_MARGIN, x1: EXP_MARGIN + N_PLAY, y1: EXP_MARGIN + N_PLAY };
+  expansions = []; expansionLevels = { left:0, right:0, top:0, bottom:0 };
+  purchasedPieces = new Set();
+  selectedExpansion = null; hoveredExpansion = null;
+  // Remplir le masque pour la zone de jeu initiale
+  mapMask.fill(0);
+  for(let y=mapBounds.y0; y<mapBounds.y1; y++)
+    for(let x=mapBounds.x0; x<mapBounds.x1; x++)
+      mapMask[y*N+x] = 1;
 
   const n1 = valueNoise(16), n2 = valueNoise(7), n3 = valueNoise(3);
   const tn = valueNoise(9);
@@ -664,20 +685,22 @@ function genWorld(config){
   placePatch(T.IRON, patchCount(WORLD.resources.iron));
   placePatch(T.COAL, patchCount(WORLD.resources.coal));
 
-  // caméra : centrée sur une zone d'herbe proche du milieu
-  let sx = N>>1, sy = N>>1;
+  // caméra : centrée sur une zone d'herbe proche du milieu de la zone jouable
+  const mcx = (mapBounds.x0+mapBounds.x1)>>1, mcy = (mapBounds.y0+mapBounds.y1)>>1;
+  let sx = mcx, sy = mcy;
   outer:
-  for(let r=0;r<N>>1;r++)
-    for(let y=(N>>1)-r;y<=(N>>1)+r;y++)
-      for(let x=(N>>1)-r;x<=(N>>1)+r;x++)
-        if(x>=0&&y>=0&&x<N&&y<N && terrain[y*N+x]===T.GRASS){ sx=x; sy=y; break outer; }
+  for(let r=0;r<N_PLAY>>1;r++)
+    for(let y=mcy-r;y<=mcy+r;y++)
+      for(let x=mcx-r;x<=mcx+r;x++)
+        if(inMap(x,y) && terrain[y*N+x]===T.GRASS){ sx=x; sy=y; break outer; }
   cam.z = 1;
   centerOn(sx*TILE+TILE/2, sy*TILE+TILE/2);
   if(MP.connected && MP.myId != null) ensureHomelessForOwner(MP.myId);
+  refreshExpansionSlots();
 }
 
 // ---------- aides ----------
-const inMap = (x,y)=> x>=0 && y>=0 && x<N && y<N;
+const inMap = (x,y)=> x>=0 && y>=0 && x<N && y<N && !!mapMask && mapMask[y*N+x]===1;
 // Filtres par owner : en solo (owner null) on compte tout, en MP on filtre
 const myOwner   = () => (MP.connected && MP.myId != null) ? MP.myId : null;
 const ownedBy   = (b, oid) => oid == null ? (b.owner == null) : (b.owner === oid);
@@ -697,6 +720,196 @@ const buildingDistance = (a,b)=>{
   const ca = centerOfBuilding(a), cb = centerOfBuilding(b);
   return Math.max(Math.abs(ca.x-cb.x), Math.abs(ca.y-cb.y));
 };
+
+// ---------- expansion de carte ----------
+// Détermine si un tile appartient à la pièce puzzle pi (parmi n) d'une bande d'expansion
+function jigsawTileInPiece(x, y, strip, pi, n, tabR){
+  const {x0,y0,x1,y1,vert} = strip;
+  if(x<x0||x>=x1||y<y0||y>=y1) return false;
+  const tc = x+0.5, tr = y+0.5;
+  const len = vert ? (y1-y0)/n : (x1-x0)/n;
+  const ctr = vert ? (x0+x1)/2 : (y0+y1)/2; // centre perpendiculaire
+
+  let piece = vert
+    ? Math.min(n-1, Math.max(0, (tr-y0)/len|0))
+    : Math.min(n-1, Math.max(0, (tc-x0)/len|0));
+
+  for(let b=0; b<n-1; b++){
+    const bPos = vert ? (y0+(b+1)*len) : (x0+(b+1)*len);
+    const da   = vert ? (tc-ctr) : (tr-ctr);
+    const db   = vert ? (tr-bPos) : (tc-bPos);
+    if(da*da+db*db < tabR*tabR){
+      piece = b%2===0 ? b : b+1; // paire → pièce haute/gauche a le tab
+      break;
+    }
+  }
+  return piece===pi;
+}
+
+// Génère le terrain (eau, arbres, ressources) dans toutes les tuiles hors mapBounds.
+// Appelée lors du chargement de sauvegardes anciennes dont les marges sont vides (tout herbe).
+function generateExpansionTerrain(){
+  const n1=valueNoise(16),n2=valueNoise(7),n3=valueNoise(3),tn=valueNoise(9);
+  const inPlay=(x,y)=>x>=mapBounds.x0&&y>=mapBounds.y0&&x<mapBounds.x1&&y<mapBounds.y1;
+
+  // Eau / herbe de base
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    if(inPlay(x,y)) continue;
+    const h=0.55*n1(x,y)+0.30*n2(x,y)+0.15*n3(x,y);
+    terrain[y*N+x]=h<0.40?T.WATER:T.GRASS;
+  }
+  // Arbres
+  const tc=[];
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    if(!inPlay(x,y)&&terrain[y*N+x]===T.GRASS) tc.push({x,y,s:tn(x,y)+Math.random()*0.25});
+  }
+  tc.sort((a,b)=>b.s-a.s);
+  const mTiles=N*N-(mapBounds.x1-mapBounds.x0)*(mapBounds.y1-mapBounds.y0);
+  for(let i=0,lim=Math.round(mTiles*(WORLD.resources?.tree??20)/100);i<lim&&i<tc.length;i++)
+    terrain[tc[i].y*N+tc[i].x]=T.TREE;
+  // Gisements et champs
+  const pp=(type,count)=>{
+    for(let k=0;k<count;k++){
+      let cx,cy,tries=0;
+      do{cx=(1+Math.random()*(N-2))|0;cy=(1+Math.random()*(N-2))|0;}
+      while((inPlay(cx,cy)||terrain[cy*N+cx]===T.WATER)&&++tries<400);
+      if(tries>=400)continue;
+      const r=1+(Math.random()*2)|0;
+      for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+        const px=cx+dx,py=cy+dy;
+        if(px<0||py<0||px>=N||py>=N||inPlay(px,py))continue;
+        if(dx*dx+dy*dy>r*r+0.5)continue;
+        if(terrain[py*N+px]!==T.WATER&&Math.random()<0.85)terrain[py*N+px]=type;
+      }
+    }
+  };
+  const cnt=pct=>Math.round(mTiles*pct/100/8);
+  pp(T.WHEAT,cnt(WORLD.resources?.wheat??8));
+  pp(T.IRON, cnt(WORLD.resources?.iron??10));
+  pp(T.COAL, cnt(WORLD.resources?.coal??10));
+}
+
+// Coût d'une tuile selon son terrain (prix de base au niveau 0)
+function expTileCost(t){
+  if(t===T.WATER) return  600;  // pas constructible, moins cher
+  if(t===T.GRASS) return 3000;  // terrain standard
+  if(t===T.TREE)  return 4500;  // ressource bois
+  if(t===T.WHEAT) return 4000;  // ressource agriculture
+  if(t===T.IRON)  return 6000;  // minerai rare
+  if(t===T.COAL)  return 5500;  // minerai
+  return 3000;
+}
+
+function refreshExpansionSlots(){
+  expansions = [];
+  const m = mapBounds;
+  const n = EXP_N_PIECES;
+
+  const sideList = [
+    { side:'right',  vert:true,  x0:m.x1,           y0:m.y0, x1:m.x1+EXP_DEPTH, y1:m.y1  },
+    { side:'left',   vert:true,  x0:m.x0-EXP_DEPTH, y0:m.y0, x1:m.x0,           y1:m.y1  },
+    { side:'bottom', vert:false, x0:m.x0, y0:m.y1,           x1:m.x1, y1:m.y1+EXP_DEPTH  },
+    { side:'top',    vert:false, x0:m.x0, y0:m.y0-EXP_DEPTH, x1:m.x1, y1:m.y0            },
+  ];
+  const cornerList = [
+    { side:'top-left',     x0:m.x0-EXP_DEPTH, y0:m.y0-EXP_DEPTH, x1:m.x0, y1:m.y0             },
+    { side:'top-right',    x0:m.x1,           y0:m.y0-EXP_DEPTH, x1:m.x1+EXP_DEPTH, y1:m.y0   },
+    { side:'bottom-left',  x0:m.x0-EXP_DEPTH, y0:m.y1,           x1:m.x0, y1:m.y1+EXP_DEPTH   },
+    { side:'bottom-right', x0:m.x1,           y0:m.y1,           x1:m.x1+EXP_DEPTH, y1:m.y1+EXP_DEPTH },
+  ];
+
+  // Bandes latérales – 3 pièces puzzle chacune
+  for(const strip of sideList){
+    if(strip.x0<0||strip.y0<0||strip.x1>N||strip.y1>N) continue;
+    const level = expansionLevels[strip.side]||0;
+    const pieceLen = strip.vert ? (strip.y1-strip.y0)/n : (strip.x1-strip.x0)/n;
+    const tabR = pieceLen * 0.30;
+    const mult = Math.pow(2, level);
+
+    // Précalculer membership de chaque tuile de la bande pour les n pièces
+    const pieceTiles = Array.from({length:n}, ()=>[]);
+    for(let y=strip.y0; y<strip.y1; y++)
+      for(let x=strip.x0; x<strip.x1; x++)
+        for(let pi=0; pi<n; pi++)
+          if(jigsawTileInPiece(x,y,strip,pi,n,tabR)){ pieceTiles[pi].push({x,y}); break; }
+
+    for(let pi=0; pi<n; pi++){
+      const key = strip.side+'-'+pi;
+      if(purchasedPieces.has(key)) continue;
+      const pFrac = (pi+0.5)/n;
+      const cx = strip.vert ? (strip.x0+strip.x1)/2 : strip.x0 + pFrac*(strip.x1-strip.x0);
+      const cy = strip.vert ? strip.y0 + pFrac*(strip.y1-strip.y0) : (strip.y0+strip.y1)/2;
+      const inPiece = (x,y) => jigsawTileInPiece(x,y,strip,pi,n,tabR);
+      // Prix basé sur la valeur du terrain de chaque tuile
+      const rawCost = pieceTiles[pi].reduce((s,{x,y}) => s + expTileCost(terrain[y*N+x]), 0);
+      const cost = Math.ceil(rawCost * mult);
+      expansions.push({ side:strip.side, pieceIndex:pi, x0:strip.x0, y0:strip.y0, x1:strip.x1, y1:strip.y1,
+                        cx, cy, cost, inPiece, strip });
+    }
+  }
+
+  // Coins – 1 pièce carrée chacun
+  for(const c of cornerList){
+    if(c.x0<0||c.y0<0||c.x1>N||c.y1>N) continue;
+    if(purchasedPieces.has(c.side)) continue;
+    const level = Math.max(expansionLevels.left||0, expansionLevels.right||0,
+                           expansionLevels.top||0,  expansionLevels.bottom||0);
+    const mult = Math.pow(2, level);
+    let rawCost = 0;
+    for(let y=c.y0; y<c.y1; y++) for(let x=c.x0; x<c.x1; x++) rawCost += expTileCost(terrain[y*N+x]);
+    const cost = Math.ceil(rawCost * mult);
+    const {x0,y0,x1,y1} = c;
+    const inPiece = (x,y) => x>=x0&&x<x1&&y>=y0&&y<y1;
+    expansions.push({ side:c.side, pieceIndex:0, x0,y0,x1,y1,
+                      cx:(x0+x1)/2, cy:(y0+y1)/2, cost, inPiece, strip:null });
+  }
+}
+
+function buyExpansion(exp){
+  if(!exp) return;
+  if(myWallet().money < exp.cost){ toast('Fonds insuffisants ('+exp.cost.toLocaleString()+' $ requis).','err'); return; }
+  spendMoney(exp.cost, 'expansion');
+
+  // Remplir les tuiles de cette pièce dans le masque
+  const s = exp.strip || exp;
+  for(let y=s.y0; y<s.y1; y++)
+    for(let x=s.x0; x<s.x1; x++)
+      if(x>=0&&y>=0&&x<N&&y<N && exp.inPiece(x,y)) mapMask[y*N+x] = 1;
+
+  if(exp.strip){
+    // Pièce latérale : marquer achetée, vérifier si bande complète
+    const key = exp.side+'-'+exp.pieceIndex;
+    purchasedPieces.add(key);
+    const allDone = Array.from({length:EXP_N_PIECES},(_,i)=>exp.side+'-'+i).every(k=>purchasedPieces.has(k));
+    if(allDone){
+      // Bande terminée → étendre mapBounds et ouvrir la bande suivante
+      expansionLevels[exp.side] = (expansionLevels[exp.side]||0)+1;
+      for(let i=0;i<EXP_N_PIECES;i++) purchasedPieces.delete(exp.side+'-'+i);
+      // mapBounds s'étend d'une bande complète dans la bonne direction
+      if(exp.side==='right')  mapBounds.x1 = s.x1;
+      if(exp.side==='left')   mapBounds.x0 = s.x0;
+      if(exp.side==='bottom') mapBounds.y1 = s.y1;
+      if(exp.side==='top')    mapBounds.y0 = s.y0;
+    }
+    // mapBounds ne change PAS pour un achat partiel : les pièces restantes restent visibles
+  } else {
+    // Coin : achat unique, étendre mapBounds immédiatement
+    purchasedPieces.add(exp.side);
+    mapBounds.x0 = Math.min(mapBounds.x0, exp.x0);
+    mapBounds.y0 = Math.min(mapBounds.y0, exp.y0);
+    mapBounds.x1 = Math.max(mapBounds.x1, exp.x1);
+    mapBounds.y1 = Math.max(mapBounds.y1, exp.y1);
+  }
+
+  refreshExpansionSlots();
+  selectedExpansion = null;
+  hudTimer = 0;
+  const dirLabel = {right:'droite',left:'gauche',bottom:'bas',top:'haut',
+    'top-left':'haut-gauche','top-right':'haut-droite',
+    'bottom-left':'bas-gauche','bottom-right':'bas-droite'}[exp.side];
+  toast('🧩 Pièce achetée vers '+dirLabel+'.','win');
+  addFloat(exp.cx, exp.cy, '🧩', '#60d8a0');
+}
 
 function townOwnedBy(t, oid=myOwner()){
   return buildings.some(b=>!b.dead && b.townId === t.id && BUILD[b.type]?.resid && ownedBy(b, oid));
@@ -1163,6 +1376,8 @@ const MP = {
   ws: null, myId: null, myColor: '#ffffff', myName: 'Moi',
   role: null, isAdmin: false, players: [], cursors: {}, chat: [], connected: false,
   username: null, token: null, saves: [],
+  prevOwnerId: null,   // ancien id de connexion, reçu du serveur lors de l'auth
+  savedRegistry: null, // playerRegistry issu de la dernière sauvegarde chargée
   shutdownNotice: false,
   shutdownMessage: '',
 };
@@ -1215,7 +1430,13 @@ function canPlace(t,x,y){
 }
 
 function clickAt(x,y){
-  if(!inMap(x,y)) return;
+  if(!inMap(x,y)){
+    // Zones d'expansion : cliquables quel que soit l'outil
+    const exp = expansions.find(e=>e.inPiece(x,y));
+    if(exp){ selectedExpansion = exp; selected = null; selectedVehicle = null; hudTimer = 0; return; }
+    return;
+  }
+  selectedExpansion = null;
   const i = y*N+x;
 
   // Mode assignation de route véhicule (intercepte avant tout le reste)
@@ -1358,16 +1579,11 @@ function tryDispatch(b,res){
                           Math.abs(centerOfBuilding(c).y - senderCenter.y));
       if(d2 > senderRadius) continue;
     }
-    // vérifier le rayon de la cible si c'est un entrepôt ou un bâtiment industriel
+    // vérifier le rayon de la cible si c'est un entrepôt
     if(!pumpToTank && isStorageHub(c)){
       const d2 = Math.max(Math.abs(centerOfBuilding(b).x - centerOfBuilding(c).x),
                           Math.abs(centerOfBuilding(b).y - centerOfBuilding(c).y));
       if(d2 > (c.type === 'tank' ? tankRadiusOf(c) : depotRadiusOf(c))) continue;
-    }
-    if(!noRangeLimit && BUILD[c.type]?.ind){
-      const d2 = Math.max(Math.abs(centerOfBuilding(b).x - centerOfBuilding(c).x),
-                          Math.abs(centerOfBuilding(b).y - centerOfBuilding(c).y));
-      if(d2 > indRadiusOf(c)) continue;
     }
     let bd = Infinity, bt = -1;
     for(const t of adjRoadTiles(c))
@@ -1451,6 +1667,14 @@ function updateTrucks(dt){
       if(!tk.from.dead) tk.from.trucksOut--;
       trucks.splice(i,1);
     }
+  }
+}
+
+function syncIncomingReservations(){
+  for(const b of buildings) b.inc = {};
+  for(const tk of trucks){
+    if(!tk.target || tk.target.dead || !tk.res || !tk.amt) continue;
+    tk.target.inc[tk.res] = (tk.target.inc[tk.res]||0) + tk.amt;
   }
 }
 
@@ -1613,6 +1837,7 @@ function update(dt){
 
   ensureAllStarterProtections();
   refreshWorkerAllocation();
+  syncIncomingReservations();
   // eff du joueur courant (pour statusOf)
   eff = myWallet().eff;
 
@@ -1954,7 +2179,8 @@ function pathToEdge(b){
     const [c,i] = hpop();
     if(c > dist[i]) continue;
     const x = i%N, y = (i/N)|0;
-    if(x===0 || y===0 || x===N-1 || y===N-1){ goal = i; break; }
+    // Tuile sur le bord de la zone jouable (a au moins un voisin hors masque)
+    if(x<=0||y<=0||x>=N-1||y>=N-1||mapMask[i-1]===0||mapMask[i+1]===0||mapMask[i-N]===0||mapMask[i+N]===0){ goal=i; break; }
     for(const [dx,dy] of DIRS){
       const nx = x+dx, ny = y+dy;
       if(!inMap(nx,ny)) continue;
@@ -2494,6 +2720,125 @@ function drawVehicle(veh){
   }
 }
 
+const EXP_N_PIECES = 3; // pièces de puzzle par côté
+
+// Badge de prix canvas (remplace les anciennes fonctions jigsawPath/expPieceTabs devenus inutiles)
+function jigsawPath(cx, cy, w, h, tabs){
+  const r  = Math.min(w, h) * 0.10; // rayon de coin
+  const tr = Math.min(w, h) * 0.20; // rayon de tab/slot
+  const x0 = cx - w/2, x1 = cx + w/2;
+  const y0 = cy - h/2, y1 = cy + h/2;
+  const PI = Math.PI;
+
+  ctx.beginPath();
+  ctx.moveTo(x0 + r, y0);
+
+  // Bord TOP (gauche → droite)
+  if(tabs.top === 'tab'){
+    ctx.lineTo(cx - tr, y0);
+    ctx.arc(cx, y0, tr, PI, 0, false);   // tab vers le HAUT
+    ctx.lineTo(x1 - r, y0);
+  } else if(tabs.top === 'slot'){
+    ctx.lineTo(cx - tr, y0);
+    ctx.arc(cx, y0, tr, PI, 0, true);    // slot vers le BAS (rentrant)
+    ctx.lineTo(x1 - r, y0);
+  } else { ctx.lineTo(x1 - r, y0); }
+
+  ctx.quadraticCurveTo(x1, y0, x1, y0 + r);
+
+  // Bord RIGHT (haut → bas)
+  if(tabs.right === 'tab'){
+    ctx.lineTo(x1, cy - tr);
+    ctx.arc(x1, cy, tr, PI*1.5, PI*0.5, false); // tab vers la DROITE
+    ctx.lineTo(x1, y1 - r);
+  } else if(tabs.right === 'slot'){
+    ctx.lineTo(x1, cy - tr);
+    ctx.arc(x1, cy, tr, PI*1.5, PI*0.5, true);  // slot vers la GAUCHE
+    ctx.lineTo(x1, y1 - r);
+  } else { ctx.lineTo(x1, y1 - r); }
+
+  ctx.quadraticCurveTo(x1, y1, x1 - r, y1);
+
+  // Bord BOTTOM (droite → gauche)
+  if(tabs.bottom === 'tab'){
+    ctx.lineTo(cx + tr, y1);
+    ctx.arc(cx, y1, tr, 0, PI, false);   // tab vers le BAS
+    ctx.lineTo(x0 + r, y1);
+  } else if(tabs.bottom === 'slot'){
+    ctx.lineTo(cx + tr, y1);
+    ctx.arc(cx, y1, tr, 0, PI, true);    // slot vers le HAUT
+    ctx.lineTo(x0 + r, y1);
+  } else { ctx.lineTo(x0 + r, y1); }
+
+  ctx.quadraticCurveTo(x0, y1, x0, y1 - r);
+
+  // Bord LEFT (bas → haut)
+  if(tabs.left === 'tab'){
+    ctx.lineTo(x0, cy + tr);
+    ctx.arc(x0, cy, tr, PI*0.5, PI*1.5, false); // tab vers la GAUCHE
+    ctx.lineTo(x0, y0 + r);
+  } else if(tabs.left === 'slot'){
+    ctx.lineTo(x0, cy + tr);
+    ctx.arc(x0, cy, tr, PI*0.5, PI*1.5, true);  // slot vers la DROITE
+    ctx.lineTo(x0, y0 + r);
+  } else { ctx.lineTo(x0, y0 + r); }
+
+  ctx.quadraticCurveTo(x0, y0, x0 + r, y0);
+  ctx.closePath();
+}
+
+// Détermine les tabs d'une pièce selon sa position dans le côté
+function expPieceTabs(side, pi, n){
+  const t = { left:'flat', right:'flat', top:'flat', bottom:'flat' };
+  // Face vers la carte = tab (s'emboîte sur le bord existant)
+  if(side === 'right')  t.left   = 'tab';
+  if(side === 'left')   t.right  = 'tab';
+  if(side === 'bottom') t.top    = 'tab';
+  if(side === 'top')    t.bottom = 'tab';
+  // Interfaces entre pièces voisines : tab alternent avec slots
+  if(side === 'right' || side === 'left'){
+    if(pi < n-1) t.bottom = (pi%2===0) ? 'tab' : 'slot';
+    if(pi > 0)   t.top    = ((pi-1)%2===0) ? 'slot' : 'tab';
+  } else {
+    if(pi < n-1) t.right = (pi%2===0) ? 'tab' : 'slot';
+    if(pi > 0)   t.left  = ((pi-1)%2===0) ? 'slot' : 'tab';
+  }
+  return t;
+}
+
+function drawExpansionBadges(){
+  if(drawFast) return;
+  for(const exp of expansions){
+    const isHov = exp === hoveredExpansion;
+    const isSel = exp === selectedExpansion;
+    const canAfford = myWallet().money >= exp.cost;
+    // Centre ISO de la pièce
+    const [ru, rv] = rotF(exp.cx, exp.cy);
+    const [px, py] = iso(ru, rv);
+    const pulse = 0.85 + 0.15 * Math.sin(gtime * 2.4 + exp.cx * 0.12);
+
+    // Mini badge fond
+    const R = TH * 1.35;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(px, py, R, 0, Math.PI*2);
+    ctx.fillStyle = isSel ? 'rgba(12,50,38,0.96)' : `rgba(8,25,20,${0.85*pulse})`;
+    ctx.fill();
+    ctx.strokeStyle = isSel ? 'rgba(60,240,150,1)' : `rgba(50,190,130,${0.65*(isHov?1.4:1)*pulse})`;
+    ctx.lineWidth = isSel ? 2.5 : 1.5;
+    ctx.stroke();
+    ctx.restore();
+
+    // Prix
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 4;
+    ctx.fillStyle = canAfford ? '#ffe9a0' : '#ff9a8a';
+    ctx.font = 'bold '+Math.round(TH*0.52)+'px "Segoe UI",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(exp.cost.toLocaleString()+'$', px, py);
+    ctx.restore();
+  }
+}
+
 function draw(){
   drawFast = performance.now() < zoomActiveUntil || Math.abs(targetCam.z - cam.z) > 0.006;
   // ciel
@@ -2552,7 +2897,40 @@ function draw(){
     const px = (rx-ry)*TW2, py = (rx+ry)*TH2;
     if(px < vx0-TW || px > vx1 || py < vy0 || py > vy1) continue;
     const [x,y] = invRotIdx(rx,ry);
+    if(x<0||y<0||x>=N||y>=N) continue;
     const i = y*N+x, t = terrain[i];
+
+    // Tuiles hors zone jouable : zones d'expansion ou void
+    const inPlay = !!mapMask && mapMask[i]===1;
+    if(!inPlay){
+      const expZone = expansions.find(e=>e.inPiece(x,y));
+      if(!expZone) continue;
+      // Terrain dim + overlay sarcelle teinté par pièce
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = t===T.WATER ? WATER_COLS[hash(x,y)&1] : GRASS_COLS[hash(x,y)&3];
+      diamond(rx,ry); ctx.fill();
+      ctx.globalAlpha = 1;
+      const isHov = expZone === hoveredExpansion;
+      const isSel = expZone === selectedExpansion;
+      // Couleur légèrement différente par pièce pour distinguer visuellement
+      const PIECE_COLS = ['rgba(14,68,52,0.68)','rgba(20,82,62,0.68)','rgba(10,58,44,0.68)'];
+      const hovCol = isSel ? 'rgba(50,180,120,0.80)' : isHov ? 'rgba(38,150,105,0.75)' : PIECE_COLS[expZone.pieceIndex%3];
+      ctx.fillStyle = hovCol;
+      diamond(rx,ry); ctx.fill();
+      // Bordure lumineuse sur les tuiles adjacentes à la zone jouable
+      if(!drawFast){
+        const nextToMap = (x>0&&mapMask[i-1]===1)||(x<N-1&&mapMask[i+1]===1)
+                        ||(y>0&&mapMask[i-N]===1)||(y<N-1&&mapMask[i+N]===1);
+        if(nextToMap){
+          ctx.strokeStyle = isHov||isSel ? 'rgba(60,220,150,0.90)' : 'rgba(40,160,100,0.50)';
+          ctx.lineWidth = 1.5;
+          diamond(rx,ry); ctx.stroke();
+        }
+        // Distinguer les pièces voisines (via un stroke discret sur les tuiles de la "zone tab" centrale)
+        // La différence de couleur PIECE_COLS suffit ; pas de calcul coûteux ici
+      }
+      continue;
+    }
 
     if(t===T.WATER){
       ctx.fillStyle = WATER_COLS[hash(x,y)&1];
@@ -2771,6 +3149,9 @@ function draw(){
     diamond(grx,gry); ctx.stroke();
   }
 
+  // badges des zones d'expansion
+  if(!drawFast && expansions.length) drawExpansionBadges();
+
   // textes flottants
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for(const f of floats){
@@ -2833,9 +3214,9 @@ function renderFinance(){
     '<tr class="'+cls+'"><td>'+lbl+'</td>'
     + '<td class="r">'+sign+fmt(fin[c])+' $</td>'
     + '<td class="r">'+sign+fmt(rate(c))+' $</td></tr>';
-  const netT = fin.ventes+fin.taxes+fin.rembours-fin.construction-fin.entretien;
+  const netT = fin.ventes+fin.taxes+fin.rembours-fin.construction-fin.entretien-(fin.expansion||0);
   const netR = rate('ventes')+rate('taxes')+rate('rembours')
-             - rate('construction')-rate('entretien');
+             - rate('construction')-rate('entretien')-rate('expansion');
   const sgn = n => n>=0 ? '+' : '−';
   p.innerHTML =
     '<h3>💰 Finances <button class="tbtn" id="bFinX">✕</button></h3>'
@@ -2846,6 +3227,7 @@ function renderFinance(){
     + row('Remboursements','rembours','+','in')
     + row('Construction','construction','−','out')
     + row('Entretien industriel','entretien','−','out')
+    + ((fin.expansion||0) > 0 ? row('Expansions carte','expansion','−','out') : '')
     + '<tr class="net"><td>Bilan</td><td class="r">'+sgn(netT)+fmt(netT)+' $</td>'
     + '<td class="r">'+sgn(netR)+fmt(netR)+' $</td></tr>'
     + '</table>';
@@ -2882,6 +3264,40 @@ function statusOf(b){
 
 function renderInfo(){
   const p = $('info');
+
+  // --- Zone d'expansion sélectionnée ---
+  if(selectedExpansion && !selected && !selectedVehicle){
+    const exp = selectedExpansion;
+    if(!expansions.includes(exp)){ selectedExpansion = null; }
+    else {
+      const dirLabels = { right:'droite', left:'gauche', bottom:'bas', top:'haut',
+        'top-left':'coin haut-gauche','top-right':'coin haut-droite',
+        'bottom-left':'coin bas-gauche','bottom-right':'coin bas-droite' };
+      const dir = dirLabels[exp.side] || exp.side;
+      const isCorner = !exp.strip;
+      const n = EXP_N_PIECES;
+      const bought = isCorner ? 0 : Array.from({length:n},(_,i)=>exp.side+'-'+i).filter(k=>purchasedPieces.has(k)).length;
+      const canAfford = myWallet().money >= exp.cost;
+      let h_ = '<h3>🧩 Pièce de puzzle</h3>';
+      h_ += '<div class="status">Vers : <b>'+dir+'</b>'+(isCorner?' (coin)':' — pièce '+(exp.pieceIndex+1)+'/'+n)+'</div>';
+      if(!isCorner && bought>0)
+        h_ += '<div class="row"><span>Pièces achetées</span><b>'+bought+'/'+n+'</b></div>';
+      if(!isCorner)
+        h_ += '<div class="row"><span>Achetez les '+n+' pièces pour débloquer la prochaine bande</span></div>';
+      h_ += '<div class="row"><span>Prix pièce</span><b style="color:'+(canAfford?'#ffe9a0':'#ff9a8a')+'">'+exp.cost.toLocaleString()+' $</b></div>';
+      if(!isCorner && (expansionLevels[exp.side]||0)>0)
+        h_ += '<div class="row"><span>Bande n°</span><b>'+((expansionLevels[exp.side]||0)+1)+'</b></div>';
+      h_ += '<button class="tbtn" style="margin-top:8px;width:100%;'+(canAfford?'':'opacity:0.5;cursor:not-allowed;')+'" '
+          + 'onclick="buyExpansion(selectedExpansion)">'
+          + (canAfford ? '🧩 Acheter cette pièce' : '💸 Fonds insuffisants')
+          + '</button>';
+      p.style.display = 'block';
+      if(p._html === h_) return;
+      p._html = h_; p._b = null;
+      p.innerHTML = h_;
+      return;
+    }
+  }
 
   // --- Véhicule sélectionné ---
   if(selectedVehicle){
@@ -3280,6 +3696,7 @@ function updateMouseTileAt(x,y){
   const u = (ix/TW2 + iy/TH2)/2, v = (iy/TH2 - ix/TW2)/2;
   const [tx,ty] = invRotF(u,v);
   mouse.tx = Math.floor(tx); mouse.ty = Math.floor(ty);
+  hoveredExpansion = expansions.find(e=>e.inPiece(mouse.tx,mouse.ty)) || null;
 }
 function updateMouseTile(e){
   updateMouseTileAt(e.clientX, e.clientY);
@@ -3352,8 +3769,18 @@ cv.addEventListener('contextmenu', e=> e.preventDefault());
 function clampCamera(c){
   const m = TW*4;
   c.z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, c.z));
-  c.x = Math.min(N*TW2+m - W/c.z, Math.max(-N*TW2-m, c.x));
-  c.y = Math.min(N*TH+m - H/c.z, Math.max(-m-200, c.y));
+  // Bornes iso de la zone visible (zone jouable + EXP_DEPTH pour montrer les expansions)
+  const bx0 = mapBounds.x0 - EXP_DEPTH, by0 = mapBounds.y0 - EXP_DEPTH;
+  const bx1 = mapBounds.x1 + EXP_DEPTH, by1 = mapBounds.y1 + EXP_DEPTH;
+  let minIX=Infinity, maxIX=-Infinity, minIY=Infinity, maxIY=-Infinity;
+  for(const [wx,wy] of [[bx0,by0],[bx1,by0],[bx0,by1],[bx1,by1]]){
+    const [u,v] = rotF(wx, wy);
+    const [px,py] = iso(u, v);
+    if(px<minIX) minIX=px; if(px>maxIX) maxIX=px;
+    if(py<minIY) minIY=py; if(py>maxIY) maxIY=py;
+  }
+  c.x = Math.min(maxIX + m - W/c.z, Math.max(minIX - m, c.x));
+  c.y = Math.min(maxIY + m - H/c.z, Math.max(minIY - m - 200, c.y));
 }
 function clampCam(){
   clampCamera(cam);
@@ -3380,7 +3807,7 @@ addEventListener('keydown', e=>{
   if(e.target.tagName==='INPUT') return;
   keys.add(e.code);
   if(e.code==='Space'){ e.preventDefault(); togglePause(); }
-  if(e.code==='Escape'){ setTool('select'); selected = null; vehicleRouteMode = null; selectedVehicle = null; }
+  if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; }
   if(e.code==='KeyH') toggleHelp();
   if(e.code==='KeyR') rotate(e.shiftKey ? -1 : 1);
   if(e.code==='KeyB') setTool('bulldoze');
@@ -3501,6 +3928,10 @@ function serializeState(){
   return {
     world: WORLD,
     size: N,
+    mapBounds,
+    expansionLevels,
+    purchasedPieces: Array.from(purchasedPieces),
+    mapMask: Array.from(mapMask),
     terrain: Array.from(terrain),
     road:    Array.from(road),
     wallets: WALLETS,
@@ -3509,7 +3940,7 @@ function serializeState(){
     paused, speed,
     buildings: buildings.map(b => ({
       type:b.type, x:b.x, y:b.y, w:b.w, h:b.h,
-      storage:{...b.storage}, inc:{...b.inc},
+      storage:{...b.storage}, inc:{},
       prog:b.prog||0, trucksOut:b.trucksOut||0,
       pop:b.pop||0, protectedPop:b.protectedPop||0,
       ct:b.ct||0, pending:b.pending||0, pendingProtected:b.pendingProtected||0, starve:b.starve||0,
@@ -3530,11 +3961,105 @@ function serializeState(){
   };
 }
 
+// Relie le nouveau MP.myId aux données d'une session précédente
+// Source 1 : prevOwnerId transmis par le serveur (reconnexion dans la même session)
+// Source 2 : playerRegistry dans la sauvegarde (redémarrage serveur)
+// Diffuse également le remap à l'hôte pour que son état reste cohérent
+function remapOwnerId(){
+  if(MP.myId == null || !MP.username) return;
+  let oldId = MP.prevOwnerId;
+  if((oldId == null || oldId === MP.myId) && MP.savedRegistry){
+    const fromSave = MP.savedRegistry[MP.username];
+    if(fromSave != null) oldId = Number(fromSave);
+  }
+  if(oldId == null || oldId === MP.myId || !Number.isFinite(Number(oldId))) return;
+  oldId = Number(oldId);
+  applyOwnerRemap(oldId, MP.myId);
+  // Propager le remap à l'hôte et aux autres clients
+  if(MP.connected && MP.role !== 'host'){
+    netSend({ type:'owner_remap', oldId, newId:MP.myId });
+  }
+}
+
+function applyOwnerRemap(oldId, newId){
+  for(const b of buildings) if(b.owner === oldId) b.owner = newId;
+  for(const h of homeless)  if(h.owner === oldId){ h.owner = newId; h.col = playerColor(newId); }
+  if(WALLETS[oldId]){
+    if(!WALLETS[newId] || (WALLETS[oldId].money||0) >= (WALLETS[newId]?.money||0)){
+      WALLETS[newId] = WALLETS[oldId];
+    }
+    delete WALLETS[oldId];
+  }
+}
+
 function applySnapshot(d){
-  WORLD = normalizeWorldConfig(d.world || { ...WORLD, size: d.size || WORLD.size });
-  setMapSize(WORLD.size);
-  terrain  = Uint8Array.from(d.terrain);
-  road     = Uint8Array.from(d.road);
+  if(d.mapBounds){
+    // Format récent : d.size = N_FULL, mapBounds fourni
+    WORLD = normalizeWorldConfig(d.world || { ...WORLD, size: d.size });
+    setMapSize(d.size || N);
+    terrain = Uint8Array.from(d.terrain);
+    road    = Uint8Array.from(d.road);
+    mapBounds = { ...d.mapBounds };
+    expansionLevels = d.expansionLevels || { left:0, right:0, top:0, bottom:0 };
+    purchasedPieces = new Set(d.purchasedPieces||[]);
+    if(d.mapMask){
+      mapMask = Uint8Array.from(d.mapMask);
+    } else {
+      // Ancienne sauvegarde sans mapMask : reconstruire le masque ET le terrain des marges
+      mapMask.fill(0);
+      for(let y=mapBounds.y0; y<mapBounds.y1; y++)
+        for(let x=mapBounds.x0; x<mapBounds.x1; x++)
+          mapMask[y*N+x] = 1;
+      generateExpansionTerrain(); // les marges étaient vides (tout herbe)
+    }
+  } else {
+    // Ancien format : d.size = N_PLAY, migration vers la nouvelle structure
+    const N_PLAY = d.size || 64;
+    const N_FULL_MAP = N_PLAY + 2 * EXP_MARGIN;
+    WORLD = normalizeWorldConfig(d.world || { ...WORLD, size: N_PLAY });
+    setMapSize(N_FULL_MAP);
+    mapBounds = { x0: EXP_MARGIN, y0: EXP_MARGIN, x1: EXP_MARGIN + N_PLAY, y1: EXP_MARGIN + N_PLAY };
+    expansionLevels = { left:0, right:0, top:0, bottom:0 };
+    purchasedPieces = new Set();
+    // Déplacer le terrain dans la grande grille
+    const oldTerrain = Uint8Array.from(d.terrain);
+    const oldRoad    = Uint8Array.from(d.road);
+    terrain = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
+    road    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
+    for(let y=0; y<N_PLAY; y++) for(let x=0; x<N_PLAY; x++){
+      terrain[(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldTerrain[y*N_PLAY+x];
+      road   [(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldRoad   [y*N_PLAY+x];
+    }
+    // Décaler toutes les coordonnées de EXP_MARGIN tuiles
+    for(const o of d.buildings) { o.x += EXP_MARGIN; o.y += EXP_MARGIN; }
+    if(Array.isArray(d.towns)) for(const t of d.towns) { t.cx += EXP_MARGIN; t.cy += EXP_MARGIN; }
+    if(Array.isArray(d.vehicles)) for(const v of d.vehicles){
+      if(v.garageX != null) v.garageX += EXP_MARGIN;
+      if(v.garageY != null) v.garageY += EXP_MARGIN;
+      if(v.sourceX != null) v.sourceX += EXP_MARGIN;
+      if(v.sourceY != null) v.sourceY += EXP_MARGIN;
+      if(v.destX   != null) v.destX   += EXP_MARGIN;
+      if(v.destY   != null) v.destY   += EXP_MARGIN;
+    }
+    if(Array.isArray(d.homeless)) for(const h of d.homeless){
+      h.x += EXP_MARGIN * TILE;
+      h.y += EXP_MARGIN * TILE;
+    }
+    // Remplir le masque et générer le terrain des marges (migration : marges = tout herbe)
+    mapMask.fill(0);
+    for(let y=mapBounds.y0; y<mapBounds.y1; y++)
+      for(let x=mapBounds.x0; x<mapBounds.x1; x++)
+        mapMask[y*N+x] = 1;
+    generateExpansionTerrain();
+    // Re-centrer la caméra sur la zone jouable migée
+    const pcx = (mapBounds.x0 + mapBounds.x1) / 2;
+    const pcy = (mapBounds.y0 + mapBounds.y1) / 2;
+    cam.z = 1;
+    centerOn(pcx * TILE + TILE/2, pcy * TILE + TILE/2);
+  }
+  selectedExpansion = null; hoveredExpansion = null;
+  // Sauvegarder le registre des joueurs (pour récupération après redémarrage serveur)
+  if(d.playerRegistry && typeof d.playerRegistry === 'object') MP.savedRegistry = d.playerRegistry;
   gtime    = d.gtime || 0;
   WALLETS  = {};
   if(d.wallets){ for(const k in d.wallets) WALLETS[k] = d.wallets[k]; }
@@ -3559,7 +4084,7 @@ function applySnapshot(d){
     if(!BUILD[o.type]) continue;
     const b = newBuilding(o.type, o.x, o.y, o.w, o.h);
     Object.assign(b, {
-      storage:o.storage||{}, inc:o.inc||{},
+      storage:o.storage||{}, inc:{},
       prog:o.prog||0, trucksOut:0,
       pop:o.pop||0, protectedPop:o.protectedPop||0,
       ct:o.ct||0, pending:o.pending||0, pendingProtected:o.pendingProtected||0, starve:o.starve||0,
@@ -3639,6 +4164,8 @@ function applySnapshot(d){
       vehicles.push(v);
     }
   }
+  refreshExpansionSlots();
+  remapOwnerId();
 }
 
 // ---- patch minimal d'une action entrante ----
@@ -3660,6 +4187,7 @@ function applyAction(msg){
     case 'build': {
       const cost = BUILD[act.btype].cost||0;
       const wSender = walletOf(msg.from);
+      if(msg.fromUsername) wSender.username = msg.fromUsername;
       if(act.btype === 'road'){
         road[act.y*N+act.x] = 1;
         wSender.money -= cost; wSender.fin.construction += cost;
@@ -3695,6 +4223,9 @@ function applyAction(msg){
       applyPlantUpgrade(b, targetType);
       break;
     }
+    case 'owner_remap':
+      applyOwnerRemap(act.oldId, act.newId);
+      break;
     case 'pause': togglePause(); break;
     case 'speed': {
       speed = act.s; paused = false;
@@ -3829,10 +4360,13 @@ function mpConnect(url){
         break;
       }
 
-      case 'player_list':
+      case 'player_list': {
         MP.players = msg.players;
         MP.isAdmin = !!(MP.players.find(p=>p.id===MP.myId)||{}).isAdmin;
         for(const p of MP.players) ensureHomelessForOwner(p.id);
+        // Synchroniser la couleur du joueur local si elle a changé (après auth)
+        const myEntry = MP.players.find(p=>p.id===MP.myId);
+        if(myEntry && myEntry.color !== MP.myColor){ MP.myColor = myEntry.color; }
         for(const h of homeless) h.col = playerColor(h.owner);
         for(const p of MP.players) assignHomelessToHousing(p.id);
         ensureSelectedTown();
@@ -3842,10 +4376,14 @@ function mpConnect(url){
         for(const p of MP.players)
           if(MP.cursors[p.id]) MP.cursors[p.id].color = p.color;
         break;
+      }
 
       case 'player_left':
         delete MP.cursors[msg.id];
-        toast('👤 Joueur #'+msg.id+' a quitté la partie');
+        if(msg.id !== MP.myId){
+          const leaverName = msg.username || msg.name || ('Joueur #'+msg.id);
+          toast('👤 '+leaverName+' a quitté la partie');
+        }
         mpRenderPlayerList();
         break;
 
@@ -3854,11 +4392,21 @@ function mpConnect(url){
         MP.token    = msg.token;
         MP.myColor  = msg.color;
         MP.myName   = msg.username;
+        // Stocker l'ancien id de connexion fourni par le serveur pour le remappage
+        if(msg.prevOwnerId != null && msg.prevOwnerId !== MP.myId) MP.prevOwnerId = msg.prevOwnerId;
+        // Fallback : chercher dans le registry sauvegardé (cas redémarrage serveur)
+        if(!MP.prevOwnerId && MP.savedRegistry){
+          const fromSave = MP.savedRegistry[msg.username];
+          if(fromSave != null && Number(fromSave) !== MP.myId) MP.prevOwnerId = Number(fromSave);
+        }
         for(const h of homeless) if(h.owner === MP.myId) h.col = msg.color;
         localStorage.setItem('fp_token', msg.token);
         $('mpAuthPwd').value = '';
         mpShowAuthError('');
         toast('👤 Connecté en tant que ' + msg.username);
+        // Relier l'ancien id aux données déjà chargées (si snapshot déjà arrivé)
+        remapOwnerId();
+        resetSelectedTown();
         mpUpdateUI();
         // récupérer la liste des sauvegardes
         MP.ws.send(JSON.stringify({ type:'list_saves', token:MP.token }));
@@ -3933,6 +4481,20 @@ function mpConnect(url){
         MP.shutdownMessage = msg.msg || 'Serveur arrêté';
         if(MP.ws) MP.ws.close();
         break;
+
+      case 'server_cmd':
+        if(msg.cmd === 'regen_expansions'){
+          generateExpansionTerrain();
+          refreshExpansionSlots();
+          toast('🌍 Terrain des zones d\'expansion régénéré par le serveur.', 'win');
+        } else if(msg.cmd === 'set_money'){
+          const amount = Math.round(Number(msg.amount));
+          if(Number.isFinite(amount)){
+            myWallet().money = amount;
+            toast('💰 Solde fixé à '+amount.toLocaleString()+' $ par le serveur.', 'win');
+          }
+        }
+        break;
     }
   };
 }
@@ -3963,7 +4525,12 @@ function mpLogoutAccount(){
 
 // ---- interception des clics (via clickFn défini plus haut) ----
 clickFn = function(x,y){
-  if(!inMap(x,y)) return;
+  // Zones d'expansion cliquables quel que soit l'outil ou le contexte réseau
+  if(!inMap(x,y)){
+    const exp = expansions.find(e=>e.inPiece(x,y));
+    if(exp){ selectedExpansion = exp; selected = null; selectedVehicle = null; hudTimer = 0; }
+    return;
+  }
   const i = y*N+x;
   if(tool==='select'){ clickAt(x,y); return; }
   if(!MP.connected){
@@ -4465,3 +5032,13 @@ function escHtml(s){
 }
 
 mpInjectUI();
+
+// ======================================================================
+// COMMANDES CONSOLE
+// ======================================================================
+window.regenExpansions = function(){
+  generateExpansionTerrain();
+  refreshExpansionSlots();
+  toast('🌍 Terrain des zones d\'expansion régénéré.', 'win');
+  console.info('[regenExpansions] Terrain non-jouable régénéré avec de nouvelles ressources.');
+};
