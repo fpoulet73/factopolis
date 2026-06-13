@@ -22,7 +22,7 @@ function serializeState(){
       storage:{...b.storage}, inc:{},
       prog:b.prog||0, trucksOut:b.trucksOut||0,
       pop:b.pop||0, protectedPop:b.protectedPop||0,
-      ct:b.ct||0, pending:b.pending||0, pendingProtected:b.pendingProtected||0, starve:b.starve||0,
+      ct:b.ct||0, pending:0, pendingProtected:0, starve:b.starve||0,
       ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, sellMin:b.sellMin||null, paused:b.paused||false, owner:b.owner||null,
       starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
     })),
@@ -166,7 +166,7 @@ function applySnapshot(d){
       storage:o.storage||{}, inc:{},
       prog:o.prog||0, trucksOut:0,
       pop:o.pop||0, protectedPop:o.protectedPop||0,
-      ct:o.ct||0, pending:o.pending||0, pendingProtected:o.pendingProtected||0, starve:o.starve||0,
+      ct:o.ct||0, pending:0, pendingProtected:0, starve:o.starve||0,
     });
     if(o.ore)   b.ore   = o.ore;
     if(o.allow) b.allow = o.allow;
@@ -991,4 +991,3 @@ function mpRenderSaves(){
     };
   });
 }
-

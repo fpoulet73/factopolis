@@ -6,6 +6,7 @@ function update(dt){
   ensureAllStarterProtections();
   refreshWorkerAllocation();
   syncIncomingReservations();
+  syncResidentReservations();
   // eff du joueur courant (pour statusOf)
   eff = myWallet().eff;
 
@@ -484,7 +485,6 @@ function updateWalkers(dt){
           if(d < 4 && c.pop < bestPop){ bestPop = c.pop; best = c; }
         }
         tg = best;
-        if(tg){ tg.pending++; }
       } else {
         tg.pending--;
         if(wk.protectedResident) tg.pendingProtected = Math.max(0, (tg.pendingProtected||0) - 1);
@@ -502,4 +502,3 @@ function updateWalkers(dt){
     }
   }
 }
-

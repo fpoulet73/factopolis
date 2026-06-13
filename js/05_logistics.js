@@ -28,12 +28,9 @@ function tryDispatch(b,res){
     if(c===b || c.dead || !accepts(c,res) || space(c,res)<=0) continue;
     if(res === 'water' && b.type === 'pump' && c.type === 'bakery') continue;
     if(isStorageHub(b) && isStorageHub(c)) continue;
-    // Liaisons directes sans limite de rayon (portée = réseau routier uniquement)
-    const millToBakery = b.type === 'mill'  && res === 'flour' && c.type === 'bakery';
-    const pumpToTank   = b.type === 'pump'  && res === 'water' && c.type === 'tank';
-    const noRangeLimit = millToBakery || pumpToTank;
+    const pumpToTank = b.type === 'pump' && res === 'water' && c.type === 'tank';
     // vérifier le rayon de l'expéditeur
-    if(!noRangeLimit && senderRadius < Infinity){
+    if(senderRadius < Infinity){
       const d2 = Math.max(Math.abs(centerOfBuilding(c).x - senderCenter.x),
                           Math.abs(centerOfBuilding(c).y - senderCenter.y));
       if(d2 > senderRadius) continue;
@@ -47,9 +44,9 @@ function tryDispatch(b,res){
     let bd = Infinity, bt = -1;
     for(const t of adjRoadTiles(c))
       if(dist[t]>=0 && dist[t]<bd){ bd = dist[t]; bt = t; }
-    // Livraison directe (sans route) pour ind→ind dans le rayon, ou pour les liaisons spéciales
+    // Livraison directe (sans route) pour ind→ind dans le rayon
     const targetIsInd = !!BUILD[c.type]?.ind;
-    const directOk = noRangeLimit || (senderIsInd && targetIsInd);
+    const directOk = senderIsInd && targetIsInd;
     if(bt<0 && !directOk) continue;
     // l'entrepôt en dernier recours ; les logements déjà pleins après ceux qui grandissent
     const rcc = BUILD[c.type].resid;
@@ -134,6 +131,20 @@ function syncIncomingReservations(){
   for(const tk of trucks){
     if(!tk.target || tk.target.dead || !tk.res || !tk.amt) continue;
     tk.target.inc[tk.res] = (tk.target.inc[tk.res]||0) + tk.amt;
+  }
+}
+
+function syncResidentReservations(){
+  for(const b of buildings){
+    if(!BUILD[b.type]?.resid) continue;
+    b.pending = 0;
+    b.pendingProtected = 0;
+  }
+  for(const wk of walkers){
+    const tg = wk.target;
+    if(wk.leaving || !tg || tg.dead || !BUILD[tg.type]?.resid) continue;
+    tg.pending = (tg.pending||0) + 1;
+    if(wk.protectedResident) tg.pendingProtected = (tg.pendingProtected||0) + 1;
   }
 }
 
@@ -288,4 +299,3 @@ function updateVehicles(dt){
     }
   }
 }
-
