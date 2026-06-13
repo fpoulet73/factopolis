@@ -187,6 +187,14 @@ const broadcastAll  = msg => { const r = JSON.stringify(msg); clients.forEach(c 
 const broadcast     = (msg, excludeId) => { const r = JSON.stringify(msg); clients.forEach(c => { if(c.id!==excludeId && c.ws.readyState===1) c.ws.send(r); }); };
 // Mémorise le dernier id de connexion de chaque joueur authentifié (persiste les reconnexions)
 const userOwnerRegistry = new Map(); // username → last connection id
+if (startupSave?.state?.playerRegistry && typeof startupSave.state.playerRegistry === 'object') {
+  for (const [username, id] of Object.entries(startupSave.state.playerRegistry)) {
+    const n = Number(id);
+    if (username && Number.isFinite(n)) userOwnerRegistry.set(username, n);
+  }
+  const maxKnownId = Math.max(0, ...Array.from(userOwnerRegistry.values()));
+  nextId = Math.max(nextId, maxKnownId + 1);
+}
 let shuttingDown = false;
 let consoleRl = null;
 
@@ -206,6 +214,43 @@ function requirePrivileged(c, errType = 'permission_err') {
   if (isPrivileged(c)) return true;
   send(c, { type: errType, msg: 'Action réservée à l’hôte ou aux administrateurs' });
   return false;
+}
+
+function clientLabel(c) {
+  return c?.username || c?.name || (c ? 'Joueur ' + c.id : 'Joueur inconnu');
+}
+
+function logClientJoin(c) {
+  if (!c || c.joinLogged) return;
+  c.joinLogged = true;
+  console.log(`[+] ${clientLabel(c)} connecté (#${c.id}, ${clients.length} joueurs)`);
+}
+
+function replaceExistingAuthenticatedClient(username, replacement) {
+  const old = clients.find(c => c !== replacement && c.username === username);
+  if (!old) return;
+
+  old.replaced = true;
+  clients = clients.filter(c => c !== old);
+  if (hostId === old.id) {
+    hostId = replacement.id;
+    send(replacement, { type: 'promoted_host', worldConfig });
+    console.log(`[→] ${clientLabel(replacement)} promu hôte`);
+  }
+  broadcastAll({ type:'player_left', id: old.id, name: old.name, username: old.username });
+  try { old.ws.close(4000, 'replaced_by_new_session'); } catch {}
+  console.log(`[~] ${clientLabel(old)} remplacé par une nouvelle connexion`);
+}
+
+function authenticateClient(client, { username, token, color, isAdmin = false }) {
+  const prevOwnerId = userOwnerRegistry.get(username) ?? null;
+  Object.assign(client, { username, token, name: username, color, isAdmin, announced: true });
+  replaceExistingAuthenticatedClient(username, client);
+  userOwnerRegistry.set(username, client.id);
+  send(client, { type:'auth_ok', username, color, token, prevOwnerId });
+  logClientJoin(client);
+  broadcastPlayerList();
+  return prevOwnerId;
 }
 
 function clampInt(v, min, max, def) {
@@ -249,9 +294,8 @@ wss.on('connection', (ws) => {
   const id    = nextId++;
   const color = COLORS[(id - 1) % COLORS.length];
   const name  = 'Joueur ' + id;
-  const client = { ws, id, color, name, username: null, token: null, isAdmin: false, announced: false };
+  const client = { ws, id, color, name, username: null, token: null, isAdmin: false, announced: false, joinLogged: false, replaced: false };
   clients.push(client);
-  console.log(`[+] ${name} connecté  (${clients.length} joueurs)`);
 
   if (hostId === null) {
     hostId = id;
@@ -277,14 +321,16 @@ wss.on('connection', (ws) => {
     const host = clients.find(c => c.id === hostId);
     if (host) send(host, { type: 'snapshot_request', forId: id });
   }
-  // Délai de grâce : si le joueur s'authentifie (resume/login), c'est cet handler qui diffuse
-  // la liste avec le bon nom/couleur. Sinon on annonce après 400 ms.
+  // Délai de grâce : si le joueur s'authentifie (resume/login), cet handler évite
+  // d'annoncer un nom temporaire du type "Joueur 4".
+  // la liste avec le bon nom/couleur. Sinon on annonce après 1,5 s.
   setTimeout(() => {
     if (clients.find(c => c.id === id) && !client.announced) {
       client.announced = true;
+      logClientJoin(client);
       broadcastPlayerList();
     }
-  }, 400);
+  }, 1500);
 
   ws.on('message', (raw) => {
     let msg;
@@ -307,11 +353,7 @@ wss.on('connection', (ws) => {
         users[username] = { passwordHash, color };
         saveUsers(users);
         const token = makeToken(username, passwordHash);
-        const prevOwnerId = userOwnerRegistry.get(username) ?? null;
-        userOwnerRegistry.set(username, client.id);
-        Object.assign(client, { username, token, name: username, color, announced: true });
-        send(client, { type:'auth_ok', username, color, token, prevOwnerId });
-        broadcastPlayerList();
+        authenticateClient(client, { username, token, color });
         console.log(`[register] ${username}`);
         break;
       }
@@ -325,11 +367,7 @@ wss.on('connection', (ws) => {
         if (users[username].passwordHash !== passwordHash)
           { send(client, { type:'auth_err', msg:'Mot de passe incorrect' }); break; }
         const token = makeToken(username, passwordHash);
-        const prevOwnerId = userOwnerRegistry.get(username) ?? null;
-        userOwnerRegistry.set(username, client.id);
-        Object.assign(client, { username, token, name: username, color: users[username].color, announced: true });
-        send(client, { type:'auth_ok', username, color: users[username].color, token, prevOwnerId });
-        broadcastPlayerList();
+        authenticateClient(client, { username, token, color: users[username].color });
         console.log(`[login] ${username}`);
         break;
       }
@@ -337,11 +375,7 @@ wss.on('connection', (ws) => {
       case 'resume': {
         const user = validateToken(msg.token);
         if (!user) { send(client, { type:'auth_err', msg:'Session expirée, reconnectez-vous' }); break; }
-        const prevOwnerId = userOwnerRegistry.get(user.username) ?? null;
-        userOwnerRegistry.set(user.username, client.id);
-        Object.assign(client, { username: user.username, token: msg.token, name: user.username, color: user.color, announced: true });
-        send(client, { type:'auth_ok', username: user.username, color: user.color, token: msg.token, prevOwnerId });
-        broadcastPlayerList();
+        authenticateClient(client, { username: user.username, token: msg.token, color: user.color });
         console.log(`[resume] ${user.username}`);
         break;
       }
@@ -477,12 +511,13 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     clients = clients.filter(c => c.id !== id);
-    console.log(`[-] ${name} déconnecté (${clients.length} joueurs)`);
+    if (client.replaced) return;
+    console.log(`[-] ${clientLabel(client)} déconnecté (${clients.length} joueurs)`);
     if (hostId === id) {
       if (clients.length > 0) {
         hostId = clients[0].id;
         send(clients[0], { type: 'promoted_host', worldConfig });
-        console.log(`[→] ${clients[0].name} promu hôte`);
+        console.log(`[→] ${clientLabel(clients[0])} promu hôte`);
       } else { hostId = null; }
     }
     broadcastAll({ type:'player_left', id, name: client.name, username: client.username });

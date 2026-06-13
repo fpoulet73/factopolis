@@ -471,6 +471,7 @@ function mpConnect(url){
         MP.token    = msg.token;
         MP.myColor  = msg.color;
         MP.myName   = msg.username;
+        MP.prevOwnerId = null;
         // Stocker l'ancien id de connexion fourni par le serveur pour le remappage
         if(msg.prevOwnerId != null && msg.prevOwnerId !== MP.myId) MP.prevOwnerId = msg.prevOwnerId;
         // Fallback : chercher dans le registry sauvegardé (cas redémarrage serveur)
