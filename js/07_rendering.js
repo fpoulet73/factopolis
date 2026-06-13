@@ -51,6 +51,18 @@ function diamond(rx,ry,w,h){
   ctx.closePath();
 }
 
+function spriteDepthKey(u,v,bias){
+  return (u+v)*4096 + (v-u) + (bias||0);
+}
+
+function buildingDepthKey(b){
+  const [r1x,r1y] = rotIdx(b.x, b.y);
+  const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
+  const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
+  const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
+  return spriteDepthKey(rx0+rw*0.5, ry0+rh*0.5, 0.2);
+}
+
 const GRASS_COLS = ['#74b048','#6ea944','#7ab84d','#68a23f'];
 const WATER_COLS = ['#3590cf','#3187c2'];
 
@@ -674,7 +686,7 @@ function draw(){
 
     // collecte des sprites (arbres / bâtiments) au passage
     if(!drawFast && t===T.TREE){
-      sprites.push({ k:ry*1024+rx, f:()=>drawTree(rx,ry,x,y) });
+      sprites.push({ k:spriteDepthKey(rx+0.5, ry+0.5), f:()=>drawTree(rx,ry,x,y) });
     }
     const b = bgrid[i];
     if(b){
@@ -682,7 +694,7 @@ function draw(){
       const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
       // dessiné une seule fois, depuis sa tuile la plus « en avant »
       if(rx===Math.max(r1x,r2x) && ry===Math.max(r1y,r2y))
-        sprites.push({ k:ry*1024+rx, f:()=>drawBuilding(b) });
+        sprites.push({ k:buildingDepthKey(b), f:()=>drawBuilding(b) });
     }
   }
 
@@ -748,14 +760,14 @@ function draw(){
   if(!drawFast){
     for(const h of homeless){
       const [u,v] = rotF(h.x/TILE, h.y/TILE);
-      sprites.push({ k:Math.floor(v)*1024 + Math.floor(u) + 0.55, f:()=>drawHomeless(h) });
+      sprites.push({ k:spriteDepthKey(u, v, 0.55), f:()=>drawHomeless(h) });
     }
 
     for(const tk of trucks){
       const a = tk.pts[tk.seg], b = tk.pts[Math.min(tk.seg+1, tk.pts.length-1)];
       const wx = a.x + (b.x-a.x)*tk.t, wy = a.y + (b.y-a.y)*tk.t;
       const [u,v] = rotF(wx/TILE, wy/TILE);
-      sprites.push({ k:Math.floor(v)*1024 + Math.floor(u) + 0.5, f:()=>drawTruck(tk) });
+      sprites.push({ k:spriteDepthKey(u, v, 0.5), f:()=>drawTruck(tk) });
     }
 
     for(const veh of vehicles){
@@ -763,7 +775,7 @@ function draw(){
       const a = veh.pts[veh.seg], b = veh.pts[Math.min(veh.seg+1, veh.pts.length-1)];
       const wx = a.x + (b.x-a.x)*veh.t, wy = a.y + (b.y-a.y)*veh.t;
       const [u,v] = rotF(wx/TILE, wy/TILE);
-      sprites.push({ k:Math.floor(v)*1024 + Math.floor(u) + 0.52, f:()=>drawVehicle(veh) });
+      sprites.push({ k:spriteDepthKey(u, v, 0.52), f:()=>drawVehicle(veh) });
     }
 
     // piétons
@@ -771,7 +783,7 @@ function draw(){
       const a = wk.pts[wk.seg], b = wk.pts[Math.min(wk.seg+1, wk.pts.length-1)];
       const wx = a.x + (b.x-a.x)*wk.t, wy = a.y + (b.y-a.y)*wk.t;
       const [u,v] = rotF(wx/TILE, wy/TILE);
-      sprites.push({ k:Math.floor(v)*1024 + Math.floor(u) + 0.6, f:()=>drawWalker(wk) });
+      sprites.push({ k:spriteDepthKey(u, v, 0.6), f:()=>drawWalker(wk) });
     }
   }
 
