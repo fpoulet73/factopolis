@@ -120,7 +120,6 @@ mpInjectUI();
 
 buildToolbar();
 genWorld();
-$('help').style.display = 'block';
 renderAutoSaves();
 requestAnimationFrame(frame);
 

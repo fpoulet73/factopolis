@@ -904,6 +904,7 @@ function mpUpdateUI(){
   if(!conn) return;
 
   if(MP.connected){
+    const sp = $('splash'); if(sp) sp.style.display = 'none';
     conn.style.display  = 'none';
     disc.style.display  = '';
     $('mpAuthBlock').style.display = MP.username ? 'none' : '';

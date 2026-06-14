@@ -687,6 +687,7 @@ function toggleHelp(){
 }
 $('bHelp').onclick = toggleHelp;
 $('bGo').onclick = ()=> $('help').style.display = 'none';
+$('sSplashGo').onclick = ()=> $('splash').style.display = 'none';
 
 // ---------- dropdown options ----------
 const optMenu = $('optMenu');

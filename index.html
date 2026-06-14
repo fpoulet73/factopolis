@@ -100,10 +100,62 @@
   #help .go{display:block;margin:14px auto 0;font-size:15px;padding:8px 28px}
   #help ul{margin:8px 0;padding-left:20px}
   #help li{margin:3px 0}
+
+  /* ---- splash ---- */
+  #splash{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:28px;
+    background:rgba(10,14,22,.52);overflow:hidden}
+  /* blocs décoratifs flottants */
+  .sb{position:absolute;border-radius:5px;opacity:.18;
+    background:hsl(var(--h),75%,55%);
+    box-shadow:5px 5px 0 hsl(var(--h),75%,28%),10px 10px 0 hsl(var(--h),75%,15%);
+    transform:skewX(-12deg) skewY(4deg);
+    animation:sbFloat var(--d,5s) ease-in-out var(--dl,0s) infinite}
+  @keyframes sbFloat{0%,100%{translate:0 0}50%{translate:0 -18px}}
+  /* titre isométrique */
+  .splash-scene{text-align:center;position:relative;z-index:1}
+  .splash-title{
+    font-size:clamp(52px,9vw,116px);font-weight:900;letter-spacing:.1em;line-height:1;
+    color:#4dd9ff;
+    text-shadow:
+      1px 2px 0 #3bcbec, 2px 4px 0 #2eb8d8, 3px 6px 0 #21a5c4,
+      4px 8px 0 #1492b0, 5px 10px 0 #077f9c, 6px 12px 0 #006c88,
+      7px 14px 0 #005974, 8px 16px 0 #004660,
+      0 0 80px rgba(77,217,255,.25);
+    transform:perspective(700px) rotateX(22deg) skewX(-5deg);
+    transform-origin:center top;
+    animation:titleGlow 2.8s ease-in-out infinite}
+  @keyframes titleGlow{
+    0%,100%{filter:drop-shadow(0 0 12px rgba(77,217,255,.35))}
+    50%     {filter:drop-shadow(0 0 38px rgba(77,217,255,.75))}}
+  .splash-sub{margin:18px 0 0;color:#3d6080;font-size:15px;
+    letter-spacing:.28em;text-transform:uppercase;position:relative;z-index:1}
+  #sSplashGo{font-size:16px;padding:11px 40px;position:relative;z-index:1;
+    background:#1d3a5a;border-color:#3a7aaa;transition:background .2s}
+  #sSplashGo:hover{background:#1e4f80}
 </style>
 </head>
 <body>
 <canvas id="cv"></canvas>
+
+<!-- ============================================================
+     SPLASH — titre isométrique Tetris au démarrage
+     ============================================================ -->
+<div id="splash">
+  <!-- blocs décoratifs (6 pièces Tetris stylisées) -->
+  <div class="sb" style="--h:185;--d:6s;--dl:0s;  width:130px;height:32px; top:9%;  left:5%"></div>
+  <div class="sb" style="--h:35; --d:5s;--dl:.8s; width:32px; height:96px; top:14%; right:8%"></div>
+  <div class="sb" style="--h:280;--d:7s;--dl:1.4s;width:96px; height:32px; bottom:22%;left:7%"></div>
+  <div class="sb" style="--h:120;--d:4.5s;--dl:.3s;width:64px;height:64px; bottom:14%;right:10%"></div>
+  <div class="sb" style="--h:55; --d:6.5s;--dl:2s; width:32px; height:64px; top:52%; left:3%"></div>
+  <div class="sb" style="--h:240;--d:5.5s;--dl:1s; width:96px; height:32px; top:62%; right:4%"></div>
+  <!-- scène principale -->
+  <div class="splash-scene">
+    <div class="splash-title">FACTOPOLIS</div>
+    <p class="splash-sub">Extrais · Produis · Transporte · Peuple</p>
+  </div>
+  <button class="tbtn" id="sSplashGo">▶ &nbsp;Commencer</button>
+</div>
 
 <div id="topbar" class="panel">
   <span class="stat" id="sMoney" title="Cliquer : détail des gains et dépenses">💰 <b id="hMoney">0</b> $</span>
