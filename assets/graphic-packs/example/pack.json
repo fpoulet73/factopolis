@@ -1,0 +1,50 @@
+{
+  "id": "example",
+  "name": "Exemple communautaire",
+  "description": "Pack d'exemple avec sprites SVG remplaçant quelques polygones.",
+  "fallback": "classic",
+  "defaultScale": 1,
+  "buildings": {
+    "house": { "src": "house.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.25 },
+    "duplex": { "src": "house.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.5 },
+    "row": { "src": "house.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.7 },
+    "residence": { "src": "tower.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.1 },
+    "tower": { "src": "tower.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.25 },
+    "bigtower": { "src": "tower.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.55 },
+    "sky": { "src": "tower.svg", "anchorX": 0.5, "anchorY": 1, "scale": 2.05 },
+    "mine": { "src": "mine.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 },
+    "lumber": { "src": "lumber.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 },
+    "farm": {
+      "src": "farm.svg",
+      "anchorX": 0.5,
+      "anchorY": 1,
+      "scale": 1.25,
+      "variants": {
+        "2x1": { "src": "farm.svg", "scale": 1.55 },
+        "1x2": { "src": "farm.svg", "scale": 1.55 },
+        "area:4": { "src": "farm.svg", "scale": 1.9 }
+      }
+    },
+    "pump": { "src": "pump.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 },
+    "mill": { "src": "mill.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 },
+    "bakery": { "src": "bakery.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 },
+    "smelter": { "src": "smelter.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 },
+    "factory": {
+      "src": "factory.svg",
+      "anchorX": 0.5,
+      "anchorY": 1,
+      "scale": 1.35,
+      "variants": {
+        "2x1": { "src": "factory.svg", "scale": 1.6 },
+        "1x2": { "src": "factory.svg", "scale": 1.6 },
+        "area:4": { "src": "factory.svg", "scale": 1.9 },
+        "area:6": { "src": "factory.svg", "scale": 2.2 },
+        "area:16": { "src": "factory.svg", "scale": 2.9 }
+      }
+    },
+    "plant": { "src": "plant.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.2 },
+    "depot": { "src": "depot.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 },
+    "tank": { "src": "tank.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 },
+    "garage": { "src": "garage.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 }
+  }
+}

@@ -35,6 +35,7 @@ const UI_OPTIONS = (() => {
   try { saved = JSON.parse(localStorage.getItem('factopolis_ui_options') || '{}'); } catch(e){}
   return {
     hideColorMarkers: saved.hideColorMarkers ?? false,
+    graphicPack: GRAPHIC_PACKS[saved.graphicPack] || /^asset:/.test(saved.graphicPack || '') ? saved.graphicPack : 'classic',
   };
 })();
 function saveUIOptions(){ localStorage.setItem('factopolis_ui_options', JSON.stringify(UI_OPTIONS)); }
@@ -583,4 +584,3 @@ function refreshWorkerAllocation(){
     WALLETS[k].eff = req > 0 ? Math.min(1, assigned / req) : 1;
   }
 }
-

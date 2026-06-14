@@ -46,7 +46,7 @@ const EXP_MARGIN = 48;   // marge pré-générée de chaque côté (max 3 expans
 // ---------- véhicules persistants ----------
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
-  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', ble:'#d7b348', farine:'#eadfa8', citerne:'#64b7e8', pain:'#d99a45', acier:'#7a8fa0', marchandises:'#e6c84f' };
+  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', ble:'#d7b348', farine:'#eadfa8', citerne:'#64b7e8', pain:'#d99a45', poisson:'#4fa6b8', acier:'#7a8fa0', marchandises:'#e6c84f' };
   const DEFS = {
     minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal'], cost:800,  capacite:15, speed:4.0 },
     bois:        { nom:'Camion bois',         icone:'🚜', resources:['wood'],        cost:600,  capacite:15, speed:4.0 },
@@ -54,6 +54,7 @@ const VEHICLE_TYPES = (()=>{
     farine:      { nom:'Camion farine',       icone:'🚚', resources:['flour'],       cost:650,  capacite:15, speed:3.8 },
     citerne:     { nom:'Camion citerne',      icone:'🚛', resources:['water'],       cost:750,  capacite:20, speed:3.5 },
     pain:        { nom:'Camion pain',         icone:'🚚', resources:['bread'],       cost:700,  capacite:15, speed:3.8 },
+    poisson:     { nom:'Chariot poisson',     icone:'🛒', resources:['fish','fish_fillet','fish_oil'], cost:650, capacite:14, speed:3.8 },
     acier:       { nom:'Camion acier',        icone:'🚚', resources:['steel'],       cost:1000, capacite:12, speed:3.5 },
     marchandises:{ nom:'Camion outils',        icone:'🚐', resources:['goods'],       cost:700,  capacite:12, speed:3.5 },
   };
@@ -82,9 +83,183 @@ const RES = {
   flour: { n:'Farine',       c:'#eadfa8' },
   water: { n:'Eau',          c:'#64b7e8' },
   bread: { n:'Pain',         c:'#d99a45' },
+  fish:  { n:'Poisson',      c:'#4fa6b8' },
+  fish_fillet: { n:'Filet de poisson', c:'#c7e7e9' },
+  fish_oil:    { n:'Huile de poisson', c:'#d6b45c' },
   steel: { n:'Acier',        c:'#a8bdd2' },
   goods: { n:'Outils de construction', c:'#e6c84f' },
 };
+
+const GRAPHIC_PACKS = {
+  classic: {
+    n: 'Classique',
+    desc: 'Couleurs lisibles proches du rendu original.',
+    mode: 'polygon',
+    sky: ['#1c2740', '#0b101a'],
+    grass: ['#74b048','#6ea944','#7ab84d','#68a23f'],
+    water: ['#3590cf','#3187c2'],
+    road: '#33373e',
+    roadLine: '#4c525c',
+    roof: 'flat',
+    category: {},
+    buildings: {},
+  },
+  brick: {
+    n: 'Briques',
+    desc: 'Toits chauds et bâtiments plus urbains.',
+    mode: 'polygon',
+    sky: ['#26384b', '#111820'],
+    grass: ['#6d9d4a','#638f43','#78aa54','#5b883b'],
+    water: ['#2f87b5','#2b799f'],
+    road: '#3a3430',
+    roadLine: '#5a524a',
+    roof: 'tiles',
+    category: {
+      resid: '#b0644c',
+      ind: '#8a5e45',
+      storage: '#78613f',
+    },
+    buildings: {
+      road: '#3a3430',
+      house: '#b46d4f',
+      duplex: '#a85f48',
+      row: '#ad634d',
+      residence: '#9a6a5a',
+      tower: '#7a6b72',
+      bigtower: '#6f7181',
+      sky: '#5f6f86',
+      depot: '#816b45',
+      garage: '#56606c',
+      tank: '#47728d',
+    },
+  },
+  modern: {
+    n: 'Moderne',
+    desc: 'Façades froides, verre et routes plus nettes.',
+    mode: 'polygon',
+    sky: ['#203049', '#0d121a'],
+    grass: ['#5f9f55','#57964f','#66aa5c','#4f8849'],
+    water: ['#2c99d5','#228bc6'],
+    road: '#2c3440',
+    roadLine: '#596675',
+    roof: 'glass',
+    category: {
+      resid: '#6f89a4',
+      ind: '#63707d',
+      storage: '#5f6b78',
+    },
+    buildings: {
+      mine: '#6c625d',
+      lumber: '#5f8151',
+      farm: '#a19a4f',
+      pump: '#4e8aa2',
+      mill: '#8a8f91',
+      bakery: '#b9845d',
+      smelter: '#75606a',
+      factory: '#5d7088',
+      plant: '#59626d',
+      depot: '#667077',
+      tank: '#4d7f99',
+      garage: '#516178',
+    },
+  },
+  industrial: {
+    n: 'Industriel',
+    desc: 'Métal sombre, sols plus ternes et détails d’usine.',
+    mode: 'polygon',
+    sky: ['#202833', '#101216'],
+    grass: ['#667d4b','#5f7445','#718656','#586d41'],
+    water: ['#347f95','#2d6f82'],
+    road: '#2c2c2c',
+    roadLine: '#555555',
+    roof: 'vents',
+    category: {
+      resid: '#7b6a5b',
+      ind: '#5c6062',
+      storage: '#575a50',
+    },
+    buildings: {
+      mine: '#67594f',
+      smelter: '#6b4b43',
+      factory: '#4f5a66',
+      plant: '#454b52',
+      depot: '#5c5842',
+      garage: '#454f63',
+      tank: '#3d6476',
+    },
+  },
+};
+
+const GRAPHIC_PACK_REGISTRY_URL = 'assets/graphic-packs/packs.json';
+const GRAPHIC_PACK_IMAGES = {};
+
+function joinAssetUrl(base, src){
+  if(!src) return '';
+  if(/^(https?:|data:|blob:|\/)/.test(src)) return src;
+  return base + src.replace(/^\.?\//, '');
+}
+
+function normalizeGraphicSprite(value, baseUrl){
+  if(!value) return null;
+  if(typeof value === 'string') value = { src:value };
+  const out = Object.assign({}, value);
+  if(out.src) out.src = joinAssetUrl(baseUrl, out.src);
+  if(out.variants){
+    const vars = {};
+    for(const key in out.variants) vars[key] = normalizeGraphicSprite(out.variants[key], baseUrl);
+    out.variants = vars;
+  }
+  if(out.views){
+    const views = {};
+    for(const key in out.views) views[key] = normalizeGraphicSprite(out.views[key], baseUrl);
+    out.views = views;
+  }
+  return out;
+}
+
+function registerCommunityGraphicPack(manifest, manifestUrl){
+  if(!manifest || !manifest.id) return null;
+  const id = 'asset:' + String(manifest.id).replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const baseUrl = manifestUrl.slice(0, manifestUrl.lastIndexOf('/') + 1);
+  const buildings = {};
+  for(const key in (manifest.buildings || {}))
+    buildings[key] = normalizeGraphicSprite(manifest.buildings[key], baseUrl);
+  GRAPHIC_PACKS[id] = {
+    n: manifest.name || manifest.id,
+    desc: manifest.description || 'Pack graphique communautaire.',
+    mode: 'sprite',
+    fallback: GRAPHIC_PACKS[manifest.fallback] ? manifest.fallback : 'classic',
+    baseUrl,
+    tileWidth: manifest.tileWidth || 64,
+    tileHeight: manifest.tileHeight || 32,
+    defaultScale: manifest.defaultScale || 1,
+    buildings,
+  };
+  return id;
+}
+
+async function loadCommunityGraphicPacks(){
+  let registry;
+  try {
+    const res = await fetch(GRAPHIC_PACK_REGISTRY_URL, { cache:'no-store' });
+    if(!res.ok) return [];
+    registry = await res.json();
+  } catch(e){ return []; }
+  const entries = Array.isArray(registry) ? registry : (registry.packs || []);
+  const loaded = [];
+  for(const entry of entries){
+    const manifestUrl = typeof entry === 'string' ? entry : entry.manifest;
+    if(!manifestUrl) continue;
+    const url = joinAssetUrl('assets/graphic-packs/', manifestUrl);
+    try {
+      const res = await fetch(url, { cache:'no-store' });
+      if(!res.ok) continue;
+      const id = registerCommunityGraphicPack(await res.json(), url);
+      if(id) loaded.push(id);
+    } catch(e){}
+  }
+  return loaded;
+}
 
 // Prix de vente inter-joueurs (par unité)
 const TRADE_PRICES = (()=>{
@@ -97,6 +272,9 @@ const TRADE_PRICES = (()=>{
     flour: cfg.farine       ?? 7,
     water: cfg.eau          ?? 2,
     bread: cfg.pain         ?? 12,
+    fish:  cfg.poisson      ?? 7,
+    fish_fillet: cfg.filetPoisson ?? 14,
+    fish_oil:    cfg.huilePoisson ?? 11,
     steel: cfg.acier        ?? 14,
     goods: cfg.marchandises ?? 10,
   };
@@ -125,6 +303,11 @@ const BUILD = {
              upkeep: CFG.production?.pompe?.entretien ?? 1.5,
              recipe:{ in:{}, out:{water:1} },
              desc:"À placer sur l'herbe au bord de l'eau. Produit de l'eau." },
+  fisher:  { n:'Cabane de pêcheur', ic:'🎣', hk:'', cost: CFG.production?.pecheur?.cout ?? 420,
+             workers:2, time:3.0, col:'#4f7f86', hgt:15, ind:true,
+             upkeep: CFG.production?.pecheur?.entretien ?? 1.4,
+             recipe:{ in:{}, out:{fish:1} },
+             desc:"À placer sur l'herbe au bord de l'eau. Produit du poisson." },
   mill:    { n:'Moulin',    ic:'⚙️', hk:'', cost: CFG.production?.moulin?.cout   ?? 650,
              workers:3, time:3.2, col:'#b9a77a', hgt:24, ind:true,
              upkeep: CFG.production?.moulin?.entretien ?? 2,
@@ -135,6 +318,11 @@ const BUILD = {
              upkeep: CFG.production?.boulangerie?.entretien ?? 2.5,
              recipe:{ in:{flour:1, water:1}, out:{bread:1} },
              desc:'Farine + eau → pain. Nécessite une citerne proche pour recevoir l’eau.' },
+  fishery: { n:'Poissonnerie', ic:'🐟', hk:'', cost: CFG.production?.poissonnerie?.cout ?? 850,
+             workers:3, time:3.4, col:'#4d7f8a', hgt:22, ind:true,
+             upkeep: CFG.production?.poissonnerie?.entretien ?? 2.2,
+             recipe:{ in:{fish:2}, out:{fish_fillet:1, fish_oil:1} },
+             desc:'2 poissons → 1 filet de poisson + 1 huile de poisson.' },
   smelter: { n:'Fonderie',  ic:'🔥', hk:'6', cost: CFG.production?.fonderie?.cout ?? 900,
              workers:4, time:3.5, col:'#8a4f3d', hgt:26, ind:true,
              upkeep: CFG.production?.fonderie?.entretien ?? 3,
@@ -166,6 +354,7 @@ const PLANT_UPGRADES = {
   farm:    { label:'Ferme',         type:'farm',    icon:'🌾' },
   mill:    { label:'Moulin',        type:'mill',    icon:'⚙️' },
   bakery:  { label:'Boulangerie',   type:'bakery',  icon:'🥖' },
+  fishery: { label:'Poissonnerie',  type:'fishery', icon:'🐟' },
   factory: { label:'Outils de construction', type:'factory', icon:'🏭' },
 };
 // ---------- niveaux résidentiels ----------
@@ -277,8 +466,10 @@ const IND_NAMES = {
   lumber:  ['Scierie du Bois','Bûcherie Verte','Scierie des Pins','Grand Moulin','Scierie Royale','Scierie du Moulin','Bûcherie Centrale','Scierie du Nord','Vieille Scierie','Bûcherie des Chênes'],
   farm:    ['Ferme des Blés','Domaine Doré','Ferme du Moulin','Grange Centrale','Ferme de la Plaine','Domaine des Épis','Ferme du Nord','Métairie Royale','Champ Fleuri','Ferme des Moissons'],
   pump:    ['Pompe du Lac','Station des Rives','Pompe Centrale','Station Bleue','Pompe du Canal','Pompe des Berges','Station du Nord','Pompe Royale','Station Claire','Pompe de la Source'],
+  fisher:  ['Cabane des Rives','Pêcherie du Lac','Cabane du Pont','Pêcherie Royale','Cabane des Filets','Pêcherie du Nord','Hutte du Pêcheur','Cabane des Berges','Pêcherie Claire','Port aux Poissons'],
   mill:    ['Moulin des Blés','Moulin Blanc','Moulin du Pont','Grand Moulin','Moulin de la Plaine','Moulin des Épis','Moulin du Nord','Moulin Royal','Moulin de la Vallée','Vieux Moulin'],
   bakery:  ['Boulangerie Centrale','Four des Blés','Boulangerie du Pont','Pain Doré','Boulangerie Royale','Fournil du Nord','Maison du Pain','Boulangerie des Épis','Grand Fournil','Pain de la Vallée'],
+  fishery: ['Poissonnerie Centrale','Halle aux Poissons','Fileterie du Port','Poissonnerie Royale','Atelier des Filets','Poissonnerie du Nord','Fileterie Claire','Maison du Poisson','Halle des Rives','Fileterie des Berges'],
   smelter: ['Grande Forge','Fonderie du Feu','Forge Ardente','Forge du Roi','Fonderie Centrale','Vieille Forge','Forge des Maîtres','Fonderie du Nord','Forge Royale','Forge de la Vallée'],
   factory: ['Manufacture Centrale','Atelier du Peuple','Grande Usine','Fabrique Royale','Usine Municipale','Atelier des Arts','Grande Fabrique','Usine Centrale','Fabrique du Nord','Manufacture Royale'],
 };
@@ -400,14 +591,14 @@ function tryMergeDepot(){
 }
 (function applyUpkeepConfig(){
   const p = CFG.production || {};
-  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', pompe:'pump', moulin:'mill', boulangerie:'bakery', fonderie:'smelter', usine:'factory' };
+  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', pompe:'pump', pecheur:'fisher', moulin:'mill', boulangerie:'bakery', poissonnerie:'fishery', fonderie:'smelter', usine:'factory' };
   for(const fr in map) if(p[fr]?.entretien != null) BUILD[map[fr]].upkeep = p[fr].entretien;
 })();
 
 // surcharge des recettes et coûts par config.js (clés françaises)
 (function applyProductionConfig(){
   const p = CFG.production || {};
-  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', pompe:'pump', moulin:'mill', boulangerie:'bakery', fonderie:'smelter', usine:'factory' };
+  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', pompe:'pump', pecheur:'fisher', moulin:'mill', boulangerie:'bakery', poissonnerie:'fishery', fonderie:'smelter', usine:'factory' };
   for(const fr in map){
     const c = p[fr];
     if(!c) continue;
@@ -426,5 +617,5 @@ function tryMergeDepot(){
   if(bats.citerne?.cout  != null) BUILD.tank.cost   = bats.citerne.cout;
 })();
 
-const TOOL_ORDER = ['select','road','mine','lumber','plant','house','depot','tank','pump','garage','bulldoze','terraform'];
+const TOOL_ORDER = ['select','road','mine','lumber','fisher','plant','house','depot','tank','pump','garage','bulldoze','terraform'];
 const MILESTONES = [25, 50, 100, 200, 400];

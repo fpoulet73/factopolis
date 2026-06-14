@@ -63,8 +63,149 @@ function buildingDepthKey(b){
   return spriteDepthKey(rx0+rw*0.5, ry0+rh*0.5, 0.2);
 }
 
-const GRASS_COLS = ['#74b048','#6ea944','#7ab84d','#68a23f'];
-const WATER_COLS = ['#3590cf','#3187c2'];
+function graphicPack(){
+  return GRAPHIC_PACKS[UI_OPTIONS.graphicPack] || GRAPHIC_PACKS.classic;
+}
+
+function graphicBasePack(){
+  const p = graphicPack();
+  return GRAPHIC_PACKS[p.fallback] || p;
+}
+
+function packTerrain(kind, x, y){
+  const p = graphicBasePack();
+  const cols = kind === T.WATER ? p.water : p.grass;
+  return cols[hash(x,y) % cols.length];
+}
+
+function packBuildingColor(b, d){
+  const p = graphicBasePack();
+  if(b.type === 'mine' && b.ore) return b.ore === 'iron' ? '#8a5c3a' : '#4a4a5a';
+  if(p.buildings && p.buildings[b.type]) return p.buildings[b.type];
+  if(d.resid && p.category?.resid) return p.category.resid;
+  if(d.ind && p.category?.ind) return p.category.ind;
+  if((b.type === 'depot' || b.type === 'tank' || b.type === 'garage') && p.category?.storage)
+    return p.category.storage;
+  return d.col;
+}
+
+function drawRoofAccent(rx0, ry0, rw, rh, hp, col, b, d){
+  if(drawFast) return;
+  const style = graphicBasePack().roof;
+  if(style === 'flat') return;
+  const A = iso(rx0,ry0), B = iso(rx0+rw,ry0), C = iso(rx0+rw,ry0+rh), D = iso(rx0,ry0+rh);
+  const up = p => [p[0], p[1]-hp];
+  const TA = up(A), TB = up(B), TC = up(C), TD = up(D);
+  const lerp = (P,Q,t) => [P[0]+(Q[0]-P[0])*t, P[1]+(Q[1]-P[1])*t];
+  const line = (P,Q,stroke,width,alpha) => {
+    ctx.save();
+    ctx.globalAlpha = alpha == null ? 1 : alpha;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = width || 1;
+    ctx.beginPath(); ctx.moveTo(P[0],P[1]); ctx.lineTo(Q[0],Q[1]); ctx.stroke();
+    ctx.restore();
+  };
+
+  if(style === 'tiles' && d.resid){
+    const n = Math.max(2, Math.min(6, rw + rh + 1));
+    for(let i=1; i<n; i++){
+      const t = i/n;
+      line(lerp(TA, TD, t), lerp(TB, TC, t), shade(col, -0.18), 0.8, 0.65);
+    }
+    line(lerp(TA, TB, 0.5), lerp(TD, TC, 0.5), shade(col, 0.32), 1.2, 0.5);
+    return;
+  }
+
+  if(style === 'glass' && d.resid){
+    const m1 = lerp(lerp(TA, TB, 0.18), lerp(TD, TC, 0.18), 0.18);
+    const m2 = lerp(lerp(TA, TB, 0.82), lerp(TD, TC, 0.82), 0.18);
+    const m3 = lerp(lerp(TA, TB, 0.82), lerp(TD, TC, 0.82), 0.82);
+    const m4 = lerp(lerp(TA, TB, 0.18), lerp(TD, TC, 0.18), 0.82);
+    ctx.save();
+    ctx.fillStyle = 'rgba(170,225,255,.22)';
+    quad(m1,m2,m3,m4);
+    ctx.strokeStyle = 'rgba(215,245,255,.35)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  if(style === 'vents' && d.ind){
+    const count = Math.min(4, Math.max(1, rw * rh));
+    for(let i=0; i<count; i++){
+      const t = (i+1)/(count+1);
+      const base = lerp(lerp(TA, TB, 0.62), lerp(TD, TC, 0.62), t);
+      ctx.fillStyle = shade(col, -0.38);
+      ctx.fillRect(base[0]-3, base[1]-5, 6, 5);
+      ctx.fillStyle = 'rgba(180,190,190,.34)';
+      ctx.beginPath(); ctx.ellipse(base[0]+2, base[1]-8, 5, 2, 0, 0, 7); ctx.fill();
+    }
+  }
+}
+
+function spriteForBuilding(b, rw, rh){
+  const pack = graphicPack();
+  if(pack.mode !== 'sprite' || !pack.buildings) return null;
+  const def = pack.buildings[b.type];
+  if(!def) return null;
+  const sizeKey = b.w + 'x' + b.h;
+  const rotSizeKey = rw + 'x' + rh;
+  const areaKey = 'area:' + (b.w * b.h);
+  if(def.variants){
+    const variant = def.variants[sizeKey]
+      || def.variants[rotSizeKey]
+      || def.variants[areaKey]
+      || def.variants[String(b.w * b.h)]
+      || def.variants.default
+      || null;
+    if(variant) return viewForSprite(Object.assign({}, def, variant, { variants:undefined }));
+  }
+  return viewForSprite(def);
+}
+
+function viewForSprite(sprite){
+  if(!sprite?.views) return sprite;
+  const view = sprite.views[rot] || sprite.views[String(rot)] || sprite.views.default;
+  if(!view) return sprite;
+  return Object.assign({}, sprite, view, { views:undefined });
+}
+
+function imageForSprite(sprite){
+  if(!sprite || !sprite.src) return null;
+  let img = GRAPHIC_PACK_IMAGES[sprite.src];
+  if(!img){
+    img = new Image();
+    img.decoding = 'async';
+    img.onerror = () => console.warn('[graphics-pack] image introuvable ou invalide:', sprite.src);
+    img.src = sprite.src;
+    GRAPHIC_PACK_IMAGES[sprite.src] = img;
+  }
+  return img;
+}
+
+function drawBuildingSprite(b, rx0, ry0, rw, rh, d){
+  const sprite = spriteForBuilding(b, rw, rh);
+  const img = imageForSprite(sprite);
+  if(!img || !img.complete || !img.naturalWidth) return null;
+
+  const pack = graphicPack();
+  const base = iso(rx0 + rw*0.5, ry0 + rh*0.5);
+  const autoScale = sprite.autoScale ? Math.max(1, Math.sqrt(rw*rh) * 0.72) : 1;
+  const scale = (sprite.scale || pack.defaultScale || 1) * autoScale;
+  const w = (sprite.width || img.naturalWidth) * scale;
+  const h = (sprite.height || img.naturalHeight) * scale;
+  const ax = sprite.anchorX == null ? 0.5 : sprite.anchorX;
+  const ay = sprite.anchorY == null ? 1 : sprite.anchorY;
+  const ox = sprite.offsetX || 0;
+  const oy = sprite.offsetY || 0;
+
+  ctx.drawImage(img, base[0] - w*ax + ox, base[1] - h*ay + oy, w, h);
+  return [
+    base[0] + (sprite.labelX || 0),
+    base[1] - h*ay + (sprite.labelY == null ? 18 : sprite.labelY)
+  ];
+}
 
 function drawTree(rx,ry,x,y){
   const c = iso(rx+0.5, ry+0.5);
@@ -94,12 +235,16 @@ function drawBuilding(b){
   const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
   // les sites industriels fusionnés gagnent en hauteur avec leur taille
   const hgt = d.ind ? d.hgt*(1+0.18*(Math.max(b.w,b.h)-1)) : d.hgt;
-  // Couleur spécifique pour les mines selon le minerai
-  const bCol = (b.type==='mine' && b.ore) ? (b.ore==='iron' ? '#8a5c3a' : '#4a4a5a') : d.col;
-  const tc = prism(rx0, ry0, rx0+rw, ry0+rh, hgt, bCol);
+  const bCol = packBuildingColor(b, d);
+  let tc = drawBuildingSprite(b, rx0, ry0, rw, rh, d);
+  const usedSprite = !!tc;
+  if(!tc){
+    tc = prism(rx0, ry0, rx0+rw, ry0+rh, hgt, bCol);
+    drawRoofAccent(rx0, ry0, rw, rh, hgt, bCol, b, d);
+  }
 
   // fenêtres éclairées sur les faces des grands logements
-  if(!drawFast && d.resid && d.hgt >= 40){
+  if(!usedSprite && !drawFast && d.resid && d.hgt >= 40){
     const B = iso(rx0+rw,ry0), C = iso(rx0+rw,ry0+rh), D = iso(rx0,ry0+rh);
     const rows = Math.max(3, Math.min(9, Math.floor(d.hgt/14)));
     const face = (P,Q,tiles,seed)=>{
@@ -118,25 +263,27 @@ function drawBuilding(b){
   }
 
   // icône sur le toit
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = (TH*(0.62+0.28*(Math.max(b.w,b.h)-1)))+'px "Segoe UI Emoji",sans-serif';
-  if(b.type === 'mine' && b.ore){
-    // Pioche colorée selon le minerai (fer = orange, charbon = gris clair)
-    const oreColor = b.ore === 'iron' ? '#d98a4f' : '#b0b0c0';
-    ctx.save();
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = oreColor;
-    // fond coloré rond derrière l'icône
-    const fs = TH*(0.62+0.28*(Math.max(b.w,b.h)-1));
-    ctx.beginPath();
-    ctx.arc(tc[0], tc[1], fs*0.55, 0, Math.PI*2);
-    ctx.globalAlpha = 0.28;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.fillText(d.ic, tc[0], tc[1]+1);
-    ctx.restore();
-  } else {
-    ctx.fillText(d.ic, tc[0], tc[1]+1);
+  if(!usedSprite){
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = (TH*(0.62+0.28*(Math.max(b.w,b.h)-1)))+'px "Segoe UI Emoji",sans-serif';
+    if(b.type === 'mine' && b.ore){
+      // Pioche colorée selon le minerai (fer = orange, charbon = gris clair)
+      const oreColor = b.ore === 'iron' ? '#d98a4f' : '#b0b0c0';
+      ctx.save();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = oreColor;
+      // fond coloré rond derrière l'icône
+      const fs = TH*(0.62+0.28*(Math.max(b.w,b.h)-1));
+      ctx.beginPath();
+      ctx.arc(tc[0], tc[1], fs*0.55, 0, Math.PI*2);
+      ctx.globalAlpha = 0.28;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillText(d.ic, tc[0], tc[1]+1);
+      ctx.restore();
+    } else {
+      ctx.fillText(d.ic, tc[0], tc[1]+1);
+    }
   }
 
   // barre de progression
@@ -523,9 +670,10 @@ function draw(){
   drawFast = performance.now() < zoomActiveUntil || Math.abs(targetCam.z - cam.z) > 0.006;
   // ciel
   ctx.setTransform(DPR,0,0,DPR,0,0);
+  const pack = graphicBasePack();
   const sky = ctx.createLinearGradient(0,0,0,H);
-  sky.addColorStop(0,'#1c2740');
-  sky.addColorStop(1,'#0b101a');
+  sky.addColorStop(0, pack.sky[0]);
+  sky.addColorStop(1, pack.sky[1]);
   ctx.fillStyle = sky;
   ctx.fillRect(0,0,W,H);
 
@@ -587,7 +735,7 @@ function draw(){
       if(!expZone) continue;
       // Terrain dim + overlay sarcelle teinté par pièce
       ctx.globalAlpha = 0.22;
-      ctx.fillStyle = t===T.WATER ? WATER_COLS[hash(x,y)&1] : GRASS_COLS[hash(x,y)&3];
+      ctx.fillStyle = packTerrain(t===T.WATER ? T.WATER : T.GRASS, x, y);
       diamond(rx,ry); ctx.fill();
       ctx.globalAlpha = 1;
       const isHov = expZone === hoveredExpansion;
@@ -613,10 +761,10 @@ function draw(){
     }
 
     if(t===T.WATER){
-      ctx.fillStyle = WATER_COLS[hash(x,y)&1];
+      ctx.fillStyle = packTerrain(T.WATER, x, y);
       diamond(rx,ry); ctx.fill();
     } else {
-      ctx.fillStyle = GRASS_COLS[hash(x,y)&3];
+      ctx.fillStyle = packTerrain(T.GRASS, x, y);
       diamond(rx,ry); ctx.fill();
       if(!drawFast && t===T.WHEAT){
         const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
@@ -644,7 +792,7 @@ function draw(){
 
     // routes
     if(road[i]){
-      ctx.fillStyle = '#33373e';
+      ctx.fillStyle = pack.road;
       diamond(rx,ry); ctx.fill();
       if(drawFast) {
         // Pendant le zoom on évite les traits arrondis multiples, très coûteux en canvas.
@@ -659,13 +807,13 @@ function draw(){
         links++;
         const [du,dv] = rotDir(dx,dy);
         const m = iso(rx+0.5+du*0.5, ry+0.5+dv*0.5);
-        ctx.strokeStyle = '#4c525c'; ctx.lineWidth = 12;
+        ctx.strokeStyle = pack.roadLine; ctx.lineWidth = 12;
         ctx.beginPath(); ctx.moveTo(c[0],c[1]); ctx.lineTo(m[0],m[1]); ctx.stroke();
         ctx.strokeStyle = 'rgba(200,206,214,.55)'; ctx.lineWidth = 1.4;
         ctx.beginPath(); ctx.moveTo(c[0],c[1]); ctx.lineTo(m[0],m[1]); ctx.stroke();
       }
       if(!links){
-        ctx.fillStyle = '#4c525c';
+        ctx.fillStyle = pack.roadLine;
         ctx.beginPath(); ctx.ellipse(c[0], c[1], 8, 4.5, 0, 0, 7); ctx.fill();
       }
     }
@@ -743,7 +891,7 @@ function draw(){
   }
 
   // en mode placement d'industrie : afficher tous les rayons industriels existants
-  if(['mine','lumber','farm','pump','mill','bakery','smelter','factory'].includes(tool) && !drawFast){
+  if(['mine','lumber','farm','pump','fisher','mill','bakery','fishery','smelter','factory'].includes(tool) && !drawFast){
     for(const b of buildings){
       if(!BUILD[b.type]?.ind || b.dead) continue;
       ctx.globalAlpha = 0.35;
@@ -817,7 +965,8 @@ function draw(){
     }
     if(va.ok && d.hgt){
       ctx.globalAlpha = 0.55;
-      const tc = prism(grx, gry, grx+1, gry+1, d.hgt, d.col);
+      const ghost = { type:tool, x:mouse.tx, y:mouse.ty, w:1, h:1 };
+      const tc = prism(grx, gry, grx+1, gry+1, d.hgt, packBuildingColor(ghost, d));
       ctx.font = (TH*0.62)+'px "Segoe UI Emoji",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(d.ic, tc[0], tc[1]+1);

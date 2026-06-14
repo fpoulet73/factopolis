@@ -119,7 +119,7 @@ function accepts(b,res){
   if(b.type==='tank') return false;
   if(b.type==='depot') return b.allow?.[res] !== false;
   if(BUILD[b.type].resid){
-    if(res !== 'goods' && res !== 'bread') return false;
+    if(res !== 'goods' && res !== 'bread' && res !== 'fish_fillet') return false;
     if(b.starterHome) return false; // maisons protégées : pas besoin de ravitaillement
     return true;
   }
@@ -352,4 +352,3 @@ function applyPlantUpgrade(b, targetType){
   assignIndustryName(b);
   return '';
 }
-

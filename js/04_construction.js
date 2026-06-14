@@ -51,6 +51,7 @@ function canPlace(t,x,y){
     if(t==='lumber' && !treeNear(x,y,2)) return { ok:false, msg:"Aucun arbre à moins de 2 cases" };
     if(t==='farm' && !fieldNear(x,y,2)) return { ok:false, msg:"Aucun champ de blé à moins de 2 cases" };
     if(t==='pump' && !waterNear(x,y,1)) return { ok:false, msg:"La pompe doit être au bord de l'eau" };
+    if(t==='fisher' && !waterNear(x,y,1)) return { ok:false, msg:"La cabane de pêcheur doit être au bord de l'eau" };
   }
   // zone d'exclusion multijoueur
   if(MP.connected && nearbyEnemyOwner(MP.myId, x, y))

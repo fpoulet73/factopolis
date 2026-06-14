@@ -6,6 +6,7 @@
      iron  = fer          coal  = charbon       wood = bois
      wheat = blé          flour = farine        water = eau
      bread = pain         steel = acier         goods = marchandises
+     fish = poisson       fish_fillet = filet   fish_oil = huile de poisson
    ============================================================ */
 const CONFIG = {
 
@@ -21,8 +22,10 @@ const CONFIG = {
     bucheron: { temps: 2.8, sortie: { wood: 1 },                                 cout: 350,  entretien: 1.5 },
     ferme:    { temps: 3.0, sortie: { wheat: 1 },                                cout: 300,  entretien: 1.2 },
     pompe:    { temps: 2.5, sortie: { water: 1 },                                cout: 500,  entretien: 1.5 },
+    pecheur:  { temps: 3.0, sortie: { fish: 1 },                                 cout: 420,  entretien: 1.4 },
     moulin:   { temps: 3.2, entree: { wheat: 2 }, sortie: { flour: 1 },          cout: 650,  entretien: 2   },
     boulangerie:{ temps: 3.5, entree: { coal: 0.5,flour: 2, water: 1 }, sortie: { bread: 1 }, cout: 950, entretien: 2.5 },
+    poissonnerie:{ temps: 3.4, entree: { fish: 2 }, sortie: { fish_fillet: 1, fish_oil: 1 }, cout: 850, entretien: 2.2 },
     fonderie: { temps: 3.5, entree: { iron: 1, coal: 1 }, sortie: { steel: 1 },  cout: 900,  entretien: 3   },
     usine:    { temps: 4.0, entree: { steel: 1, wood: 1 }, sortie: { goods: 1 }, cout: 1400, entretien: 4   },
   },
@@ -136,6 +139,7 @@ const CONFIG = {
       farine:       { nom:'Camion farine',        icone:'🚚', ressources:['flour'],       cout:650,  capacite:15, vitesse:3.8 },
       citerne:      { nom:'Camion citerne',       icone:'🚛', ressources:['water'],       cout:750,  capacite:20, vitesse:3.5 },
       pain:         { nom:'Camion pain',          icone:'🚚', ressources:['bread'],       cout:700,  capacite:15, vitesse:3.8 },
+      poisson:      { nom:'Chariot poisson',      icone:'🛒', ressources:['fish','fish_fillet','fish_oil'], cout:650, capacite:14, vitesse:3.8 },
       acier:        { nom:'Camion acier',         icone:'🚚', ressources:['steel'],       cout:1000, capacite:12, vitesse:3.5 },
       marchandises: { nom:'Camion marchandises',  icone:'🚐', ressources:['goods'],       cout:700,  capacite:12, vitesse:3.5 },
     },

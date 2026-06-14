@@ -55,7 +55,8 @@ function tryDispatch(b,res){
     const stockRatio = rcc
       ? Math.min(
           ((c.storage.goods||0) + (c.inc.goods||0)) / (rcc.stockCap || 1),
-          ((c.storage.bread||0) + (c.inc.bread||0)) / (rcc.stockCap || 1)
+          ((c.storage.bread||0) + (c.inc.bread||0)) / (rcc.stockCap || 1),
+          ((c.storage.fish_fillet||0) + (c.inc.fish_fillet||0)) / (rcc.stockCap || 1)
         )
       : 0;
     // distance réelle pour le score : route si disponible, sinon vol direct

@@ -70,9 +70,10 @@ function renderFinance(){
 function statusOf(b){
   if(BUILD[b.type].resid){
     if(b.starterHome) return 'Maison de départ protégée (pas besoin de ravitaillement)';
-    const hasGoods = (b.storage.goods||0) > 0, hasBread = (b.storage.bread||0) > 0;
-    if(hasGoods && hasBread) return 'Consomme outils + pain…';
-    if(hasGoods) return 'Consomme outils… — manque de pain (montée en niveau bloquée)';
+    const hasGoods = (b.storage.goods||0) > 0, hasBread = (b.storage.bread||0) > 0, hasFish = (b.storage.fish_fillet||0) > 0;
+    if(hasGoods && hasBread && hasFish) return 'Consomme outils + pain + filets de poisson…';
+    if(hasGoods && hasBread) return 'Consomme outils + pain… — demande des filets de poisson';
+    if(hasGoods) return 'Consomme outils… — manque de pain (montée en niveau bloquée) et de filets';
     if(b.pop > (b.protectedPop||0) && b.starve > 0)
       return '⚠️ Pénurie d\'outils ! Dégradation dans '+Math.max(0,Math.ceil(STARVE_DELAY-b.starve))+' s';
     return 'Attend des outils de construction';
@@ -231,6 +232,7 @@ function renderInfo(){
     const incomePerCycle = d.resid.income * Math.max(1, b.pop);
     const ratePerMin = b.pop > 0 ? Math.round(incomePerCycle / d.resid.interval * 60) : 0;
     h += '<div class="row"><span>Revenu / outil livré</span><b>'+incomePerCycle+' $</b></div>';
+    h += '<div class="row"><span>Bonus filet de poisson</span><b style="color:#c7e7e9">+20 % si disponible</b></div>';
     h += '<div class="row"><span>Intervalle conso.</span><b>'+d.resid.interval+' s</b></div>';
     h += '<div class="row"><span>Revenu / min</span><b style="color:#9fe8a0">~'+ratePerMin+' $</b></div>';
   }
@@ -679,11 +681,38 @@ $('bGo').onclick = ()=> $('help').style.display = 'none';
 
 // ---------- dropdown options ----------
 const optMenu = $('optMenu');
+const graphicPackMenu = $('graphicPackMenu');
+
+function buildGraphicPackMenu(){
+  graphicPackMenu.innerHTML = '';
+  for(const key in GRAPHIC_PACKS){
+    const pack = GRAPHIC_PACKS[key];
+    const el = document.createElement('div');
+    el.className = 'opt-item';
+    el.dataset.pack = key;
+    el.title = pack.desc || '';
+    el.innerHTML = '<span class="chk"></span>' + pack.n;
+    graphicPackMenu.appendChild(el);
+  }
+}
+buildGraphicPackMenu();
+loadCommunityGraphicPacks().then(ids => {
+  if(!ids.length) return;
+  buildGraphicPackMenu();
+  refreshOptMenu();
+  if(ids.includes(UI_OPTIONS.graphicPack))
+    toast('Pack graphique chargé : ' + GRAPHIC_PACKS[UI_OPTIONS.graphicPack].n);
+});
 
 function refreshOptMenu(){
   document.querySelectorAll('.opt-item[data-opt]').forEach(el => {
     const key = el.dataset.opt;
     const active = !!UI_OPTIONS[key];
+    el.classList.toggle('active', active);
+    el.querySelector('.chk').textContent = active ? '✓' : '';
+  });
+  document.querySelectorAll('.opt-item[data-pack]').forEach(el => {
+    const active = UI_OPTIONS.graphicPack === el.dataset.pack;
     el.classList.toggle('active', active);
     el.querySelector('.chk').textContent = active ? '✓' : '';
   });
@@ -709,6 +738,16 @@ document.querySelectorAll('.opt-item[data-opt]').forEach(el => {
     refreshOptMenu();
   };
 });
+
+graphicPackMenu.onclick = e => {
+  const el = e.target.closest('.opt-item[data-pack]');
+  if(!el) return;
+  e.stopPropagation();
+  UI_OPTIONS.graphicPack = el.dataset.pack;
+  saveUIOptions();
+  refreshOptMenu();
+  toast('Pack graphique : ' + GRAPHIC_PACKS[UI_OPTIONS.graphicPack].n);
+};
 
 // ---------- boucle principale ----------
 // drawFn est une indirection pour permettre aux extensions (multijoueur) de surcharger draw

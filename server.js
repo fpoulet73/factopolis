@@ -156,6 +156,11 @@ const userColor = username => COLORS[parseInt(sha256(username).slice(0,2), 16) %
 const MIME = {
   '.html': 'text/html', '.js': 'application/javascript',
   '.css': 'text/css',   '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
 };
 const httpServer = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0];

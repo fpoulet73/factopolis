@@ -1,0 +1,6 @@
+{
+  "packs": [
+    "medieval/pack.json",
+    "example/pack.json"
+  ]
+}

@@ -34,6 +34,8 @@
   .opt-item .chk{width:16px;height:16px;border-radius:4px;border:1.5px solid #36465e;
     flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px}
   .opt-item.active .chk{background:#2f6fd6;border-color:#5b93e8}
+  .opt-title{padding:7px 14px 4px;color:#8fa3bf;font-size:11px;text-transform:uppercase}
+  .opt-sep{height:1px;background:#263246;margin:5px 0}
 
   /* ---- barre d'outils ---- */
   #toolbar{bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:6px;
@@ -123,6 +125,9 @@
   <div class="opt-wrap">
     <button class="tbtn" id="bOptions" title="Options d'affichage">⚙️</button>
     <div id="optMenu">
+      <div class="opt-title">Pack graphique</div>
+      <div id="graphicPackMenu"></div>
+      <div class="opt-sep"></div>
       <div class="opt-item" id="optColorMarkers" data-opt="hideColorMarkers">
         <span class="chk"></span>
         Cacher les marqueurs de couleur
@@ -142,18 +147,20 @@
      Les camions transportent automatiquement les ressources entre bâtiments connectés.</p>
   <div class="chain">
     ⛏️ Mine (fer) + ⛏️ Mine (charbon) → 🔥 Fonderie → acier<br>
-    🏚️ Usine abandonnée → 🔥 aciérie / 🌾 ferme / ⚙️ moulin / 🥖 boulangerie / 🏭 outils<br>
+    🏚️ Usine abandonnée → 🔥 aciérie / 🌾 ferme / ⚙️ moulin / 🥖 boulangerie / 🐟 poissonnerie / 🏭 outils<br>
     💧 Pompe → 🛢️ citerne → eau &nbsp;•&nbsp; 🌾 blé → ⚙️ farine → 🥖 pain<br>
+    🎣 Cabane de pêcheur → poisson &nbsp;•&nbsp; 🐟 poissonnerie : 2 poissons → filets + huile<br>
     🪓 Bûcheron → bois &nbsp;•&nbsp; acier + bois → outils de construction<br>
-    outils + pain → 🏠 Maisons → 👥 habitants + 💰 argent + 🛠️ ouvriers
+    outils + pain + filets → 🏠 Maisons → 👥 habitants + 💰 argent + 🛠️ ouvriers
   </div>
   <ul>
     <li>Chaque bâtiment doit toucher une <b>route</b> (sinon ⚠️ : aucun camion ne passe).</li>
     <li>Les usines abandonnées doivent être <b>spécialisées</b> depuis leur panneau de détail.</li>
     <li>Les pompes se construisent au <b>bord de l'eau</b>. Les camions citernes transportent l'eau vers les citernes.</li>
     <li>Les boulangeries ont besoin d'une <b>citerne proche</b> pour recevoir l'eau.</li>
+    <li>Les cabanes de pêcheur se construisent au <b>bord de l'eau</b>. Les poissonneries transforment 2 poissons en <b>filet de poisson</b> + <b>huile de poisson</b>.</li>
     <li>Les usines ont besoin d'<b>ouvriers</b> : sans assez d'habitants, elles tournent au ralenti.</li>
-    <li>Les maisons consomment les <b>outils de construction</b> → <b>+1 habitant</b> et <b>+25 $</b> par unité. Le <b>pain</b> est consommé si disponible mais ne cause pas de pénurie.</li>
+    <li>Les maisons consomment les <b>outils de construction</b> → <b>+1 habitant</b> et argent. Le <b>pain</b> sert aux montées en niveau ; les <b>filets de poisson</b> donnent un bonus de revenu s'ils sont disponibles.</li>
     <li>Sans outils trop longtemps, un logement se <b>dégrade</b> : les bâtiments
         fusionnés se séparent en maisons et les habitants en trop quittent la ville à pied.</li>
     <li>Des logements <b>pleins, approvisionnés en outils ET en pain</b> couvrant un rectangle fusionnent en niveau supérieur :
@@ -179,7 +186,7 @@
 <script src="js/04_construction.js"></script>
 <script src="js/05_logistics.js"></script>
 <script src="js/06_simulation.js"></script>
-<script src="js/07_rendering.js?v=depth2"></script>
+<script src="js/07_rendering.js?v=graphics2"></script>
 <script src="js/08_ui_input_loop.js"></script>
 <script src="js/09_multiplayer.js"></script>
 <script src="js/10_saves_chat_console.js"></script>
