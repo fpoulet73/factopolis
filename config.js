@@ -68,24 +68,35 @@ const CONFIG = {
     ressourcesBonus: ['fish_fillet'],
   },
 
-  /* ---------- AUTRES NIVEAUX RÉSIDENTIELS ----------
-     Fusion : dès qu'un rectangle est entièrement couvert de logements PLEINS
-     plus petits, ils fusionnent en bâtiment du niveau correspondant.
-     formes : [largeur, hauteur] — les deux orientations sont listées.
-     Progression : maison → 2×1 → 3×1 → 4×1, et 2×2 → 3×2 → 4×4. */
-  residentiel: {
-    duplex:        { formes:[[2,1],[1,2]], intervalleConsommation:18, revenuParUnite:17, habitantsMax:12,  stockMax:14,
-      ressourcesIndispensables:['goods'], ressourcesFusion:['goods','bread'], ressourcesBonus:['fish_fillet'] },
-    rangee:        { formes:[[3,1],[1,3]], intervalleConsommation:16, revenuParUnite:18, habitantsMax:20,  stockMax:18,
-      ressourcesIndispensables:['goods'], ressourcesFusion:['goods','bread'], ressourcesBonus:['fish_fillet'] },
-    residence:     { formes:[[4,1],[1,4]], intervalleConsommation:14, revenuParUnite:20, habitantsMax:28,  stockMax:22,
-      ressourcesIndispensables:['goods','bread'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'] },
-    grandImmeuble: { formes:[[3,2],[2,3]], intervalleConsommation:10, revenuParUnite:18, habitantsMax:60,  stockMax:40,
-      ressourcesIndispensables:['goods','bread'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'] },
-    tour: { formes:[3,3], intervalleConsommation:10, revenuParUnite:18, habitantsMax:60,  stockMax:40,
-      ressourcesIndispensables:['goods','bread'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'] },
-    gratteCiel:    { formes:[[4,4]],       intervalleConsommation:7,  revenuParUnite:20, habitantsMax:150, stockMax:80,
-      ressourcesIndispensables:['goods','bread','clothes'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'] },
+  /* ---------- DUPLEX ----------
+     Fusion : rectangle de logements PLEINS couvrant les formes indiquées. */
+  duplex: {
+    formes:[[2,1],[1,2]], intervalleConsommation:18, revenuParUnite:17, habitantsMax:12, stockMax:14,
+    ressourcesIndispensables:['goods'], ressourcesFusion:['goods','bread'], ressourcesBonus:['fish_fillet'],
+  },
+
+  /* ---------- MAISONS EN RANGÉE ---------- */
+  rangee: {
+    formes:[[3,1],[1,3]], intervalleConsommation:16, revenuParUnite:18, habitantsMax:20, stockMax:18,
+    ressourcesIndispensables:['goods'], ressourcesFusion:['goods','bread'], ressourcesBonus:['fish_fillet'],
+  },
+
+  /* ---------- RÉSIDENCE ---------- */
+  residence: {
+    formes:[[4,1],[1,4]], intervalleConsommation:14, revenuParUnite:20, habitantsMax:28, stockMax:22,
+    ressourcesIndispensables:['goods','bread'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'],
+  },
+
+  /* ---------- GRAND IMMEUBLE ---------- */
+  grandImmeuble: {
+    formes:[[3,2],[2,3]], intervalleConsommation:10, revenuParUnite:18, habitantsMax:60, stockMax:40,
+    ressourcesIndispensables:['goods','bread'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'],
+  },
+
+  /* ---------- GRATTE-CIEL ---------- */
+  gratteCiel: {
+    formes:[[4,4]], intervalleConsommation:7, revenuParUnite:20, habitantsMax:150, stockMax:80,
+    ressourcesIndispensables:['goods','bread','clothes'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'],
   },
 
   /* ---------- FUSION INDUSTRIELLE ----------
