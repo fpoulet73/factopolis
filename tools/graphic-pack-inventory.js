@@ -16,6 +16,7 @@ const residentialShapes = {
   residence: [[4,1], [1,4]],
   tower: [[2,2]],
   bigtower: [[3,2], [2,3]],
+  tower3: [[3,3]],
   sky: [[4,4]],
 };
 

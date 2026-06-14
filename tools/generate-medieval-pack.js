@@ -10,7 +10,7 @@ const productionTypes = ['mine','lumber','farm','cotton_farm','weaver','pump','f
 const productionShapes = [[1,1],[2,1],[1,2],[3,1],[1,3],[4,1],[1,4],[2,2],[3,2],[2,3],[4,4]];
 const residentialShapes = {
   house:[[1,1]], duplex:[[2,1],[1,2]], row:[[3,1],[1,3]], residence:[[4,1],[1,4]],
-  tower:[[2,2]], bigtower:[[3,2],[2,3]], sky:[[4,4]],
+  tower:[[2,2]], bigtower:[[3,2],[2,3]], tower3:[[3,3]], sky:[[4,4]],
 };
 const logisticsShapes = {
   depot:[[1,1],[2,1],[1,2],[3,1],[1,3],[4,1],[1,4],[2,2],[3,2],[2,3],[3,3],[4,4]],
@@ -153,7 +153,7 @@ function drawBase(img, cx, cy, w, h, type, view){
 
 function drawHouse(img,cx,cy,w,h,type,view){
   drawBase(img,cx,cy,w,h,type,view);
-  const bw = 34 + 11*w, bd = 24 + 9*h, bh = type === 'sky' ? 90 : type === 'bigtower' ? 70 : type === 'tower' ? 56 : type === 'residence' ? 34 : 24;
+  const bw = 34 + 11*w, bd = 24 + 9*h, bh = type === 'sky' ? 90 : type === 'tower3' ? 82 : type === 'bigtower' ? 70 : type === 'tower' ? 56 : type === 'residence' ? 34 : 24;
   const x=cx, y=cy+12;
   const top=[[x-bw/2,y-bd/2-bh],[x+bw/2,y-bd/2-bh],[x+bw/2,y+bd/2-bh],[x-bw/2,y+bd/2-bh]];
   img.poly([[x+bw/2,y-bd/2],[x+bw/2,y+bd/2],top[2],top[1]], shade(PALETTE.wall2,-.18));
@@ -272,7 +272,7 @@ function drawLogistics(img,cx,cy,w,h,type,view){
 
 function drawSprite(type,w,h,view,file){
   const ww = 150 + 30*(w+h);
-  const hh = 132 + 18*(w+h) + (type === 'sky' ? 90 : type === 'bigtower' ? 70 : 0);
+  const hh = 132 + 18*(w+h) + (type === 'sky' ? 90 : type === 'tower3' ? 82 : type === 'bigtower' ? 70 : 0);
   const img = new Img(ww, hh);
   const cx = ww/2, cy = hh - 46 - 7*(w+h);
   const dw = view & 1 ? h : w;

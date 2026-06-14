@@ -90,7 +90,8 @@ Ajoutez le manifeste du pack dans `assets/graphic-packs/packs.json` :
 Production : `mine`, `lumber`, `farm`, `cotton_farm`, `weaver`, `pump`,
 `fisher`, `mill`, `bakery`, `fishery`, `smelter`, `factory`, `plant`.
 
-Logements : `house`, `duplex`, `row`, `residence`, `tower`, `bigtower`, `sky`.
+Logements : `house`, `duplex`, `row`, `residence`, `tower`, `bigtower`,
+`tower3`, `sky`.
 
 Logistique : `depot`, `tank`, `garage`.
 

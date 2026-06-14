@@ -44,10 +44,10 @@ const CONFIG = {
 
   /* ---------- MAISONS ---------- */
   maison: {
-    intervalleConsommation: 60,  // secondes entre chaque marchandise consommée
-    revenuParUnite: 15,         // $ gagnés par marchandise consommée
-    habitantsMax: 5,            // capacité (4 maisons pleines en carré 2×2 → immeuble)
-    stockMax: 10,               // marchandises stockables sur place
+    intervalleConsommation: 60,
+    revenuParUnite: 15,
+    habitantsMax: 5,
+    stockMax: 10,
     // Ressources indispensables pour que les habitants restent.
     // Ressources disponibles : goods, clothes, bread, fish_fillet, etc.
     ressourcesIndispensables: ['goods'],
@@ -59,7 +59,7 @@ const CONFIG = {
 
   /* ---------- IMMEUBLES (niveau 2×2) ---------- */
   immeuble: {
-    intervalleConsommation: 30,  // consomme plus vite qu'une maison
+    intervalleConsommation: 30,
     revenuParUnite: 15,
     habitantsMax: 30,
     stockMax: 25,
@@ -71,32 +71,74 @@ const CONFIG = {
   /* ---------- DUPLEX ----------
      Fusion : rectangle de logements PLEINS couvrant les formes indiquées. */
   duplex: {
-    formes:[[2,1],[1,2]], intervalleConsommation:18, revenuParUnite:17, habitantsMax:12, stockMax:14,
-    ressourcesIndispensables:['goods'], ressourcesFusion:['goods','bread'], ressourcesBonus:['fish_fillet'],
+    formes: [[2,1],[1,2]],
+    intervalleConsommation: 18,
+    revenuParUnite: 17,
+    habitantsMax: 12,
+    stockMax: 14,
+    ressourcesIndispensables: ['goods'],
+    ressourcesFusion: ['goods','bread'],
+    ressourcesBonus: ['fish_fillet'],
   },
 
   /* ---------- MAISONS EN RANGÉE ---------- */
   rangee: {
-    formes:[[3,1],[1,3]], intervalleConsommation:16, revenuParUnite:18, habitantsMax:20, stockMax:18,
-    ressourcesIndispensables:['goods'], ressourcesFusion:['goods','bread'], ressourcesBonus:['fish_fillet'],
+    formes: [[3,1],[1,3]],
+    intervalleConsommation: 16,
+    revenuParUnite: 18,
+    habitantsMax: 20,
+    stockMax: 18,
+    ressourcesIndispensables: ['goods'],
+    ressourcesFusion: ['goods','bread'],
+    ressourcesBonus: ['fish_fillet'],
   },
 
   /* ---------- RÉSIDENCE ---------- */
   residence: {
-    formes:[[4,1],[1,4]], intervalleConsommation:14, revenuParUnite:20, habitantsMax:28, stockMax:22,
-    ressourcesIndispensables:['goods','bread'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'],
+    formes: [[4,1],[1,4]],
+    intervalleConsommation: 14,
+    revenuParUnite: 20,
+    habitantsMax: 28,
+    stockMax: 22,
+    ressourcesIndispensables: ['goods','bread'],
+    ressourcesFusion: ['goods','clothes','bread'],
+    ressourcesBonus: ['fish_fillet'],
   },
 
   /* ---------- GRAND IMMEUBLE ---------- */
   grandImmeuble: {
-    formes:[[3,2],[2,3]], intervalleConsommation:10, revenuParUnite:18, habitantsMax:60, stockMax:40,
-    ressourcesIndispensables:['goods','bread'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'],
+    formes: [[3,2],[2,3]],
+    intervalleConsommation: 10,
+    revenuParUnite: 18,
+    habitantsMax: 60,
+    stockMax: 40,
+    ressourcesIndispensables: ['goods','bread'],
+    ressourcesFusion: ['goods','clothes','bread'],
+    ressourcesBonus: ['fish_fillet'],
+  },
+
+  /* ---------- TOUR (niveau 3×3) ---------- */
+  tour: {
+    formes: [[3,3]],
+    intervalleConsommation: 8,
+    revenuParUnite: 19,
+    habitantsMax: 95,
+    stockMax: 60,
+    ressourcesIndispensables: ['goods','bread','clothes'],
+    ressourcesFusion: ['goods','clothes','bread'],
+    ressourcesBonus: ['fish_fillet'],
   },
 
   /* ---------- GRATTE-CIEL ---------- */
   gratteCiel: {
-    formes:[[4,4]], intervalleConsommation:7, revenuParUnite:20, habitantsMax:150, stockMax:80,
-    ressourcesIndispensables:['goods','bread','clothes'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'],
+    formes: [[4,4]],
+    intervalleConsommation: 7,
+    revenuParUnite: 20,
+    habitantsMax: 150,
+    stockMax: 80,
+    ressourcesIndispensables: ['goods','bread','clothes'],
+    ressourcesFusion: ['goods','clothes','bread'],
+    ressourcesBonus: ['fish_fillet'],
   },
 
   /* ---------- FUSION INDUSTRIELLE ----------
@@ -113,12 +155,12 @@ const CONFIG = {
   industrie: {
     formesFusion: [[2,1],[3,1],[4,1],[2,2],[3,2],[4,4]],
     formesParType: {
-      // ferme: [[2,1],[3,1],[4,1],[2,2]],
-      // coton: [[2,1],[3,1],[4,1],[2,2]],
-      // tissage: [[2,1],[2,2],[3,2]],
-      // moulin: ["2x1","3x1","2x2"],
-      // usine: [[2,1],[2,2],[3,2],[4,4]],
-      // pecheur: [[2,1],[3,1],[4,1]],
+      ferme: [[2,1],[3,1],[4,1],[2,2]],
+      coton: [[2,1],[2,2]],
+      tissage: [[2,1],[2,2]],
+      moulin: [1,1],
+      pecheur: [[1,1]],
+      usine: [[2,1],[2,2],[3,2],[4,4]],
     },
     facteurs: { 2:1.15, 3:1.3, 4:1.5, 6:1.75, 16:2.5 },
     intervalleEntretien: 10,    // secondes entre deux prélèvements d'entretien

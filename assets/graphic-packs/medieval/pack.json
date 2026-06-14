@@ -2655,6 +2655,43 @@
         }
       }
     },
+    "tower3": {
+      "src": "tower3-3x3-0.png",
+      "anchorX": 0.5,
+      "anchorY": 1,
+      "views": {
+        "0": {
+          "src": "tower3-3x3-0.png"
+        },
+        "1": {
+          "src": "tower3-3x3-1.png"
+        },
+        "2": {
+          "src": "tower3-3x3-2.png"
+        },
+        "3": {
+          "src": "tower3-3x3-3.png"
+        }
+      },
+      "variants": {
+        "3x3": {
+          "views": {
+            "0": {
+              "src": "tower3-3x3-0.png"
+            },
+            "1": {
+              "src": "tower3-3x3-1.png"
+            },
+            "2": {
+              "src": "tower3-3x3-2.png"
+            },
+            "3": {
+              "src": "tower3-3x3-3.png"
+            }
+          }
+        }
+      }
+    },
     "sky": {
       "src": "sky-4x4-0.png",
       "anchorX": 0.5,
