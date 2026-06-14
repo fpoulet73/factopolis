@@ -7,7 +7,7 @@ function tryDispatch(b,res){
   for(const s of starts){ dist[s] = 0; prev[s] = -1; q.push(s); }
   for(let qi=0; qi<q.length; qi++){
     const c = q[qi], cx = c%N, cy = (c/N)|0;
-    for(const [dx,dy] of DIRS){
+    for(const [dx,dy] of DIRS8){
       const x = cx+dx, y = cy+dy;
       if(!inMap(x,y)) continue;
       const ni = y*N+x;
@@ -196,7 +196,7 @@ function findRoadPath(fromB, toB){
   for(const s of starts){ dist[s] = 0; prev[s] = -1; q.push(s); }
   for(let qi=0; qi<q.length; qi++){
     const c = q[qi], cx = c%N, cy = (c/N)|0;
-    for(const [dx,dy] of DIRS){
+    for(const [dx,dy] of DIRS8){
       const x = cx+dx, y = cy+dy;
       if(!inMap(x,y)) continue;
       const ni = y*N+x;

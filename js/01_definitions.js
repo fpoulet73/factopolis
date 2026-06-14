@@ -43,7 +43,8 @@ const TILE = 36;         // taille d'une tuile en px monde (simulation)
 const TW = 64, TH = 32;  // taille d'une tuile iso à l'écran
 const TW2 = TW/2, TH2 = TH/2;
 const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4, WHEAT:5, COTTON:6 };
-const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+const DIRS  = [[1,0],[-1,0],[0,1],[0,-1]];
+const DIRS8 = [[1,0],[-1,0],[0,1],[0,-1],[1,-1],[-1,1],[1,1],[-1,-1]];
 const OUTCAP = 12;       // stock max de sortie par ressource
 const INCAP = 12;        // stock max d'entrée par ressource
 const TRUCK_LOAD  = CFG.camions?.capacite ?? 6; // cargaison max d'un camion

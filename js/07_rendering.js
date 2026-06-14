@@ -802,34 +802,6 @@ function draw(){
       }
     }
 
-    // routes
-    if(road[i]){
-      ctx.fillStyle = pack.road;
-      diamond(rx,ry); ctx.fill();
-      if(drawFast) {
-        // Pendant le zoom on évite les traits arrondis multiples, très coûteux en canvas.
-        continue;
-      }
-      const c = iso(rx+0.5, ry+0.5);
-      let links = 0;
-      ctx.lineCap = 'round';
-      for(const [dx,dy] of DIRS){
-        const nx = x+dx, ny = y+dy;
-        if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
-        links++;
-        const [du,dv] = rotDir(dx,dy);
-        const m = iso(rx+0.5+du*0.5, ry+0.5+dv*0.5);
-        ctx.strokeStyle = pack.roadLine; ctx.lineWidth = 12;
-        ctx.beginPath(); ctx.moveTo(c[0],c[1]); ctx.lineTo(m[0],m[1]); ctx.stroke();
-        ctx.strokeStyle = 'rgba(200,206,214,.55)'; ctx.lineWidth = 1.4;
-        ctx.beginPath(); ctx.moveTo(c[0],c[1]); ctx.lineTo(m[0],m[1]); ctx.stroke();
-      }
-      if(!links){
-        ctx.fillStyle = pack.roadLine;
-        ctx.beginPath(); ctx.ellipse(c[0], c[1], 8, 4.5, 0, 0, 7); ctx.fill();
-      }
-    }
-
     // falaises au bord de la carte
     const D = 15;
     const cliff = t===T.WATER ? '#1c557f' : '#6f5236';
@@ -855,6 +827,80 @@ function draw(){
       // dessiné une seule fois, depuis sa tuile la plus « en avant »
       if(rx===Math.max(r1x,r2x) && ry===Math.max(r1y,r2y))
         sprites.push({ k:buildingDepthKey(b), f:()=>drawBuilding(b) });
+    }
+  }
+
+  // --- passe 2 : routes (après tout le terrain pour éviter que l'herbe écrase les gaps) ---
+  for(let ry=minRy; ry<=maxRy; ry++) for(let rx=minRx; rx<=maxRx; rx++){
+    const [x,y] = invRotIdx(rx,ry);
+    if(x<0||y<0||x>=N||y>=N) continue;
+    const i = y*N+x;
+    if(!road[i]) continue;
+
+    ctx.fillStyle = pack.road;
+    diamond(rx,ry); ctx.fill();
+
+    // Combler le losange vide entre deux tuiles diagonalement adjacentes.
+    // Chaque coin partagé est traité depuis la tuile dont rx est le plus petit.
+    for(const [dx,dy] of [[1,-1],[1,1]]){
+      const nx = x+dx, ny = y+dy;
+      if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
+      const [du,dv] = rotDir(dx,dy);
+      const cu = rx+0.5+du*0.5, cv = ry+0.5+dv*0.5;
+      // fond de route
+      ctx.beginPath();
+      ctx.moveTo(...iso(cu,      cv-0.5));
+      ctx.lineTo(...iso(cu+0.5,  cv    ));
+      ctx.lineTo(...iso(cu,      cv+0.5));
+      ctx.lineTo(...iso(cu-0.5,  cv    ));
+      ctx.closePath(); ctx.fill();
+
+      if(!drawFast){
+        // ligne de marquage à travers le losange de jonction
+        const cA = iso(rx+0.5, ry+0.5);              // centre tuile courante
+        const cB = iso(rx+du+0.5, ry+dv+0.5);        // centre tuile voisine (déjà en coords tournées)
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(...iso(cu,      cv-0.5));
+        ctx.lineTo(...iso(cu+0.5,  cv    ));
+        ctx.lineTo(...iso(cu,      cv+0.5));
+        ctx.lineTo(...iso(cu-0.5,  cv    ));
+        ctx.closePath(); ctx.clip();
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = pack.roadLine; ctx.lineWidth = 12;
+        ctx.beginPath(); ctx.moveTo(cA[0],cA[1]); ctx.lineTo(cB[0],cB[1]); ctx.stroke();
+        ctx.strokeStyle = 'rgba(200,206,214,.55)'; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(cA[0],cA[1]); ctx.lineTo(cB[0],cB[1]); ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    if(drawFast) continue;
+    const c = iso(rx+0.5, ry+0.5);
+    let links = 0;
+    ctx.lineCap = 'round';
+
+    // Clipper les lignes de marquage au diamant de la tuile pour éviter
+    // les débordements sur les tuiles voisines (surtout en diagonale).
+    ctx.save();
+    diamond(rx,ry); ctx.clip();
+
+    for(const [dx,dy] of DIRS8){
+      const nx = x+dx, ny = y+dy;
+      if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
+      links++;
+      const [du,dv] = rotDir(dx,dy);
+      const m = iso(rx+0.5+du*0.5, ry+0.5+dv*0.5);
+      ctx.strokeStyle = pack.roadLine; ctx.lineWidth = 12;
+      ctx.beginPath(); ctx.moveTo(c[0],c[1]); ctx.lineTo(m[0],m[1]); ctx.stroke();
+      ctx.strokeStyle = 'rgba(200,206,214,.55)'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(c[0],c[1]); ctx.lineTo(m[0],m[1]); ctx.stroke();
+    }
+    ctx.restore();
+
+    if(!links){
+      ctx.fillStyle = pack.roadLine;
+      ctx.beginPath(); ctx.ellipse(c[0], c[1], 8, 4.5, 0, 0, 7); ctx.fill();
     }
   }
 
