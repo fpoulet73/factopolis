@@ -100,6 +100,11 @@ function clickAt(x,y){
       } else {
         const vRef = vehicleRouteMode.vehicle;
         vRef.dest = b;
+        if(!vehicleCanServeRoute(vRef)){
+          vRef.dest = null;
+          toast('⛔ Destination hors rayon de la citerne source.','err');
+          return;
+        }
         vehicleRouteMode = null;
         startVehicleRoute(vRef);
         if(MP.connected) netSend({

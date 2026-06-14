@@ -14,7 +14,7 @@ function serializeState(){
     terrain: Array.from(terrain),
     road:    Array.from(road),
     wallets: WALLETS,
-    homeless: homeless.map(h=>({ owner:h.owner ?? null, x:h.x, y:h.y, col:h.col, phase:h.phase })),
+    homeless: [],
     gtime,
     paused, speed,
     buildings: buildings.map(b => ({
@@ -120,10 +120,6 @@ function applySnapshot(d){
       if(v.destX   != null) v.destX   += EXP_MARGIN;
       if(v.destY   != null) v.destY   += EXP_MARGIN;
     }
-    if(Array.isArray(d.homeless)) for(const h of d.homeless){
-      h.x += EXP_MARGIN * TILE;
-      h.y += EXP_MARGIN * TILE;
-    }
     // Remplir le masque et générer le terrain des marges (migration : marges = tout herbe)
     mapMask.fill(0);
     for(let y=mapBounds.y0; y<mapBounds.y1; y++)
@@ -196,17 +192,8 @@ function applySnapshot(d){
     w.starterHomesGranted = Math.max(w.starterHomesGranted||0, w.starterHomes);
   }
   ensureAllStarterProtections();
-  if(Array.isArray(d.homeless)){
-    homeless = d.homeless.map(h=>({
-      owner:h.owner ?? null,
-      x:h.x, y:h.y,
-      col:h.col || playerColor(h.owner),
-      phase:h.phase || 0,
-    }));
-    if(MP.connected && MP.role === 'host' && MP.myId != null) adoptSoloHomeless(MP.myId);
-    for(const h of homeless) h.col = playerColor(h.owner);
-    for(const h of homeless) walletOf(h.owner).homelessSeeded = true;
-  }
+  homeless = [];
+  for(const k in WALLETS) WALLETS[k].homelessSeeded = true;
   // Restaurer les véhicules persistants
   if(Array.isArray(d.vehicles)){
     for(const sv of d.vehicles){
@@ -221,6 +208,10 @@ function applySnapshot(d){
       v.dest = dest || null;
       v.cargo = sv.cargo || 0;
       v.res = sv.res || null;
+      if(v.source && v.dest && !vehicleCanServeRoute(v, v.res)){
+        v.source = null; v.dest = null; v.cargo = 0; v.res = null;
+        continue;
+      }
       // Recalculer le chemin si la route était en cours
       if(source && dest && sv.state !== 'idle'){
         const from = sv.state === 'to_dest' ? source : garage;
@@ -323,6 +314,7 @@ function applyAction(msg){
       if(!vehicleRouteEndpointOk(source) || !vehicleRouteEndpointOk(dest)) break;
       v.source = source;
       v.dest = dest;
+      if(!vehicleCanServeRoute(v)){ v.source = null; v.dest = null; break; }
       startVehicleRoute(v);
       break;
     }
@@ -603,6 +595,8 @@ function mpConnect(url){
             myWallet().money = amount;
             toast('💰 Solde fixé à '+amount.toLocaleString()+' $ par le serveur.', 'win');
           }
+        } else if(msg.cmd === 'spawn_fields'){
+          spawnFieldsOnMap(msg.fieldType, msg.count);
         }
         break;
     }

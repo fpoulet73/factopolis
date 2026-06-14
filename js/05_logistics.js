@@ -188,6 +188,20 @@ function vehicleRouteEndpointOk(b){
   return isStorageHub(b);
 }
 
+function buildingChebyshevDistance(a, b){
+  const ac = centerOfBuilding(a), bc = centerOfBuilding(b);
+  return Math.max(Math.abs(ac.x - bc.x), Math.abs(ac.y - bc.y));
+}
+
+function vehicleCanServeRoute(v, res=null){
+  if(!v?.source || !v?.dest || v.source.dead || v.dest.dead) return false;
+  if(!vehicleRouteEndpointOk(v.source) || !vehicleRouteEndpointOk(v.dest)) return false;
+  const resource = res || VEHICLE_TYPES[v.vtype]?.resources?.[0] || null;
+  if(resource === 'water' && v.source.type === 'tank')
+    return buildingChebyshevDistance(v.source, v.dest) <= tankRadiusOf(v.source);
+  return true;
+}
+
 function findRoadPath(fromB, toB){
   const starts = adjRoadTiles(fromB);
   if(!starts.length) return null;
@@ -221,7 +235,7 @@ function findRoadPath(fromB, toB){
 
 function startVehicleRoute(v){
   if(!v.source || !v.dest || v.source.dead || v.dest.dead){ v.state = 'idle'; return; }
-  if(!vehicleRouteEndpointOk(v.source) || !vehicleRouteEndpointOk(v.dest)){
+  if(!vehicleCanServeRoute(v)){
     v.source = null; v.dest = null; v.state = 'idle'; v.pts = []; v.vizRoute = null;
     return;
   }
@@ -298,6 +312,9 @@ function updateVehicles(dt){
           if(amt > maxAmt){ maxAmt = amt; res = r; }
         }
         if(res && maxAmt > 0){
+          if(!vehicleCanServeRoute(v, res)){
+            v.cargo = 0; v.res = null; v.waitTimer = 5; continue;
+          }
           const take = Math.min(vt.capacite, maxAmt);
           // Commerce inter-joueurs : paiement si la source appartient à un autre joueur
           if(src.owner != null && src.owner !== (v.garageRef.owner ?? null)){
@@ -328,6 +345,7 @@ function updateVehicles(dt){
         if(v.cargo > 0 && v.res){
           const dst = v.dest;
           const canDeposit = accepts(dst, v.res)
+            && vehicleCanServeRoute(v, v.res)
             && !(v.res === 'water' && v.source?.type === 'pump' && dst.type === 'bakery');
           const room = canDeposit ? Math.max(0, capOf(dst, v.res) - (dst.storage[v.res]||0)) : 0;
           const deposit = Math.min(v.cargo, room);

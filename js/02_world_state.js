@@ -23,7 +23,7 @@ let speed = 1, paused = false;
 let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0;
 let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
 const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0, expansion:0 });
-const START_HOMELESS = 10;
+const START_HOMELESS = 0;
 let rot = 0; // orientation de la vue (0..3)
 const cam = { x:0, y:0, z:1 };
 const targetCam = { x:0, y:0, z:1 };

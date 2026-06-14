@@ -542,6 +542,7 @@ function printConsoleHelp() {
   console.log('  promote <id>                 Donne les droits admin à un joueur');
   console.log('  setmoney <nom> <montant>     Fixe le solde d\'un joueur connecté');
   console.log('  regenexpansions              Régénère le terrain des zones d\'expansion non achetées');
+  console.log('  spawnfields <type> [count]   Génère des champs aléatoires (type: wheat/ble, cotton/coton)');
   console.log('  stop                         Arrête proprement le serveur');
 }
 
@@ -667,6 +668,27 @@ function handleConsoleCommand(line) {
       }
       broadcastAll({ type: 'server_cmd', cmd: 'regen_expansions' });
       console.log('[regenExpansions] Commande envoyée à tous les clients. Le terrain des zones d\'expansion sera régénéré.');
+      break;
+    }
+
+    case 'spawnfields':
+    case 'spawnfield': {
+      const ALIASES = { ble: 'wheat', blé: 'wheat', coton: 'cotton' };
+      const rawType = (args[0] || '').toLowerCase();
+      const fieldType = ALIASES[rawType] || rawType;
+      const count = Math.max(1, Math.round(Number(args[1]) || 3));
+
+      if (!['wheat', 'cotton'].includes(fieldType)) {
+        console.log('Type de champ invalide : "' + (args[0] || '') + '".');
+        console.log('Types acceptés : wheat (ou ble/blé), cotton (ou coton)');
+        break;
+      }
+      if (!clients.length) {
+        console.log('Aucun joueur connecté — commande ignorée.');
+        break;
+      }
+      broadcastAll({ type: 'server_cmd', cmd: 'spawn_fields', fieldType, count });
+      console.log(`[spawnFields] ${count} patch(s) de ${fieldType} envoyés à tous les clients.`);
       break;
     }
 

@@ -197,23 +197,7 @@ function ensureHomelessForOwner(owner){
   const key = owner ?? MP.myId;
   const w = walletOf(key);
   if(w.homelessSeeded) return;
-  const hasPresence =
-    homeless.some(h=> (h.owner ?? MP.myId) === key)
-    || walkers.some(wk=>wk.fromHomeless && wk.target && (wk.target.owner ?? MP.myId) === key)
-    || buildings.some(b=>ownedBy(b, owner) && BUILD[b.type].resid && ((b.pop||0) > 0 || (b.pending||0) > 0));
-  if(hasPresence){ w.homelessSeeded = true; return; }
   w.homelessSeeded = true;
-  const tiles = findEmptySpawnTiles(owner, START_HOMELESS);
-  for(let i=0; i<START_HOMELESS; i++){
-    const t = tiles[i] || { x:(N>>1), y:(N>>1) };
-    homeless.push({
-      owner,
-      x:t.x*TILE+TILE/2,
-      y:t.y*TILE+TILE/2,
-      col: playerColor(owner),
-      phase: (i*1.73) % 7,
-    });
-  }
 }
 
 function adoptSoloHomeless(owner){

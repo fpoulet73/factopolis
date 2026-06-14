@@ -132,3 +132,46 @@ window.regenExpansions = function(){
   toast('🌍 Terrain des zones d\'expansion régénéré.', 'win');
   console.info('[regenExpansions] Terrain non-jouable régénéré avec de nouvelles ressources.');
 };
+
+// Génère des patchs de champs sur la zone jouable.
+// Appelée par le serveur via server_cmd 'spawn_fields'.
+function spawnFieldsOnMap(type, count){
+  const ALIASES = { ble:'wheat', blé:'wheat', coton:'cotton' };
+  const resolved = ALIASES[type] || String(type || '').toLowerCase();
+  const TILE_TYPES = { wheat: T.WHEAT, cotton: T.COTTON };
+  const tileType = TILE_TYPES[resolved];
+  if(tileType === undefined){
+    console.warn('[spawnFields] Type inconnu : "'+type+'".');
+    return;
+  }
+
+  const n = Math.max(1, Math.round(count) || 3);
+  const minRadius = 1;
+  const maxRadius = resolved === 'cotton' ? 1 : 2;
+  const fillChance = resolved === 'cotton' ? 0.65 : 0.85;
+
+  let placed = 0;
+  for(let k = 0; k < n; k++){
+    let cx, cy, tries = 0;
+    do {
+      cx = mapBounds.x0 + 1 + (Math.random() * (mapBounds.x1 - mapBounds.x0 - 2)) | 0;
+      cy = mapBounds.y0 + 1 + (Math.random() * (mapBounds.y1 - mapBounds.y0 - 2)) | 0;
+    } while(terrain[cy*N+cx] === T.WATER && ++tries < 300);
+    if(tries >= 300) continue;
+
+    const r = minRadius + (Math.random() * (maxRadius - minRadius + 1)) | 0;
+    for(let dy = -r; dy <= r; dy++) for(let dx = -r; dx <= r; dx++){
+      const x = cx + dx, y = cy + dy;
+      if(x < 0 || y < 0 || x >= N || y >= N) continue;
+      if(dx*dx + dy*dy > r*r + 0.5) continue;
+      if(terrain[y*N+x] === T.GRASS && Math.random() < fillChance){
+        terrain[y*N+x] = tileType;
+      }
+    }
+    placed++;
+  }
+
+  const label = resolved === 'wheat' ? 'blé 🌾' : 'coton ☁️';
+  toast('🌱 '+placed+' patch(s) de '+label+' ajouté(s) par le serveur.', 'win');
+  console.info('[spawnFields] '+placed+' patch(s) de '+resolved+' placés (count='+n+').');
+}
