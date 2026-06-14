@@ -36,10 +36,11 @@ const CONFIG = {
 
   /* ---------- BÂTIMENTS CIVILS ---------- */
   batiments: {
-    route:    { cout: 10  },
-    maison:   { cout: 100 },
-    entrepot: { cout: 400 },
-    citerne:  { cout: 450 },
+    route:          { cout: 10  },
+    usineAbandonee: { cout: 150 },
+    maison:         { cout: 100 },
+    entrepot:       { cout: 400 },
+    citerne:        { cout: 450 },
   },
 
   /* ---------- MAISONS ---------- */

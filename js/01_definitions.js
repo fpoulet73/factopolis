@@ -385,7 +385,7 @@ const BUILD = {
              upkeep: CFG.production?.usine?.entretien    ?? 4,
              recipe:{ in:{steel:1, wood:1}, out:{goods:1} },
              desc:'Acier + bois → outils de construction.' },
-  plant:   { n:'Usine',     ic:'🏚️', hk:'5', cost: 0, col:'#4e5663', hgt:18,
+  plant:   { n:'Usine',     ic:'🏚️', hk:'5', cost: CFG.batiments?.usineAbandonee?.cout ?? 150, col:'#4e5663', hgt:18,
              desc:"Usine abandonnée. À convertir ensuite en aciérie, ferme, ferme de coton, tissage, moulin, boulangerie ou usine d'outils." },
   house:   { n:'Maison',    ic:'🏠', hk:'6', cost: CFG.batiments?.maison?.cout    ?? 100,
              col:'#9a7e5f', hgt:18, desc:'' },
@@ -737,11 +737,12 @@ function tryMergeDepot(){
   }
   // coûts des bâtiments civils
   const bats = CFG.batiments || {};
-  if(bats.route?.cout    != null) BUILD.road.cost   = bats.route.cout;
-  if(bats.maison?.cout   != null) BUILD.house.cost  = bats.maison.cout;
-  if(bats.entrepot?.cout != null) BUILD.depot.cost  = bats.entrepot.cout;
-  if(bats.citerne?.cout  != null) BUILD.tank.cost   = bats.citerne.cout;
+  if(bats.route?.cout          != null) BUILD.road.cost   = bats.route.cout;
+  if(bats.usineAbandonee?.cout != null) BUILD.plant.cost  = bats.usineAbandonee.cout;
+  if(bats.maison?.cout         != null) BUILD.house.cost  = bats.maison.cout;
+  if(bats.entrepot?.cout       != null) BUILD.depot.cost  = bats.entrepot.cout;
+  if(bats.citerne?.cout        != null) BUILD.tank.cost   = bats.citerne.cout;
 })();
 
-const TOOL_ORDER = ['select','road','mine','lumber','fisher','plant','cotton_farm','weaver','house','depot','tank','pump','garage','bulldoze','terraform'];
+const TOOL_ORDER = ['select','road','mine','lumber','fisher','plant','house','depot','tank','pump','garage','bulldoze','terraform'];
 const MILESTONES = [25, 50, 100, 200, 400];
