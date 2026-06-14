@@ -25,6 +25,16 @@ function updateHUD(dt){
     const s = Math.ceil(autoSaveTimer);
     cdEl.textContent = s >= 60 ? 'dans '+(Math.ceil(s/60))+' min' : 'dans '+s+' s';
   }
+  // Date/heure du jeu
+  const gdEl = $('gameDate');
+  if(gdEl){
+    const ms = GAME_EPOCH_MS + (gtime || 0) * GAME_HOURS_PER_SEC * 3600000;
+    const d  = new Date(ms);
+    const pad = n => String(n).padStart(2,'0');
+    const day = pad(d.getUTCDate()), mon = pad(d.getUTCMonth()+1), yr = d.getUTCFullYear();
+    const hr  = pad(d.getUTCHours()), min = pad(d.getUTCMinutes());
+    gdEl.textContent = `📅 ${day}/${mon}/${yr}  🕐 ${hr}:${min}`;
+  }
   renderInfo();
   renderFinance();
 }
@@ -92,6 +102,13 @@ function statusOf(b){
     const active = (b.vehicles||[]).filter(v=>v.state!=='idle').length;
     return active > 0 ? active+' véhicule(s) en tournée' : 'Aucun véhicule en service';
   }
+  if(b.type==='bus_stop'){
+    const max = b.passengersMax || 0;
+    if(max === 0) return 'Aucun habitant à portée (rayon '+BUS_STOP_RADIUS+' cases)';
+    const cur = Math.floor(b.passengers || 0);
+    if(cur < max) return 'En remplissage : '+cur+' / '+max+' passagers';
+    return 'Complet : '+max+' passager'+(max>1?'s':'')+' en attente';
+  }
   if(b.type === 'plant') return 'Usine abandonnée — choisir une spécialisation';
   if(b.type === 'bakery' && !tankNear(b)) return '⚠️ Aucune citerne proche pour recevoir l’eau';
   if(b.paused) return 'En pause — ouvriers libérés';
@@ -151,11 +168,19 @@ function renderInfo(){
       const stateLabel = { idle:'En attente 💤', to_source:'Vers source 🔵', to_dest:'Vers destination 🟠', returning:'Retour au dépôt 🏪' }[veh.state] || veh.state;
       const srcName = veh.source && !veh.source.dead ? BUILD[veh.source.type].n : '—';
       const dstName = veh.dest   && !veh.dest.dead   ? BUILD[veh.dest.type].n  : '—';
+      const isBusVeh = veh.vtype === 'bus';
+      const srcNameDisplay = isBusVeh && veh.source && !veh.source.dead
+        ? (veh.source.name || BUILD[veh.source.type].n) : srcName;
+      const dstNameDisplay = isBusVeh && veh.dest && !veh.dest.dead
+        ? (veh.dest.name || BUILD[veh.dest.type].n) : dstName;
+      const cargoStr = isBusVeh
+        ? (veh.cargo > 0 ? veh.cargo+' passager(s)' : 'Vide')
+        : (veh.cargo > 0 ? veh.cargo+' '+(veh.res ? RES[veh.res].n : '') : 'Vide');
       let h = '<h3><span style="font-size:22px">'+vt.icone+'</span> '+vt.nom+'</h3>';
       h += '<div class="status">'+stateLabel+'</div>';
-      h += '<div class="row"><span>Cargaison</span><b>'+(veh.cargo > 0 ? veh.cargo+' '+(veh.res ? RES[veh.res].n : '') : 'Vide')+'</b></div>';
-      h += '<div class="row"><span>Source</span><b style="color:#4dd9ff">'+srcName+'</b></div>';
-      h += '<div class="row"><span>Destination</span><b style="color:#ffaa44">'+dstName+'</b></div>';
+      h += '<div class="row"><span>Cargaison</span><b>'+cargoStr+'</b></div>';
+      h += '<div class="row"><span>Source</span><b style="color:#4dd9ff">'+srcNameDisplay+'</b></div>';
+      h += '<div class="row"><span>Destination</span><b style="color:#ffaa44">'+dstNameDisplay+'</b></div>';
       h += '<div class="row"><span>Capacité</span><b>'+vt.capacite+'</b></div>';
       h += '<div class="row"><span>Vitesse</span><b>'+vt.speed+' cases/s</b></div>';
       h += '<div style="margin-top:8px;display:flex;gap:4px">'
@@ -172,7 +197,10 @@ function renderInfo(){
       $('bVehRoute').onclick = ()=>{
         vehicleRouteMode = { vehicle:veh, step:'source' };
         setTool('select');
-        toast('🔁 Clique sur l\'entrepôt source pour '+vt.nom+'.');
+        if(veh.vtype === 'bus')
+          toast('🚌 Clique sur l\'arrêt de bus de départ pour '+vt.nom+'.');
+        else
+          toast('🔁 Clique sur l\'entrepôt source pour '+vt.nom+'.');
         p._html = null;
       };
       const retBtn = $('bVehReturn');
@@ -372,15 +400,44 @@ function renderInfo(){
     h += '<div class="row"><span>Rayon d\'action</span><b style="color:#64b7e8">'+tankRadiusOf(b)+' cases</b></div>';
     h += '<div class="row"><span>Stockage</span><b>Eau uniquement</b></div>';
   }
+  if(b.type==='bus_stop'){
+    const canRename = !b.owner || b.owner === (MP.myId ?? null);
+    const town = getTownOf(b);
+    if(town) h += '<div class="row"><span>Village</span><b style="color:#e8d48b">🏘️ '+escHtml(town.name)+'</b></div>';
+    const pCur = Math.floor(b.passengers||0), pMax = b.passengersMax||0;
+    h += '<div class="row"><span>Passagers en attente</span><b style="color:#7dd8ff">👥 '+pCur+(pMax>0?' / '+pMax:'')+'</b></div>';
+    h += '<div class="row"><span>Rayon</span><b>'+BUS_STOP_RADIUS+' cases</b></div>';
+    h += '<div class="row"><span>Tarif</span><b style="color:#ffe9a0">'+BUS_FARE_FACTOR+' $/passager/tuile</b></div>';
+    h += '<div class="row"><span>Intra-ville</span><b style="color:#a0c8e8">÷'+BUS_INTRA_CITY_DIV+' du tarif</b></div>';
+    if(canRename){
+      const stopName = b.name || '';
+      h += '<div style="margin-top:8px;color:#8fa3bf;font-size:11px">Nom de l\'arrêt</div>';
+      h += '<div style="display:flex;gap:4px;margin-top:4px">'
+         + '<input id="bsNameInput" type="text" value="'+escHtml(stopName)+'" placeholder="Arrêt sans nom" '
+         + 'style="flex:1;padding:4px 6px;background:#1a2535;border:1px solid #2a3a50;color:#dde6f0;border-radius:4px;font-size:12px">'
+         + '<button class="tbtn" id="bsNameSave" style="width:auto;padding:4px 10px">✓</button>'
+         + '</div>';
+    } else if(b.name){
+      h += '<div class="row"><span>Nom</span><b style="color:#9fd4f0">'+escHtml(b.name)+'</b></div>';
+    }
+  }
   if(b.type==='garage'){
     const bvehicles = b.vehicles || [];
     h += '<div class="row"><span>Véhicules</span><b>'+bvehicles.length+'</b></div>';
     // Instruction mode assignation route
     if(vehicleRouteMode && bvehicles.some(v=>v===vehicleRouteMode.vehicle)){
       const step = vehicleRouteMode.step;
-      h += '<div class="warn" style="background:#1a2e1a;border-color:#3d8c3d;color:#9fe8a0">'
-         + (step==='source' ? '🔁 Clique sur l\'ENTREPÔT source' : '🔁 Clique sur l\'ENTREPÔT destination')
-         + '</div>';
+      const rmVeh = vehicleRouteMode.vehicle;
+      const isBusRM = rmVeh?.vtype === 'bus';
+      if(isBusRM){
+        h += '<div class="warn" style="background:#0e1e30;border-color:#3a6f9c;color:#7dd8ff">'
+           + (step==='source' ? '🚌 Clique sur l\'ARRÊT DE BUS de départ' : '🚌 Clique sur l\'ARRÊT DE BUS de destination')
+           + '</div>';
+      } else {
+        h += '<div class="warn" style="background:#1a2e1a;border-color:#3d8c3d;color:#9fe8a0">'
+           + (step==='source' ? '🔁 Clique sur l\'ENTREPÔT source' : '🔁 Clique sur l\'ENTREPÔT destination')
+           + '</div>';
+      }
     }
     if(bvehicles.length){
       h += '<div style="margin-top:8px;color:#8fa3bf">Véhicules assignés</div>';
@@ -498,7 +555,10 @@ function renderInfo(){
         if(!v) return;
         vehicleRouteMode = { vehicle:v, step:'source' };
         setTool('select');
-        toast('🔁 Clique sur l\'entrepôt source pour '+VEHICLE_TYPES[v.vtype].nom+'.');
+        if(v.vtype === 'bus')
+          toast('🚌 Clique sur l\'arrêt de bus de départ pour '+VEHICLE_TYPES[v.vtype].nom+'.');
+        else
+          toast('🔁 Clique sur l\'entrepôt source pour '+VEHICLE_TYPES[v.vtype].nom+'.');
         p._html = null;
       };
     });
@@ -552,6 +612,17 @@ function renderInfo(){
     setBuildingPaused(b, !b.paused);
     p._html = null;
     renderInfo();
+  };
+  // Renommage arrêt de bus
+  const bsNameSave = $('bsNameSave');
+  if(bsNameSave) bsNameSave.onclick = ()=>{
+    const input = $('bsNameInput');
+    if(!input) return;
+    const newName = input.value.trim();
+    b.name = newName || null;
+    if(MP.connected) netSend({ type:'rename_bus_stop', x:b.x, y:b.y, name: b.name });
+    p._html = null;
+    toast('🚏 Arrêt renommé : '+(b.name || '(sans nom)'));
   };
   $('bDemol').onclick = ()=>{
     if(MP.connected && b.owner && b.owner !== MP.myId){

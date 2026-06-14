@@ -221,12 +221,35 @@ const CONFIG = {
 
   /* ---------- LOGISTIQUE ---------- */
   logistique: {
-    garage: { cout: 1200 },
+    garage: { cout: 1200, tempsArret: 2 },  // tempsArret : heures de jeu d'arrêt pour chargement/déchargement
+
+    /* ---------- ARRÊT DE BUS ----------
+       cout          : prix de construction en $
+       rayon         : rayon (Chebyshev) en cases pour compter les habitants desservis
+       tarif         : $ par passager par tuile de trajet
+       diviseurIntra : diviseur appliqué au tarif pour un trajet intra-ville (même townId)
+                       ex. 3 → revenu = tarif / 3  (intra-ville moins rentable qu'inter-ville)
+       Pour un trajet inter-joueurs le revenu plein est partagé 50/50 entre les deux propriétaires.
+    */
+    arretBus: {
+      cout:             250,
+      rayon:            8,
+      tarif:            1,    // $ par passager par tuile
+      diviseurIntra:    3,    // revenu intra-ville = tarif / diviseurIntra
+      // Remplissage aux heures de pointe : taux = pop / tempsRemplissage (linéaire)
+      // Total rush/jour = 6h (7-9h + 12-13h + 16-18h + 22-23h)
+      // → tempsRemplissage = 6 : remplit en exactement 1 journée de jeu de rush
+      tempsArret:       2,  // heures de jeu d'arrêt à quai lors de l'embarquement des passagers
+      tempsRemplissage: 6,  // gtime-secondes de rush nécessaires pour remplir complètement
+      partProprietaire:  0.8,  // part du revenu revenant au propriétaire du bus lors d'un trajet inter-joueurs (0.8 = 80 %)
+    },
+
     vehicules: {
       minerai:      { nom:'Camion minerai',      icone:'🚛', ressources:['iron','coal'], cout:800,  capacite:15, vitesse:4.0 },
       bois:         { nom:'Camion bois',          icone:'🚜', ressources:['wood'],        cout:600,  capacite:15, vitesse:4.0 },
       ble:          { nom:'Camion blé',           icone:'🚜', ressources:['wheat'],       cout:550,  capacite:15, vitesse:4.0 },
-      coton:        { nom:'Chariot coton',        icone:'🛒', ressources:['cotton','clothes'], cout:550, capacite:15, vitesse:4.0 },
+      coton:        { nom:'Chariot coton',         icone:'🛒', ressources:['cotton'],          cout:550, capacite:15, vitesse:4.0 },
+      vetement:     { nom:'Camion vêtements',      icone:'🚐', ressources:['clothes'],         cout:650, capacite:12, vitesse:3.8 },
       farine:       { nom:'Camion farine',        icone:'🚚', ressources:['flour'],       cout:650,  capacite:15, vitesse:3.8 },
       citerne:      { nom:'Camion citerne',       icone:'🚛', ressources:['water'],       cout:750,  capacite:20, vitesse:3.5 },
       pain:         { nom:'Camion pain',          icone:'🚚', ressources:['bread'],       cout:700,  capacite:15, vitesse:3.8 },

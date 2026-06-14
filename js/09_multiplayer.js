@@ -25,6 +25,7 @@ function serializeState(){
       ct:b.ct||0, pending:0, pendingProtected:0, starve:b.starve||0,
       ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, sellMin:b.sellMin||null, paused:b.paused||false, blockedOut:b.blockedOut||null, owner:b.owner||null,
       starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
+      passengers:b.passengers||0,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
     nextTownId,
@@ -175,6 +176,7 @@ function applySnapshot(d){
     if(o.starterSlots) b.starterSlots = o.starterSlots;
     if(o.townId != null) b.townId = o.townId;
     if(o.name   != null) b.name   = o.name;
+    if(o.passengers != null && b.type === 'bus_stop') b.passengers = o.passengers;
     buildings.push(b);
     setGrid(b,b);
   }
@@ -334,7 +336,7 @@ function applyAction(msg){
       const source = buildings.find(b=>b.x===act.sourceX && b.y===act.sourceY);
       const dest   = buildings.find(b=>b.x===act.destX   && b.y===act.destY);
       if(!source || !dest) break;
-      if(!vehicleRouteEndpointOk(source) || !vehicleRouteEndpointOk(dest)) break;
+      if(!vehicleRouteEndpointOk(source, v.vtype) || !vehicleRouteEndpointOk(dest, v.vtype)) break;
       v.source = source;
       v.dest = dest;
       if(!vehicleCanServeRoute(v)){ v.source = null; v.dest = null; break; }
@@ -365,6 +367,13 @@ function applyAction(msg){
       const dst = towns.find(t=>t.id===act.dstId);
       if(!dst) break;
       reassignBuildingsInRect(act.dstId, act.x1, act.y1, act.x2, act.y2, act.owner);
+      break;
+    }
+    case 'rename_bus_stop': {
+      const b = bgrid[act.y*N+act.x];
+      if(!b || b.type !== 'bus_stop') break;
+      if(b.owner && b.owner !== msg.from) break;
+      b.name = act.name || null;
       break;
     }
     case 'owner_remap':

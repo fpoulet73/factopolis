@@ -14,6 +14,11 @@
   /* ---- barre du haut ---- */
   #topbar{top:10px;left:50%;transform:translateX(-50%);display:flex;gap:16px;
     align-items:center;padding:8px 16px;font-size:14px;white-space:nowrap;z-index:10}
+  /* ---- date/heure du jeu (coin haut-droite) ---- */
+  #gameDate{position:fixed;top:10px;right:12px;z-index:10;background:rgba(13,18,28,.92);
+    border:1px solid #36465e;border-radius:10px;padding:6px 12px;font-size:13px;
+    color:#b8d4f0;white-space:nowrap;font-variant-numeric:tabular-nums;
+    box-shadow:0 4px 18px rgba(0,0,0,.45);backdrop-filter:blur(5px)}
   #topbar .stat{display:flex;gap:5px;align-items:center}
   #topbar .stat b{font-variant-numeric:tabular-nums}
   #topbar .sep{width:1px;height:18px;background:#36465e}
@@ -215,6 +220,7 @@
   </div>
 </div>
 
+<div id="gameDate">📅 01/01/1970 &nbsp;🕐 00:00</div>
 <div id="townPanel" class="panel"></div>
 <div id="zoneOverlay"></div>
 <div id="toolbar" class="panel"></div>

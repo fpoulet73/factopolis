@@ -107,21 +107,21 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
   const C = i => ({ x:(i%N)*TILE+TILE/2, y:((i/N)|0)*TILE+TILE/2 });
   let pts;
   if(targetTile >= 0){
-    // chemin routier
+    // chemin routier : commence et termine sur la tuile de route adjacente au bâtiment
     const path = [];
     let t = targetTile;
     while(t!==-1){ path.push(t); t = prev[t]; }
     path.reverse();
-    pts = [
-      { x:(b.x+b.w/2)*TILE, y:(b.y+b.h/2)*TILE },
-      ...path.map(C),
-      { x:(target.x+target.w/2)*TILE, y:(target.y+target.h/2)*TILE },
-    ];
+    pts = path.map(C);
   } else {
-    // vol direct (pas de route vers la cible)
+    // vol direct (pas de route) : s'arrête au bord du bâtiment cible
+    const bx = (b.x + b.w/2)*TILE, by = (b.y + b.h/2)*TILE;
+    const tx = (target.x + target.w/2)*TILE, ty = (target.y + target.h/2)*TILE;
+    const dx = tx - bx, dy = ty - by, len = Math.sqrt(dx*dx+dy*dy)||1;
+    const stop = TILE * 0.5; // s'arrête à ~0.5 tuile du centre de la cible
     pts = [
-      { x:(b.x+b.w/2)*TILE, y:(b.y+b.h/2)*TILE },
-      { x:(target.x+target.w/2)*TILE, y:(target.y+target.h/2)*TILE },
+      { x: bx, y: by },
+      { x: tx - dx/len*stop, y: ty - dy/len*stop },
     ];
   }
   trucks.push({ pts, seg:0, t:0, res, amt, target, from:b });
@@ -169,6 +169,16 @@ function updateTrucks(dt){
 // Retourne true si le camion a été redirigé.
 function tryRedirect(tk, currentBuilding, remaining){
   const res = tk.res;
+  // Rayon d'action de l'expéditeur original (même contrainte que tryDispatch)
+  const fromB = tk.from && !tk.from.dead ? tk.from : null;
+  const fromIsDepot = fromB && isStorageHub(fromB);
+  const fromIsInd   = fromB && !!BUILD[fromB.type]?.ind;
+  const fromRadius  = !fromB        ? Infinity
+    : fromIsDepot ? (fromB.type === 'tank' ? tankRadiusOf(fromB) : depotRadiusOf(fromB))
+    : fromIsInd   ? indRadiusOf(fromB)
+    : Infinity;
+  const fromCenter = fromB ? centerOfBuilding(fromB) : null;
+
   // BFS depuis les routes adjacentes au bâtiment courant
   dist.fill(-1);
   const q = [];
@@ -182,11 +192,22 @@ function tryRedirect(tk, currentBuilding, remaining){
       if(road[ni] && dist[ni]<0){ dist[ni] = dist[c]+1; prev[ni] = c; q.push(ni); }
     }
   }
-  const curCenter = centerOfBuilding(currentBuilding);
   let bestB = null, bestScore = Infinity, bestTile = -1;
   for(const c of buildings){
     if(c === currentBuilding || c.dead) continue;
     if(!accepts(c, res) || space(c, res) <= 0) continue;
+    // Respecter le rayon d'action de l'expéditeur original
+    if(fromRadius < Infinity && fromCenter){
+      const d2 = Math.max(Math.abs(centerOfBuilding(c).x - fromCenter.x),
+                          Math.abs(centerOfBuilding(c).y - fromCenter.y));
+      if(d2 > fromRadius) continue;
+    }
+    // Respecter le rayon de la cible si c'est un entrepôt
+    if(isStorageHub(c) && fromCenter){
+      const d2 = Math.max(Math.abs(fromCenter.x - centerOfBuilding(c).x),
+                          Math.abs(fromCenter.y - centerOfBuilding(c).y));
+      if(d2 > (c.type === 'tank' ? tankRadiusOf(c) : depotRadiusOf(c))) continue;
+    }
     let bd = Infinity, bt = -1;
     for(const t of adjRoadTiles(c))
       if(dist[t]>=0 && dist[t]<bd){ bd = dist[t]; bt = t; }
@@ -206,11 +227,7 @@ function tryRedirect(tk, currentBuilding, remaining){
   path.reverse();
   tk.target = bestB;
   tk.amt    = remaining;
-  tk.pts    = [
-    { x:(currentBuilding.x+currentBuilding.w/2)*TILE, y:(currentBuilding.y+currentBuilding.h/2)*TILE },
-    ...path.map(C),
-    { x:(bestB.x+bestB.w/2)*TILE, y:(bestB.y+bestB.h/2)*TILE },
-  ];
+  tk.pts    = path.map(C);
   tk.seg = 0; tk.t = 0;
   return true;
 }
@@ -275,7 +292,9 @@ function removePersistentVehicle(v){
   return i >= 0;
 }
 
-function vehicleRouteEndpointOk(b){
+function vehicleRouteEndpointOk(b, vtype_override){
+  const vt = vtype_override || vehicleRouteMode?.vehicle?.vtype;
+  if(vt === 'bus') return b?.type === 'bus_stop';
   return isStorageHub(b);
 }
 
@@ -286,7 +305,8 @@ function buildingChebyshevDistance(a, b){
 
 function vehicleCanServeRoute(v, res=null){
   if(!v?.source || !v?.dest || v.source.dead || v.dest.dead) return false;
-  if(!vehicleRouteEndpointOk(v.source) || !vehicleRouteEndpointOk(v.dest)) return false;
+  if(!vehicleRouteEndpointOk(v.source, v.vtype) || !vehicleRouteEndpointOk(v.dest, v.vtype)) return false;
+  if(v.vtype === 'bus') return true;
   const resource = res || VEHICLE_TYPES[v.vtype]?.resources?.[0] || null;
   if(resource === 'water' && v.source.type === 'tank')
     return buildingChebyshevDistance(v.source, v.dest) <= tankRadiusOf(v.source);
@@ -317,11 +337,30 @@ function findRoadPath(fromB, toB){
   while(t !== -1){ path.push(t); t = prev[t]; }
   path.reverse();
   const C = idx => ({ x:(idx%N)*TILE+TILE/2, y:((idx/N)|0)*TILE+TILE/2 });
-  return [
-    { x:(fromB.x+fromB.w/2)*TILE, y:(fromB.y+fromB.h/2)*TILE },
-    ...path.map(C),
-    { x:(toB.x+toB.w/2)*TILE, y:(toB.y+toB.h/2)*TILE },
-  ];
+  return path.map(C);
+}
+
+function busEarnRevenue(v, numPassengers, routeLen, departStop, arrivalStop){
+  if(numPassengers <= 0 || !departStop || !arrivalStop) return;
+  const dist = Math.max(1, routeLen);
+  const baseRev = numPassengers * dist * BUS_FARE_FACTOR;
+  const sameCity = departStop.townId != null && departStop.townId === arrivalStop.townId;
+  const revenue = Math.round(sameCity ? baseRev / BUS_INTRA_CITY_DIV : baseRev);
+  const dOwner = departStop.owner ?? v.garageRef.owner ?? null;
+  const aOwner = arrivalStop.owner ?? dOwner;
+  if(dOwner !== null && aOwner !== null && dOwner !== aOwner){
+    // Le propriétaire du bus (garageRef) reçoit BUS_OWNER_SHARE, l'autre joueur le reste
+    const busOwner = v.garageRef.owner ?? dOwner;
+    const otherOwner = busOwner === dOwner ? aOwner : dOwner;
+    const busShare   = Math.max(1, Math.round(revenue * BUS_OWNER_SHARE));
+    const otherShare = Math.max(0, revenue - busShare);
+    earnMoney(busShare,   'ventes', walletOf(busOwner));
+    if(otherShare > 0) earnMoney(otherShare, 'ventes', walletOf(otherOwner));
+    addFloat(arrivalStop.x + 0.5, arrivalStop.y, '+'+busShare+' $ 🚌', '#4dd9ff');
+  } else {
+    earnMoney(revenue, 'ventes', walletOf(dOwner));
+    addFloat(arrivalStop.x + 0.5, arrivalStop.y, '+'+revenue+' $ 🚌', sameCity ? '#a0c8e8' : '#ffe9a0');
+  }
 }
 
 function startVehicleRoute(v){
@@ -363,15 +402,20 @@ function updateVehicles(dt){
     if(v.state !== 'returning' && (!v.source || v.source.dead || !v.dest || v.dest.dead)){
       v.state = 'idle'; v.cargo = 0; v.res = null; v.pts = []; continue;
     }
-    // Timer d'attente (chemin non trouvé)
+    // Timer d'attente (arrêt en gare ou chemin non trouvé)
     if(v.waitTimer > 0){
       v.waitTimer -= dt;
       if(v.waitTimer > 0) continue;
-      const from = v.currentBuilding || v.garageRef;
-      const to = v.state === 'to_source' ? v.source : v.dest;
-      const pts = findRoadPath(from, to);
-      if(!pts){ v.waitTimer = 5; continue; }
-      v.pts = pts; v.seg = 0; v.t = 0;
+      if(v.busReady){
+        // Chemin déjà prêt (arrêt passager) : on repart directement
+        v.busReady = false;
+      } else {
+        const from = v.currentBuilding || v.garageRef;
+        const to = v.state === 'to_source' ? v.source : v.dest;
+        const pts = findRoadPath(from, to);
+        if(!pts){ v.waitTimer = 5; continue; }
+        v.pts = pts; v.seg = 0; v.t = 0;
+      }
       // fall through to movement
     }
     if(!v.pts || !v.pts.length){ v.waitTimer = 5; continue; }
@@ -392,6 +436,26 @@ function updateVehicles(dt){
       }
       if(v.state === 'to_source'){
         v.currentBuilding = v.source;
+        if(v.vtype === 'bus'){
+          // Encaisser les passagers retour (chargés à la destination au voyage précédent)
+          if(v.cargo > 0){
+            busEarnRevenue(v, v.cargo, v.busRouteDistance, v.dest, v.source);
+            v.cargo = 0;
+          }
+          // Charger les passagers aller depuis l'arrêt source
+          const available = Math.floor(v.source.passengers || 0);
+          const take = Math.min(vt.capacite, available);
+          v.source.passengers = Math.max(0, (v.source.passengers || 0) - take);
+          v.cargo = take;
+          v.res = null;
+          const pts = findRoadPath(v.source, v.dest);
+          if(!pts){ v.waitTimer = 5; continue; }
+          v.busRouteDistance = pts.length - 2;
+          v.state = 'to_dest';
+          v.pts = pts; v.seg = 0; v.t = 0;
+          v.waitTimer = BUS_DWELL_TIME; v.busReady = true; // arrêt passager
+          continue;
+        }
         // Charger la ressource
         const src = v.source;
         const isInterPlayer = src.owner != null && src.owner !== (v.garageRef.owner ?? null);
@@ -430,8 +494,27 @@ function updateVehicles(dt){
         if(!pts){ v.waitTimer = 5; continue; }
         v.state = 'to_dest';
         v.pts = pts; v.seg = 0; v.t = 0;
+        v.waitTimer = VEHICLE_DWELL_TIME; v.busReady = true; // arrêt chargement
       } else {
         v.currentBuilding = v.dest;
+        if(v.vtype === 'bus'){
+          // Encaisser le revenu des passagers aller
+          if(v.cargo > 0){
+            busEarnRevenue(v, v.cargo, v.busRouteDistance, v.source, v.dest);
+            v.cargo = 0;
+          }
+          // Charger les passagers retour depuis l'arrêt de destination
+          const available = Math.floor(v.dest.passengers || 0);
+          const take = Math.min(vt.capacite, available);
+          v.dest.passengers = Math.max(0, (v.dest.passengers || 0) - take);
+          v.cargo = take;
+          const pts = findRoadPath(v.dest, v.source);
+          if(!pts){ v.waitTimer = 5; continue; }
+          v.state = 'to_source';
+          v.pts = pts; v.seg = 0; v.t = 0;
+          v.waitTimer = BUS_DWELL_TIME; v.busReady = true; // arrêt passager
+          continue;
+        }
         // Décharger la cargaison
         if(v.cargo > 0 && v.res){
           const dst = v.dest;
@@ -447,6 +530,7 @@ function updateVehicles(dt){
         if(!pts){ v.waitTimer = 5; continue; }
         v.state = 'to_source';
         v.pts = pts; v.seg = 0; v.t = 0;
+        v.waitTimer = VEHICLE_DWELL_TIME; v.busReady = true; // arrêt déchargement
       }
     }
   }

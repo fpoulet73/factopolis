@@ -201,6 +201,39 @@ function update(dt){
     floats[i].life -= dt;
     if(floats[i].life <= 0) floats.splice(i,1);
   }
+
+  // Arrêts de bus : mise à jour du max (pop proche) toutes les 3s, remplissage progressif chaque frame
+  busStopTimer += dt;
+  const updateBusMax = busStopTimer >= 3;
+  if(updateBusMax) busStopTimer = 0;
+  // Heures de pointe : les arrêts se remplissent seulement pendant ces tranches horaires
+  const _busH = new Date(GAME_EPOCH_MS + (gtime||0) * GAME_HOURS_PER_SEC * 3600000).getUTCHours();
+  const busRushHour = (_busH >= 7 && _busH < 9) || (_busH >= 12 && _busH < 13)
+                   || (_busH >= 16 && _busH < 18) || (_busH >= 22 && _busH < 23);
+  for(const b of buildings){
+    if(b.dead || b.type !== 'bus_stop') continue;
+    if(updateBusMax){
+      const cx = b.x + 0.5, cy = b.y + 0.5;
+      let pop = 0;
+      for(const o of buildings){
+        if(o.dead || !BUILD[o.type]?.resid) continue;
+        const dx = Math.abs((o.x + o.w/2) - cx);
+        const dy = Math.abs((o.y + o.h/2) - cy);
+        if(Math.max(dx, dy) <= BUS_STOP_RADIUS) pop += o.pop || 0;
+      }
+      b.passengersMax = pop;
+      if((b.passengers || 0) > pop) b.passengers = pop; // cap si pop a baissé
+    }
+    // Remplissage progressif uniquement aux heures de pointe
+    // taux linéaire = pop / FILL_TIME → même durée pour tous, vitesse et capacité proportionnelles à pop
+    if(!busRushHour) continue;
+    const max = b.passengersMax || 0;
+    if(max > 0 && (b.passengers || 0) < max){
+      const rate = max / BUS_STOP_FILL_TIME;
+      const capped = Math.min(dt, 0.5); // évite les sauts en cas de grand dt (reprise d'onglet, etc.)
+      b.passengers = Math.min(max, (b.passengers || 0) + rate * capped);
+    }
+  }
 }
 
 // un rectangle w×h entièrement couvert de logements pleins strictement plus

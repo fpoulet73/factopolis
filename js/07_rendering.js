@@ -334,10 +334,26 @@ function drawBuilding(b){
     ctx.fillText('$', tc[0] + TW*rw*0.3, tc[1] - 3);
     ctx.restore();
   }
-  // Contour vert clignotant sur les entrepôts éligibles lors de l'assignation de route
+  // Nombre de passagers sur les arrêts de bus
+  if(!drawFast && b.type === 'bus_stop' && (b.passengersMax || 0) > 0){
+    const pDisp = Math.floor(b.passengers || 0);
+    ctx.font = 'bold 11px sans-serif';
+    ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 3;
+    ctx.strokeText('👥'+pDisp, tc[0], tc[1]-TH*0.75);
+    ctx.fillStyle = pDisp < (b.passengersMax||0) ? '#a0c8e8' : '#7dd8ff';
+    ctx.fillText('👥'+pDisp, tc[0], tc[1]-TH*0.75);
+  }
+  // Contour vert clignotant sur les bâtiments éligibles lors de l'assignation de route
   if(vehicleRouteMode && vehicleRouteEndpointOk(b)){
+    const isBus = vehicleRouteMode.vehicle?.vtype === 'bus';
     const myOid = MP.connected ? MP.myId : null;
-    if(vehicleRouteMode.step === 'dest' || b.owner == null || b.owner === myOid || b.type === 'tank'){
+    if(isBus){
+      // Pour les bus : tous les arrêts sont éligibles (y compris d'autres joueurs)
+      ctx.strokeStyle = '#7dd8ff'; ctx.lineWidth = 1.5;
+      ctx.setLineDash([4,3]);
+      diamond(rx0, ry0, rw, rh); ctx.stroke();
+      ctx.setLineDash([]);
+    } else if(vehicleRouteMode.step === 'dest' || b.owner == null || b.owner === myOid || b.type === 'tank'){
       ctx.strokeStyle = '#9fe8a0'; ctx.lineWidth = 1.5;
       ctx.setLineDash([4,3]);
       diamond(rx0, ry0, rw, rh); ctx.stroke();

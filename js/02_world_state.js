@@ -20,7 +20,7 @@ let selectedExpansion = null;
 let gtime = 0, eff = 1; // eff = snapshot du wallet courant, gardé pour statusOf
 let selected = null, tool = 'select';
 let speed = 1, paused = false;
-let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0;
+let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0;
 let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
 const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0, expansion:0 });
 const START_HOMELESS = 0;
@@ -208,7 +208,7 @@ function genWorld(config){
   vehicles = []; vehicleRouteMode = null; selectedVehicle = null; nextVehicleId = 0;
   towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = [];
   WALLETS = {}; gtime = 0;
-  selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0;
+  selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0; busStopTimer = 0;
   mapBounds = { x0: EXP_MARGIN, y0: EXP_MARGIN, x1: EXP_MARGIN + N_PLAY, y1: EXP_MARGIN + N_PLAY };
   expansions = []; expansionLevels = { left:0, right:0, top:0, bottom:0 };
   purchasedPieces = new Set();

@@ -57,25 +57,41 @@ const WALKER_COLS = ['#e2574c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#ececec'
 const AUTO_SAVE_INTERVAL = 300; // secondes (5 minutes)
 const AUTO_SAVE_MAX      = 5;   // nombre d'emplacements conservés
 const AUTO_SAVE_KEY      = 'factopolis_autosaves';
+
+// ---------- horloge du jeu ----------
+// 1 seconde de gtime = GAME_HOURS_PER_SEC heures dans le jeu.
+// Par défaut : 1 gtime-seconde = 1 heure de jeu → 1 journée = 24 sec, 1 an ≈ 2h26 de jeu.
+const GAME_HOURS_PER_SEC = CFG.jeu?.heuresParSeconde ?? 1;
+const GAME_EPOCH_MS      = Date.UTC(1970, 0, 1); // 1er janvier 1970 00:00 UTC
 const TOWN_RADIUS        = 20;  // cases — rayon d'appartenance à un village
 const EXP_DEPTH  = 16;   // profondeur d'une tranche d'expansion (tuiles)
 const EXP_MARGIN = 48;   // marge pré-générée de chaque côté (max 3 expansions / bord)
 
 // ---------- véhicules persistants ----------
+const BUS_STOP_RADIUS      = CFG.logistique?.arretBus?.rayon         ?? 8;
+const BUS_FARE_FACTOR      = CFG.logistique?.arretBus?.tarif         ?? 1;
+const BUS_INTRA_CITY_DIV   = CFG.logistique?.arretBus?.diviseurIntra ?? 3;
+const BUS_DWELL_TIME       = (CFG.logistique?.arretBus?.tempsArret      ?? 2) / (CFG.jeu?.heuresParSeconde ?? 1); // gtime-s d'arrêt bus à quai
+const VEHICLE_DWELL_TIME   = (CFG.logistique?.garage?.tempsArret         ?? 2) / (CFG.jeu?.heuresParSeconde ?? 1); // gtime-s d'arrêt véhicule chargement/déchargement
+const BUS_STOP_FILL_TIME   = CFG.logistique?.arretBus?.tempsRemplissage ?? 6; // gtime-s de rush pour remplir (6 = 1 journée de pointe)
+const BUS_OWNER_SHARE      = CFG.logistique?.arretBus?.partProprietaire     ?? 0.8;
+
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
-  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', ble:'#d7b348', coton:'#f1efe3', farine:'#eadfa8', citerne:'#64b7e8', pain:'#d99a45', poisson:'#4fa6b8', acier:'#7a8fa0', marchandises:'#e6c84f' };
+  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', ble:'#d7b348', coton:'#f1efe3', vetement:'#b98fcb', farine:'#eadfa8', citerne:'#64b7e8', pain:'#d99a45', poisson:'#4fa6b8', acier:'#7a8fa0', marchandises:'#e6c84f', bus:'#3a8fd4' };
   const DEFS = {
     minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal','dirt'], cost:800,  capacite:15, speed:4.0 },
     bois:        { nom:'Camion bois',         icone:'🚜', resources:['wood'],        cost:600,  capacite:15, speed:4.0 },
     ble:         { nom:'Camion blé',          icone:'🚜', resources:['wheat'],       cost:550,  capacite:15, speed:4.0 },
-    coton:       { nom:'Chariot coton',       icone:'🛒', resources:['cotton','clothes'], cost:550, capacite:15, speed:4.0 },
+    coton:       { nom:'Chariot coton',       icone:'🛒', resources:['cotton'],      cost:550,  capacite:15, speed:4.0 },
+    vetement:    { nom:'Camion vêtements',    icone:'🚐', resources:['clothes'],     cost:650,  capacite:12, speed:3.8 },
     farine:      { nom:'Camion farine',       icone:'🚚', resources:['flour'],       cost:650,  capacite:15, speed:3.8 },
     citerne:     { nom:'Camion citerne',      icone:'🚛', resources:['water'],       cost:750,  capacite:20, speed:3.5 },
     pain:        { nom:'Camion pain',         icone:'🚚', resources:['bread'],       cost:700,  capacite:15, speed:3.8 },
     poisson:     { nom:'Chariot poisson',     icone:'🛒', resources:['fish','fish_fillet','fish_oil'], cost:650, capacite:14, speed:3.8 },
     acier:       { nom:'Camion acier',        icone:'🚚', resources:['steel'],       cost:1000, capacite:12, speed:3.5 },
     marchandises:{ nom:'Camion outils',        icone:'🚐', resources:['goods'],       cost:700,  capacite:12, speed:3.5 },
+    bus:         { nom:'Bus',                 icone:'🚌', resources:[],              cost:1500, capacite:40, speed:3.0 },
   };
   const out = {};
   for(const k in DEFS){
@@ -93,6 +109,7 @@ const VEHICLE_TYPES = (()=>{
   return out;
 })();
 const GARAGE_COST = CFG.logistique?.garage?.cout ?? 1200;
+const BUS_STOP_COST = CFG.logistique?.arretBus?.cout ?? 250;
 
 const RES = {
   iron:  { n:'Fer',          c:'#d98a4f' },
@@ -403,6 +420,8 @@ const BUILD = {
              desc:'Stocke uniquement l’eau. À placer près des boulangeries.' },
   garage:  { n:'Dépôt véhicules', ic:'🚛', hk:'0', cost: GARAGE_COST, col:'#3d4f6b', hgt:20,
              desc:'Achète et gère des véhicules de transport spécialisés.' },
+  bus_stop:{ n:'Arrêt de bus',   ic:'🚏', hk:'', cost: BUS_STOP_COST, col:'#1e4a8a', hgt:12,
+             desc:'Accueille les passagers du quartier (rayon '+BUS_STOP_RADIUS+' cases). Les bus transportent les habitants entre arrêts.' },
   bulldoze: { n:'Démolir',    ic:'🧨', hk:'B', desc:'Détruit routes, bâtiments (30 % remboursés) et arbres.' },
   terraform:{ n:'Bulldozer',  ic:'🚜', hk:'-', desc:'Rase les gisements (fer/charbon), les champs et les sapins en herbe.' },
   fill_water:{ n:'Remblai',   ic:'🪣', hk:'', desc:'Comble une tuile d\'eau en terre (10 terres requises). Nécessite une usine de terrassement à portée.' },
@@ -822,5 +841,5 @@ function tryMergeDepot(){
   if(bats.citerne?.cout        != null) BUILD.tank.cost   = bats.citerne.cout;
 })();
 
-const TOOL_ORDER = ['select','road','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bulldoze','terraform','fill_water'];
+const TOOL_ORDER = ['select','road','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','bulldoze','terraform','fill_water'];
 const MILESTONES = [25, 50, 100, 200, 400];

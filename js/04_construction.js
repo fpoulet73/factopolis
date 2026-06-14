@@ -87,16 +87,27 @@ function clickAt(x,y){
   if(vehicleRouteMode && tool === 'select'){
     const b = bgrid[i];
     if(b && !b.dead){
+      const veh = vehicleRouteMode.vehicle;
+      const isBus = veh.vtype === 'bus';
       if(!vehicleRouteEndpointOk(b)){
-        toast('⛔ Les véhicules ne peuvent utiliser que des entrepôts comme source et destination.','err');
+        if(isBus)
+          toast('⛔ Le bus ne peut utiliser que des arrêts de bus comme source et destination.','err');
+        else
+          toast('⛔ Les véhicules ne peuvent utiliser que des entrepôts comme source et destination.','err');
         return;
       }
       if(vehicleRouteMode.step === 'source'){
         const v = vehicleRouteMode.vehicle;
         const vt = VEHICLE_TYPES[v.vtype];
         const myOwner = MP.myId;
-        // Seul un marché d'un autre joueur est autorisé comme source (pas son dépôt)
-        if(b.owner !== myOwner && b.owner != null){
+        if(isBus){
+          // Les bus peuvent utiliser n'importe quel arrêt (y compris inter-joueurs)
+          vehicleRouteMode.vehicle.source = b;
+          vehicleRouteMode.step = 'dest';
+          const stopName = b.name || BUILD[b.type].n;
+          toast('🚌 Départ : '+stopName+'. Clique sur l\'arrêt de destination.');
+        } else if(b.owner !== myOwner && b.owner != null){
+          // Seul un marché d'un autre joueur est autorisé comme source (pas son dépôt)
           if(b.type !== 'market'){
             toast('⛔ Vous ne pouvez acheter que depuis le marché d\'un autre joueur.','err'); return;
           }
@@ -115,8 +126,8 @@ function clickAt(x,y){
       } else {
         const vRef = vehicleRouteMode.vehicle;
         const myOwner = MP.myId;
-        // Destination chez un autre joueur : uniquement un marché
-        if(b.owner !== myOwner && b.owner != null){
+        if(!isBus && b.owner !== myOwner && b.owner != null){
+          // Destination chez un autre joueur : uniquement un marché (hors bus)
           if(b.type !== 'market'){
             toast('⛔ Vous ne pouvez livrer que vers le marché d\'un autre joueur.','err'); return;
           }

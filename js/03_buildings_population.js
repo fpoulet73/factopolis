@@ -16,6 +16,7 @@ function newBuilding(type,x,y,w,h){
     b.sellTo = { water:false };
   }
   if(type==='garage') b.vehicles = [];
+  if(type==='bus_stop'){ b.passengers = 0; b.passengersMax = 0; }
   if(d.ind) b.paused = false;
   if(d.resid){ b.pop = 0; b.protectedPop = 0; b.ct = 0; b.bonusCt = 0; b.pending = 0; b.pendingProtected = 0; b.starve = 0; }
   return b;
