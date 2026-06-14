@@ -850,6 +850,7 @@ function draw(){
       if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
       links++;
       if(ny < y || (ny === y && nx < x)) continue;
+      if(dx !== 0 && dy !== 0 && (road[y*N+nx] || road[ny*N+x])) continue;
       const [du,dv] = rotDir(dx,dy);
       roadSegments.push([c, iso(rx+du+0.5, ry+dv+0.5)]);
     }

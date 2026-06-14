@@ -556,7 +556,7 @@ let roadDragStart = null;   // {x,y} tuile de départ
 let roadPreviewTiles = [];  // [{x,y}] tuiles de l'aperçu
 
 // Trace une route entre deux tuiles en 8-directions (Bresenham octagonal).
-// Shift forcé = segment L-shape (d'abord diagonale, puis droit), sinon ligne droite 8-dir.
+// Shift forcé = segment à angle droit, sinon ligne droite 8-dir.
 function computeRoadPreview(x0, y0, x1, y1, shiftMode){
   const dx = x1 - x0, dy = y1 - y0;
   const sx = dx >= 0 ? 1 : -1, sy = dy >= 0 ? 1 : -1;
@@ -564,9 +564,7 @@ function computeRoadPreview(x0, y0, x1, y1, shiftMode){
   const tiles = [];
   let x = x0, y = y0;
   if(shiftMode){
-    // Shift : segment L-shape (diagonale puis droit)
-    const diag = Math.min(adx, ady);
-    for(let i = 0; i < diag; i++){ tiles.push({x, y}); x += sx; y += sy; }
+    // Shift : angle droit sans diagonale.
     while(x !== x1){ tiles.push({x, y}); x += sx; }
     while(y !== y1){ tiles.push({x, y}); y += sy; }
   } else {
