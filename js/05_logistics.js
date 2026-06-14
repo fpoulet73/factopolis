@@ -51,13 +51,10 @@ function tryDispatch(b,res){
     // l'entrepôt en dernier recours ; les logements déjà pleins après ceux qui grandissent
     const rcc = BUILD[c.type].resid;
     const full = !!rcc && c.pop >= rcc.popCap;
-    // pour les ressources vers les logements : priorité au stock le plus bas des deux ressources vitales
-    const stockRatio = rcc
-      ? Math.min(
-          ((c.storage.goods||0) + (c.inc.goods||0)) / (rcc.stockCap || 1),
-          ((c.storage.bread||0) + (c.inc.bread||0)) / (rcc.stockCap || 1),
-          ((c.storage.fish_fillet||0) + (c.inc.fish_fillet||0)) / (rcc.stockCap || 1)
-        )
+    // pour les ressources vers les logements : priorité au stock le plus bas des besoins configurés
+    const demand = rcc ? residDeliveryResourcesOf(c) : [];
+    const stockRatio = demand.length
+      ? Math.min(...demand.map(r => ((c.storage[r]||0) + (c.inc[r]||0)) / (rcc.stockCap || 1)))
       : 0;
     // distance réelle pour le score : route si disponible, sinon vol direct
     const distScore = bt >= 0 ? bd : Math.round(Math.hypot(

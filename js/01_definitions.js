@@ -6,13 +6,30 @@
 
 // ---------- configuration (voir config.js) ----------
 const CFG = (typeof CONFIG !== 'undefined') ? CONFIG : {};
+const DEFAULT_RESIDENT_NEEDS = ['goods','clothes'];
+const DEFAULT_RESIDENT_FUSION_NEEDS = ['goods','clothes','bread'];
+const DEFAULT_RESIDENT_BONUS = ['fish_fillet'];
+function _resList(raw, def){
+  const list = Array.isArray(raw) ? raw : def;
+  const out = [];
+  for(const r of list || []){
+    if(typeof r === 'string' && r && !out.includes(r)) out.push(r);
+  }
+  return out;
+}
 function _resid(c, def){
   c = c || {};
+  const required = _resList(c.ressourcesIndispensables, def.required || DEFAULT_RESIDENT_NEEDS);
+  const fusionRequired = _resList(c.ressourcesFusion, def.fusionRequired || DEFAULT_RESIDENT_FUSION_NEEDS);
+  const bonus = _resList(c.ressourcesBonus, def.bonus || DEFAULT_RESIDENT_BONUS);
   return {
     interval: c.intervalleConsommation ?? def.interval,
     income:   c.revenuParUnite        ?? def.income,
     popCap:   c.habitantsMax          ?? def.popCap,
     stockCap: c.stockMax              ?? def.stockCap,
+    required,
+    fusionRequired,
+    bonus,
   };
 }
 const ECO = {
@@ -25,7 +42,7 @@ let N = 64;              // taille de la carte (tuiles)
 const TILE = 36;         // taille d'une tuile en px monde (simulation)
 const TW = 64, TH = 32;  // taille d'une tuile iso à l'écran
 const TW2 = TW/2, TH2 = TH/2;
-const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4, WHEAT:5 };
+const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4, WHEAT:5, COTTON:6 };
 const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
 const OUTCAP = 12;       // stock max de sortie par ressource
 const INCAP = 12;        // stock max d'entrée par ressource
@@ -46,11 +63,12 @@ const EXP_MARGIN = 48;   // marge pré-générée de chaque côté (max 3 expans
 // ---------- véhicules persistants ----------
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
-  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', ble:'#d7b348', farine:'#eadfa8', citerne:'#64b7e8', pain:'#d99a45', poisson:'#4fa6b8', acier:'#7a8fa0', marchandises:'#e6c84f' };
+  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', ble:'#d7b348', coton:'#f1efe3', farine:'#eadfa8', citerne:'#64b7e8', pain:'#d99a45', poisson:'#4fa6b8', acier:'#7a8fa0', marchandises:'#e6c84f' };
   const DEFS = {
     minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal'], cost:800,  capacite:15, speed:4.0 },
     bois:        { nom:'Camion bois',         icone:'🚜', resources:['wood'],        cost:600,  capacite:15, speed:4.0 },
     ble:         { nom:'Camion blé',          icone:'🚜', resources:['wheat'],       cost:550,  capacite:15, speed:4.0 },
+    coton:       { nom:'Chariot coton',       icone:'🛒', resources:['cotton','clothes'], cost:550, capacite:15, speed:4.0 },
     farine:      { nom:'Camion farine',       icone:'🚚', resources:['flour'],       cost:650,  capacite:15, speed:3.8 },
     citerne:     { nom:'Camion citerne',      icone:'🚛', resources:['water'],       cost:750,  capacite:20, speed:3.5 },
     pain:        { nom:'Camion pain',         icone:'🚚', resources:['bread'],       cost:700,  capacite:15, speed:3.8 },
@@ -80,6 +98,8 @@ const RES = {
   coal:  { n:'Charbon',      c:'#454552' },
   wood:  { n:'Bois',         c:'#a4713d' },
   wheat: { n:'Blé',          c:'#d7b348' },
+  cotton:{ n:'Coton',        c:'#f1efe3' },
+  clothes:{ n:'Vêtement',    c:'#b98fcb' },
   flour: { n:'Farine',       c:'#eadfa8' },
   water: { n:'Eau',          c:'#64b7e8' },
   bread: { n:'Pain',         c:'#d99a45' },
@@ -152,6 +172,8 @@ const GRAPHIC_PACKS = {
       mine: '#6c625d',
       lumber: '#5f8151',
       farm: '#a19a4f',
+      cotton_farm: '#d7d1b8',
+      weaver: '#8f6b9f',
       pump: '#4e8aa2',
       mill: '#8a8f91',
       bakery: '#b9845d',
@@ -269,6 +291,8 @@ const TRADE_PRICES = (()=>{
     coal:  cfg.charbon      ?? 6,
     wood:  cfg.bois         ?? 5,
     wheat: cfg.ble          ?? 4,
+    cotton: cfg.coton       ?? 6,
+    clothes: cfg.vetement   ?? 18,
     flour: cfg.farine       ?? 7,
     water: cfg.eau          ?? 2,
     bread: cfg.pain         ?? 12,
@@ -284,6 +308,8 @@ const PROD_CONFIG_KEYS = {
   mine:'mine',
   bucheron:'lumber',
   ferme:'farm',
+  coton:'cotton_farm',
+  tissage:'weaver',
   pompe:'pump',
   pecheur:'fisher',
   moulin:'mill',
@@ -313,6 +339,16 @@ const BUILD = {
              upkeep: CFG.production?.ferme?.entretien ?? 1.2,
              recipe:{ in:{}, out:{wheat:1} },
              desc:"À placer à 2 cases ou moins d'un champ de blé. Produit du blé." },
+  cotton_farm:{ n:'Ferme de coton', ic:'☁️', hk:'', cost: CFG.production?.coton?.cout ?? 320,
+             workers:2, time:3.0, col:'#d7d1b8', hgt:12, ind:true,
+             upkeep: CFG.production?.coton?.entretien ?? 1.2,
+             recipe:{ in:{}, out:{cotton:1} },
+             desc:"À placer à 2 cases ou moins d'un champ de coton. Produit du coton." },
+  weaver:  { n:'Usine de tissage', ic:'🧵', hk:'', cost: CFG.production?.tissage?.cout ?? 900,
+             workers:4, time:3.8, col:'#8f6b9f', hgt:24, ind:true,
+             upkeep: CFG.production?.tissage?.entretien ?? 2.4,
+             recipe:{ in:{cotton:3}, out:{clothes:1} },
+             desc:'3 cotons → 1 vêtement.' },
   pump:    { n:'Pompe',     ic:'💧', hk:'9', cost: CFG.production?.pompe?.cout    ?? 500,
              workers:1, time:2.5, col:'#4f86a8', hgt:14, ind:true,
              upkeep: CFG.production?.pompe?.entretien ?? 1.5,
@@ -349,7 +385,7 @@ const BUILD = {
              recipe:{ in:{steel:1, wood:1}, out:{goods:1} },
              desc:'Acier + bois → outils de construction.' },
   plant:   { n:'Usine',     ic:'🏚️', hk:'5', cost: 0, col:'#4e5663', hgt:18,
-             desc:"Usine abandonnée. À convertir ensuite en aciérie, ferme, moulin, boulangerie ou usine d'outils." },
+             desc:"Usine abandonnée. À convertir ensuite en aciérie, ferme, ferme de coton, tissage, moulin, boulangerie ou usine d'outils." },
   house:   { n:'Maison',    ic:'🏠', hk:'6', cost: CFG.batiments?.maison?.cout    ?? 100,
              col:'#9a7e5f', hgt:18, desc:'' },
   depot:   { n:'Entrepôt',        ic:'📦', hk:'7', cost: CFG.batiments?.entrepot?.cout  ?? 400,
@@ -367,6 +403,8 @@ const BUILD = {
 const PLANT_UPGRADES = {
   smelter: { label:'Aciérie',       type:'smelter', icon:'🔥' },
   farm:    { label:'Ferme',         type:'farm',    icon:'🌾' },
+  cotton_farm:{ label:'Ferme de coton', type:'cotton_farm', icon:'☁️' },
+  weaver:  { label:'Usine de tissage', type:'weaver', icon:'🧵' },
   mill:    { label:'Moulin',        type:'mill',    icon:'⚙️' },
   bakery:  { label:'Boulangerie',   type:'bakery',  icon:'🥖' },
   fishery: { label:'Poissonnerie',  type:'fishery', icon:'🐟' },
@@ -399,8 +437,8 @@ const LEVELS = [
     const area = L.shapes[0][0]*L.shapes[0][1];
     if(L.key==='house'){
       Object.assign(BUILD.house, { resid:L.resid, area:1 });
-      BUILD.house.desc = 'Consomme outils de construction (+ pain si disponible) → +1 habitant et +'+L.resid.income
-        +' $ par habitant. Pain requis pour monter en niveau.';
+      BUILD.house.desc = 'Consomme '+resNames(L.resid.required)+' → +1 habitant et +'+L.resid.income
+        +' $ par habitant. Fusion : '+resNames(L.resid.fusionRequired)+'.';
       continue;
     }
     BUILD[L.key] = { n:L.n, ic:L.ic, col:L.col, hgt:L.hgt, cost:100*area, area,
@@ -409,6 +447,30 @@ const LEVELS = [
         +'). '+L.resid.popCap+' habitants.' };
   }
 })();
+
+function _residCfgOf(b){
+  const type = typeof b === 'string' ? b : b?.type;
+  return BUILD[type]?.resid || null;
+}
+function residRequiredOf(b){ return _residCfgOf(b)?.required || DEFAULT_RESIDENT_NEEDS; }
+function residFusionRequiredOf(b){ return _residCfgOf(b)?.fusionRequired || DEFAULT_RESIDENT_FUSION_NEEDS; }
+function residBonusOf(b){ return _residCfgOf(b)?.bonus || DEFAULT_RESIDENT_BONUS; }
+function residDeliveryResourcesOf(b){
+  const out = [];
+  for(const r of [...residRequiredOf(b), ...residFusionRequiredOf(b), ...residBonusOf(b)]){
+    if(RES[r] && !out.includes(r)) out.push(r);
+  }
+  return out;
+}
+function residHasAll(b, list){
+  return list.every(r => (b.storage[r]||0) > 0);
+}
+function residConsumeAll(b, list){
+  for(const r of list) b.storage[r] = Math.max(0, (b.storage[r]||0) - 1);
+}
+function resNames(list){
+  return list.filter(r => RES[r]).map(r => RES[r].n.toLowerCase()).join(' + ');
+}
 // niveaux fusionnables, du plus grand au plus petit
 const MERGE_ORDER = LEVELS.filter(L=>L.key!=='house')
   .sort((a,b)=> b.shapes[0][0]*b.shapes[0][1] - a.shapes[0][0]*a.shapes[0][1]);
@@ -526,6 +588,8 @@ const IND_NAMES = {
   mine:    ['Mine de Fer','Puits Noir','Mine Profonde','Mine Royale','Vieux Puits','Mine du Nord','Carrière Centrale','Mine de l\'Ouest','Mine des Anciens','Mine du Pic'],
   lumber:  ['Scierie du Bois','Bûcherie Verte','Scierie des Pins','Grand Moulin','Scierie Royale','Scierie du Moulin','Bûcherie Centrale','Scierie du Nord','Vieille Scierie','Bûcherie des Chênes'],
   farm:    ['Ferme des Blés','Domaine Doré','Ferme du Moulin','Grange Centrale','Ferme de la Plaine','Domaine des Épis','Ferme du Nord','Métairie Royale','Champ Fleuri','Ferme des Moissons'],
+  cotton_farm:['Cotonnerie Blanche','Domaine du Coton','Champ des Toiles','Ferme Blanche','Clos des Fibres','Métairie du Linon','Champ Nuageux','Ferme des Balles'],
+  weaver:  ['Atelier de Tissage','Maison des Toiles','Tissage Royal','Filature Centrale','Atelier des Draps','Tissage du Nord','Halle aux Étoffes','Manufacture Textile'],
   pump:    ['Pompe du Lac','Station des Rives','Pompe Centrale','Station Bleue','Pompe du Canal','Pompe des Berges','Station du Nord','Pompe Royale','Station Claire','Pompe de la Source'],
   fisher:  ['Cabane des Rives','Pêcherie du Lac','Cabane du Pont','Pêcherie Royale','Cabane des Filets','Pêcherie du Nord','Hutte du Pêcheur','Cabane des Berges','Pêcherie Claire','Port aux Poissons'],
   mill:    ['Moulin des Blés','Moulin Blanc','Moulin du Pont','Grand Moulin','Moulin de la Plaine','Moulin des Épis','Moulin du Nord','Moulin Royal','Moulin de la Vallée','Vieux Moulin'],
@@ -676,5 +740,5 @@ function tryMergeDepot(){
   if(bats.citerne?.cout  != null) BUILD.tank.cost   = bats.citerne.cout;
 })();
 
-const TOOL_ORDER = ['select','road','mine','lumber','fisher','plant','house','depot','tank','pump','garage','bulldoze','terraform'];
+const TOOL_ORDER = ['select','road','mine','lumber','fisher','plant','cotton_farm','weaver','house','depot','tank','pump','garage','bulldoze','terraform'];
 const MILESTONES = [25, 50, 100, 200, 400];

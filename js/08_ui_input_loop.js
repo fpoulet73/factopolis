@@ -70,13 +70,20 @@ function renderFinance(){
 function statusOf(b){
   if(BUILD[b.type].resid){
     if(b.starterHome) return 'Maison de départ protégée (pas besoin de ravitaillement)';
-    const hasGoods = (b.storage.goods||0) > 0, hasBread = (b.storage.bread||0) > 0, hasFish = (b.storage.fish_fillet||0) > 0;
-    if(hasGoods && hasBread && hasFish) return 'Consomme outils + pain + filets de poisson…';
-    if(hasGoods && hasBread) return 'Consomme outils + pain… — demande des filets de poisson';
-    if(hasGoods) return 'Consomme outils… — manque de pain (montée en niveau bloquée) et de filets';
+    const req = residRequiredOf(b);
+    const missingReq = req.filter(r => (b.storage[r]||0) <= 0);
+    const fusionMissing = residFusionRequiredOf(b)
+      .filter(r => !req.includes(r) && (b.storage[r]||0) <= 0);
+    const bonusMissing = residBonusOf(b).filter(r => (b.storage[r]||0) <= 0);
+    if(missingReq.length === 0){
+      const txt = 'Consomme '+resNames(req)+'…';
+      if(fusionMissing.length) return txt+' — manque '+resNames(fusionMissing)+' pour monter';
+      if(bonusMissing.length) return txt+' — bonus demandé : '+resNames(bonusMissing);
+      return txt;
+    }
     if(b.pop > (b.protectedPop||0) && b.starve > 0)
-      return '⚠️ Pénurie d\'outils ! Dégradation dans '+Math.max(0,Math.ceil(STARVE_DELAY-b.starve))+' s';
-    return 'Attend des outils de construction';
+      return '⚠️ Pénurie : manque '+resNames(missingReq)+' ! Dégradation dans '+Math.max(0,Math.ceil(STARVE_DELAY-b.starve))+' s';
+    return 'Attend : '+resNames(missingReq);
   }
   if(b.type==='depot') return 'Stocke et redistribue';
   if(b.type==='tank') return 'Stocke l’eau pour les boulangeries proches';
@@ -232,7 +239,9 @@ function renderInfo(){
     const incomePerCycle = d.resid.income * Math.max(1, b.pop);
     const ratePerMin = b.pop > 0 ? Math.round(incomePerCycle / d.resid.interval * 60) : 0;
     h += '<div class="row"><span>Revenu / outil livré</span><b>'+incomePerCycle+' $</b></div>';
-    h += '<div class="row"><span>Bonus filet de poisson</span><b style="color:#c7e7e9">+20 % si disponible</b></div>';
+    h += '<div class="row"><span>Besoins indispensables</span><b>'+escHtml(resNames(residRequiredOf(b)))+'</b></div>';
+    h += '<div class="row"><span>Besoins de fusion</span><b>'+escHtml(resNames(residFusionRequiredOf(b)))+'</b></div>';
+    h += '<div class="row"><span>Bonus</span><b style="color:#c7e7e9">'+escHtml(resNames(residBonusOf(b)))+' (+20 % si disponible)</b></div>';
     h += '<div class="row"><span>Intervalle conso.</span><b>'+d.resid.interval+' s</b></div>';
     h += '<div class="row"><span>Revenu / min</span><b style="color:#9fe8a0">~'+ratePerMin+' $</b></div>';
   }

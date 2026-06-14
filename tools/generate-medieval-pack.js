@@ -6,7 +6,7 @@ const zlib = require('zlib');
 
 const OUT_DIR = path.join(__dirname, '..', 'assets', 'graphic-packs', 'medieval');
 
-const productionTypes = ['mine','lumber','farm','pump','fisher','mill','bakery','fishery','smelter','factory'];
+const productionTypes = ['mine','lumber','farm','cotton_farm','weaver','pump','fisher','mill','bakery','fishery','smelter','factory'];
 const productionShapes = [[1,1],[2,1],[1,2],[3,1],[1,3],[4,1],[1,4],[2,2],[3,2],[2,3],[4,4]];
 const residentialShapes = {
   house:[[1,1]], duplex:[[2,1],[1,2]], row:[[3,1],[1,3]], residence:[[4,1],[1,4]],
@@ -141,7 +141,7 @@ function diamondPoints(d){ return [d.top,d.right,d.bottom,d.left]; }
 function drawBase(img, cx, cy, w, h, type, view){
   const d = iso(cx, cy, w, h);
   img.ellipse(cx, cy + 22, 34 + 24*(w+h), 12 + 5*(w+h), rgba('#000000', 45));
-  const ground = type === 'farm' ? PALETTE.field : type === 'pump' ? '#5c8ca5' : '#6c7f45';
+  const ground = type === 'farm' ? PALETTE.field : type === 'cotton_farm' ? '#d8d2b6' : type === 'pump' ? '#5c8ca5' : '#6c7f45';
   img.poly(diamondPoints(d), rgba(ground, 230));
   const stripe = shade(ground, .18);
   for(let i=1; i<Math.min(6, w+h+2); i++){
@@ -179,7 +179,7 @@ function drawHouse(img,cx,cy,w,h,type,view){
 function drawIndustry(img,cx,cy,w,h,type,view){
   drawBase(img,cx,cy,w,h,type,view);
   const x=cx, y=cy+10, bw=38+14*w, bd=26+10*h, bh=22+5*Math.sqrt(w*h);
-  const wall = type === 'smelter' ? '#755044' : type === 'bakery' ? '#bd7b49' : type === 'fishery' ? '#4d7f8a' : type === 'fisher' ? '#4f7f86' : type === 'mill' ? '#c3ae75' : type === 'pump' ? '#4d86a6' : type === 'farm' ? '#9c7a36' : type === 'lumber' ? '#6f7f45' : type === 'mine' ? '#76604e' : '#626a66';
+  const wall = type === 'smelter' ? '#755044' : type === 'bakery' ? '#bd7b49' : type === 'fishery' ? '#4d7f8a' : type === 'fisher' ? '#4f7f86' : type === 'weaver' ? '#8f6b9f' : type === 'mill' ? '#c3ae75' : type === 'pump' ? '#4d86a6' : type === 'cotton_farm' ? '#d7d1b8' : type === 'farm' ? '#9c7a36' : type === 'lumber' ? '#6f7f45' : type === 'mine' ? '#76604e' : '#626a66';
   if(type === 'farm'){
     const barnX = x - 8;
     img.poly([[barnX-bw*.25,y-bd*.15],[barnX,y-bd*.45],[barnX+bw*.25,y-bd*.15],[barnX,y+bd*.05]], rgba('#9f4a31',255));
@@ -187,6 +187,20 @@ function drawIndustry(img,cx,cy,w,h,type,view){
     img.poly([[barnX+bw*.25,y-bd*.15],[barnX,y+bd*.05],[barnX,y+bd*.32],[barnX+bw*.25,y+bd*.12]], rgba('#6e402a',255));
     img.line(x-bw*.45,y+bd*.1,x+bw*.45,y-bd*.2,2,rgba('#f2d06e',170));
     img.line(x-bw*.3,y+bd*.25,x+bw*.55,y-bd*.05,2,rgba('#f2d06e',170));
+    return;
+  }
+  if(type === 'cotton_farm'){
+    const barnX = x - 8;
+    img.poly([[barnX-bw*.25,y-bd*.15],[barnX,y-bd*.45],[barnX+bw*.25,y-bd*.15],[barnX,y+bd*.05]], rgba('#efe9d3',255));
+    img.poly([[barnX-bw*.25,y-bd*.15],[barnX,y+bd*.05],[barnX,y+bd*.32],[barnX-bw*.25,y+bd*.12]], rgba('#c8b899',255));
+    img.poly([[barnX+bw*.25,y-bd*.15],[barnX,y+bd*.05],[barnX,y+bd*.32],[barnX+bw*.25,y+bd*.12]], rgba('#a9987c',255));
+    img.poly([[barnX-bw*.28,y-bd*.18],[barnX,y-bd*.48],[barnX+bw*.28,y-bd*.18],[barnX,y-bd*.06]], rgba('#8a4f3d',255));
+    for(let i=0;i<Math.min(8,w*h+3);i++){
+      const px = x - bw*.45 + (i%4)*bw*.28;
+      const py = y + bd*.18 - Math.floor(i/4)*bd*.18;
+      img.ellipse(px, py, 7, 4, rgba('#f4f0df',235));
+      img.line(px, py+5, px, py+12, 1, rgba('#75805a',190));
+    }
     return;
   }
   img.poly([[x-bw/2,y-bd/2],[x+bw/2,y-bd/2],[x+bw/2,y+bd/2],[x-bw/2,y+bd/2]], rgba(wall,255));
@@ -210,6 +224,12 @@ function drawIndustry(img,cx,cy,w,h,type,view){
     img.ellipse(x-bw*.22,y+bd*.12,10,5,rgba('#c7e7e9',245));
     img.ellipse(x+bw*.22,y+bd*.10,9,4,rgba('#d6b45c',230));
     img.line(x-bw*.38,y-bd*.18,x+bw*.38,y-bd*.02,2,rgba('#d7c08a',180));
+  } else if(type === 'weaver'){
+    img.rect(x-bw*.32,y+bd*.05,bw*.62,8,rgba('#d8c6e6',240));
+    img.rect(x-bw*.30,y+bd*.17,bw*.60,7,rgba('#b98fcb',230));
+    img.ellipse(x-bw*.24,y-bd*.02,7,7,rgba('#f4f0df',245));
+    img.ellipse(x+bw*.20,y-bd*.02,7,7,rgba('#f4f0df',245));
+    for(let i=0;i<4;i++) img.line(x-bw*.34,y+bd*.03+i*4,x+bw*.34,y-bd*.10+i*4,1,rgba('#eadff2',210));
   } else if(type === 'smelter' || type === 'factory' || type === 'plant'){
     const stackX = x + (view === 1 || view === 2 ? -bw*.34 : bw*.28);
     img.rect(stackX,y-bd/2-bh-20,13,45,rgba(type==='plant'?'#454b52':'#5a5b58',255));

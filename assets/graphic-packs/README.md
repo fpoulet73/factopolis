@@ -87,8 +87,8 @@ Ajoutez le manifeste du pack dans `assets/graphic-packs/packs.json` :
 
 ## Identifiants de bâtiments
 
-Production : `mine`, `lumber`, `farm`, `pump`, `fisher`, `mill`, `bakery`,
-`fishery`, `smelter`, `factory`, `plant`.
+Production : `mine`, `lumber`, `farm`, `cotton_farm`, `weaver`, `pump`,
+`fisher`, `mill`, `bakery`, `fishery`, `smelter`, `factory`, `plant`.
 
 Logements : `house`, `duplex`, `row`, `residence`, `tower`, `bigtower`, `sky`.
 

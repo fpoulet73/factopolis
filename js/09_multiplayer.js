@@ -655,7 +655,7 @@ clickFn = function(x,y){
       netSend({ type:'bulldoze_bld', bx:bgrid[i].x, by:bgrid[i].y });
     } else if(road[i]){
       netSend({ type:'bulldoze_road', i });
-    } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT){
+    } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON){
       netSend({ type:'bulldoze_tree', i });
     }
     clickAt(x,y);
@@ -663,7 +663,7 @@ clickFn = function(x,y){
   }
   if(tool==='terraform'){
     const ter = terrain[i];
-    if(!bgrid[i] && (ter===T.TREE || ter===T.WHEAT || ter===T.IRON || ter===T.COAL)){
+    if(!bgrid[i] && (ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL)){
       netSend({ type:'terraform', i });
       clickAt(x,y);
     }
@@ -790,6 +790,8 @@ function mpInjectUI(){
     <input id="mpResTree" type="number" min="0" max="40" step="0.5" style="${INP}">
     <label style="display:block;color:#8fa3bf;font-size:11px">Champs de blé (%)</label>
     <input id="mpResWheat" type="number" min="0" max="40" step="0.5" style="${INP}">
+    <label style="display:block;color:#8fa3bf;font-size:11px">Champs de coton (%)</label>
+    <input id="mpResCotton" type="number" min="0" max="40" step="0.5" style="${INP}">
     <label style="display:block;color:#8fa3bf;font-size:11px">Fer (%)</label>
     <input id="mpResIron" type="number" min="0" max="40" step="0.5" style="${INP}">
     <label style="display:block;color:#8fa3bf;font-size:11px">Charbon (%)</label>
@@ -877,6 +879,7 @@ function mpInjectUI(){
       resources: {
         tree: $('mpResTree').value,
         wheat: $('mpResWheat').value,
+        cotton: $('mpResCotton').value,
         iron: $('mpResIron').value,
         coal: $('mpResCoal').value,
       },
@@ -945,6 +948,7 @@ function mpSyncWorldInputs(){
   $('mpMaxPlayers').value = WORLD.maxPlayers;
   $('mpResTree').value = WORLD.resources.tree;
   $('mpResWheat').value = WORLD.resources.wheat;
+  $('mpResCotton').value = WORLD.resources.cotton;
   $('mpResIron').value = WORLD.resources.iron;
   $('mpResCoal').value = WORLD.resources.coal;
 }

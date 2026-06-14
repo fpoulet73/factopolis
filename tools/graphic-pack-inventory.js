@@ -1,7 +1,7 @@
 'use strict';
 
 const productionTypes = [
-  'mine', 'lumber', 'farm', 'pump', 'fisher', 'mill', 'bakery', 'fishery', 'smelter', 'factory',
+  'mine', 'lumber', 'farm', 'cotton_farm', 'weaver', 'pump', 'fisher', 'mill', 'bakery', 'fishery', 'smelter', 'factory',
 ];
 
 const productionShapes = [

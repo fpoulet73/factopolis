@@ -36,8 +36,8 @@ function nearbyEnemyOwner(myId, cx, cy){
 function canPlace(t,x,y){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
-  if(t==='bulldoze') return { ok: !!(road[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT) };
-  if(t==='terraform') return { ok: !bgrid[i] && (ter===T.TREE || ter===T.WHEAT || ter===T.IRON || ter===T.COAL) };
+  if(t==='bulldoze') return { ok: !!(road[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT || ter===T.COTTON) };
+  if(t==='terraform') return { ok: !bgrid[i] && (ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL) };
   if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
   if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
   if(t==='road'){
@@ -50,6 +50,7 @@ function canPlace(t,x,y){
     if(ter!==T.GRASS) return { ok:false, msg:'Terrain non constructible' };
     if(t==='lumber' && !treeNear(x,y,2)) return { ok:false, msg:"Aucun arbre à moins de 2 cases" };
     if(t==='farm' && !fieldNear(x,y,2)) return { ok:false, msg:"Aucun champ de blé à moins de 2 cases" };
+    if(t==='cotton_farm' && !cottonFieldNear(x,y,2)) return { ok:false, msg:"Aucun champ de coton à moins de 2 cases" };
     if(t==='pump' && !waterNear(x,y,1)) return { ok:false, msg:"La pompe doit être au bord de l'eau" };
     if(t==='fisher' && !waterNear(x,y,1)) return { ok:false, msg:"La cabane de pêcheur doit être au bord de l'eau" };
   }
@@ -143,7 +144,7 @@ function clickAt(x,y){
       if(refund) addFloat(x,y,'+'+refund+' $','#9fe89f');
     } else if(road[i]){
       road[i] = 0; earnMoney(3, 'rembours');
-    } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT){
+    } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON){
       terrain[i] = T.GRASS;
     }
     return;
@@ -151,7 +152,7 @@ function clickAt(x,y){
   if(tool==='terraform'){
     const ter = terrain[i];
     if(bgrid[i]){ toast('⛔ Démolissez d\'abord le bâtiment','err'); return; }
-    if(ter===T.TREE || ter===T.WHEAT || ter===T.IRON || ter===T.COAL){
+    if(ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL){
       terrain[i] = T.GRASS;
       if(MP.connected) netSend({ type:'terraform', i });
     }

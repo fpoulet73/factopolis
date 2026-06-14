@@ -27,16 +27,18 @@ function update(dt){
       }
     }
     const rc = BUILD[b.type].resid;
-    if(rc && !b.starterHome && (b.storage.goods||0) > 0){
+    if(rc && !b.starterHome && residHasAll(b, residRequiredOf(b))){
       b.starve = 0;
       b.ct += dt;
       if(b.ct >= rc.interval){
         b.ct = 0;
-        b.storage.goods--;
-        if((b.storage.bread||0) > 0) b.storage.bread--; // consommé si présent, pas obligatoire
-        const fishBonus = (b.storage.fish_fillet||0) > 0;
-        if(fishBonus) b.storage.fish_fillet--;
-        const income = Math.round(rc.income * Math.max(1, b.pop) * (fishBonus ? 1.2 : 1));
+        residConsumeAll(b, residRequiredOf(b));
+        const fusionOptional = residFusionRequiredOf(b).filter(r => !residRequiredOf(b).includes(r));
+        for(const r of fusionOptional) if((b.storage[r]||0) > 0) b.storage[r]--; // consommé si présent, pas obligatoire
+        const bonusResources = residBonusOf(b).filter(r => (b.storage[r]||0) > 0);
+        for(const r of bonusResources) b.storage[r]--;
+        const hasBonus = bonusResources.length > 0;
+        const income = Math.round(rc.income * Math.max(1, b.pop) * (hasBonus ? 1.2 : 1));
         earnMoney(income, 'ventes', w);
         addFloat(b.x + (b.w-1)/2, b.y, '+'+income+' $', '#ffe9a0');
         if(b.pop + b.pending < rc.popCap) spawnWalker(b);
@@ -62,7 +64,10 @@ function update(dt){
     }
     // croissance bonus : stock > seuil ET logement non plein → +1 habitant toutes les X secondes
     if(rc && b.pop + b.pending < rc.popCap){
-      const stockFull = (b.storage.goods||0) / rc.stockCap;
+      const req = residRequiredOf(b);
+      const stockFull = req.length
+        ? Math.min(...req.map(r => (b.storage[r]||0) / rc.stockCap))
+        : 1;
       if(stockFull > BONUS_GROWTH_THRESHOLD){
         b.bonusCt = (b.bonusCt||0) + dt;
         if(b.bonusCt >= BONUS_GROWTH_INTERVAL){
@@ -199,7 +204,7 @@ function checkRect(x,y,w,h){
     if(b.w*b.h >= area) return null;                            // pas plus petit
     if(b.x<x || b.y<y || b.x+b.w>x+w || b.y+b.h>y+h) return null; // déborde du rectangle
     if(b.pop < rc.popCap) return null;                          // pas plein
-    if(!b.starterHome && ((b.storage.goods||0) <= 0 || (b.storage.bread||0) <= 0)) return null; // pain requis pour fusion, poisson = bonus
+    if(!b.starterHome && !residHasAll(b, residFusionRequiredOf(b))) return null;
     if(!set.includes(b)) set.push(b);
   }
   return set;
@@ -261,12 +266,11 @@ function tryMerge(){
         const set = checkRect(x,y,w,h);
         if(!set) continue;
         const d = BUILD[L.key];
-        let goods = 0, bread = 0, fishFillet = 0, pop = 0, protectedPop = 0, wasSel = false;
+        const stock = {};
+        let pop = 0, protectedPop = 0, wasSel = false;
         const owner = set[0].owner||null;
         for(const o of set){
-          goods += o.storage.goods||0;
-          bread += o.storage.bread||0;
-          fishFillet += o.storage.fish_fillet||0;
+          for(const k in o.storage) stock[k] = (stock[k]||0) + o.storage[k];
           pop += o.pop;
           protectedPop += o.protectedPop||0;
           if(o===selected) wasSel = true;
@@ -282,9 +286,7 @@ function tryMerge(){
         t.starterHome = t.protectedPop > 0 || set.some(o => o.starterHome);
         // Conserver le nombre total de slots de départ absorbés
         t.starterSlots = set.reduce((s, o) => s + (o.starterSlots || (o.starterHome ? 1 : 0)), 0);
-        t.storage.goods = Math.min(d.resid.stockCap, goods);
-        t.storage.bread = Math.min(d.resid.stockCap, bread);
-        t.storage.fish_fillet = Math.min(d.resid.stockCap, fishFillet);
+        for(const k in stock) if(RES[k]) t.storage[k] = Math.min(d.resid.stockCap, stock[k]);
         buildings.push(t);
         setGrid(t,t);
         if(wasSel) selected = t;
@@ -310,7 +312,7 @@ function growPop(b, protectedResident=false){
 // renvoie les étapes du bord de la carte jusqu'au bâtiment, ou null si enclavé
 function pathToEdge(b){
   const walkable = i => terrain[i]!==T.WATER && !bgrid[i];
-  const costOf = i => road[i] ? 1 : (terrain[i]===T.TREE ? 6 : (terrain[i]===T.WHEAT ? 4 : 3));
+  const costOf = i => road[i] ? 1 : (terrain[i]===T.TREE ? 6 : ((terrain[i]===T.WHEAT || terrain[i]===T.COTTON) ? 4 : 3));
 
   dist.fill(-1);
   const heap = [];
@@ -405,9 +407,8 @@ function splitBuilding(b){
   const owner = b.owner ?? null;
   let pop = b.pop;
   let protectedPop = b.protectedPop||0;
-  let goodsPool = b.storage.goods||0;
-  let breadPool = b.storage.bread||0;
-  let fishFilletPool = b.storage.fish_fillet||0;
+  const pools = {};
+  for(const k in b.storage) if(RES[k]) pools[k] = b.storage[k]||0;
   const area = b.w * b.h;
   const excess = Math.max(0, pop - area * houseCap);
   b.dead = true;
@@ -424,16 +425,12 @@ function splitBuilding(b){
     h.starterHome = h.protectedPop > 0;
     protectedPop -= h.protectedPop;
     h.starve = 0;
-    // distribuer marchandises et pain équitablement entre les nouvelles maisons
-    const shareG = Math.min(houseStockCap, Math.floor(goodsPool / area));
-    const shareB = Math.min(houseStockCap, Math.floor(breadPool / area));
-    const shareF = Math.min(houseStockCap, Math.floor(fishFilletPool / area));
-    h.storage.goods = shareG;
-    h.storage.bread = shareB;
-    h.storage.fish_fillet = shareF;
-    goodsPool -= shareG;
-    breadPool  -= shareB;
-    fishFilletPool -= shareF;
+    // distribuer les stocks résidentiels équitablement entre les nouvelles maisons
+    for(const k in pools){
+      const share = Math.min(houseStockCap, Math.floor(pools[k] / area));
+      h.storage[k] = share;
+      pools[k] -= share;
+    }
     buildings.push(h);
     setGrid(h,h);
     newHouses.push(h);
@@ -441,25 +438,17 @@ function splitBuilding(b){
   }
   // donner le reste aux premières maisons
   for(const h of newHouses){
-    if(goodsPool <= 0 && breadPool <= 0 && fishFilletPool <= 0) break;
-    if(goodsPool > 0){
-      const space = houseStockCap - (h.storage.goods||0);
-      const give = Math.min(space, goodsPool);
-      h.storage.goods += give; goodsPool -= give;
-    }
-    if(breadPool > 0){
-      const space = houseStockCap - (h.storage.bread||0);
-      const give = Math.min(space, breadPool);
-      h.storage.bread += give; breadPool -= give;
-    }
-    if(fishFilletPool > 0){
-      const space = houseStockCap - (h.storage.fish_fillet||0);
-      const give = Math.min(space, fishFilletPool);
-      h.storage.fish_fillet += give; fishFilletPool -= give;
+    if(Object.values(pools).every(v => v <= 0)) break;
+    for(const k in pools){
+      if(pools[k] <= 0) continue;
+      const space = houseStockCap - (h.storage[k]||0);
+      const give = Math.min(space, pools[k]);
+      h.storage[k] = (h.storage[k]||0) + give;
+      pools[k] -= give;
     }
   }
   if(excess > 0) spawnLeavers(bgrid[b.y*N+b.x], excess);
-  toast('📉 '+BUILD[b.type].n+' sans outils : défusion'
+  toast('📉 '+BUILD[b.type].n+' sans '+resNames(residRequiredOf(b))+' : défusion'
     + (excess>0 ? ', '+excess+" habitants s'en vont" : ''),'err');
   if(excess > 0) addFloat(b.x+(b.w-1)/2, b.y, '−'+excess+' 👤', '#ff9a8a');
   // tenter de remplir les maisons incomplètes avec les sans-abri disponibles

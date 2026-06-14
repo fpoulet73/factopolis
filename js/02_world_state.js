@@ -67,7 +67,7 @@ let prev = new Int32Array(N*N);
 const WORLD_DEFAULTS = {
   size: 64,
   maxPlayers: 8,
-  resources: { tree: 8, wheat: 4, iron: 2, coal: 2 },
+  resources: { tree: 8, wheat: 4, cotton: 1, iron: 2, coal: 2 },
 };
 let WORLD = JSON.parse(JSON.stringify(WORLD_DEFAULTS));
 
@@ -86,6 +86,7 @@ function normalizeWorldConfig(config){
     resources: {
       tree: clampNum(r.tree, 0, 40, WORLD_DEFAULTS.resources.tree),
       wheat: clampNum(r.wheat, 0, 40, WORLD_DEFAULTS.resources.wheat),
+      cotton: clampNum(r.cotton, 0, 40, WORLD_DEFAULTS.resources.cotton),
       iron: clampNum(r.iron, 0, 40, WORLD_DEFAULTS.resources.iron),
       coal: clampNum(r.coal, 0, 40, WORLD_DEFAULTS.resources.coal),
     },
@@ -237,22 +238,26 @@ function genWorld(config){
     terrain[c.y*N+c.x] = T.TREE;
   }
   // champs et gisements en taches
-  const placePatch = (type, count)=>{
+  const placePatch = (type, count, opts={})=>{
+    const minRadius = opts.minRadius ?? 1;
+    const maxRadius = opts.maxRadius ?? 2;
+    const fillChance = opts.fillChance ?? 0.85;
     for(let k=0;k<count;k++){
       let cx, cy, tries = 0;
       do { cx = 3+(Math.random()*(N-6))|0; cy = 3+(Math.random()*(N-6))|0; }
       while(terrain[cy*N+cx] === T.WATER && ++tries < 300);
-      const r = 1 + (Math.random()*2)|0;
+      const r = minRadius + (Math.random()*(maxRadius-minRadius+1))|0;
       for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
         const x = cx+dx, y = cy+dy;
         if(x<0||y<0||x>=N||y>=N) continue;
         if(dx*dx+dy*dy > r*r+0.5) continue;
-        if(terrain[y*N+x] !== T.WATER && Math.random() < 0.85) terrain[y*N+x] = type;
+        if(terrain[y*N+x] !== T.WATER && Math.random() < fillChance) terrain[y*N+x] = type;
       }
     }
   };
   const patchCount = pct => Math.round(N*N * pct / 100 / 8);
   placePatch(T.WHEAT, patchCount(WORLD.resources.wheat));
+  placePatch(T.COTTON, patchCount(WORLD.resources.cotton), { maxRadius:1, fillChance:0.65 });
   placePatch(T.IRON, patchCount(WORLD.resources.iron));
   placePatch(T.COAL, patchCount(WORLD.resources.coal));
 
@@ -339,23 +344,25 @@ function generateExpansionTerrain(){
   for(let i=0,lim=Math.round(mTiles*(WORLD.resources?.tree??20)/100);i<lim&&i<tc.length;i++)
     terrain[tc[i].y*N+tc[i].x]=T.TREE;
   // Gisements et champs
-  const pp=(type,count)=>{
+  const pp=(type,count,opts={})=>{
+    const minRadius=opts.minRadius??1,maxRadius=opts.maxRadius??2,fillChance=opts.fillChance??0.85;
     for(let k=0;k<count;k++){
       let cx,cy,tries=0;
       do{cx=(1+Math.random()*(N-2))|0;cy=(1+Math.random()*(N-2))|0;}
       while((inPlay(cx,cy)||terrain[cy*N+cx]===T.WATER)&&++tries<400);
       if(tries>=400)continue;
-      const r=1+(Math.random()*2)|0;
+      const r=minRadius+(Math.random()*(maxRadius-minRadius+1))|0;
       for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
         const px=cx+dx,py=cy+dy;
         if(px<0||py<0||px>=N||py>=N||inPlay(px,py))continue;
         if(dx*dx+dy*dy>r*r+0.5)continue;
-        if(terrain[py*N+px]!==T.WATER&&Math.random()<0.85)terrain[py*N+px]=type;
+        if(terrain[py*N+px]!==T.WATER&&Math.random()<fillChance)terrain[py*N+px]=type;
       }
     }
   };
   const cnt=pct=>Math.round(mTiles*pct/100/8);
   pp(T.WHEAT,cnt(WORLD.resources?.wheat??8));
+  pp(T.COTTON,cnt(WORLD.resources?.cotton??2),{maxRadius:1,fillChance:0.65});
   pp(T.IRON, cnt(WORLD.resources?.iron??10));
   pp(T.COAL, cnt(WORLD.resources?.coal??10));
 }
@@ -366,6 +373,7 @@ function expTileCost(t){
   if(t===T.GRASS) return 3000;  // terrain standard
   if(t===T.TREE)  return 4500;  // ressource bois
   if(t===T.WHEAT) return 4000;  // ressource agriculture
+  if(t===T.COTTON)return 4200;  // ressource textile
   if(t===T.IRON)  return 6000;  // minerai rare
   if(t===T.COAL)  return 5500;  // minerai
   return 3000;

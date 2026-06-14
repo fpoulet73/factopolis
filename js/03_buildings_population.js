@@ -119,7 +119,7 @@ function accepts(b,res){
   if(b.type==='tank') return false;
   if(b.type==='depot') return b.allow?.[res] !== false;
   if(BUILD[b.type].resid){
-    if(res !== 'goods' && res !== 'bread' && res !== 'fish_fillet') return false;
+    if(!residDeliveryResourcesOf(b).includes(res)) return false;
     if(b.starterHome) return false; // maisons protégées : pas besoin de ravitaillement
     return true;
   }
@@ -140,6 +140,14 @@ function fieldNear(x,y,r){
   for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
     const a = x+dx, c = y+dy;
     if(inMap(a,c) && terrain[c*N+a]===T.WHEAT) return true;
+  }
+  return false;
+}
+
+function cottonFieldNear(x,y,r){
+  for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
+    const a = x+dx, c = y+dy;
+    if(inMap(a,c) && terrain[c*N+a]===T.COTTON) return true;
   }
   return false;
 }
@@ -336,6 +344,8 @@ function plantUpgradeError(b, targetType){
   if(!PLANT_UPGRADES[targetType]) return 'Type d\'usine invalide';
   if(targetType === 'farm' && !fieldNear(b.x, b.y, 2))
     return 'Aucun champ de blé à moins de 2 cases';
+  if(targetType === 'cotton_farm' && !cottonFieldNear(b.x, b.y, 2))
+    return 'Aucun champ de coton à moins de 2 cases';
   return '';
 }
 

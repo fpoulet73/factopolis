@@ -779,6 +779,18 @@ function draw(){
           ctx.stroke();
         }
       }
+      if(!drawFast && t===T.COTTON){
+        const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
+        for(let k=0;k<7;k++){
+          const ox = ((hs>>(k*3))&7)/7*TW*0.42 - TW*0.21;
+          const oy = ((hs>>(k*3+6))&7)/7*TH*0.34 - TH*0.17;
+          ctx.fillStyle = 'rgba(245,242,224,.92)';
+          ctx.beginPath(); ctx.ellipse(c[0]+ox, c[1]+oy-2, 4.2, 2.8, 0, 0, 7); ctx.fill();
+          ctx.strokeStyle = 'rgba(116,126,88,.75)';
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(c[0]+ox, c[1]+oy+5); ctx.lineTo(c[0]+ox, c[1]+oy); ctx.stroke();
+        }
+      }
       if(!drawFast && (t===T.IRON || t===T.COAL)){
         ctx.fillStyle = t===T.IRON ? '#c0763a' : '#23232b';
         const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
@@ -891,7 +903,7 @@ function draw(){
   }
 
   // en mode placement d'industrie : afficher tous les rayons industriels existants
-  if(['mine','lumber','farm','pump','fisher','mill','bakery','fishery','smelter','factory'].includes(tool) && !drawFast){
+  if(['mine','lumber','farm','cotton_farm','weaver','pump','fisher','mill','bakery','fishery','smelter','factory'].includes(tool) && !drawFast){
     for(const b of buildings){
       if(!BUILD[b.type]?.ind || b.dead) continue;
       ctx.globalAlpha = 0.35;

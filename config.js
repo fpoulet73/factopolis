@@ -4,7 +4,8 @@
 
    Identifiants de ressources à utiliser dans les recettes :
      iron  = fer          coal  = charbon       wood = bois
-     wheat = blé          flour = farine        water = eau
+     wheat = blé          cotton = coton        clothes = vêtement
+     flour = farine        water = eau
      bread = pain         steel = acier         goods = marchandises
      fish = poisson       fish_fillet = filet   fish_oil = huile de poisson
    ============================================================ */
@@ -22,6 +23,8 @@ const CONFIG = {
     mine:     { temps: 2.2, quantite: 1,                                         cout: 450,  entretien: 2   },
     bucheron: { temps: 2.8, sortie: { wood: 1 },                                 cout: 350,  entretien: 1.5 },
     ferme:    { temps: 3.0, sortie: { wheat: 1 },                                cout: 300,  entretien: 1.2 },
+    coton:    { temps: 3.0, sortie: { cotton: 1 },                               cout: 320,  entretien: 1.2 },
+    tissage:  { temps: 3.8, entree: { cotton: 3 }, sortie: { clothes: 1 },        cout: 900,  entretien: 2.4 },
     pompe:    { temps: 2.5, sortie: { water: 1 },                                cout: 500,  entretien: 1.5 },
     pecheur:  { temps: 3.0, sortie: { fish: 1 },                                 cout: 420,  entretien: 1.4 },
     moulin:   { temps: 3.2, entree: { wheat: 2 }, sortie: { flour: 1 },          cout: 650,  entretien: 2   },
@@ -45,6 +48,13 @@ const CONFIG = {
     revenuParUnite: 15,         // $ gagnés par marchandise consommée
     habitantsMax: 5,            // capacité (4 maisons pleines en carré 2×2 → immeuble)
     stockMax: 10,               // marchandises stockables sur place
+    // Ressources indispensables pour que les habitants restent.
+    // Ressources disponibles : goods, clothes, bread, fish_fillet, etc.
+    ressourcesIndispensables: ['goods'],
+    // Ressources requises en plus pour fusionner/monter en niveau.
+    ressourcesFusion: ['goods'],
+    // Ressources optionnelles consommées si disponibles, bonus revenu +20 %.
+    ressourcesBonus: ['fish_fillet'],
   },
 
   /* ---------- IMMEUBLES (niveau 2×2) ---------- */
@@ -53,6 +63,9 @@ const CONFIG = {
     revenuParUnite: 15,
     habitantsMax: 30,
     stockMax: 25,
+    ressourcesIndispensables: ['goods','bread'],
+    ressourcesFusion: ['goods','clothes','bread'],
+    ressourcesBonus: ['fish_fillet'],
   },
 
   /* ---------- AUTRES NIVEAUX RÉSIDENTIELS ----------
@@ -61,11 +74,18 @@ const CONFIG = {
      formes : [largeur, hauteur] — les deux orientations sont listées.
      Progression : maison → 2×1 → 3×1 → 4×1, et 2×2 → 3×2 → 4×4. */
   residentiel: {
-    duplex:        { formes:[[2,1],[1,2]], intervalleConsommation:18, revenuParUnite:17, habitantsMax:12,  stockMax:14 },
-    rangee:        { formes:[[3,1],[1,3]], intervalleConsommation:16, revenuParUnite:18, habitantsMax:20,  stockMax:18 },
-    residence:     { formes:[[4,1],[1,4]], intervalleConsommation:14, revenuParUnite:20, habitantsMax:28,  stockMax:22 },
-    grandImmeuble: { formes:[[3,2],[2,3]], intervalleConsommation:10, revenuParUnite:18, habitantsMax:60,  stockMax:40 },
-    gratteCiel:    { formes:[[4,4]],       intervalleConsommation:7,  revenuParUnite:20, habitantsMax:150, stockMax:80 },
+    duplex:        { formes:[[2,1],[1,2]], intervalleConsommation:18, revenuParUnite:17, habitantsMax:12,  stockMax:14,
+      ressourcesIndispensables:['goods'], ressourcesFusion:['goods','bread'], ressourcesBonus:['fish_fillet'] },
+    rangee:        { formes:[[3,1],[1,3]], intervalleConsommation:16, revenuParUnite:18, habitantsMax:20,  stockMax:18,
+      ressourcesIndispensables:['goods'], ressourcesFusion:['goods','bread'], ressourcesBonus:['fish_fillet'] },
+    residence:     { formes:[[4,1],[1,4]], intervalleConsommation:14, revenuParUnite:20, habitantsMax:28,  stockMax:22,
+      ressourcesIndispensables:['goods','bread'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'] },
+    grandImmeuble: { formes:[[3,2],[2,3]], intervalleConsommation:10, revenuParUnite:18, habitantsMax:60,  stockMax:40,
+      ressourcesIndispensables:['goods','bread'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'] },
+    tour: { formes:[3,3], intervalleConsommation:10, revenuParUnite:18, habitantsMax:60,  stockMax:40,
+      ressourcesIndispensables:['goods','bread'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'] },
+    gratteCiel:    { formes:[[4,4]],       intervalleConsommation:7,  revenuParUnite:20, habitantsMax:150, stockMax:80,
+      ressourcesIndispensables:['goods','bread','clothes'], ressourcesFusion:['goods','clothes','bread'], ressourcesBonus:['fish_fillet'] },
   },
 
   /* ---------- FUSION INDUSTRIELLE ----------
@@ -75,7 +95,7 @@ const CONFIG = {
      formesFusion : formes par défaut pour toutes les usines. Les orientations
        inversées sont ajoutées automatiquement : [2,1] autorise aussi [1,2].
      formesParType : surcharge par type. Clés possibles :
-       mine, bucheron, ferme, pompe, pecheur, moulin, boulangerie,
+       mine, bucheron, ferme, coton, tissage, pompe, pecheur, moulin, boulangerie,
        poissonnerie, fonderie, usine.
        On peut aussi écrire les formes sous forme de texte : "2x1".
      facteurs : { nombreDeCases: facteur } — le palier inférieur s'applique. */
@@ -83,6 +103,8 @@ const CONFIG = {
     formesFusion: [[2,1],[3,1],[4,1],[2,2],[3,2],[4,4]],
     formesParType: {
       // ferme: [[2,1],[3,1],[4,1],[2,2]],
+      // coton: [[2,1],[3,1],[4,1],[2,2]],
+      // tissage: [[2,1],[2,2],[3,2]],
       // moulin: ["2x1","3x1","2x2"],
       // usine: [[2,1],[2,2],[3,2],[4,4]],
       // pecheur: [[2,1],[3,1],[4,1]],
@@ -150,6 +172,7 @@ const CONFIG = {
       minerai:      { nom:'Camion minerai',      icone:'🚛', ressources:['iron','coal'], cout:800,  capacite:15, vitesse:4.0 },
       bois:         { nom:'Camion bois',          icone:'🚜', ressources:['wood'],        cout:600,  capacite:15, vitesse:4.0 },
       ble:          { nom:'Camion blé',           icone:'🚜', ressources:['wheat'],       cout:550,  capacite:15, vitesse:4.0 },
+      coton:        { nom:'Chariot coton',        icone:'🛒', ressources:['cotton','clothes'], cout:550, capacite:15, vitesse:4.0 },
       farine:       { nom:'Camion farine',        icone:'🚚', ressources:['flour'],       cout:650,  capacite:15, vitesse:3.8 },
       citerne:      { nom:'Camion citerne',       icone:'🚛', ressources:['water'],       cout:750,  capacite:20, vitesse:3.5 },
       pain:         { nom:'Camion pain',          icone:'🚚', ressources:['bread'],       cout:700,  capacite:15, vitesse:3.8 },

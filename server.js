@@ -179,7 +179,7 @@ const wss = new WebSocketServer({ server: httpServer });
 let nextId  = 1;
 let clients = [];   // { ws, id, color, name, username, token, isAdmin }
 let hostId  = null;
-let worldConfig = { size: 64, maxPlayers: 8, resources: { tree: 8, wheat: 4, iron: 2, coal: 2 } };
+let worldConfig = { size: 64, maxPlayers: 8, resources: { tree: 8, wheat: 4, cotton: 1, iron: 2, coal: 2 } };
 const startupSave = getLatestSave();
 let startupSaveLoaded = false;
 if (startupSave?.state?.world) worldConfig = sanitizeWorldConfig(startupSave.state.world);
@@ -278,6 +278,7 @@ function sanitizeWorldConfig(config = {}) {
     resources: {
       tree: clampPercent(resources.tree, worldConfig.resources.tree),
       wheat: clampPercent(resources.wheat, worldConfig.resources.wheat),
+      cotton: clampPercent(resources.cotton, worldConfig.resources.cotton),
       iron: clampPercent(resources.iron, worldConfig.resources.iron),
       coal: clampPercent(resources.coal, worldConfig.resources.coal),
     },
