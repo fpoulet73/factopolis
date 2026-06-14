@@ -51,15 +51,22 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
     // l'entrepôt en dernier recours ; les logements déjà pleins après ceux qui grandissent
     const rcc = BUILD[c.type].resid;
     const full = !!rcc && c.pop >= rcc.popCap;
-    // pour les ressources vers les logements : priorité au stock le plus bas des besoins configurés
+    // ratio de stock pour les logements (besoins multiples)
     const demand = rcc ? residDeliveryResourcesOf(c) : [];
-    const stockRatio = demand.length
+    const residRatio = demand.length
       ? Math.min(...demand.map(r => ((c.storage[r]||0) + (c.inc[r]||0)) / (rcc.stockCap || 1)))
       : 0;
+    // ratio de stock pour les bâtiments industriels (équité entre consommateurs)
+    const cap = capOf(c, res);
+    const indRatio = (targetIsInd && cap > 0)
+      ? ((c.storage[res]||0) + (c.inc[res]||0)) / cap
+      : 0;
+    const stockRatio = rcc ? residRatio : indRatio;
     // distance réelle pour le score : route si disponible, sinon vol direct
     const distScore = bt >= 0 ? bd : Math.round(Math.hypot(
       centerOfBuilding(c).x - senderCenter.x,
       centerOfBuilding(c).y - senderCenter.y));
+    // stockRatio élevé = déjà bien approvisionné → pénalité → distribution équitable
     const score = distScore + (isStorageHub(c) ? 500 : 0) + (full ? 200 : 0) + stockRatio * 150;
     if(score<bestScore){ bestScore = score; bestB = c; bestTile = bt; }
   }
@@ -137,18 +144,75 @@ function updateTrucks(dt){
       if(!tg.dead){
         tg.inc[tk.res] = Math.max(0, (tg.inc[tk.res]||0) - tk.amt);
       } else {
-        // la cible a disparu (ex. maisons fusionnées en immeuble) → livrer le remplaçant
         const rep = bgrid[tg.y*N+tg.x];
         tg = (rep && !rep.dead && accepts(rep,tk.res)) ? rep : null;
       }
+      let delivered = 0;
       if(tg){
         const room = capOf(tg,tk.res) - (tg.storage[tk.res]||0);
-        tg.storage[tk.res] = (tg.storage[tk.res]||0) + Math.min(room, tk.amt);
+        delivered = Math.min(Math.max(0,room), tk.amt);
+        tg.storage[tk.res] = (tg.storage[tk.res]||0) + delivered;
       }
-      if(!tk.from.dead) tk.from.trucksOut--;
-      trucks.splice(i,1);
+      const remaining = tk.amt - delivered;
+      if(remaining > 0 && tryRedirect(tk, tg ?? tk.target, remaining)){
+        // camion redirigé — reste dans trucks[], trucksOut inchangé
+      } else {
+        if(!tk.from.dead) tk.from.trucksOut--;
+        trucks.splice(i,1);
+      }
     }
   }
+}
+
+// Redirige un camion depuis `currentBuilding` vers la prochaine destination disponible.
+// Cherche d'abord un consommateur, sinon l'entrepôt le plus proche.
+// Retourne true si le camion a été redirigé.
+function tryRedirect(tk, currentBuilding, remaining){
+  const res = tk.res;
+  // BFS depuis les routes adjacentes au bâtiment courant
+  dist.fill(-1);
+  const q = [];
+  for(const s of adjRoadTiles(currentBuilding)){ dist[s] = 0; prev[s] = -1; q.push(s); }
+  for(let qi=0; qi<q.length; qi++){
+    const c = q[qi], cx = c%N, cy = (c/N)|0;
+    for(const [dx,dy] of DIRS8){
+      const x = cx+dx, y = cy+dy;
+      if(!inMap(x,y)) continue;
+      const ni = y*N+x;
+      if(road[ni] && dist[ni]<0){ dist[ni] = dist[c]+1; prev[ni] = c; q.push(ni); }
+    }
+  }
+  const curCenter = centerOfBuilding(currentBuilding);
+  let bestB = null, bestScore = Infinity, bestTile = -1;
+  for(const c of buildings){
+    if(c === currentBuilding || c.dead) continue;
+    if(!accepts(c, res) || space(c, res) <= 0) continue;
+    let bd = Infinity, bt = -1;
+    for(const t of adjRoadTiles(c))
+      if(dist[t]>=0 && dist[t]<bd){ bd = dist[t]; bt = t; }
+    if(bt < 0) continue;
+    const cap = capOf(c, res);
+    const ratio = cap > 0 ? ((c.storage[res]||0) + (c.inc[res]||0)) / cap : 1;
+    const score = bd + (isStorageHub(c) ? 400 : 0) + ratio * 100;
+    if(score < bestScore){ bestScore = score; bestB = c; bestTile = bt; }
+  }
+  if(!bestB) return false;
+
+  bestB.inc[res] = (bestB.inc[res]||0) + remaining;
+  const C = i2 => ({ x:(i2%N)*TILE+TILE/2, y:((i2/N)|0)*TILE+TILE/2 });
+  const path = [];
+  let t = bestTile;
+  while(t !== -1){ path.push(t); t = prev[t]; }
+  path.reverse();
+  tk.target = bestB;
+  tk.amt    = remaining;
+  tk.pts    = [
+    { x:(currentBuilding.x+currentBuilding.w/2)*TILE, y:(currentBuilding.y+currentBuilding.h/2)*TILE },
+    ...path.map(C),
+    { x:(bestB.x+bestB.w/2)*TILE, y:(bestB.y+bestB.h/2)*TILE },
+  ];
+  tk.seg = 0; tk.t = 0;
+  return true;
 }
 
 function syncIncomingReservations(){

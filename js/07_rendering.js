@@ -406,7 +406,7 @@ function drawTruck(tk){
   ctx.fillStyle = 'rgba(0,0,0,.20)';
   ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 11, 5, 0, 0, 7); ctx.fill();
   prism(u-au, v-av, u+au, v+av, 5, '#39404c');
-  prism(u-au*0.72, v-av*0.72, u+au*0.72, v+av*0.72, 7, RES[tk.res].c, 5);
+  prism(u-au*0.72, v-av*0.72, u+au*0.72, v+av*0.72, 7, RES[tk.res]?.c ?? '#aaa', 5);
 }
 
 function drawVehicleRoute(veh){

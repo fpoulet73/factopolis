@@ -115,20 +115,18 @@ function update(dt){
           if(b.allow?.[k] === false) continue;
           tryDispatch(b, k);
         }
-      } else if(b.type === 'terrassement'){
-        // puits pur : ne ré-expédie jamais son stock, les ressources restent jusqu'à utilisation
+      } else if(BUILD[b.type]?.resid || b.type === 'terrassement'){
+        // logements et puits purs : ne ré-expédient jamais leur stock
       } else {
-        // bâtiment de production : dispatcher la ressource la plus abondante
-        // Seuil à 10 unités — évite les micro-livraisons et les allers-retours rapides
-        // Inclut les sorties de recette ET les sous-produits hors recette (ex: terre des mines)
-        let best = null, amt = 0;
+        // bâtiment de production : tenter un dispatch pour chaque ressource éligible
+        // (indépendamment — une sortie bloquée ne bloque pas les autres)
         for(const k in b.storage){
+          if(b.trucksOut >= maxTrucks) break;
           if(b.storage[k] < 10) continue;
           const inRecipeOut = r && k in r.out;
-          const isByproduct  = !r || !(k in r.in); // pas un input de recette
-          if((inRecipeOut || isByproduct) && b.storage[k] > amt){ best = k; amt = b.storage[k]; }
+          const isByproduct  = !r || !(k in r.in);
+          if(inRecipeOut || isByproduct) tryDispatch(b, k, 10);
         }
-        if(best) tryDispatch(b, best, 10);
       }
     }
   }
