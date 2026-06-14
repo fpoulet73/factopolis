@@ -7,6 +7,10 @@ function newBuilding(type,x,y,w,h){
     b.allow = {}; b.sellTo = {}; b.sellMin = {};
     for(const k in RES){ b.allow[k] = k !== 'water'; b.sellTo[k] = false; b.sellMin[k] = 0; }
   }
+  if(type==='market'){
+    b.allow = {}; b.sellTo = {}; b.sellMin = {};
+    for(const k in RES){ b.allow[k] = k !== 'water'; b.sellTo[k] = false; b.sellMin[k] = 0; }
+  }
   if(type==='tank'){
     b.allow = { water:true };
     b.sellTo = { water:false };
@@ -104,7 +108,7 @@ function capOf(b,res){
   const rc = BUILD[b.type].resid;
   if(rc) return rc.stockCap;
   if(b.type==='tank') return res === 'water' ? TANK_STOCK_PER_CELL * b.w * b.h : 0;
-  if(b.type==='depot') return DEPOT_STOCK_PER_CELL * b.w * b.h;
+  if(b.type==='depot' || b.type==='market') return DEPOT_STOCK_PER_CELL * b.w * b.h;
   if(b.type==='terrassement') return res === 'dirt' ? 80 : 0;
   const r = recipeOf(b);
   // les stocks des bâtiments industriels fusionnés grandissent avec leur taille
@@ -120,7 +124,7 @@ function accepts(b,res){
   }
   if(b.type==='tank') return false;
   if(b.type==='terrassement') return res === 'dirt' && (b.storage['dirt']||0) < 80;
-  if(b.type==='depot') return b.allow?.[res] !== false;
+  if(b.type==='depot' || b.type==='market') return b.allow?.[res] !== false;
   if(BUILD[b.type].resid){
     if(!residDeliveryResourcesOf(b).includes(res)) return false;
     if(b.starterHome) return false; // maisons protégées : pas besoin de ravitaillement

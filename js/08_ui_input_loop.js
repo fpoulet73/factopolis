@@ -86,6 +86,7 @@ function statusOf(b){
     return 'Attend : '+resNames(missingReq);
   }
   if(b.type==='depot') return 'Stocke et redistribue';
+  if(b.type==='market') return 'Marché — vente aux autres joueurs';
   if(b.type==='tank') return 'Stocke l’eau pour les boulangeries proches';
   if(b.type==='garage'){
     const active = (b.vehicles||[]).filter(v=>v.state!=='idle').length;
@@ -275,8 +276,8 @@ function renderInfo(){
     if(extraKeys.length){
       extraKeys.forEach(showStock);
     }
-  } else {
-    // bâtiments non-industriels (logements, entrepôts…)
+  } else if(b.type !== 'depot' && b.type !== 'market') {
+    // bâtiments non-industriels (logements…)
     const allKeys = [...new Set([
       ...Object.keys(b.storage).filter(k=>b.storage[k]>0 || (b.inc[k]||0)>0),
     ])];
@@ -286,42 +287,86 @@ function renderInfo(){
     }
   }
   if(b.type==='depot'){
-    h += '<div class="row"><span>Rayon d\'action</span><b style="color:#ffd700">'+depotRadiusOf(b)+' cases</b></div>';
-    if(b.w*b.h > 1)
-      h += '<div class="row"><span>Taille</span><b>'+b.w+'×'+b.h+'</b></div>';
-    h += '<div style="margin-top:8px;color:#8fa3bf">Ressources acceptées</div><div>';
+    const myOid = MP.myId;
+    const isOwner = !b.owner || b.owner === myOid;
+    h += '<div style="color:#8fa3bf;font-size:10px;margin-bottom:6px">Rayon d\'action : <b style="color:#ffd700">'+depotRadiusOf(b)+' cases</b>'+(b.w*b.h>1?' · Taille <b>'+b.w+'×'+b.h+'</b>':'')+'</div>';
+    if(isOwner){
+      h += '<div style="color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">📦 Ressources stockées</div>';
+      h += '<div class="depot-cols-3">';
+      for(const k in RES){
+        if(k === 'water') continue;
+        const on = b.allow?.[k] !== false;
+        const val = b.storage[k]||0, cap = capOf(b,k);
+        const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
+        h += '<div class="depot-res-item'+(on?' on':'')+'" style="cursor:pointer;flex-direction:column;align-items:stretch;padding:5px 7px" data-toggle-res="'+k+'">'
+           + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
+           + '<span class="dot" style="background:'+RES[k].c+'"></span>'
+           + '<span style="flex:1;font-size:11px;'+(on?'':'opacity:.4')+'">'+RES[k].n+'</span>'
+           + (on ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '<span style="font-size:10px;color:#555">off</span>')
+           + '</div>'
+           + (on && cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px"></i></div>' : '')
+           + '</div>';
+      }
+      h += '</div>';
+    } else {
+      h += '<div style="color:#8fa3bf;font-size:12px;font-style:italic">Appartient à un autre joueur.</div>';
+    }
+  }
+  if(b.type==='market'){
+    const myOid = MP.myId;
+    const isOwner = !b.owner || b.owner === myOid;
+    h += '<div class="depot-cols">';
+
+    // --- Colonne gauche : ressources stockées ---
+    h += '<div>';
+    h += '<div style="color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">📦 Ressources stockées</div>';
+    h += '<div style="color:#8fa3bf;font-size:10px;margin-bottom:6px">Rayon : <b style="color:#ffd700">'+depotRadiusOf(b)+' cases</b>'+(b.w*b.h>1?' · <b>'+b.w+'×'+b.h+'</b>':'')+'</div>';
+    h += '<div class="depot-cols-3">';
     for(const k in RES){
       if(k === 'water') continue;
       const on = b.allow?.[k] !== false;
-      h += '<button class="tbtn flt'+(on?' on':'')+'" data-r="'+k+'">'
-         + '<span class="dot" style="background:'+RES[k].c+'"></span>'+RES[k].n+'</button>';
+      const val = b.storage[k]||0, cap = capOf(b,k);
+      const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
+      h += '<div class="depot-res-item'+(on?' on':'')+'" style="cursor:pointer;flex-direction:column;align-items:stretch;padding:5px 7px" data-toggle-res="'+k+'">'
+         + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
+         + '<span class="dot" style="background:'+RES[k].c+'"></span>'
+         + '<span style="flex:1;font-size:11px;'+(on?'':'opacity:.4')+'">'+RES[k].n+'</span>'
+         + (on ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '<span style="font-size:10px;color:#555">off</span>')
+         + '</div>'
+         + (on && cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px"></i></div>' : '')
+         + '</div>';
     }
     h += '</div>';
-    // Section vente inter-joueurs (toujours visible pour permettre l'accès solo aussi)
-    const myOid = MP.myId;
-    const isOwner = !b.owner || b.owner === myOid;
+    h += '</div>';
+
+    // --- Colonne droite : vente inter-joueurs ---
+    h += '<div>';
     if(isOwner){
-      h += '<div style="margin-top:8px;color:#f0c060;font-size:11px">🛒 Vente aux autres joueurs</div>';
-      h += '<div style="font-size:10px;color:#8fa3bf;margin-bottom:3px">Prix par unité · cliquer pour activer/désactiver</div>';
+      h += '<div style="color:#f0c060;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">🛒 Vente aux autres joueurs</div>';
+      h += '<div style="font-size:10px;color:#8fa3bf;margin-bottom:6px">Cliquer pour activer · prix par unité</div>';
       for(const k in RES){
         if(k === 'water') continue;
         const on = !!b.sellTo?.[k];
         const price = TRADE_PRICES[k];
         const minStock = b.sellMin?.[k] || 0;
-        h += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">'
-           + '<button class="tbtn sell-toggle'+(on?' on':'')+'" data-sell="'+k+'" style="flex:1;'
-           + (on ? 'border-color:#f0c060;color:#f0c060' : '')+'">'
+        h += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">'
+           + '<div class="depot-res-item'+(on?' on':'')+' sell-toggle" data-sell="'+k+'" style="flex:1;cursor:pointer;padding:3px 7px">'
            + '<span class="dot" style="background:'+RES[k].c+'"></span>'
-           + RES[k].n+' <span style="color:#8fa3bf">'+price+' $</span></button>';
+           + '<span style="flex:1;font-size:11px">'+RES[k].n+'</span>'
+           + '<span style="color:#f0c060;font-size:10px">'+price+' $</span>'
+           + '</div>';
         if(on){
-          h += '<span style="color:#8fa3bf;font-size:10px;white-space:nowrap">Min stock</span>'
-             + '<button class="tbtn sell-min-dec" data-sell-min="'+k+'" style="padding:2px 6px">−</button>'
-             + '<span style="min-width:24px;text-align:center;font-size:11px">'+minStock+'</span>'
-             + '<button class="tbtn sell-min-inc" data-sell-min="'+k+'" style="padding:2px 6px">+</button>';
+          h += '<button class="tbtn sell-min-dec" data-sell-min="'+k+'" style="padding:2px 5px;margin:0;width:auto">−</button>'
+             + '<span style="min-width:20px;text-align:center;font-size:11px">'+minStock+'</span>'
+             + '<button class="tbtn sell-min-inc" data-sell-min="'+k+'" style="padding:2px 5px;margin:0;width:auto">+</button>';
         }
         h += '</div>';
       }
+    } else {
+      h += '<div style="color:#8fa3bf;font-size:12px;font-style:italic">Appartient à un autre joueur.</div>';
     }
+    h += '</div>';
+    h += '</div>'; // fin depot-cols
   }
   if(b.type==='tank'){
     h += '<div class="row"><span>Rayon d\'action</span><b style="color:#64b7e8">'+tankRadiusOf(b)+' cases</b></div>';
@@ -388,6 +433,7 @@ function renderInfo(){
     h += '<button class="tbtn" id="bPauseBld">'+(b.paused ? '▶ Reprendre' : '⏸ Mettre en pause')+'</button>';
   h += '<button class="tbtn" id="bDemol">🧨 Démolir (+'+Math.floor((d.cost||0)*0.3)+' $)</button>';
   p.style.display = 'block';
+  p.classList.toggle('depot-modal', b.type === 'depot' || b.type === 'market');
   if(p._html === h && p._b === b) return; // ne pas reconstruire le DOM sous la souris
   p._html = h; p._b = b;
   p.innerHTML = h;
@@ -414,16 +460,17 @@ function renderInfo(){
       toast('🏭 Usine créée : '+targetDef.n, 'win');
     };
   });
-  p.querySelectorAll('.flt').forEach(btn=>{
-    btn.onclick = ()=>{
-      b.allow[btn.dataset.r] = b.allow[btn.dataset.r] === false;
-      p._html = null; // forcer le rafraîchissement
+  p.querySelectorAll('[data-toggle-res]').forEach(el=>{
+    el.onclick = ()=>{
+      if(!b.allow) b.allow = {};
+      b.allow[el.dataset.toggleRes] = b.allow[el.dataset.toggleRes] === false ? undefined : false;
+      p._html = null;
     };
   });
-  p.querySelectorAll('.sell-toggle').forEach(btn=>{
-    btn.onclick = ()=>{
+  p.querySelectorAll('.sell-toggle').forEach(el=>{
+    el.onclick = ()=>{
       if(!b.sellTo) b.sellTo = {};
-      b.sellTo[btn.dataset.sell] = !b.sellTo[btn.dataset.sell];
+      b.sellTo[el.dataset.sell] = !b.sellTo[el.dataset.sell];
       p._html = null;
     };
   });
@@ -576,18 +623,188 @@ function selectTownLabelAt(x,y){
     const h = townLabelHits[i];
     if(x >= h.x && x <= h.x+h.w && y >= h.y && y <= h.y+h.h){
       selectedTownId = h.id;
-      const t = towns.find(t=>t.id === h.id);
-      if(t) toast('🏘️ Village sélectionné : ' + t.name);
       hudTimer = 0;
       updateHUD(0);
+      openTownPanel(h.id);
       return true;
     }
   }
   return false;
 }
 
-// clickFn : indirection pour permettre au module multijoueur d'intercepter les clics
-let clickFn = clickAt;
+// ---- Panel village ----
+let townZoneSelectMode = null; // { townId } si mode sélection de zone actif
+let townZoneDrag = null;       // { x0,y0,x1,y1 } en tiles pendant le drag
+let townZonePending = null;    // { x1,y1,x2,y2, newName } en attente de confirmation
+
+function openTownPanel(tid){
+  const panel = $('townPanel');
+  renderTownPanel(tid);
+  panel.style.display = 'block';
+}
+
+function closeTownPanel(){
+  $('townPanel').style.display = 'none';
+  cancelTownZoneSelect();
+}
+
+function cancelTownZoneSelect(){
+  if(townZoneSelectMode){ townZoneSelectMode = null; townZoneDrag = null; townZonePending = null; $('zoneOverlay').style.display='none'; }
+}
+
+function renderTownPanel(tid){
+  const panel = $('townPanel');
+  const t = towns.find(t=>t.id===tid);
+  if(!t){ panel.style.display='none'; return; }
+  const myOid = myOwner();
+  const members = buildings.filter(b=>!b.dead && b.townId===t.id);
+  const pop = townPopulation(t);
+  const resCount = members.filter(b=>BUILD[b.type]?.resid).length;
+  const indCount = members.filter(b=>BUILD[b.type]?.ind).length;
+  const mergeable = mergeableTowns(t);
+  const inZone = !!(townZoneSelectMode && townZoneSelectMode.townId===tid);
+
+  let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+        + '<h3>🏘️ '+t.name+'</h3>'
+        + '<button class="tbtn" id="tpClose" style="width:auto;padding:2px 8px;margin:0">✕</button>'
+        + '</div>';
+  h += '<div class="row"><span style="color:#8fa3bf">Population</span><b>'+pop+'</b></div>';
+  h += '<div class="row"><span style="color:#8fa3bf">Maisons</span><b>'+resCount+'</b></div>';
+  h += '<div class="row"><span style="color:#8fa3bf">Industries</span><b>'+indCount+'</b></div>';
+
+  // Confirmation création nouveau village
+  if(townZonePending && townZoneSelectMode?.townId===tid){
+    const p = townZonePending;
+    const rx1=Math.min(p.x0,p.x1), ry1=Math.min(p.y0,p.y1);
+    const rx2=Math.max(p.x0,p.x1), ry2=Math.max(p.y0,p.y1);
+    const affected = buildings.filter(b=>{
+      if(b.dead) return false;
+      if(myOid!=null && b.owner!==myOid) return false;
+      const bx2=b.x+(b.w||1)-1, by2=b.y+(b.h||1)-1;
+      return b.x<=rx2 && bx2>=rx1 && b.y<=ry2 && by2>=ry1;
+    });
+    const resAff = affected.filter(b=>BUILD[b.type]?.resid).length;
+    const indAff = affected.filter(b=>BUILD[b.type]?.ind).length;
+    h += '<div class="tp-section" style="border:1px solid #d6a82f;border-radius:6px;padding:10px;margin-top:12px">';
+    h += '<div class="tp-section-title" style="color:#ffe9a0">⚠️ Confirmer la création</div>';
+    h += '<div style="font-size:12px;color:#8fa3bf;margin-bottom:8px">'
+       + 'Nouveau village <b style="color:#ffe9a0">'+p.newName+'</b><br>'
+       + affected.length+' bâtiment'+(affected.length>1?'s':'')+' concerné'+(affected.length>1?'s':'')+' ('
+       + resAff+' maison'+(resAff>1?'s':'')+', '+indAff+' industrie'+(indAff>1?'s':'')+')'
+       + '</div>';
+    h += '<div style="display:flex;gap:8px">'
+       + '<button class="tbtn" id="tpZoneConfirm" style="flex:1;background:rgba(214,168,47,.15);border-color:#d6a82f;color:#ffe9a0">✅ Créer</button>'
+       + '<button class="tbtn" id="tpZoneCancel" style="flex:1;color:#ff9a8a">✕ Annuler</button>'
+       + '</div>';
+    h += '</div>';
+  }
+
+  // Fusion
+  h += '<div class="tp-section">';
+  h += '<div class="tp-section-title">🔀 Fusionner avec</div>';
+  if(mergeable.length){
+    for(const { town: other, gap } of mergeable){
+      const otherPop = townPopulation(other);
+      h += '<div class="tp-town-btn" data-merge-town="'+other.id+'">'
+         + '<span>🏘️</span>'
+         + '<span style="flex:1"><b>'+other.name+'</b> <span style="color:#8fa3bf;font-size:11px">— '+otherPop+' hab, écart '+gap+' tuile'+(gap>1?'s':'')+'</span></span>'
+         + '<span style="color:#9fe8a0;font-size:12px">Fusionner →</span>'
+         + '</div>';
+    }
+  } else {
+    h += '<div style="color:#8fa3bf;font-size:12px;font-style:italic">Aucun village adjacent (écart ≤ '+MERGE_TOWN_GAP+' tuiles).</div>';
+  }
+  h += '</div>';
+
+  // Nouveau village par zone
+  h += '<div class="tp-section">';
+  h += '<div class="tp-section-title">🆕 Créer un nouveau village</div>';
+  h += '<div style="font-size:11px;color:#8fa3bf;margin-bottom:6px">Sélectionner un rectangle sur la carte — un nouveau village sera créé avec les bâtiments à vous dans cette zone.</div>';
+  if(!inZone){
+    h += '<button class="tbtn" id="tpZoneBtn" style="width:100%">📐 Sélectionner une zone</button>';
+  } else if(!townZonePending){
+    h += '<button class="tbtn zone-active" id="tpZoneBtn" style="width:100%">⏹️ Annuler la sélection</button>';
+  }
+  h += '</div>';
+
+  panel.innerHTML = h;
+
+  panel.querySelector('#tpClose').onclick = () => closeTownPanel();
+
+  panel.querySelectorAll('[data-merge-town]').forEach(el=>{
+    el.onclick = () => {
+      const srcId = parseInt(el.dataset.mergeTown);
+      const srcTown = towns.find(t=>t.id===srcId);
+      if(!srcTown) return;
+      const srcBuildings = buildings.filter(b=>!b.dead && b.townId===srcId);
+      const forbidden = srcBuildings.some(b=>b.owner!=null && b.owner!==myOid && myOid!=null);
+      if(forbidden){ toast('⛔ Ce village contient des bâtiments d\'un autre joueur.','err'); return; }
+      if(MP.connected) netSend({ type:'action', act:{ type:'merge_towns', dstId:t.id, srcId } });
+      mergeTowns(t.id, srcId);
+      hudTimer=0; updateHUD(0);
+      renderTownPanel(t.id);
+    };
+  });
+
+  const zoneBtn = panel.querySelector('#tpZoneBtn');
+  if(zoneBtn) zoneBtn.onclick = () => {
+    if(inZone){ cancelTownZoneSelect(); renderTownPanel(tid); }
+    else {
+      townZoneSelectMode = { townId: tid };
+      townZoneDrag = null; townZonePending = null;
+      $('townPanel').style.display = 'none'; // cacher pendant la sélection
+      toast('📐 Glisse un rectangle sur la carte pour créer un nouveau village.','win');
+    }
+  };
+
+  const confirmBtn = panel.querySelector('#tpZoneConfirm');
+  if(confirmBtn) confirmBtn.onclick = () => {
+    const p = townZonePending;
+    if(!p) return;
+    const oid = myOwner();
+    const rx1=Math.min(p.x0,p.x1), ry1=Math.min(p.y0,p.y1);
+    const rx2=Math.max(p.x0,p.x1), ry2=Math.max(p.y0,p.y1);
+    const cx = (rx1+rx2)/2, cy = (ry1+ry2)/2;
+    const newTown = { id: nextTownId++, name: p.newName, cx, cy };
+    towns.push(newTown);
+    if(MP.connected) netSend({ type:'action', act:{ type:'zone_reassign', dstId:newTown.id,
+      x1:rx1, y1:ry1, x2:rx2, y2:ry2, owner:oid, newTown:{ id:newTown.id, name:newTown.name, cx, cy } } });
+    reassignBuildingsInRect(newTown.id, rx1, ry1, rx2, ry2, oid);
+    cancelTownZoneSelect();
+    hudTimer=0; updateHUD(0);
+    toast('🏘️ Nouveau village : '+newTown.name,'win');
+    renderTownPanel(tid);
+  };
+
+  const cancelBtn = panel.querySelector('#tpZoneCancel');
+  if(cancelBtn) cancelBtn.onclick = () => {
+    townZonePending = null;
+    $('zoneOverlay').style.display='none';
+    renderTownPanel(tid);
+  };
+}
+
+
+// ---- overlay du rectangle de sélection de zone village ----
+function updateZoneOverlay(mouseX, mouseY){
+  if(!townZoneDrag){ $('zoneOverlay').style.display='none'; return; }
+  const { x0,y0,x1,y1 } = townZoneDrag;
+  // Convertir les coins en pixels écran via iso
+  const corners = [
+    [Math.min(x0,x1), Math.min(y0,y1)],
+    [Math.max(x0,x1)+1, Math.min(y0,y1)],
+    [Math.min(x0,x1), Math.max(y0,y1)+1],
+    [Math.max(x0,x1)+1, Math.max(y0,y1)+1],
+  ].map(([tx,ty])=>{ const [ru,rv]=rotF(tx,ty); const [px,py]=iso(ru,rv); return [(px-cam.x)*cam.z,(py-cam.y)*cam.z]; });
+  const minX = Math.min(...corners.map(c=>c[0]));
+  const maxX = Math.max(...corners.map(c=>c[0]));
+  const minY = Math.min(...corners.map(c=>c[1]));
+  const maxY = Math.max(...corners.map(c=>c[1]));
+  const ov = $('zoneOverlay');
+  ov.style.display = 'block';
+  ov.style.left   = minX + 'px'; ov.style.top    = minY + 'px';
+  ov.style.width  = (maxX-minX) + 'px'; ov.style.height = (maxY-minY) + 'px';
+}
 
 // ---------- tracé de route deux-points ----------
 let roadDragStart = null;   // {x,y} tuile de départ
@@ -632,6 +849,11 @@ cv.addEventListener('mousedown', e=>{
   if(e.button===0){
     mouse.lDown = true;
     if(selectTownLabelAt(e.clientX, e.clientY)){ mouse.lDown = false; return; }
+    // Mode sélection de zone pour village
+    if(townZoneSelectMode){
+      townZoneDrag = { x0: mouse.tx, y0: mouse.ty, x1: mouse.tx, y1: mouse.ty };
+      return;
+    }
     if(tool === 'road'){
       roadDragStart = { x: mouse.tx, y: mouse.ty };
       roadPreviewTiles = computeRoadPreview(mouse.tx, mouse.ty, mouse.tx, mouse.ty, e.shiftKey);
@@ -654,6 +876,11 @@ addEventListener('mousemove', e=>{
     syncTargetCam();
     mouse.lastX = e.clientX; mouse.lastY = e.clientY;
   }
+  if(mouse.lDown && townZoneDrag){
+    townZoneDrag.x1 = mouse.tx; townZoneDrag.y1 = mouse.ty;
+    updateZoneOverlay(e.clientX, e.clientY);
+    return;
+  }
   if(mouse.lDown && (tool==='bulldoze'||tool==='terraform'||tool==='fill_water') && (mouse.tx!==ptx || mouse.ty!==pty))
     clickFn(mouse.tx, mouse.ty);
   if(mouse.lDown && tool==='road' && roadDragStart && (mouse.tx!==ptx || mouse.ty!==pty))
@@ -661,6 +888,19 @@ addEventListener('mousemove', e=>{
 });
 addEventListener('mouseup', e=>{
   if(e.button===0){
+    if(townZoneDrag && townZoneSelectMode && !townZonePending){
+      const { x0,y0,x1,y1 } = townZoneDrag;
+      const cx = (Math.min(x0,x1)+Math.max(x0,x1))/2;
+      const cy = (Math.min(y0,y1)+Math.max(y0,y1))/2;
+      townZonePending = { x0, y0, x1, y1, newName: generateTownName(Math.round(cx), Math.round(cy)) };
+      townZoneDrag = null;
+      // Réafficher le panel avec la confirmation
+      const tid = townZoneSelectMode.townId;
+      $('townPanel').style.display = 'block';
+      renderTownPanel(tid);
+      mouse.lDown = false;
+      return;
+    }
     if(tool === 'road' && roadDragStart){
       for(const t of roadPreviewTiles)
         if(canPlace('road', t.x, t.y).ok) clickFn(t.x, t.y);
@@ -728,7 +968,7 @@ addEventListener('keydown', e=>{
   if(e.target.tagName==='INPUT') return;
   keys.add(e.code);
   if(e.code==='Space'){ e.preventDefault(); togglePause(); }
-  if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; }
+  if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; closeTownPanel(); }
   if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown)
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, true);
   if(e.code==='KeyH') toggleHelp();

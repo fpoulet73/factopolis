@@ -327,7 +327,7 @@ function drawBuilding(b){
     diamond(rx0, ry0, rw, rh); ctx.stroke();
   }
   // Indicateur "en vente" : petit $ doré sur le dépôt
-  if(!drawFast && b.type === 'depot' && b.sellTo && Object.values(b.sellTo).some(v=>v)){
+  if(!drawFast && (b.type === 'depot' || b.type === 'market') && b.sellTo && Object.values(b.sellTo).some(v=>v)){
     ctx.save();
     ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = '#f0c060';
@@ -342,7 +342,7 @@ function drawBuilding(b){
       ctx.setLineDash([4,3]);
       diamond(rx0, ry0, rw, rh); ctx.stroke();
       ctx.setLineDash([]);
-    } else if(b.owner != null && b.owner !== myOid && b.type === 'depot'){
+    } else if(b.owner != null && b.owner !== myOid && b.type === 'market'){
       const vt = VEHICLE_TYPES[vehicleRouteMode.vehicle.vtype];
       if(vt.resources.some(r => b.sellTo?.[r])){
         ctx.strokeStyle = '#f0c060'; ctx.lineWidth = 1.5;

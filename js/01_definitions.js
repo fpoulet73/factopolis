@@ -304,6 +304,7 @@ const TRADE_PRICES = (()=>{
     fish_oil:    cfg.huilePoisson ?? 11,
     steel: cfg.acier        ?? 14,
     goods: cfg.marchandises ?? 10,
+    dirt:  cfg.terre        ?? 1,
   };
 })();
 
@@ -394,10 +395,13 @@ const BUILD = {
   depot:   { n:'Entrepôt',        ic:'📦', hk:'7', cost: CFG.batiments?.entrepot?.cout  ?? 400,
              col:'#7a7048', hgt:22,
              desc:'Stocke et redistribue. Cliquer dessus pour choisir les ressources acceptées.' },
+  market:  { n:'Marché',          ic:'🏬', hk:'M', cost: CFG.batiments?.marche?.cout    ?? 600,
+             col:'#7a5a30', hgt:20,
+             desc:'Stocke et vend des ressources aux autres joueurs. Configurer les ressources en vente depuis le panneau.' },
   tank:    { n:'Entrepôt citerne', ic:'🛢️', hk:'8', cost: CFG.batiments?.citerne?.cout ?? 450,
              col:'#3f6f8f', hgt:18,
              desc:'Stocke uniquement l’eau. À placer près des boulangeries.' },
-  garage:  { n:'Dépôt véhicules', ic:'🏪', hk:'0', cost: GARAGE_COST, col:'#3d4f6b', hgt:20,
+  garage:  { n:'Dépôt véhicules', ic:'🚛', hk:'0', cost: GARAGE_COST, col:'#3d4f6b', hgt:20,
              desc:'Achète et gère des véhicules de transport spécialisés.' },
   bulldoze: { n:'Démolir',    ic:'🧨', hk:'B', desc:'Détruit routes, bâtiments (30 % remboursés) et arbres.' },
   terraform:{ n:'Bulldozer',  ic:'🚜', hk:'-', desc:'Rase les gisements (fer/charbon), les champs et les sapins en herbe.' },
@@ -578,7 +582,7 @@ function generateTownName(seedX, seedY){
 }
 
 function assignBuildingToTown(b, silent = false){
-  if(!BUILD[b.type]?.resid) return;
+  const isResid = !!BUILD[b.type]?.resid;
   const bx = b.x + b.w/2, by = b.y + b.h/2;
   let nearest = null, nearestDist = Infinity;
   for(const t of towns){
@@ -587,7 +591,8 @@ function assignBuildingToTown(b, silent = false){
   }
   if(nearest && nearestDist <= TOWN_RADIUS){
     b.townId = nearest.id;
-  } else {
+  } else if(isResid){
+    // Seuls les bâtiments résidentiels peuvent créer un nouveau village
     const name = generateTownName(Math.round(bx), Math.round(by));
     const t = { id: nextTownId++, name, cx: bx, cy: by };
     towns.push(t);
@@ -595,6 +600,7 @@ function assignBuildingToTown(b, silent = false){
     if(selectedTownId == null && ownedBy(b, myOwner())) selectedTownId = t.id;
     if(!silent) toast('🏘️ Nouveau village : ' + name, 'win');
   }
+  // Les non-résidentiels sans village proche gardent townId=null
 }
 
 // ---------- noms d'industrie par village ----------
@@ -612,6 +618,7 @@ const IND_NAMES = {
   smelter: ['Grande Forge','Fonderie du Feu','Forge Ardente','Forge du Roi','Fonderie Centrale','Vieille Forge','Forge des Maîtres','Fonderie du Nord','Forge Royale','Forge de la Vallée'],
   factory: ['Manufacture Centrale','Atelier du Peuple','Grande Usine','Fabrique Royale','Usine Municipale','Atelier des Arts','Grande Fabrique','Usine Centrale','Fabrique du Nord','Manufacture Royale'],
   terrassement: ['Chantier Central','Entreprise du Sol','Chantier des Berges','Remblai du Lac','Chantier Royal','Terrassement du Nord','Chantier des Rives','Entreprise de la Vallée','Grand Chantier','Chantier des Marais'],
+  market: ['Grand Marché','Marché du Peuple','Halle aux Denrées','Marché Royal','Marché Central','Marché du Nord','Halle Centrale','Marché des Halles','Grand Bazar','Marché de la Place'],
 };
 const IND_AREA_RADIUS = 30; // rayon de déduplication des noms
 
@@ -660,7 +667,66 @@ function townPopulation(t){
   return pop;
 }
 
-// ---------- fusion entrepôt ----------
+// Retourne les bâtiments (non-morts) d'un village
+function townBuildings(tid){
+  return buildings.filter(b => !b.dead && b.townId === tid);
+}
+
+// Distance minimum bord-à-bord entre deux bâtiments (0 = adjacent ou superposé)
+function buildingEdgeGap(a, b){
+  const gapX = Math.max(0, Math.max(a.x - (b.x + (b.w||1)), b.x - (a.x + (a.w||1))));
+  const gapY = Math.max(0, Math.max(a.y - (b.y + (b.h||1)), b.y - (a.y + (a.h||1))));
+  return Math.max(gapX, gapY);
+}
+
+// Retourne les villages fusionnables avec t (min gap entre bâtiments ≤ MERGE_TOWN_GAP)
+const MERGE_TOWN_GAP = 10;
+function mergeableTowns(t){
+  const aMems = townBuildings(t.id);
+  if(!aMems.length) return [];
+  const result = [];
+  for(const other of towns){
+    if(other.id === t.id) continue;
+    const bMems = townBuildings(other.id);
+    if(!bMems.length) continue;
+    let minGap = Infinity;
+    for(const a of aMems){
+      for(const bld of bMems){
+        const g = buildingEdgeGap(a, bld);
+        if(g < minGap) minGap = g;
+      }
+    }
+    if(minGap <= MERGE_TOWN_GAP) result.push({ town: other, gap: minGap });
+  }
+  return result;
+}
+
+// Fusionne srcId dans dstId : tous les bâtiments de srcId → dstId, supprime srcId
+function mergeTowns(dstId, srcId){
+  for(const b of buildings){
+    if(!b.dead && b.townId === srcId) b.townId = dstId;
+  }
+  towns = towns.filter(t => t.id !== srcId);
+  if(selectedTownId === srcId) selectedTownId = dstId;
+}
+
+// Réassigne tous les bâtiments de owner dans le rectangle [x1,y1]-[x2,y2] au village dstId
+function reassignBuildingsInRect(dstId, x1, y1, x2, y2, owner){
+  const rx1 = Math.min(x1,x2), rx2 = Math.max(x1,x2);
+  const ry1 = Math.min(y1,y2), ry2 = Math.max(y1,y2);
+  for(const b of buildings){
+    if(b.dead) continue;
+    if(owner != null && b.owner !== owner) continue;
+    const bx2 = b.x + (b.w||1) - 1, by2 = b.y + (b.h||1) - 1;
+    if(b.x <= rx2 && bx2 >= rx1 && b.y <= ry2 && by2 >= ry1){
+      b.townId = dstId;
+    }
+  }
+  // Supprimer les villages sans habitants résidentiels
+  towns = towns.filter(t => buildings.some(b => !b.dead && b.townId === t.id && BUILD[b.type]?.resid));
+}
+
+
 const DEPOT_STOCK_PER_CELL  = CFG.entrepot?.stockParCase ?? 20;
 const DEPOT_RADIUS_BASE     = CFG.entrepot?.rayonBase    ?? 5;
 const DEPOT_RADIUS_FACTOR   = CFG.entrepot?.rayonFacteur ?? 3;
@@ -670,7 +736,7 @@ const TANK_RADIUS_BASE     = CFG.citerne?.rayonBase    ?? 5;
 const TANK_RADIUS_FACTOR   = CFG.citerne?.rayonFacteur ?? 3;
 const BAKERY_TANK_RADIUS   = CFG.citerne?.rayonBoulangerie ?? 8;
 const tankRadiusOf = b => Math.round(TANK_RADIUS_BASE + Math.sqrt(b.w * b.h) * TANK_RADIUS_FACTOR);
-const isStorageHub = b => b && (b.type === 'depot' || b.type === 'tank');
+const isStorageHub = b => b && (b.type === 'depot' || b.type === 'market' || b.type === 'tank');
 // génère les deux orientations et déduplique, triées du plus grand au plus petit
 const DEPOT_SHAPES = (()=>{
   const raw = CFG.entrepot?.formesFusion ?? [[2,1],[3,1],[2,2],[3,2],[3,3],[4,4]];
@@ -756,5 +822,5 @@ function tryMergeDepot(){
   if(bats.citerne?.cout        != null) BUILD.tank.cost   = bats.citerne.cout;
 })();
 
-const TOOL_ORDER = ['select','road','mine','lumber','fisher','plant','house','depot','tank','pump','garage','bulldoze','terraform','fill_water'];
+const TOOL_ORDER = ['select','road','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bulldoze','terraform','fill_water'];
 const MILESTONES = [25, 50, 100, 200, 400];

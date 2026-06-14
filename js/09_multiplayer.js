@@ -180,7 +180,7 @@ function applySnapshot(d){
   }
   // Migration : assign townId aux maisons sans village et noms aux industries sans nom
   for(const b of buildings){
-    if(BUILD[b.type]?.resid && b.townId == null) assignBuildingToTown(b, true);
+    if(b.townId == null) assignBuildingToTown(b, true);
     if(BUILD[b.type]?.ind   && !b.name)          assignIndustryName(b);
   }
   ensureSelectedTown();
@@ -345,6 +345,26 @@ function applyAction(msg){
       const v = vehicles.find(v=>String(v.id) === String(act.id));
       if(!v || v.garageRef?.owner !== msg.from) break;
       returnToGarage(v);
+      break;
+    }
+    case 'merge_towns': {
+      const dst = towns.find(t=>t.id===act.dstId);
+      const src = towns.find(t=>t.id===act.srcId);
+      if(!dst || !src) break;
+      mergeTowns(act.dstId, act.srcId);
+      break;
+    }
+    case 'zone_reassign': {
+      if(act.newTown){
+        // Créer le nouveau village si nécessaire (venant d'un autre joueur)
+        if(!towns.find(t=>t.id===act.newTown.id)){
+          towns.push({ id:act.newTown.id, name:act.newTown.name, cx:act.newTown.cx, cy:act.newTown.cy });
+          nextTownId = Math.max(nextTownId, act.newTown.id + 1);
+        }
+      }
+      const dst = towns.find(t=>t.id===act.dstId);
+      if(!dst) break;
+      reassignBuildingsInRect(act.dstId, act.x1, act.y1, act.x2, act.y2, act.owner);
       break;
     }
     case 'owner_remap':

@@ -87,16 +87,18 @@ function clickAt(x,y){
         const v = vehicleRouteMode.vehicle;
         const vt = VEHICLE_TYPES[v.vtype];
         const myOwner = MP.myId;
-        // Dépôt d'un autre joueur : autorisé seulement si sellTo actif pour ce véhicule
+        // Seul un marché d'un autre joueur est autorisé comme source (pas son dépôt)
         if(b.owner !== myOwner && b.owner != null){
-          if(b.type !== 'depot') return;
+          if(b.type !== 'market'){
+            toast('⛔ Vous ne pouvez acheter que depuis le marché d\'un autre joueur.','err'); return;
+          }
           const hasSellRes = vt.resources.some(r => b.sellTo?.[r]);
           if(!hasSellRes){
-            toast('⛔ Ce dépôt ne vend pas les ressources de ce véhicule.','err'); return;
+            toast('⛔ Ce marché ne vend pas les ressources de ce véhicule.','err'); return;
           }
           vehicleRouteMode.vehicle.source = b;
           vehicleRouteMode.step = 'dest';
-          toast('🛒 Source (achat) : dépôt de '+(MP.players.find(p=>p.id===b.owner)||{}).name+'. Clique sur ta destination.');
+          toast('🛒 Source (achat) : '+(MP.players.find(p=>p.id===b.owner)||{}).name+'. Clique sur ta destination.');
         } else {
           vehicleRouteMode.vehicle.source = b;
           vehicleRouteMode.step = 'dest';
@@ -104,6 +106,13 @@ function clickAt(x,y){
         }
       } else {
         const vRef = vehicleRouteMode.vehicle;
+        const myOwner = MP.myId;
+        // Destination chez un autre joueur : uniquement un marché
+        if(b.owner !== myOwner && b.owner != null){
+          if(b.type !== 'market'){
+            toast('⛔ Vous ne pouvez livrer que vers le marché d\'un autre joueur.','err'); return;
+          }
+        }
         vRef.dest = b;
         if(!vehicleCanServeRoute(vRef)){
           vRef.dest = null;
