@@ -54,8 +54,16 @@ function canPlace(t,x,y){
   } else {
     if(ter!==T.GRASS) return { ok:false, msg:'Terrain non constructible' };
     if(t==='lumber' && !treeNear(x,y,2)) return { ok:false, msg:"Aucun arbre à moins de 2 cases" };
-    if(t==='farm' && !fieldNear(x,y,2)) return { ok:false, msg:"Aucun champ de blé à moins de 2 cases" };
-    if(t==='cotton_farm' && !cottonFieldNear(x,y,2)) return { ok:false, msg:"Aucun champ de coton à moins de 2 cases" };
+    if(t==='farm'){
+      if(!fieldNear(x,y,2)) return { ok:false, msg:"Aucun champ de blé à moins de 2 cases" };
+      const capErr = farmCapacityError(x, y, 'farm', T.WHEAT);
+      if(capErr) return { ok:false, msg:capErr };
+    }
+    if(t==='cotton_farm'){
+      if(!cottonFieldNear(x,y,2)) return { ok:false, msg:"Aucun champ de coton à moins de 2 cases" };
+      const capErr = farmCapacityError(x, y, 'cotton_farm', T.COTTON);
+      if(capErr) return { ok:false, msg:capErr };
+    }
     if(t==='pump' && !waterNear(x,y,1)) return { ok:false, msg:"La pompe doit être au bord de l'eau" };
     if(t==='fisher' && !waterNear(x,y,1)) return { ok:false, msg:"La cabane de pêcheur doit être au bord de l'eau" };
   }

@@ -159,6 +159,37 @@ function cottonFieldNear(x,y,r){
   return false;
 }
 
+// Compte les tuiles d'un type de terrain dans un rayon carré
+function countTilesInRadius(x, y, r, tileType){
+  let n = 0;
+  for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
+    const a = x+dx, c = y+dy;
+    if(inMap(a,c) && terrain[c*N+a]===tileType) n++;
+  }
+  return n;
+}
+
+// Compte les bâtiments actifs d'un type dans un rayon (Chebyshev centre-à-centre)
+function countBuildingsTypeInRadius(x, y, r, btype){
+  let n = 0;
+  for(const b of buildings){
+    if(b.dead || b.type !== btype) continue;
+    const cx = b.x + (b.w||1)/2 - 0.5, cy = b.y + (b.h||1)/2 - 0.5;
+    if(Math.max(Math.abs(cx - x), Math.abs(cy - y)) <= r) n++;
+  }
+  return n;
+}
+
+// Vérifie la capacité : # fermes existantes < # tuiles de champ dans le rayon
+function farmCapacityError(x, y, farmType, tileType){
+  const r = Math.round(IND_RADIUS_BASE + IND_RADIUS_FACTOR); // rayon d'une ferme 1×1
+  const tiles = countTilesInRadius(x, y, r, tileType);
+  const farms = countBuildingsTypeInRadius(x, y, r, farmType);
+  if(farms >= tiles)
+    return 'Trop de fermes : '+farms+' usine'+(farms>1?'s':'')+' pour '+tiles+' tuile'+(tiles>1?'s':'')+' de champ';
+  return '';
+}
+
 function waterNear(x,y,r){
   for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
     const a = x+dx, c = y+dy;
@@ -351,10 +382,16 @@ function setBuildingPaused(b, pausedState, broadcastChange=true){
 function plantUpgradeError(b, targetType){
   if(!b || b.dead || b.type !== 'plant') return 'Usine déjà spécialisée';
   if(!PLANT_UPGRADES[targetType]) return 'Type d\'usine invalide';
-  if(targetType === 'farm' && !fieldNear(b.x, b.y, 2))
-    return 'Aucun champ de blé à moins de 2 cases';
-  if(targetType === 'cotton_farm' && !cottonFieldNear(b.x, b.y, 2))
-    return 'Aucun champ de coton à moins de 2 cases';
+  if(targetType === 'farm'){
+    if(!fieldNear(b.x, b.y, 2)) return 'Aucun champ de blé à moins de 2 cases';
+    const capErr = farmCapacityError(b.x, b.y, 'farm', T.WHEAT);
+    if(capErr) return capErr;
+  }
+  if(targetType === 'cotton_farm'){
+    if(!cottonFieldNear(b.x, b.y, 2)) return 'Aucun champ de coton à moins de 2 cases';
+    const capErr = farmCapacityError(b.x, b.y, 'cotton_farm', T.COTTON);
+    if(capErr) return capErr;
+  }
   if(targetType === 'lumber' && !treeNear(b.x, b.y, 2))
     return 'Aucun arbre à moins de 2 cases';
   if(targetType === 'fisher' && !waterNear(b.x, b.y, 1))
