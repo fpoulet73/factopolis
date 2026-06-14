@@ -207,10 +207,10 @@ function renderInfo(){
       const opt = PLANT_UPGRADES[key];
       const d2 = BUILD[opt.type];
       const err = plantUpgradeError(b, opt.type);
+      if(err) continue; // masquer les types impossibles
       h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:3px" data-plant-upgrade="'+opt.type+'"'
-        + (!canUpgrade || err ? ' disabled' : '') + '>'
+        + (!canUpgrade ? ' disabled' : '') + '>'
         + opt.icon+' '+opt.label+' <span style="color:#8fa3bf">— '+(d2.cost||0)+' $</span>'
-        + (err ? ' <span style="color:#ff9a8a">('+escHtml(err)+')</span>' : '')
         + '</button>';
     }
   }
@@ -364,6 +364,26 @@ function renderInfo(){
     }
   }
   const canControl = !b.owner || b.owner === MP.myId;
+  // Contrôles de production pour les usines industrielles (hors dépôts/citernes)
+  if(d.ind && r2 && canControl){
+    const allOuts = Object.keys(r2.out);
+    // Pour les mines on expose aussi 'dirt' comme sortie bloquable
+    const blockableOuts = b.type === 'mine'
+      ? [...allOuts, 'dirt']
+      : allOuts;
+    if(blockableOuts.length){
+      h += '<div style="margin-top:8px;color:#8fa3bf;font-size:11px">Production</div>';
+      for(const k of blockableOuts){
+        const blocked = !!(b.blockedOut?.[k]);
+        h += '<button class="tbtn bld-toggle-out'+(blocked?' bld-blocked':'')+'" data-out="'+k+'" '
+           + 'style="width:100%;text-align:left;margin-top:3px;'
+           + (blocked ? 'opacity:.5;text-decoration:line-through' : '') + '">'
+           + (blocked ? '🚫' : '✅')+' '+(RES[k]?.n || k)
+           + '</button>';
+      }
+    }
+    h += '<button class="tbtn" id="bClearStock" style="margin-top:6px;color:#ff9a8a">🗑️ Vider le stock</button>';
+  }
   if(d.ind && canControl)
     h += '<button class="tbtn" id="bPauseBld">'+(b.paused ? '▶ Reprendre' : '⏸ Mettre en pause')+'</button>';
   h += '<button class="tbtn" id="bDemol">🧨 Démolir (+'+Math.floor((d.cost||0)*0.3)+' $)</button>';
@@ -462,6 +482,24 @@ function renderInfo(){
       };
     });
   }
+  p.querySelectorAll('.bld-toggle-out').forEach(btn=>{
+    btn.onclick = ()=>{
+      if(!b.blockedOut) b.blockedOut = {};
+      const k = btn.dataset.out;
+      b.blockedOut[k] = !b.blockedOut[k];
+      if(MP.connected) netSend({ type:'toggle_out_block', x:b.x, y:b.y, res:k, blocked:b.blockedOut[k] });
+      p._html = null;
+    };
+  });
+  const clearBtn = $('bClearStock');
+  if(clearBtn) clearBtn.onclick = ()=>{
+    if(!confirm('Vider tout le stock de ce bâtiment ?')) return;
+    b.storage = {};
+    b.inc = {};
+    if(MP.connected) netSend({ type:'clear_bld_stock', x:b.x, y:b.y });
+    p._html = null;
+    renderInfo();
+  };
   const pauseBtn = $('bPauseBld');
   if(pauseBtn) pauseBtn.onclick = ()=>{
     setBuildingPaused(b, !b.paused);
@@ -616,7 +654,7 @@ addEventListener('mousemove', e=>{
     syncTargetCam();
     mouse.lastX = e.clientX; mouse.lastY = e.clientY;
   }
-  if(mouse.lDown && (tool==='bulldoze'||tool==='terraform') && (mouse.tx!==ptx || mouse.ty!==pty))
+  if(mouse.lDown && (tool==='bulldoze'||tool==='terraform'||tool==='fill_water') && (mouse.tx!==ptx || mouse.ty!==pty))
     clickFn(mouse.tx, mouse.ty);
   if(mouse.lDown && tool==='road' && roadDragStart && (mouse.tx!==ptx || mouse.ty!==pty))
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, e.shiftKey);

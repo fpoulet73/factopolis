@@ -38,6 +38,11 @@ function canPlace(t,x,y){
   const i = y*N+x, ter = terrain[i];
   if(t==='bulldoze') return { ok: !!(road[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT || ter===T.COTTON) };
   if(t==='terraform') return { ok: !bgrid[i] && (ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL) };
+  if(t==='fill_water'){
+    if(ter !== T.WATER) return { ok:false, msg:'L\'outil Remblai ne s\'applique que sur l\'eau' };
+    if(!terrassementNear(x, y, MP.myId ?? 1)) return { ok:false, msg:'Aucune usine de terrassement à portée avec assez de terre ('+FILL_WATER_COST+' terres requises)' };
+    return { ok:true };
+  }
   if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
   if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
   if(t==='road'){
@@ -161,6 +166,16 @@ function clickAt(x,y){
       terrain[i] = T.GRASS;
       if(MP.connected) netSend({ type:'terraform', i });
     }
+    return;
+  }
+  if(tool==='fill_water'){
+    const ter = terrain[i];
+    if(ter !== T.WATER){ toast('L\'outil Remblai ne s\'applique que sur l\'eau','err'); return; }
+    const depot = terrassementNear(x, y, MP.myId ?? 1);
+    if(!depot){ toast('⛔ Aucune usine de terrassement à portée avec '+FILL_WATER_COST+' terres','err'); return; }
+    depot.storage['dirt'] = (depot.storage['dirt']||0) - FILL_WATER_COST;
+    terrain[i] = T.GRASS;
+    // netSend géré par l'intercept MP (09_multiplayer.js) pour éviter le double envoi
     return;
   }
   // outil de construction

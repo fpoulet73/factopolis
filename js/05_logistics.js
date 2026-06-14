@@ -1,5 +1,5 @@
 // ---------- logistique (camions) ----------
-function tryDispatch(b,res){
+function tryDispatch(b, res, load = TRUCK_LOAD){
   const starts = adjRoadTiles(b);
   const senderHasRoad = starts.length > 0;
   dist.fill(-1);
@@ -63,34 +63,61 @@ function tryDispatch(b,res){
     const score = distScore + (isStorageHub(c) ? 500 : 0) + (full ? 200 : 0) + stockRatio * 150;
     if(score<bestScore){ bestScore = score; bestB = c; bestTile = bt; }
   }
-  if(!bestB) return false;
 
-  const amt = Math.min(TRUCK_LOAD, b.storage[res]);
+  // Fallback pour les bâtiments de production : si aucune cible normale n'est trouvée,
+  // envoyer à l'entrepôt le plus proche dans le rayon d'action de l'expéditeur.
+  let fallbackB = null, fallbackTile = -1;
+  if(!bestB && senderIsInd && !senderIsDepot){
+    let fbDist = Infinity;
+    for(const c of buildings){
+      if(c===b || c.dead || !isStorageHub(c)) continue;
+      if(c.type === 'tank') continue;
+      if(c.allow?.[res] === false) continue;
+      if(space(c,res) <= 0) continue;
+      // respecter le rayon d'action de l'expéditeur
+      if(senderRadius < Infinity){
+        const d2 = Math.max(Math.abs(centerOfBuilding(c).x - senderCenter.x),
+                            Math.abs(centerOfBuilding(c).y - senderCenter.y));
+        if(d2 > senderRadius) continue;
+      }
+      let bd = Infinity, bt = -1;
+      for(const t of adjRoadTiles(c))
+        if(dist[t]>=0 && dist[t]<bd){ bd = dist[t]; bt = t; }
+      if(bt<0) continue;
+      if(bd < fbDist){ fbDist = bd; fallbackB = c; fallbackTile = bt; }
+    }
+  }
+
+  const target     = bestB    ?? fallbackB;
+  const targetTile = bestB ? bestTile : fallbackTile;
+  if(!target) return false;
+
+  const amt = Math.min(load, b.storage[res]);
   b.storage[res] -= amt;
   b.trucksOut++;
-  bestB.inc[res] = (bestB.inc[res]||0) + amt;
+  target.inc[res] = (target.inc[res]||0) + amt;
 
   const C = i => ({ x:(i%N)*TILE+TILE/2, y:((i/N)|0)*TILE+TILE/2 });
   let pts;
-  if(bestTile >= 0){
+  if(targetTile >= 0){
     // chemin routier
     const path = [];
-    let t = bestTile;
+    let t = targetTile;
     while(t!==-1){ path.push(t); t = prev[t]; }
     path.reverse();
     pts = [
       { x:(b.x+b.w/2)*TILE, y:(b.y+b.h/2)*TILE },
       ...path.map(C),
-      { x:(bestB.x+bestB.w/2)*TILE, y:(bestB.y+bestB.h/2)*TILE },
+      { x:(target.x+target.w/2)*TILE, y:(target.y+target.h/2)*TILE },
     ];
   } else {
     // vol direct (pas de route vers la cible)
     pts = [
       { x:(b.x+b.w/2)*TILE, y:(b.y+b.h/2)*TILE },
-      { x:(bestB.x+bestB.w/2)*TILE, y:(bestB.y+bestB.h/2)*TILE },
+      { x:(target.x+target.w/2)*TILE, y:(target.y+target.h/2)*TILE },
     ];
   }
-  trucks.push({ pts, seg:0, t:0, res, amt, target:bestB, from:b });
+  trucks.push({ pts, seg:0, t:0, res, amt, target, from:b });
   return true;
 }
 

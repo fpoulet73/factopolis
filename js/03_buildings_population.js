@@ -82,6 +82,7 @@ function setGrid(b,val){
 function recipeOf(b){
   const d = BUILD[b.type];
   if(b.type==='mine') return { in:{}, out:{ [b.ore]: d.qty||1 }, time:d.time/prodMult(b) };
+  if(b.type==='terrassement') return null; // stockage passif, pas de cycle de production
   if(d.recipe) return { in:d.recipe.in, out:d.recipe.out, time:d.time/prodMult(b) };
   return null;
 }
@@ -104,6 +105,7 @@ function capOf(b,res){
   if(rc) return rc.stockCap;
   if(b.type==='tank') return res === 'water' ? TANK_STOCK_PER_CELL * b.w * b.h : 0;
   if(b.type==='depot') return DEPOT_STOCK_PER_CELL * b.w * b.h;
+  if(b.type==='terrassement') return res === 'dirt' ? 80 : 0;
   const r = recipeOf(b);
   // les stocks des bâtiments industriels fusionnés grandissent avec leur taille
   return ((r && res in r.out) ? OUTCAP : INCAP) * (BUILD[b.type].ind ? b.w*b.h : 1);
@@ -117,6 +119,7 @@ function accepts(b,res){
     return false;
   }
   if(b.type==='tank') return false;
+  if(b.type==='terrassement') return res === 'dirt' && (b.storage['dirt']||0) < 80;
   if(b.type==='depot') return b.allow?.[res] !== false;
   if(BUILD[b.type].resid){
     if(!residDeliveryResourcesOf(b).includes(res)) return false;
@@ -168,6 +171,24 @@ function tankNear(b){
     const oc = centerOfBuilding(o);
     return Math.max(Math.abs(oc.x - center.x), Math.abs(oc.y - center.y)) <= BAKERY_TANK_RADIUS;
   });
+}
+
+// Retourne l'usine de terrassement (appartenant à owner) la plus proche de (x,y)
+// dans le rayon FILL_WATER_RADIUS et ayant au moins minDirt unités de terre.
+// Retourne null si aucune n'est trouvée.
+const FILL_WATER_RADIUS = CFG.production?.terrassement?.rayon ?? 10;
+const FILL_WATER_COST   = 10; // unités de terre par tuile comblée
+function terrassementNear(x, y, owner, minDirt = FILL_WATER_COST){
+  let best = null, bestDist = Infinity;
+  for(const b of buildings){
+    if(b.dead || b.type !== 'terrassement') continue;
+    if(!ownedBy(b, owner)) continue;
+    if((b.storage['dirt']||0) < minDirt) continue;
+    const cx = b.x + (b.w-1)/2, cy = b.y + (b.h-1)/2;
+    const dist = Math.max(Math.abs(cx - x), Math.abs(cy - y));
+    if(dist <= FILL_WATER_RADIUS && dist < bestDist){ best = b; bestDist = dist; }
+  }
+  return best;
 }
 
 function playerColor(owner){
@@ -330,6 +351,14 @@ function plantUpgradeError(b, targetType){
     return 'Aucun champ de blé à moins de 2 cases';
   if(targetType === 'cotton_farm' && !cottonFieldNear(b.x, b.y, 2))
     return 'Aucun champ de coton à moins de 2 cases';
+  if(targetType === 'lumber' && !treeNear(b.x, b.y, 2))
+    return 'Aucun arbre à moins de 2 cases';
+  if(targetType === 'fisher' && !waterNear(b.x, b.y, 1))
+    return 'Doit être au bord de l\'eau';
+  if(targetType === 'pump' && !waterNear(b.x, b.y, 1))
+    return 'Doit être au bord de l\'eau';
+  if(targetType === 'mine' && terrain[b.y*N+b.x] !== T.IRON && terrain[b.y*N+b.x] !== T.COAL)
+    return 'Doit être sur un gisement (fer ou charbon)';
   return '';
 }
 

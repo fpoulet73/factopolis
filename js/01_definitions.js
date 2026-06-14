@@ -66,7 +66,7 @@ const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
   const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', ble:'#d7b348', coton:'#f1efe3', farine:'#eadfa8', citerne:'#64b7e8', pain:'#d99a45', poisson:'#4fa6b8', acier:'#7a8fa0', marchandises:'#e6c84f' };
   const DEFS = {
-    minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal'], cost:800,  capacite:15, speed:4.0 },
+    minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal','dirt'], cost:800,  capacite:15, speed:4.0 },
     bois:        { nom:'Camion bois',         icone:'🚜', resources:['wood'],        cost:600,  capacite:15, speed:4.0 },
     ble:         { nom:'Camion blé',          icone:'🚜', resources:['wheat'],       cost:550,  capacite:15, speed:4.0 },
     coton:       { nom:'Chariot coton',       icone:'🛒', resources:['cotton','clothes'], cost:550, capacite:15, speed:4.0 },
@@ -109,6 +109,7 @@ const RES = {
   fish_oil:    { n:'Huile de poisson', c:'#d6b45c' },
   steel: { n:'Acier',        c:'#a8bdd2' },
   goods: { n:'Outils de construction', c:'#e6c84f' },
+  dirt:  { n:'Terre',        c:'#8B6347' },
 };
 
 const GRAPHIC_PACKS = {
@@ -400,6 +401,14 @@ const BUILD = {
              desc:'Achète et gère des véhicules de transport spécialisés.' },
   bulldoze: { n:'Démolir',    ic:'🧨', hk:'B', desc:'Détruit routes, bâtiments (30 % remboursés) et arbres.' },
   terraform:{ n:'Bulldozer',  ic:'🚜', hk:'-', desc:'Rase les gisements (fer/charbon), les champs et les sapins en herbe.' },
+  fill_water:{ n:'Remblai',   ic:'🪣', hk:'', desc:'Comble une tuile d\'eau en terre (10 terres requises). Nécessite une usine de terrassement à portée.' },
+  terrassement: { n:'Usine de terrassement', ic:'🏗️', hk:'', cost: CFG.production?.terrassement?.cout ?? 700,
+                  workers:3, time:1, col:'#7a6a52', hgt:20, ind:true,
+                  upkeep: CFG.production?.terrassement?.entretien ?? 1.5,
+                  recipe:{ in:{}, out:{} },
+                  desc:'Reçoit de la terre (via camion minerai). Rayon d\'action '+
+                       (CFG.production?.terrassement?.rayon ?? 10)+
+                       ' cases : permet de combler l\'eau avec l\'outil Remblai (10 terres/tuile).' },
 };
 
 const PLANT_UPGRADES = {
@@ -411,6 +420,7 @@ const PLANT_UPGRADES = {
   bakery:  { label:'Boulangerie',   type:'bakery',  icon:'🥖' },
   fishery: { label:'Poissonnerie',  type:'fishery', icon:'🐟' },
   factory: { label:'Outils de construction', type:'factory', icon:'🏭' },
+  terrassement: { label:'Usine de terrassement', type:'terrassement', icon:'🏗️' },
 };
 // ---------- niveaux résidentiels ----------
 // Un rectangle entièrement couvert de logements PLEINS plus petits fusionne
@@ -601,6 +611,7 @@ const IND_NAMES = {
   fishery: ['Poissonnerie Centrale','Halle aux Poissons','Fileterie du Port','Poissonnerie Royale','Atelier des Filets','Poissonnerie du Nord','Fileterie Claire','Maison du Poisson','Halle des Rives','Fileterie des Berges'],
   smelter: ['Grande Forge','Fonderie du Feu','Forge Ardente','Forge du Roi','Fonderie Centrale','Vieille Forge','Forge des Maîtres','Fonderie du Nord','Forge Royale','Forge de la Vallée'],
   factory: ['Manufacture Centrale','Atelier du Peuple','Grande Usine','Fabrique Royale','Usine Municipale','Atelier des Arts','Grande Fabrique','Usine Centrale','Fabrique du Nord','Manufacture Royale'],
+  terrassement: ['Chantier Central','Entreprise du Sol','Chantier des Berges','Remblai du Lac','Chantier Royal','Terrassement du Nord','Chantier des Rives','Entreprise de la Vallée','Grand Chantier','Chantier des Marais'],
 };
 const IND_AREA_RADIUS = 30; // rayon de déduplication des noms
 
@@ -745,5 +756,5 @@ function tryMergeDepot(){
   if(bats.citerne?.cout        != null) BUILD.tank.cost   = bats.citerne.cout;
 })();
 
-const TOOL_ORDER = ['select','road','mine','lumber','fisher','plant','house','depot','tank','pump','garage','bulldoze','terraform'];
+const TOOL_ORDER = ['select','road','mine','lumber','fisher','plant','house','depot','tank','pump','garage','bulldoze','terraform','fill_water'];
 const MILESTONES = [25, 50, 100, 200, 400];

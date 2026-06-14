@@ -23,7 +23,7 @@ function serializeState(){
       prog:b.prog||0, trucksOut:b.trucksOut||0,
       pop:b.pop||0, protectedPop:b.protectedPop||0,
       ct:b.ct||0, pending:0, pendingProtected:0, starve:b.starve||0,
-      ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, sellMin:b.sellMin||null, paused:b.paused||false, owner:b.owner||null,
+      ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, sellMin:b.sellMin||null, paused:b.paused||false, blockedOut:b.blockedOut||null, owner:b.owner||null,
       starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
@@ -169,6 +169,7 @@ function applySnapshot(d){
     if(o.sellTo) b.sellTo = o.sellTo;
     if(o.sellMin) b.sellMin = o.sellMin;
     if(o.paused != null) b.paused = o.paused;
+    if(o.blockedOut) b.blockedOut = o.blockedOut;
     if(o.owner  != null) b.owner  = o.owner;
     if(o.starterHome) b.starterHome = true;
     if(o.starterSlots) b.starterSlots = o.starterSlots;
@@ -237,6 +238,13 @@ function applyAction(msg){
     case 'bulldoze_road': road[act.i] = 0; earnMoney(3, 'rembours', walletOf(msg.from)); break;
     case 'bulldoze_tree': terrain[act.i] = T.GRASS; break;
     case 'terraform': terrain[act.i] = T.GRASS; break;
+    case 'fill_water': {
+      terrain[act.i] = T.GRASS;
+      const depot = bgrid[act.depotY*N+act.depotX];
+      if(depot && depot.type === 'terrassement')
+        depot.storage['dirt'] = Math.max(0, (depot.storage['dirt']||0) - FILL_WATER_COST);
+      break;
+    }
     case 'bulldoze_bld': {
       const b = bgrid[act.by*N+act.bx];
       if(!b) break;
@@ -269,6 +277,21 @@ function applyAction(msg){
       if(!b || !BUILD[b.type]?.ind) break;
       if(b.owner && b.owner !== msg.from) break;
       b.paused = !!act.paused;
+      break;
+    }
+    case 'toggle_out_block': {
+      const b = bgrid[act.y*N+act.x];
+      if(!b || !BUILD[b.type]?.ind) break;
+      if(b.owner && b.owner !== msg.from) break;
+      if(!b.blockedOut) b.blockedOut = {};
+      b.blockedOut[act.res] = !!act.blocked;
+      break;
+    }
+    case 'clear_bld_stock': {
+      const b = bgrid[act.y*N+act.x];
+      if(!b || !BUILD[b.type]?.ind) break;
+      if(b.owner && b.owner !== msg.from) break;
+      b.storage = {}; b.inc = {};
       break;
     }
     case 'upgrade_plant': {
@@ -660,6 +683,19 @@ clickFn = function(x,y){
     if(!bgrid[i] && (ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL)){
       netSend({ type:'terraform', i });
       clickAt(x,y);
+    }
+    return;
+  }
+  if(tool==='fill_water'){
+    const ter = terrain[i];
+    if(ter === T.WATER){
+      const depot = terrassementNear(x, y, MP.myId);
+      if(depot){
+        netSend({ type:'fill_water', i, depotX: depot.x, depotY: depot.y });
+        clickAt(x,y); // applique localement (sans re-envoyer)
+      } else {
+        clickAt(x,y); // affiche le message d'erreur
+      }
     }
     return;
   }

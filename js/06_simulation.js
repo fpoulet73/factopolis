@@ -15,14 +15,21 @@ function update(dt){
     const r = recipeOf(b);
     if(r && !b.paused){
       let outOK = true, inOK = true;
-      for(const k in r.out) if((b.storage[k]||0) >= capOf(b,k)) outOK = false;
-      for(const k in r.in)  if((b.storage[k]||0) <  r.in[k]) inOK = false;
+      const activeOuts = Object.keys(r.out).filter(k => !b.blockedOut?.[k]);
+      // si tous les outputs sont bloqués, stopper la production pour ne pas consommer les inputs
+      if(Object.keys(r.out).length > 0 && activeOuts.length === 0) outOK = false;
+      for(const k of activeOuts)       if((b.storage[k]||0) >= capOf(b,k)) outOK = false;
+      for(const k in r.in)             if((b.storage[k]||0) <  r.in[k]) inOK = false;
       if(outOK && inOK){
         b.prog += dt * (workersRequiredOf(b) ? workersAllocatedOf(b) / workersRequiredOf(b) : w.eff);
         if(b.prog >= r.time){
           b.prog = 0;
           for(const k in r.in)  b.storage[k] -= r.in[k];
-          for(const k in r.out) b.storage[k] = (b.storage[k]||0) + r.out[k];
+          for(const k of activeOuts) b.storage[k] = (b.storage[k]||0) + r.out[k];
+          // 2% de chance d'extraire de la terre en plus lors d'un cycle de mine
+          if(b.type === 'mine' && Math.random() < 0.02 && !b.blockedOut?.['dirt']){
+            b.storage['dirt'] = (b.storage['dirt']||0) + 1;
+          }
         }
       }
     }
@@ -108,14 +115,20 @@ function update(dt){
           if(b.allow?.[k] === false) continue;
           tryDispatch(b, k);
         }
+      } else if(b.type === 'terrassement'){
+        // puits pur : ne ré-expédie jamais son stock, les ressources restent jusqu'à utilisation
       } else {
-        // bâtiment de production : dispatcher la ressource la plus abondante en sortie
+        // bâtiment de production : dispatcher la ressource la plus abondante
+        // Seuil à 10 unités — évite les micro-livraisons et les allers-retours rapides
+        // Inclut les sorties de recette ET les sous-produits hors recette (ex: terre des mines)
         let best = null, amt = 0;
         for(const k in b.storage){
-          if(b.storage[k] < 3) continue;
-          if(r && k in r.out && b.storage[k] > amt){ best = k; amt = b.storage[k]; }
+          if(b.storage[k] < 10) continue;
+          const inRecipeOut = r && k in r.out;
+          const isByproduct  = !r || !(k in r.in); // pas un input de recette
+          if((inRecipeOut || isByproduct) && b.storage[k] > amt){ best = k; amt = b.storage[k]; }
         }
-        if(best) tryDispatch(b, best);
+        if(best) tryDispatch(b, best, 10);
       }
     }
   }
