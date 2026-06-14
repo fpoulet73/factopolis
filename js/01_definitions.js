@@ -280,6 +280,21 @@ const TRADE_PRICES = (()=>{
   };
 })();
 
+const PROD_CONFIG_KEYS = {
+  mine:'mine',
+  bucheron:'lumber',
+  ferme:'farm',
+  pompe:'pump',
+  pecheur:'fisher',
+  moulin:'mill',
+  boulangerie:'bakery',
+  poissonnerie:'fishery',
+  fonderie:'smelter',
+  usine:'factory',
+};
+const PROD_TYPE_TO_CONFIG_KEY = {};
+for(const fr in PROD_CONFIG_KEYS) PROD_TYPE_TO_CONFIG_KEY[PROD_CONFIG_KEYS[fr]] = fr;
+
 const BUILD = {
   select:  { n:'Inspecter', ic:'🔍', hk:'1', desc:'Cliquer sur un bâtiment pour voir ses stocks.' },
   road:    { n:'Route',     ic:'🛣️', hk:'2', cost: CFG.batiments?.route?.cout    ?? 10,
@@ -400,7 +415,53 @@ const MERGE_ORDER = LEVELS.filter(L=>L.key!=='house')
 
 // ---------- fusion industrielle ----------
 // production d'un bâtiment fusionné = cases × facteur (palier ≤ taille)
-const IND_SHAPES = [[4,4],[3,2],[2,3],[2,2],[4,1],[1,4],[3,1],[1,3],[2,1],[1,2]];
+const DEFAULT_IND_SHAPES = [[4,4],[3,2],[2,3],[2,2],[4,1],[1,4],[3,1],[1,3],[2,1],[1,2]];
+function normalizeShapeList(raw, def=DEFAULT_IND_SHAPES){
+  const list = Array.isArray(raw) && raw.length ? raw : def;
+  const seen = new Set();
+  const out = [];
+  const add = (w,h)=>{
+    w = Math.max(1, Math.floor(+w || 0));
+    h = Math.max(1, Math.floor(+h || 0));
+    if(!w || !h) return;
+    for(const [sw,sh] of [[w,h],[h,w]]){
+      const k = sw+','+sh;
+      if(!seen.has(k)){ seen.add(k); out.push([sw,sh]); }
+    }
+  };
+  for(const shape of list){
+    if(Array.isArray(shape)) add(shape[0], shape[1]);
+    else if(typeof shape === 'string'){
+      const m = shape.trim().match(/^(\d+)\s*[x×]\s*(\d+)$/i);
+      if(m) add(m[1], m[2]);
+    }
+  }
+  return (out.length ? out : normalizeShapeList(def, DEFAULT_IND_SHAPES))
+    .sort((a,b)=> (b[0]*b[1] - a[0]*a[1]) || (b[0] - a[0]));
+}
+const IND_SHAPES = normalizeShapeList(CFG.industrie?.formesFusion);
+function configuredIndShapesFor(type){
+  const fr = PROD_TYPE_TO_CONFIG_KEY[type] || type;
+  const perType = CFG.industrie?.formesParType || {};
+  return normalizeShapeList(
+    CFG.production?.[fr]?.formesFusion
+      ?? perType[type]
+      ?? perType[fr]
+      ?? CFG.industrie?.formesFusion,
+    IND_SHAPES
+  );
+}
+const IND_SHAPES_BY_TYPE = {};
+const allIndShapes = [];
+for(const fr in PROD_CONFIG_KEYS){
+  const type = PROD_CONFIG_KEYS[fr];
+  IND_SHAPES_BY_TYPE[type] = configuredIndShapesFor(type);
+  for(const shape of IND_SHAPES_BY_TYPE[type]) allIndShapes.push(shape);
+}
+const IND_SHAPES_ALL = normalizeShapeList(allIndShapes, IND_SHAPES);
+function indShapeAllowed(type,w,h){
+  return (IND_SHAPES_BY_TYPE[type] || IND_SHAPES).some(([sw,sh]) => sw===w && sh===h);
+}
 const IND_FACTORS = CFG.industrie?.facteurs ?? { 2:1.15, 3:1.3, 4:1.5, 6:1.75, 16:2.5 };
 function indFactor(area){
   if(area <= 1) return 1;
@@ -591,18 +652,16 @@ function tryMergeDepot(){
 }
 (function applyUpkeepConfig(){
   const p = CFG.production || {};
-  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', pompe:'pump', pecheur:'fisher', moulin:'mill', boulangerie:'bakery', poissonnerie:'fishery', fonderie:'smelter', usine:'factory' };
-  for(const fr in map) if(p[fr]?.entretien != null) BUILD[map[fr]].upkeep = p[fr].entretien;
+  for(const fr in PROD_CONFIG_KEYS) if(p[fr]?.entretien != null) BUILD[PROD_CONFIG_KEYS[fr]].upkeep = p[fr].entretien;
 })();
 
 // surcharge des recettes et coûts par config.js (clés françaises)
 (function applyProductionConfig(){
   const p = CFG.production || {};
-  const map = { mine:'mine', bucheron:'lumber', ferme:'farm', pompe:'pump', pecheur:'fisher', moulin:'mill', boulangerie:'bakery', poissonnerie:'fishery', fonderie:'smelter', usine:'factory' };
-  for(const fr in map){
+  for(const fr in PROD_CONFIG_KEYS){
     const c = p[fr];
     if(!c) continue;
-    const b = BUILD[map[fr]];
+    const b = BUILD[PROD_CONFIG_KEYS[fr]];
     if(c.temps != null) b.time = c.temps;
     if(c.cout  != null) b.cost = c.cout;
     if(fr==='mine'){ if(c.quantite != null) b.qty = c.quantite; continue; }

@@ -224,11 +224,12 @@ function checkRectInd(x,y,w,h){
 }
 
 function tryMergeInd(){
-  for(const [w,h] of IND_SHAPES){
+  for(const [w,h] of IND_SHAPES_ALL){
     for(let y=0; y<=N-h; y++) for(let x=0; x<=N-w; x++){
       const set = checkRectInd(x,y,w,h);
       if(!set) continue;
       const type = set[0].type, ore = set[0].ore, owner = set[0].owner||null;
+      if(!indShapeAllowed(type, w, h)) continue;
       const store = {};
       let wasSel = false;
       for(const o of set){

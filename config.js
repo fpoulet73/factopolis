@@ -16,7 +16,8 @@ const CONFIG = {
      sortie   : ressources produites à chaque cycle
      quantite : (mine uniquement) unités extraites par cycle — fer OU charbon selon le gisement
      cout     : prix de construction en $
-     entretien: coût d'entretien de base en $ par cycle (intervalleEntretien) */
+     entretien: coût d'entretien de base en $ par cycle (intervalleEntretien)
+     formesFusion: formes autorisées pour ce type, ex. [[2,1],[3,1],[4,1],[2,2]] */
   production: {
     mine:     { temps: 2.2, quantite: 1,                                         cout: 450,  entretien: 2   },
     bucheron: { temps: 2.8, sortie: { wood: 1 },                                 cout: 350,  entretien: 1.5 },
@@ -71,8 +72,21 @@ const CONFIG = {
      Les bâtiments de production IDENTIQUES (même type, même minerai pour les
      mines) couvrant un rectangle (2×1, 3×1, 4×1, 2×2, 3×2, 4×4…) fusionnent.
      Production du bâtiment fusionné = nombre de cases × facteur.
+     formesFusion : formes par défaut pour toutes les usines. Les orientations
+       inversées sont ajoutées automatiquement : [2,1] autorise aussi [1,2].
+     formesParType : surcharge par type. Clés possibles :
+       mine, bucheron, ferme, pompe, pecheur, moulin, boulangerie,
+       poissonnerie, fonderie, usine.
+       On peut aussi écrire les formes sous forme de texte : "2x1".
      facteurs : { nombreDeCases: facteur } — le palier inférieur s'applique. */
   industrie: {
+    formesFusion: [[2,1],[3,1],[4,1],[2,2],[3,2],[4,4]],
+    formesParType: {
+      // ferme: [[2,1],[3,1],[4,1],[2,2]],
+      // moulin: ["2x1","3x1","2x2"],
+      // usine: [[2,1],[2,2],[3,2],[4,4]],
+      // pecheur: [[2,1],[3,1],[4,1]],
+    },
     facteurs: { 2:1.15, 3:1.3, 4:1.5, 6:1.75, 16:2.5 },
     intervalleEntretien: 10,    // secondes entre deux prélèvements d'entretien
     entretienEnPause: 0.5,      // fraction de l'entretien payée par un site mis en pause
