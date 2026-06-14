@@ -514,6 +514,7 @@ function buildToolbar(){
 }
 function setTool(k){
   tool = k;
+  roadDragStart = null; roadPreviewTiles = [];
   document.querySelectorAll('.tool').forEach(b=> b.classList.toggle('on', b.dataset.t===k));
 }
 
@@ -550,12 +551,36 @@ function selectTownLabelAt(x,y){
 // clickFn : indirection pour permettre au module multijoueur d'intercepter les clics
 let clickFn = clickAt;
 
+// ---------- tracé de route deux-points ----------
+let roadDragStart = null;   // {x,y} tuile de départ
+let roadPreviewTiles = [];  // [{x,y}] tuiles de l'aperçu
+
+function computeRoadPreview(x0, y0, x1, y1, vertFirst){
+  const sx = x1 >= x0 ? 1 : -1, sy = y1 >= y0 ? 1 : -1;
+  const tiles = [];
+  let x = x0, y = y0;
+  if(vertFirst){
+    while(y !== y1){ tiles.push({x, y}); y += sy; }
+    while(x !== x1){ tiles.push({x, y}); x += sx; }
+  } else {
+    while(x !== x1){ tiles.push({x, y}); x += sx; }
+    while(y !== y1){ tiles.push({x, y}); y += sy; }
+  }
+  tiles.push({x, y});
+  return tiles;
+}
+
 cv.addEventListener('mousedown', e=>{
   updateMouseTile(e);
   if(e.button===0){
     mouse.lDown = true;
     if(selectTownLabelAt(e.clientX, e.clientY)){ mouse.lDown = false; return; }
-    clickFn(mouse.tx, mouse.ty);
+    if(tool === 'road'){
+      roadDragStart = { x: mouse.tx, y: mouse.ty };
+      roadPreviewTiles = computeRoadPreview(mouse.tx, mouse.ty, mouse.tx, mouse.ty, e.shiftKey);
+    } else {
+      clickFn(mouse.tx, mouse.ty);
+    }
   } else if(e.button===2 || e.button===1){
     mouse.rDown = true; mouse.rMoved = 0;
     mouse.lastX = e.clientX; mouse.lastY = e.clientY;
@@ -572,11 +597,20 @@ addEventListener('mousemove', e=>{
     syncTargetCam();
     mouse.lastX = e.clientX; mouse.lastY = e.clientY;
   }
-  if(mouse.lDown && (tool==='road'||tool==='bulldoze'||tool==='terraform') && (mouse.tx!==ptx || mouse.ty!==pty))
+  if(mouse.lDown && (tool==='bulldoze'||tool==='terraform') && (mouse.tx!==ptx || mouse.ty!==pty))
     clickFn(mouse.tx, mouse.ty);
+  if(mouse.lDown && tool==='road' && roadDragStart && (mouse.tx!==ptx || mouse.ty!==pty))
+    roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, e.shiftKey);
 });
 addEventListener('mouseup', e=>{
-  if(e.button===0) mouse.lDown = false;
+  if(e.button===0){
+    if(tool === 'road' && roadDragStart){
+      for(const t of roadPreviewTiles)
+        if(canPlace('road', t.x, t.y).ok) clickFn(t.x, t.y);
+      roadDragStart = null; roadPreviewTiles = [];
+    }
+    mouse.lDown = false;
+  }
   if(e.button===2 || e.button===1){
     if(e.button===2 && mouse.rMoved < 6) setTool('select'); // clic droit simple = annuler
     mouse.rDown = false;
@@ -638,6 +672,8 @@ addEventListener('keydown', e=>{
   keys.add(e.code);
   if(e.code==='Space'){ e.preventDefault(); togglePause(); }
   if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; }
+  if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown)
+    roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, true);
   if(e.code==='KeyH') toggleHelp();
   if(e.code==='KeyR') rotate(e.shiftKey ? -1 : 1);
   if(e.code==='KeyB') setTool('bulldoze');
@@ -648,7 +684,11 @@ addEventListener('keydown', e=>{
     if(toolKey) setTool(toolKey);
   }
 });
-addEventListener('keyup', e=> keys.delete(e.code));
+addEventListener('keyup', e=>{
+  keys.delete(e.code);
+  if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown)
+    roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, false);
+});
 
 function panKeys(dt){
   const s = 520*dt/cam.z;

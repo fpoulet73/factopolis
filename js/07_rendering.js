@@ -958,6 +958,16 @@ function draw(){
   // Noms des villages au centre de chaque groupe de maisons
   drawTownLabels();
 
+  // aperçu du tracé de route (deux-points)
+  if(tool === 'road' && roadPreviewTiles.length > 0){
+    for(const t of roadPreviewTiles){
+      if(!inMap(t.x, t.y)) continue;
+      const [rx, ry] = rotIdx(t.x, t.y);
+      ctx.fillStyle = canPlace('road', t.x, t.y).ok ? 'rgba(110,230,120,.55)' : 'rgba(200,200,200,.2)';
+      diamond(rx, ry); ctx.fill();
+    }
+  }
+
   // fantôme de placement
   if(tool!=='select' && inMap(mouse.tx,mouse.ty)){
     const va = canPlace(tool, mouse.tx, mouse.ty);
