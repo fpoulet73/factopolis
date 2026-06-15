@@ -342,7 +342,7 @@ function findRoadPath(fromB, toB){
 
 function busEarnRevenue(v, numPassengers, routeLen, departStop, arrivalStop){
   if(numPassengers <= 0 || !departStop || !arrivalStop) return;
-  const dist = Math.max(1, routeLen);
+  const dist = Math.max(1, routeLen ?? 1);
   const baseRev = numPassengers * dist * BUS_FARE_FACTOR;
   const sameCity = departStop.townId != null && departStop.townId === arrivalStop.townId;
   const revenue = Math.round(sameCity ? baseRev / BUS_INTRA_CITY_DIV : baseRev);

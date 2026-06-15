@@ -36,7 +36,7 @@ function serializeState(){
       sourceY: v.source && !v.source.dead ? v.source.y : null,
       destX:   v.dest   && !v.dest.dead   ? v.dest.x   : null,
       destY:   v.dest   && !v.dest.dead   ? v.dest.y   : null,
-      state: v.state, cargo: v.cargo, res: v.res || null,
+      state: v.state, cargo: v.cargo, res: v.res || null, busRouteDistance: v.busRouteDistance ?? null,
     })),
   };
 }
@@ -211,6 +211,7 @@ function applySnapshot(d){
       v.dest = dest || null;
       v.cargo = sv.cargo || 0;
       v.res = sv.res || null;
+      if(sv.busRouteDistance != null) v.busRouteDistance = sv.busRouteDistance;
       if(v.source && v.dest && !vehicleCanServeRoute(v, v.res)){
         v.source = null; v.dest = null; v.cargo = 0; v.res = null;
         continue;

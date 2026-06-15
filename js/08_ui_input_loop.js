@@ -1089,12 +1089,34 @@ $('sMoney').onclick = toggleFinance;
 // délégation : le ✕ survit aux reconstructions du panneau (rafraîchi 5×/s)
 $('finance').onclick = e=>{ if(e.target.id==='bFinX') toggleFinance(); };
 
+let helpCurrentPage = 0;
+const HELP_PAGES = 4;
+
+function goHelpPage(p){
+  helpCurrentPage = Math.max(0, Math.min(HELP_PAGES - 1, p));
+  for(let i = 0; i < HELP_PAGES; i++){
+    const el = $('hPage'+i);
+    if(el) el.classList.toggle('active', i === helpCurrentPage);
+  }
+  document.querySelectorAll('#helpDots .dot').forEach((d,i)=>
+    d.classList.toggle('on', i === helpCurrentPage));
+  $('bHelpPrev').disabled = helpCurrentPage === 0;
+  $('bHelpNext').disabled = helpCurrentPage === HELP_PAGES - 1;
+}
+
 function toggleHelp(){
   const h = $('help');
-  h.style.display = h.style.display==='block' ? 'none' : 'block';
+  const visible = h.style.display === 'block';
+  h.style.display = visible ? 'none' : 'block';
+  if(!visible) goHelpPage(helpCurrentPage);
 }
 $('bHelp').onclick = toggleHelp;
 $('bGo').onclick = ()=> $('help').style.display = 'none';
+$('bHelpPrev').onclick = ()=> goHelpPage(helpCurrentPage - 1);
+$('bHelpNext').onclick = ()=> goHelpPage(helpCurrentPage + 1);
+document.querySelectorAll('#helpDots .dot').forEach(d=>
+  d.onclick = ()=> goHelpPage(+d.dataset.p));
+goHelpPage(0);
 $('sSplashGo').onclick = ()=> $('splash').style.display = 'none';
 
 // ---------- dropdown options ----------
