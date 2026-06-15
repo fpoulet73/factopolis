@@ -226,17 +226,22 @@ function renderInfo(){
   const b = selected, d = BUILD[b.type];
   const canControl = !MP.connected || !b.owner || b.owner === MP.myId;
   const r2 = recipeOf(b);
-  const _hasStock = d.ind && r2 && canControl;
-  const _hasPause = d.ind && canControl;
   const _demolCost = Math.floor((d.cost||0)*0.3);
   let _hdrBtns = '<span style="margin-left:auto;display:flex;gap:3px;align-items:center">';
-  if(_hasStock)
+  if(d.ind && r2)
     _hdrBtns += '<button class="tbtn" id="bClearStock" title="Vider le stock" style="padding:2px 6px;font-size:13px;margin:0;width:auto">🗑️</button>';
-  if(_hasPause)
+  if(d.ind)
     _hdrBtns += '<button class="tbtn" id="bPauseBld" title="'+(b.paused?'Reprendre':'Mettre en pause')+'" style="padding:2px 6px;font-size:13px;margin:0;width:auto">'+(b.paused?'▶':'⏸')+'</button>';
   _hdrBtns += '<button class="tbtn" id="bDemol" title="Démolir (+'+_demolCost+' $)" style="padding:2px 6px;font-size:13px;margin:0;width:auto">🧨</button>';
   _hdrBtns += '</span>';
-  let h = '<h3><span style="font-size:22px">'+d.ic+'</span>'+d.n+_hdrBtns+'</h3>';
+  let h = '<h3><span style="font-size:22px">'+d.ic+'</span>';
+  if(d.ind){
+    h += '<input id="bldNameInput" class="bld-name-edit" value="'+escHtml(b.name||'')+'" placeholder="'+escHtml(d.n)+'">';
+  } else {
+    h += '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+       + (b.name ? escHtml(b.name) : d.n) + '</span>';
+  }
+  h += _hdrBtns+'</h3>';
   h += '<div class="status">'+statusOf(b)+'</div>';
   if(!adjRoadTiles(b).length)
     h += '<div class="warn">⚠️ Aucune route adjacente — pas de camions !</div>';
@@ -255,6 +260,7 @@ function renderInfo(){
         + '</button>';
     }
   }
+  if(d.ind && b.name) h += '<div style="color:#8fa3bf;font-size:11px;margin-top:6px;margin-bottom:2px">'+d.n+'</div>';
   if(d.workers) h += '<div class="row"><span>Ouvriers</span><b>'+workersAllocatedOf(b)+' / '+workersRequiredOf(b)+'</b></div>';
   if(d.ind && b.w*b.h>1)
     h += '<div class="row"><span>Taille / production</span><b>'+b.w+'×'+b.h
@@ -262,8 +268,6 @@ function renderInfo(){
   if(d.ind)
     h += '<div class="row"><span>Entretien</span><b>'+(Math.round(upkeepOf(b)*10)/10)
        + ' $ / '+IND_UPKEEP_INTERVAL+' s</b></div>';
-  if(d.ind && b.name)
-    h += '<div class="row"><span>Nom</span><b style="color:#9fd4f0">🏭 '+escHtml(b.name)+'</b></div>';
   if(d.ind)
     h += '<div class="row"><span>Rayon d\'action</span><b style="color:#ff8c42">'+indRadiusOf(b)+' cases</b></div>';
   if(b.type === 'bakery')
@@ -481,7 +485,7 @@ function renderInfo(){
     }
   }
   // Contrôles de production pour les usines industrielles (hors dépôts/citernes)
-  if(d.ind && r2 && canControl){
+  if(d.ind && r2){
     const allOuts = Object.keys(r2.out);
     // Pour les mines on expose aussi 'dirt' comme sortie bloquable
     const blockableOuts = b.type === 'mine'
@@ -601,6 +605,7 @@ function renderInfo(){
   }
   p.querySelectorAll('.bld-toggle-out').forEach(btn=>{
     btn.onclick = ()=>{
+      if(MP.connected && b.owner && b.owner !== MP.myId){ toast('⛔ Bâtiment d\'un autre joueur','err'); return; }
       if(!b.blockedOut) b.blockedOut = {};
       const k = btn.dataset.out;
       b.blockedOut[k] = !b.blockedOut[k];
@@ -610,6 +615,7 @@ function renderInfo(){
   });
   const clearBtn = $('bClearStock');
   if(clearBtn) clearBtn.onclick = ()=>{
+    if(MP.connected && b.owner && b.owner !== MP.myId){ toast('⛔ Bâtiment d\'un autre joueur','err'); return; }
     if(!confirm('Vider tout le stock de ce bâtiment ?')) return;
     b.storage = {};
     b.inc = {};
@@ -619,10 +625,25 @@ function renderInfo(){
   };
   const pauseBtn = $('bPauseBld');
   if(pauseBtn) pauseBtn.onclick = ()=>{
+    if(MP.connected && b.owner && b.owner !== MP.myId){ toast('⛔ Bâtiment d\'un autre joueur','err'); return; }
     setBuildingPaused(b, !b.paused);
     p._html = null;
     renderInfo();
   };
+  // Renommage bâtiment industriel (inline dans le h3)
+  const bldNameInput = $('bldNameInput');
+  if(bldNameInput){
+    const saveBldName = () => {
+      const newName = bldNameInput.value.trim();
+      if(newName === (b.name||'')) return;
+      if(MP.connected && b.owner && b.owner !== MP.myId){ bldNameInput.value = b.name||''; return; }
+      b.name = newName || null;
+      if(MP.connected) netSend({ type:'rename_bld', x:b.x, y:b.y, name: b.name });
+      p._html = null;
+    };
+    bldNameInput.onkeydown = e => { if(e.key === 'Enter') bldNameInput.blur(); };
+    bldNameInput.onblur = saveBldName;
+  }
   // Renommage arrêt de bus
   const bsNameSave = $('bsNameSave');
   if(bsNameSave) bsNameSave.onclick = ()=>{
