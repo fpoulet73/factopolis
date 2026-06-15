@@ -169,7 +169,7 @@ const httpServer = http.createServer((req, res) => {
     res.writeHead(403); res.end(); return;
   }
   if (!fs.existsSync(p)) { res.writeHead(404); res.end('Not found'); return; }
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(p)] || 'text/plain' });
+  res.writeHead(200, { 'Content-Type': MIME[path.extname(p)] || 'text/plain', 'Cache-Control': 'no-cache' });
   fs.createReadStream(p).pipe(res);
 });
 

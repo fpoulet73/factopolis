@@ -112,21 +112,21 @@ const GARAGE_COST = CFG.logistique?.garage?.cout ?? 1200;
 const BUS_STOP_COST = CFG.logistique?.arretBus?.cout ?? 250;
 
 const RES = {
-  iron:  { n:'Fer',          c:'#d98a4f' },
-  coal:  { n:'Charbon',      c:'#454552' },
-  wood:  { n:'Bois',         c:'#a4713d' },
-  wheat: { n:'Blé',          c:'#d7b348' },
-  cotton:{ n:'Coton',        c:'#f1efe3' },
-  clothes:{ n:'Vêtement',    c:'#b98fcb' },
-  flour: { n:'Farine',       c:'#eadfa8' },
-  water: { n:'Eau',          c:'#64b7e8' },
-  bread: { n:'Pain',         c:'#d99a45' },
-  fish:  { n:'Poisson',      c:'#4fa6b8' },
-  fish_fillet: { n:'Filet de poisson', c:'#c7e7e9' },
-  fish_oil:    { n:'Huile de poisson', c:'#d6b45c' },
-  steel: { n:'Acier',        c:'#a8bdd2' },
-  goods: { n:'Outils de construction', c:'#e6c84f' },
-  dirt:  { n:'Terre',        c:'#8B6347' },
+  iron:  { n:'Fer',                    c:'#d98a4f', ic:'🔩' },
+  coal:  { n:'Charbon',                c:'#454552', ic:'⚫' },
+  wood:  { n:'Bois',                   c:'#a4713d', ic:'🪵' },
+  wheat: { n:'Blé',                    c:'#d7b348', ic:'🌾' },
+  cotton:{ n:'Coton',                  c:'#f1efe3', ic:'☁️' },
+  clothes:{ n:'Vêtement',              c:'#b98fcb', ic:'👕' },
+  flour: { n:'Farine',                 c:'#eadfa8', ic:'🫙' },
+  water: { n:'Eau',                    c:'#64b7e8', ic:'💧' },
+  bread: { n:'Pain',                   c:'#d99a45', ic:'🍞' },
+  fish:  { n:'Poisson',                c:'#4fa6b8', ic:'🐟' },
+  fish_fillet: { n:'Filet de poisson', c:'#c7e7e9', ic:'🍣' },
+  fish_oil:    { n:'Huile de poisson', c:'#d6b45c', ic:'🫒' },
+  steel: { n:'Acier',                  c:'#a8bdd2', ic:'⚙️' },
+  goods: { n:'Outils de construction', c:'#e6c84f', ic:'🔧' },
+  dirt:  { n:'Terre',                  c:'#8B6347', ic:'🌑' },
 };
 
 const GRAPHIC_PACKS = {

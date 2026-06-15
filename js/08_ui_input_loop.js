@@ -224,7 +224,19 @@ function renderInfo(){
 
   if(!selected || selected.dead){ p.style.display = 'none'; return; }
   const b = selected, d = BUILD[b.type];
-  let h = '<h3><span style="font-size:22px">'+d.ic+'</span>'+d.n+'</h3>';
+  const canControl = !MP.connected || !b.owner || b.owner === MP.myId;
+  const r2 = recipeOf(b);
+  const _hasStock = d.ind && r2 && canControl;
+  const _hasPause = d.ind && canControl;
+  const _demolCost = Math.floor((d.cost||0)*0.3);
+  let _hdrBtns = '<span style="margin-left:auto;display:flex;gap:3px;align-items:center">';
+  if(_hasStock)
+    _hdrBtns += '<button class="tbtn" id="bClearStock" title="Vider le stock" style="padding:2px 6px;font-size:13px;margin:0;width:auto">🗑️</button>';
+  if(_hasPause)
+    _hdrBtns += '<button class="tbtn" id="bPauseBld" title="'+(b.paused?'Reprendre':'Mettre en pause')+'" style="padding:2px 6px;font-size:13px;margin:0;width:auto">'+(b.paused?'▶':'⏸')+'</button>';
+  _hdrBtns += '<button class="tbtn" id="bDemol" title="Démolir (+'+_demolCost+' $)" style="padding:2px 6px;font-size:13px;margin:0;width:auto">🧨</button>';
+  _hdrBtns += '</span>';
+  let h = '<h3><span style="font-size:22px">'+d.ic+'</span>'+d.n+_hdrBtns+'</h3>';
   h += '<div class="status">'+statusOf(b)+'</div>';
   if(!adjRoadTiles(b).length)
     h += '<div class="warn">⚠️ Aucune route adjacente — pas de camions !</div>';
@@ -277,14 +289,14 @@ function renderInfo(){
   if(d.resid)
     h += '<div class="row"><span>Rayon travail</span><b>'+workRadiusOf(b)+' cases</b></div>';
   // Stocks : pour les usines, séparer entrée / recette / sortie
-  const r2 = recipeOf(b);
   const inKeys  = d.ind && r2 ? Object.keys(r2.in||{})  : [];
   const outKeys = d.ind && r2 ? Object.keys(r2.out||{}) : [];
   const inSet   = new Set(inKeys), outSet = new Set(outKeys);
   const extraKeys = Object.keys(b.storage).filter(k => b.storage[k]>0 && !inSet.has(k) && !outSet.has(k));
   const showStock = (k) => {
     const cap = capOf(b,k), val = b.storage[k]||0;
-    h += '<div class="row"><span>'+RES[k].n+'</span><b>'+val+' / '+cap+'</b></div>';
+    const ic = RES[k].ic ? '<span style="margin-right:4px">'+RES[k].ic+'</span>' : '';
+    h += '<div class="row"><span>'+ic+RES[k].n+'</span><b>'+val+' / '+cap+'</b></div>';
     h += '<div class="bar"><i style="width:'+Math.min(100,100*val/cap)+'%;background:'+RES[k].c+'"></i></div>';
   };
   if(d.ind && r2){
@@ -292,11 +304,14 @@ function renderInfo(){
     if(inKeys.length) h += '<div style="margin-top:8px"></div>';
     inKeys.forEach(showStock);
     // recette
-    const fmt = obj => Object.entries(obj).map(([k,v]) => (v>1?v+'×':'')+RES[k].n).join(' + ');
-    const lhs  = inKeys.length ? fmt(r2.in)+' → ' : '';
+    const fmtRes = obj => Object.entries(obj).map(([k,v]) =>
+      (v>1 ? '<span style="color:#8fa3bf;font-weight:normal">'+v+'×</span>' : '')
+      + '<span class="res-ic" title="'+escHtml(RES[k].n)+'">'+(RES[k].ic || RES[k].n)+'</span>'
+    ).join('<span style="color:#8fa3bf;font-weight:normal"> + </span>');
+    const lhs  = inKeys.length ? fmtRes(r2.in)+'<span style="color:#8fa3bf;font-weight:normal"> → </span>' : '';
     const time = Math.round(r2.time*10)/10;
     h += '<div class="row" style="margin:6px 0 2px"><span style="color:#8fa3bf">Recette</span>'
-       + '<b style="color:#d4e8ff">'+lhs+fmt(r2.out)
+       + '<b style="color:#d4e8ff">'+lhs+fmtRes(r2.out)
        + ' <span style="color:#8fa3bf;font-weight:normal">/ '+time+'s</span></b></div>';
     // sortie (toujours affichée)
     outKeys.forEach(showStock);
@@ -465,7 +480,6 @@ function renderInfo(){
          + vt.icone+' '+vt.nom+' <span style="color:#8fa3bf">— '+vt.cost+' $</span></button>';
     }
   }
-  const canControl = !b.owner || b.owner === MP.myId;
   // Contrôles de production pour les usines industrielles (hors dépôts/citernes)
   if(d.ind && r2 && canControl){
     const allOuts = Object.keys(r2.out);
@@ -484,11 +498,7 @@ function renderInfo(){
            + '</button>';
       }
     }
-    h += '<button class="tbtn" id="bClearStock" style="margin-top:6px;color:#ff9a8a">🗑️ Vider le stock</button>';
   }
-  if(d.ind && canControl)
-    h += '<button class="tbtn" id="bPauseBld">'+(b.paused ? '▶ Reprendre' : '⏸ Mettre en pause')+'</button>';
-  h += '<button class="tbtn" id="bDemol">🧨 Démolir (+'+Math.floor((d.cost||0)*0.3)+' $)</button>';
   p.style.display = 'block';
   p.classList.toggle('depot-modal', b.type === 'depot' || b.type === 'market');
   if(p._html === h && p._b === b) return; // ne pas reconstruire le DOM sous la souris

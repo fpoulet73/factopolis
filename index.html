@@ -60,6 +60,17 @@
   #info.depot-modal{top:50%;left:50%;right:auto;transform:translate(-50%,-50%);
     width:min(680px,92vw);max-height:88vh;overflow-y:auto;padding:18px 22px}
   #info h3{margin:0 0 6px;font-size:15px;display:flex;gap:8px;align-items:center}
+  /* tooltips pour les boutons icône du header */
+  #info h3 button[title]{position:relative}
+  #info h3 button[title]:hover::after{content:attr(title);position:absolute;top:calc(100% + 5px);right:0;
+    background:rgba(13,18,28,.97);border:1px solid #36465e;border-radius:6px;padding:4px 8px;
+    font-size:11px;white-space:nowrap;color:#e8eef7;pointer-events:none;z-index:50}
+  /* icônes ressource dans les recettes */
+  .res-ic{position:relative;cursor:help;font-size:15px;line-height:1}
+  .res-ic:hover::after{content:attr(title);position:absolute;bottom:calc(100% + 4px);left:50%;
+    transform:translateX(-50%);background:rgba(13,18,28,.97);border:1px solid #36465e;
+    border-radius:6px;padding:3px 8px;font-size:11px;white-space:nowrap;color:#e8eef7;
+    pointer-events:none;z-index:50}
   #info .row{display:flex;justify-content:space-between;margin:3px 0}
   #info .bar{height:7px;border-radius:4px;background:#243246;overflow:hidden;margin:2px 0 7px}
   #info .bar i{display:block;height:100%}
@@ -311,16 +322,16 @@
 
 </div>
 
-<script src="config.js"></script>
-<script src="js/01_definitions.js"></script>
-<script src="js/02_world_state.js"></script>
-<script src="js/03_buildings_population.js"></script>
-<script src="js/04_construction.js"></script>
-<script src="js/05_logistics.js"></script>
-<script src="js/06_simulation.js"></script>
-<script src="js/07_rendering.js?v=graphics2"></script>
-<script src="js/08_ui_input_loop.js"></script>
-<script src="js/09_multiplayer.js"></script>
-<script src="js/10_saves_chat_console.js"></script>
+<script src="config.js?v=4"></script>
+<script src="js/01_definitions.js?v=4"></script>
+<script src="js/02_world_state.js?v=4"></script>
+<script src="js/03_buildings_population.js?v=4"></script>
+<script src="js/04_construction.js?v=4"></script>
+<script src="js/05_logistics.js?v=4"></script>
+<script src="js/06_simulation.js?v=4"></script>
+<script src="js/07_rendering.js?v=4"></script>
+<script src="js/08_ui_input_loop.js?v=4"></script>
+<script src="js/09_multiplayer.js?v=4"></script>
+<script src="js/10_saves_chat_console.js?v=4"></script>
 </body>
 </html>
