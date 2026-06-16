@@ -176,7 +176,7 @@ function centerOn(wx,wy){
 }
 function rotate(d){
   const c = screenCenterWorldPx();
-  rot = (rot + d + 4) & 3;
+  rot = (rot - d + 4) & 3;
   centerOn(c[0], c[1]);
 }
 

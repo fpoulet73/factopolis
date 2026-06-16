@@ -152,21 +152,43 @@ function spriteForBuilding(b, rw, rh){
   const sizeKey = b.w + 'x' + b.h;
   const rotSizeKey = rw + 'x' + rh;
   const areaKey = 'area:' + (b.w * b.h);
+  let matchedKey = null;
   if(def.variants){
-    const variant = def.variants[sizeKey]
-      || def.variants[rotSizeKey]
-      || def.variants[areaKey]
-      || def.variants[String(b.w * b.h)]
-      || def.variants.default
+    const variant = def.variants[sizeKey] && (matchedKey = sizeKey, def.variants[sizeKey])
+      || def.variants[rotSizeKey] && (matchedKey = rotSizeKey, def.variants[rotSizeKey])
+      || def.variants[areaKey] && (matchedKey = areaKey, def.variants[areaKey])
+      || def.variants[String(b.w * b.h)] && (matchedKey = String(b.w * b.h), def.variants[String(b.w * b.h)])
+      || def.variants.default && (matchedKey = 'default', def.variants.default)
       || null;
-    if(variant) return viewForSprite(Object.assign({}, def, variant, { variants:undefined }));
+    if(variant){
+      const base = viewForSprite(Object.assign({}, def, variant, { variants:undefined }));
+      return _annotateDesignSize(base, matchedKey);
+    }
   }
-  return viewForSprite(def);
+  return _annotateDesignSize(viewForSprite(def), null);
+}
+
+function _annotateDesignSize(sprite, matchedKey){
+  if(!sprite) return sprite;
+  const m = matchedKey && /^(\d+)x(\d+)$/.exec(matchedKey);
+  if(m){
+    sprite._designW = parseInt(m[1]);
+    sprite._designH = parseInt(m[2]);
+  } else {
+    const fm = sprite.src && /[_-](\d+)x(\d+)[_-]/.exec(sprite.src);
+    if(fm){
+      sprite._designW = parseInt(fm[1]);
+      sprite._designH = parseInt(fm[2]);
+    }
+  }
+  return sprite;
 }
 
 function viewForSprite(sprite){
   if(!sprite?.views) return sprite;
-  const view = sprite.views[rot] || sprite.views[String(rot)] || sprite.views.default;
+  const dir = ['N', 'E', 'S', 'W'][rot];
+  const view = sprite.views[dir] || sprite.views[dir.toLowerCase()]
+    || sprite.views[rot] || sprite.views[String(rot)] || sprite.views.default;
   if(!view) return sprite;
   return Object.assign({}, sprite, view, { views:undefined });
 }
@@ -184,23 +206,84 @@ function imageForSprite(sprite){
   return img;
 }
 
+const SPRITE_CONTENT_BOUNDS = {};
+
+function contentBoundsForSprite(sprite, img){
+  const fallback = { x:0, y:0, w:img.naturalWidth, h:img.naturalHeight };
+  if(!sprite?.src || !/\.png(?:[?#]|$)/i.test(sprite.src)) return fallback;
+  if(SPRITE_CONTENT_BOUNDS[sprite.src]) return SPRITE_CONTENT_BOUNDS[sprite.src];
+  try {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const g = c.getContext('2d', { willReadFrequently:true });
+    g.drawImage(img, 0, 0);
+    const data = g.getImageData(0, 0, c.width, c.height).data;
+    let minX = c.width, minY = c.height, maxX = -1, maxY = -1;
+    for(let y=0; y<c.height; y++){
+      for(let x=0; x<c.width; x++){
+        if(data[(y*c.width + x)*4 + 3] <= 2) continue;
+        if(x < minX) minX = x;
+        if(y < minY) minY = y;
+        if(x > maxX) maxX = x;
+        if(y > maxY) maxY = y;
+      }
+    }
+    return SPRITE_CONTENT_BOUNDS[sprite.src] = maxX >= minX
+      ? { x:minX, y:minY, w:maxX-minX+1, h:maxY-minY+1 }
+      : fallback;
+  } catch(err){
+    SPRITE_CONTENT_BOUNDS[sprite.src] = fallback;
+    return fallback;
+  }
+}
+
+function shouldFitSpriteToFootprint(sprite, pack){
+  const fit = sprite && Object.prototype.hasOwnProperty.call(sprite, 'fit') ? sprite.fit : pack.defaultFit;
+  if(fit != null) return fit === true || fit === 'footprint';
+  return /\.png(?:[?#]|$)/i.test(sprite?.src || '');
+}
+
+function spriteFootprintSize(rw, rh){
+  return {
+    w: Math.max(TW, (rw + rh) * TW2),
+    h: Math.max(TH, (rw + rh) * TH2)
+  };
+}
+
 function drawBuildingSprite(b, rx0, ry0, rw, rh, d){
   const sprite = spriteForBuilding(b, rw, rh);
   const img = imageForSprite(sprite);
   if(!img || !img.complete || !img.naturalWidth) return null;
 
   const pack = graphicPack();
-  const base = iso(rx0 + rw*0.5, ry0 + rh*0.5);
-  const autoScale = sprite.autoScale ? Math.max(1, Math.sqrt(rw*rh) * 0.72) : 1;
-  const scale = (sprite.scale || pack.defaultScale || 1) * autoScale;
-  const w = (sprite.width || img.naturalWidth) * scale;
-  const h = (sprite.height || img.naturalHeight) * scale;
+  const fitFootprint = shouldFitSpriteToFootprint(sprite, pack);
+  const base = fitFootprint ? iso(rx0 + rw, ry0 + rh) : iso(rx0 + rw*0.5, ry0 + rh*0.5);
   const ax = sprite.anchorX == null ? 0.5 : sprite.anchorX;
   const ay = sprite.anchorY == null ? 1 : sprite.anchorY;
   const ox = sprite.offsetX || 0;
   const oy = sprite.offsetY || 0;
+  let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
+  let w, h;
 
-  ctx.drawImage(img, base[0] - w*ax + ox, base[1] - h*ay + oy, w, h);
+  if(fitFootprint){
+    const bounds = contentBoundsForSprite(sprite, img);
+    sx = bounds.x; sy = bounds.y; sw = bounds.w; sh = bounds.h;
+    const footprint = spriteFootprintSize(rw, rh);
+    const scale = (sprite.scale ?? pack.defaultScale ?? 1) * (sprite.footprintScale ?? 1);
+    w = (sprite.width || footprint.w) * scale;
+    h = (sprite.height || (sh * (w / sw)));
+  } else {
+    const autoScale = sprite.autoScale ? Math.max(1, Math.sqrt(rw*rh) * 0.72) : 1;
+    const dW = sprite._designW || rw;
+    const dH = sprite._designH || rh;
+    const tileScale = (dW !== rw || dH !== rh) ? (rw + rh) / (dW + dH) : 1;
+    const scale = (sprite.scale ?? pack.defaultScale ?? 1) * autoScale * tileScale;
+    w = (sprite.width || img.naturalWidth) * scale;
+    h = (sprite.height || img.naturalHeight) * scale;
+  }
+
+  ctx.drawImage(img, sx, sy, sw, sh, base[0] - w*ax + ox, base[1] - h*ay + oy, w, h);
   return [
     base[0] + (sprite.labelX || 0),
     base[1] - h*ay + (sprite.labelY == null ? 18 : sprite.labelY)

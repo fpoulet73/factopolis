@@ -5,6 +5,7 @@ const path = require('path');
 const zlib = require('zlib');
 
 const OUT_DIR = path.join(__dirname, '..', 'assets', 'graphic-packs', 'medieval');
+const VIEW_DIRS = ['N', 'W', 'S', 'E'];
 
 const productionTypes = ['mine','lumber','farm','cotton_farm','weaver','pump','fisher','mill','bakery','fishery','smelter','factory'];
 const productionShapes = [[1,1],[2,1],[1,2],[3,1],[1,3],[4,1],[1,4],[2,2],[3,2],[2,3],[4,4]];
@@ -287,19 +288,19 @@ function addSpriteEntry(buildings, type, shapes){
   const [bw,bh] = shapes[0];
   const base = `${type}-${bw}x${bh}`;
   buildings[type] = {
-    src: `${base}-0.png`,
+    src: `${base}-N.png`,
     anchorX: 0.5,
     anchorY: 1,
-    views: Object.fromEntries([0,1,2,3].map(v => [String(v), { src:`${base}-${v}.png` }])),
+    views: Object.fromEntries(VIEW_DIRS.map(dir => [dir, { src:`${base}-${dir}.png` }])),
     variants: {},
   };
   for(const [w,h] of shapes){
     const key = `${w}x${h}`;
     const stem = `${type}-${key}`;
     buildings[type].variants[key] = {
-      views: Object.fromEntries([0,1,2,3].map(v => [String(v), { src:`${stem}-${v}.png` }])),
+      views: Object.fromEntries(VIEW_DIRS.map(dir => [dir, { src:`${stem}-${dir}.png` }])),
     };
-    for(let view=0; view<4; view++) drawSprite(type, w, h, view, path.join(OUT_DIR, `${stem}-${view}.png`));
+    for(let view=0; view<4; view++) drawSprite(type, w, h, view, path.join(OUT_DIR, `${stem}-${VIEW_DIRS[view]}.png`));
   }
 }
 
@@ -316,6 +317,7 @@ function main(){
     description:'Pack PNG médiéval généré procéduralement avec 4 vues et variantes de fusion.',
     fallback:'classic',
     defaultScale:1,
+    defaultFit:'footprint',
     buildings,
   };
   fs.writeFileSync(path.join(OUT_DIR, 'pack.json'), JSON.stringify(pack, null, 2) + '\n');

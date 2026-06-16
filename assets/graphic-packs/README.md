@@ -24,34 +24,34 @@ Ajoutez le manifeste du pack dans `assets/graphic-packs/packs.json` :
   "defaultScale": 1,
   "buildings": {
     "house": {
-      "src": "house-0.png",
+      "src": "house-1x1-N.png",
       "anchorX": 0.5,
       "anchorY": 1,
       "views": {
-        "0": { "src": "house-0.png" },
-        "1": { "src": "house-1.png" },
-        "2": { "src": "house-2.png" },
-        "3": { "src": "house-3.png" }
+        "N": { "src": "house-1x1-N.png" },
+        "E": { "src": "house-1x1-E.png" },
+        "S": { "src": "house-1x1-S.png" },
+        "W": { "src": "house-1x1-W.png" }
       }
     },
     "factory": {
-      "src": "factory-0.png",
+      "src": "factory-1x1-N.png",
       "anchorX": 0.5,
       "anchorY": 1,
       "views": {
-        "0": { "src": "factory-0.png" },
-        "1": { "src": "factory-1.png" },
-        "2": { "src": "factory-2.png" },
-        "3": { "src": "factory-3.png" }
+        "N": { "src": "factory-1x1-N.png" },
+        "E": { "src": "factory-1x1-E.png" },
+        "S": { "src": "factory-1x1-S.png" },
+        "W": { "src": "factory-1x1-W.png" }
       },
       "variants": {
         "1x1": { "src": "factory-small.png" },
         "2x1": {
           "views": {
-            "0": { "src": "factory-2x1-0.png" },
-            "1": { "src": "factory-2x1-1.png" },
-            "2": { "src": "factory-2x1-2.png" },
-            "3": { "src": "factory-2x1-3.png" }
+            "N": { "src": "factory-2x1-N.png" },
+            "E": { "src": "factory-2x1-E.png" },
+            "S": { "src": "factory-2x1-S.png" },
+            "W": { "src": "factory-2x1-W.png" }
           }
         },
         "1x2": { "src": "factory-deep.png" },
@@ -64,16 +64,22 @@ Ajoutez le manifeste du pack dans `assets/graphic-packs/packs.json` :
 ```
 
 - `src` est relatif au dossier du `pack.json`.
-- `views` permet 4 images selon la rotation de la carte. Les clés sont `0`,
-  `1`, `2`, `3`, correspondant aux 4 valeurs de rotation du jeu. Si une vue
-  manque, le moteur utilise `src`.
+- `views` permet 4 images selon la rotation de la carte. Les clés recommandées
+  sont `N`, `E`, `S`, `W` ; les anciennes clés `0`, `1`, `2`, `3` restent
+  acceptées. La vue de départ est `N` ; rotation gauche affiche `E`, puis `S`,
+  puis `W`, et la rotation droite parcourt l'ordre inverse. Si une vue manque,
+  le moteur utilise `src`.
 - `anchorX` / `anchorY` indiquent le point d'ancrage dans l'image. `0.5, 1`
   signifie centre bas, le plus pratique pour une image isometrique.
 - `offsetX` / `offsetY` déplacent le sprite en pixels canvas.
 - `scale`, `width`, `height` permettent d'ajuster un sprite précis.
+- `fit: "footprint"` redimensionne le contenu visible d'un PNG pour que sa
+  largeur corresponde à l'empreinte isométrique des tuiles occupées. Le moteur
+  applique ce comportement par défaut aux PNG, et un pack peut le déclarer avec
+  `defaultFit: "footprint"`.
 - `autoScale: true` agrandit automatiquement le sprite selon la taille du
-  bâtiment fusionné. Par défaut, le moteur ne redimensionne pas selon
-  l'empreinte : utilisez plutôt `scale` ou `variants` pour un rendu précis.
+  bâtiment fusionné pour les sprites qui n'utilisent pas `fit: "footprint"`.
+  Utilisez `scale`, `width`, `height` ou `variants` pour ajuster un rendu précis.
 - `labelX` / `labelY` règlent la position des barres et alertes par-dessus.
 - `variants` permet une image différente pour un bâtiment fusionné. L'ordre de
   recherche est : empreinte réelle (`2x1`), empreinte tournée à l'écran (`1x2`),
