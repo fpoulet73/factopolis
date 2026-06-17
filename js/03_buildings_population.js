@@ -251,14 +251,24 @@ function findEmptySpawnTiles(owner, count){
 }
 
 function ensureHomelessForOwner(owner){
-  const key = owner ?? MP.myId;
+  const key = owner ?? currentWalletOwner();
   const w = walletOf(key);
   if(w.homelessSeeded) return;
   w.homelessSeeded = true;
 }
 
+function adoptSoloWallet(owner){
+  if(owner == null || owner === 0) return;
+  if(WALLETS[owner]) return;
+  if(WALLETS[0]){
+    WALLETS[owner] = WALLETS[0];
+    delete WALLETS[0];
+  }
+}
+
 function adoptSoloHomeless(owner){
   if(owner == null) return;
+  adoptSoloWallet(owner);
   let adopted = 0;
   for(const h of homeless){
     if(h.owner == null){
@@ -270,7 +280,7 @@ function adoptSoloHomeless(owner){
   if(adopted){
     const w = walletOf(owner);
     w.homelessSeeded = true;
-    if(WALLETS[MP.myId ?? 0]) WALLETS[MP.myId ?? 0].homelessSeeded = true;
+    if(WALLETS[currentWalletOwner()]) WALLETS[currentWalletOwner()].homelessSeeded = true;
   }
 }
 

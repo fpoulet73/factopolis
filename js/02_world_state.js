@@ -47,14 +47,15 @@ let drawFast = false;
 
 // ---------- wallets (économie par joueur) ----------
 let WALLETS = {};
+const currentWalletOwner = () => (MP.connected && MP.myId != null) ? MP.myId : 0;
 const walletOf  = oid => {
-  const k = oid ?? MP.myId ?? 0;
+  const k = oid ?? currentWalletOwner();
   if(!WALLETS[k]) WALLETS[k] = { money:2500, fin:FIN_ZERO(), finHist:[], finTimer:0, mi:0, eff:1, homelessSeeded:false, starterHomes:0 };
   if(WALLETS[k].starterHomes == null) WALLETS[k].starterHomes = 0;
   if(WALLETS[k].starterHomesGranted == null) WALLETS[k].starterHomesGranted = WALLETS[k].starterHomes || 0;
   return WALLETS[k];
 };
-const myWallet  = () => walletOf(MP.myId);
+const myWallet  = () => walletOf(currentWalletOwner());
 // accesseurs rétro-compatibles (lecture/écriture du wallet courant)
 const getMoney   = ()    => myWallet().money;
 const spendMoney = (n,cat)=>{ const w=myWallet(); w.money-=n; w.fin[cat]=(w.fin[cat]||0)+n; };

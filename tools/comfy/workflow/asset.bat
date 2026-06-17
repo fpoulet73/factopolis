@@ -1,0 +1,1 @@
+python render_iso.py Hy21_Mesh.glb --ortho --name mine-1x1

@@ -70,6 +70,10 @@ function applyOwnerRemap(oldId, newId){
     }
     delete WALLETS[oldId];
   }
+  if(oldId == null && WALLETS[0] && !WALLETS[newId]){
+    WALLETS[newId] = WALLETS[0];
+    delete WALLETS[0];
+  }
 }
 
 function applySnapshot(d){
