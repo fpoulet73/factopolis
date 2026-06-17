@@ -47,7 +47,13 @@ let drawFast = false;
 
 // ---------- wallets (économie par joueur) ----------
 let WALLETS = {};
-const currentWalletOwner = () => (MP.connected && MP.myId != null) ? MP.myId : 0;
+function currentWalletOwner(){
+  if(MP.connected && MP.myId != null) return MP.myId;
+  if(WALLETS[0]) return 0;
+  const keys = Object.keys(WALLETS);
+  if(keys.length === 1) return +keys[0];
+  return 0;
+}
 const walletOf  = oid => {
   const k = oid ?? currentWalletOwner();
   if(!WALLETS[k]) WALLETS[k] = { money:2500, fin:FIN_ZERO(), finHist:[], finTimer:0, mi:0, eff:1, homelessSeeded:false, starterHomes:0 };

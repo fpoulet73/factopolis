@@ -52,6 +52,8 @@ function remapOwnerId(){
     const fromSave = MP.savedRegistry[MP.username];
     if(fromSave != null) oldId = Number(fromSave);
   }
+  const inferredId = inferSavedOwnerIdForUsername(oldId);
+  if(inferredId != null) oldId = inferredId;
   if(oldId == null || oldId === MP.myId || !Number.isFinite(Number(oldId))) return;
   oldId = Number(oldId);
   applyOwnerRemap(oldId, MP.myId);
@@ -59,6 +61,26 @@ function remapOwnerId(){
   if(MP.connected && MP.role !== 'host'){
     netSend({ type:'owner_remap', oldId, newId:MP.myId });
   }
+}
+
+function inferSavedOwnerIdForUsername(registryId){
+  if(!MP.savedRegistry || !MP.username) return null;
+  const registeredToOthers = new Set(
+    Object.entries(MP.savedRegistry)
+      .filter(([name]) => name !== MP.username)
+      .map(([, id]) => Number(id))
+      .filter(Number.isFinite)
+  );
+  const hasOwnedBuildings = id => buildings.some(b => b.owner === id);
+  if(Number.isFinite(registryId) && hasOwnedBuildings(registryId)) return null;
+
+  const counts = new Map();
+  for(const b of buildings){
+    if(b.owner == null || b.owner === MP.myId || registeredToOthers.has(b.owner)) continue;
+    counts.set(b.owner, (counts.get(b.owner) || 0) + 1);
+  }
+  if(!counts.size) return null;
+  return [...counts.entries()].sort((a,b) => b[1] - a[1])[0][0];
 }
 
 function applyOwnerRemap(oldId, newId){
