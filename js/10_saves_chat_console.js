@@ -1,6 +1,18 @@
 // ---------- sauvegarde automatique ----------
+function autoSaveStorageKey(){
+  return MP.roomId != null ? AUTO_SAVE_KEY + '_r' + MP.roomId : AUTO_SAVE_KEY;
+}
+function autoSaveServerName(slot){
+  const room = MP.roomName || 'Monde';
+  return '[Auto] ' + room + ' ' + slot;
+}
+function autoSaveServerPattern(){
+  const room = MP.roomName || 'Monde';
+  return new RegExp('^\\[Auto\\] ' + room.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' \\d+$', 'i');
+}
+
 function loadAutoSaves(){
-  try { return JSON.parse(localStorage.getItem(AUTO_SAVE_KEY) || '[]'); } catch(e){ return []; }
+  try { return JSON.parse(localStorage.getItem(autoSaveStorageKey()) || '[]'); } catch(e){ return []; }
 }
 
 function performAutoSave(){
@@ -11,21 +23,19 @@ function performAutoSave(){
   const entry = { slot: nextSlot, date: new Date().toISOString(), state: serializeState() };
   const updated = saves.filter(s => s.slot !== nextSlot);
   updated.push(entry);
-  // conserver uniquement les MAX dernières
   const trimmed = updated.slice(-AUTO_SAVE_MAX);
   try {
-    localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify(trimmed));
+    localStorage.setItem(autoSaveStorageKey(), JSON.stringify(trimmed));
   } catch(e){
     toast('⚠️ Sauvegarde auto impossible (stockage plein)', 'err');
     return;
   }
   renderAutoSaves();
   toast('💾 Sauvegarde auto — emplacement '+nextSlot+'/'+AUTO_SAVE_MAX);
-  // Envoyer aussi au serveur si connecté et admin
   if(MP.connected && mpHasAdminRights() && MP.token){
     MP.ws.send(JSON.stringify({
       type: 'save_game', token: MP.token,
-      name: '[Auto] ' + nextSlot,
+      name: autoSaveServerName(nextSlot),
       state: serializeState(),
     }));
   }
@@ -36,7 +46,7 @@ function renderAutoSaves(){
   if(!el) return;
   const localSaves = loadAutoSaves().sort((a,b)=> new Date(b.date) - new Date(a.date));
   // sauvegardes auto côté serveur (noms correspondant au pattern _Auto_*)
-  const serverAutoSaves = (MP.saves || []).filter(s => /^[\[_]Auto[\]_ ]/i.test(s.name))
+  const serverAutoSaves = (MP.saves || []).filter(s => autoSaveServerPattern().test(s.name))
     .sort((a,b) => new Date(b.date) - new Date(a.date));
 
   if(!localSaves.length && !serverAutoSaves.length){

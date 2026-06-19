@@ -1,16 +1,16 @@
 'use strict';
 /* ===================== Factopolis — Serveur multijoueur =====================
-   Lancer : node server.js [port]   (défaut : 8765)
+   Multi-room : plusieurs mondes simultanés.
 
    Données persistantes :
-     data/users.json          → comptes joueurs
-     data/saves/<user>_<nom>.json  → sauvegardes
+     data/users.json                → comptes joueurs
+     data/saves/<user>_<nom>.json   → sauvegardes
    =========================================================================== */
 
-const http   = require('http');
-const fs     = require('fs');
-const path   = require('path');
-const crypto = require('crypto');
+const http     = require('http');
+const fs       = require('fs');
+const path     = require('path');
+const crypto   = require('crypto');
 const readline = require('readline');
 const { WebSocketServer } = require('ws');
 
@@ -20,7 +20,6 @@ const DATA_DIR  = path.join(__dirname, 'data');
 const SAVES_DIR = path.join(DATA_DIR, 'saves');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
-// création des répertoires si absents
 if (!fs.existsSync(DATA_DIR))  fs.mkdirSync(DATA_DIR);
 if (!fs.existsSync(SAVES_DIR)) fs.mkdirSync(SAVES_DIR);
 if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, '{}');
@@ -30,8 +29,7 @@ const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
 const randomToken = () => crypto.randomBytes(32).toString('base64url');
 const tokenHash = token => sha256('session:' + token);
 const passwordHash = (password, salt = crypto.randomBytes(16).toString('hex')) => ({
-  algo: 'scrypt',
-  salt,
+  algo: 'scrypt', salt,
   hash: crypto.scryptSync(password, salt, 64).toString('hex'),
 });
 function verifyPassword(password, user) {
@@ -41,7 +39,6 @@ function verifyPassword(password, user) {
     const actual = crypto.scryptSync(password, user.passwordSalt, expected.length);
     return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
   }
-  // Legacy accounts created with a plain SHA-256 hash are accepted once and migrated on login.
   return user.passwordHash === sha256(password);
 }
 function issueToken(users, username) {
@@ -57,26 +54,20 @@ function loadUsers() {
   try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); }
   catch { return {}; }
 }
-function saveUsers(u) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(u, null, 2));
-}
+function saveUsers(u) { fs.writeFileSync(USERS_FILE, JSON.stringify(u, null, 2)); }
 function validateToken(token) {
   if (!token) return null;
   const users = loadUsers();
   const hash = tokenHash(token);
   for (const [username, u] of Object.entries(users)) {
-    if (u.sessionHash && u.sessionHash === hash)
-      return { username, color: u.color };
+    if (u.sessionHash && u.sessionHash === hash) return { username, color: u.color };
   }
   return null;
 }
 
-// nom de fichier sûr
 const safeName = s => s.replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 64);
-const saveFileName = (username, name) =>
-  safeName(username) + '_' + safeName(name) + '.json';
-const savePath = (username, name) =>
-  path.join(SAVES_DIR, saveFileName(username, name));
+const saveFileName = (username, name) => safeName(username) + '_' + safeName(name) + '.json';
+const savePath = (username, name) => path.join(SAVES_DIR, saveFileName(username, name));
 
 function saveBelongsToUser(file, data, username) {
   const userLower = String(username || '').toLowerCase();
@@ -89,22 +80,17 @@ function resolveSavePath(username, name, { mustExist = false } = {}) {
   const wanted = saveFileName(username, name);
   const exact = path.join(SAVES_DIR, wanted);
   if (fs.existsSync(exact)) return exact;
-
   const wantedLower = wanted.toLowerCase();
   try {
-    const match = fs.readdirSync(SAVES_DIR)
-      .find(f => {
-        if (!f.endsWith('.json') || f.toLowerCase() !== wantedLower) return false;
-        try {
-          const data = JSON.parse(fs.readFileSync(path.join(SAVES_DIR, f), 'utf8'));
-          return saveBelongsToUser(f, data, username);
-        } catch {
-          return f.toLowerCase().startsWith((safeName(username) + '_').toLowerCase());
-        }
-      });
+    const match = fs.readdirSync(SAVES_DIR).find(f => {
+      if (!f.endsWith('.json') || f.toLowerCase() !== wantedLower) return false;
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(SAVES_DIR, f), 'utf8'));
+        return saveBelongsToUser(f, data, username);
+      } catch { return f.toLowerCase().startsWith((safeName(username) + '_').toLowerCase()); }
+    });
     if (match) return path.join(SAVES_DIR, match);
   } catch {}
-
   const wantedNameLower = String(name || '').toLowerCase();
   try {
     const byMetaName = fs.readdirSync(SAVES_DIR)
@@ -115,9 +101,7 @@ function resolveSavePath(username, name, { mustExist = false } = {}) {
         try {
           const data = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
           return { file: f, path: fullPath, mtimeMs: stat.mtimeMs, name: data.meta?.name || null, data };
-        } catch {
-          return null;
-        }
+        } catch { return null; }
       })
       .filter(Boolean)
       .filter(s => saveBelongsToUser(s.file, s.data, username))
@@ -125,26 +109,14 @@ function resolveSavePath(username, name, { mustExist = false } = {}) {
       .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
     if (byMetaName) return byMetaName.path;
   } catch {}
-
   return mustExist ? null : exact;
 }
 
 function listUserSaves(username) {
   const prefix = safeName(username) + '_';
   const prefixLower = prefix.toLowerCase();
-  const userLower = String(username || '').toLowerCase();
   try {
     const files = fs.readdirSync(SAVES_DIR).filter(f => f.endsWith('.json'));
-    const readSave = f => {
-      const fullPath = path.join(SAVES_DIR, f);
-      const stat = fs.statSync(fullPath);
-      let data = null;
-      try { data = JSON.parse(fs.readFileSync(fullPath, 'utf8')); } catch {}
-      const owned = saveBelongsToUser(f, data, username);
-      const name = data?.meta?.name || f.replace(/\.json$/, '');
-      return { name, date: stat.mtime.toISOString(), owned };
-    };
-
     const saves = files
       .filter(f => {
         if (!f.endsWith('.json')) return false;
@@ -152,60 +124,67 @@ function listUserSaves(username) {
         try {
           const data = JSON.parse(fs.readFileSync(path.join(SAVES_DIR, f), 'utf8'));
           return saveBelongsToUser(f, data, username);
-        } catch {
-          return false;
-        }
+        } catch { return false; }
       })
-      .map(readSave);
+      .map(f => {
+        const fullPath = path.join(SAVES_DIR, f);
+        const stat = fs.statSync(fullPath);
+        let data = null;
+        try { data = JSON.parse(fs.readFileSync(fullPath, 'utf8')); } catch {}
+        const owned = saveBelongsToUser(f, data, username);
+        const name = data?.meta?.name || f.replace(/\.json$/, '');
+        return { name, date: stat.mtime.toISOString(), owned };
+      });
     return saves.sort((a, b) => b.date.localeCompare(a.date));
   } catch { return []; }
 }
 
-function getLatestSave() {
+// Charge une sauvegarde par nom (optionnel) — sinon la plus récente du dossier
+function getSave(saveName = null, saveUsername = null) {
   try {
-    const latest = fs.readdirSync(SAVES_DIR)
-      .filter(f => f.endsWith('.json'))
-      .map(f => {
-        const fullPath = path.join(SAVES_DIR, f);
-        const stat = fs.statSync(fullPath);
-        return { file: f, path: fullPath, mtimeMs: stat.mtimeMs };
-      })
-      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+    const files = fs.readdirSync(SAVES_DIR).filter(f => f.endsWith('.json'));
+    const candidates = files.map(f => {
+      const fullPath = path.join(SAVES_DIR, f);
+      const stat = fs.statSync(fullPath);
+      let data = null;
+      try { data = JSON.parse(fs.readFileSync(fullPath, 'utf8')); } catch {}
+      if (!data?.state) return null;
+      return { file: f, path: fullPath, mtimeMs: stat.mtimeMs, data };
+    }).filter(Boolean);
+
+    let filtered = candidates;
+    if (saveName) filtered = filtered.filter(x => x.data.meta?.name === saveName);
+    if (saveUsername) filtered = filtered.filter(x => x.data.meta?.username === saveUsername);
+    if (filtered.length === 0 && saveName) filtered = candidates; // fallback
+
+    const latest = filtered.sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
     if (!latest) return null;
-    const data = JSON.parse(fs.readFileSync(latest.path, 'utf8'));
-    if (!data || !data.state) return null;
     return {
-      name: data.meta?.name || latest.file.replace(/\.json$/, ''),
-      username: data.meta?.username || null,
-      date: data.meta?.date || new Date(latest.mtimeMs).toISOString(),
-      state: data.state,
+      name: latest.data.meta?.name || latest.file.replace(/\.json$/, ''),
+      username: latest.data.meta?.username || null,
+      state: latest.data.state,
     };
   } catch (e) {
-    console.warn('[autoload] impossible de lire la dernière sauvegarde:', e.message);
+    console.warn('[getSave]', e.message);
     return null;
   }
 }
 
-// couleur déterministe par username
 const COLORS = ['#e25e4c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#f0a040','#40d0c0','#e0e0e0'];
 const userColor = username => COLORS[parseInt(sha256(username).slice(0,2), 16) % COLORS.length];
 
-// ---- serveur HTTP (fichiers statiques) ----
+// ---- serveur HTTP ----
 const MIME = {
   '.html': 'text/html', '.js': 'application/javascript',
-  '.css': 'text/css',   '.json': 'application/json',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
+  '.css': 'text/css', '.json': 'application/json',
+  '.svg': 'image/svg+xml', '.png': 'image/png',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
 };
 const PUBLIC_ROOT_FILES = new Set(['index.html', 'config.js', 'favicon.ico']);
 const PUBLIC_DIRS = ['js', 'assets'];
 function resolvePublicPath(reqUrl) {
   let urlPath;
-  try { urlPath = decodeURIComponent(reqUrl.split('?')[0]); }
-  catch { return null; }
+  try { urlPath = decodeURIComponent(reqUrl.split('?')[0]); } catch { return null; }
   if (urlPath === '/') urlPath = '/index.html';
   if (urlPath.includes('\0')) return null;
   const rel = path.normalize(urlPath.replace(/^\/+/, ''));
@@ -218,9 +197,7 @@ function resolvePublicPath(reqUrl) {
 }
 const httpServer = http.createServer((req, res) => {
   const p = resolvePublicPath(req.url);
-  if (!p) {
-    res.writeHead(403); res.end(); return;
-  }
+  if (!p) { res.writeHead(403); res.end(); return; }
   if (!fs.existsSync(p)) { res.writeHead(404); res.end('Not found'); return; }
   res.writeHead(200, { 'Content-Type': MIME[path.extname(p)] || 'text/plain', 'Cache-Control': 'no-cache' });
   fs.createReadStream(p).pipe(res);
@@ -229,73 +206,172 @@ const httpServer = http.createServer((req, res) => {
 // ---- WebSocket ----
 const wss = new WebSocketServer({ server: httpServer });
 
-let nextId  = 1;
-let clients = [];   // { ws, id, color, name, username, token, isAdmin }
-let hostId  = null;
-let worldConfig = { size: 64, maxPlayers: 8, resources: { tree: 8, wheat: 4, cotton: 1, iron: 2, coal: 2 } };
-const startupSave = getLatestSave();
-let startupSaveLoaded = false;
-if (startupSave?.state?.world) worldConfig = sanitizeWorldConfig(startupSave.state.world);
-if (startupSave) {
-  console.log(`[autoload] dernière sauvegarde prête: "${startupSave.name}"${startupSave.username ? ' (' + startupSave.username + ')' : ''}`);
-}
-
-const send = (c, msg) => { if (c.ws.readyState === 1) c.ws.send(JSON.stringify(msg)); };
-const broadcastAll  = msg => { const r = JSON.stringify(msg); clients.forEach(c => { if(c.ws.readyState===1) c.ws.send(r); }); };
-const broadcast     = (msg, excludeId) => { const r = JSON.stringify(msg); clients.forEach(c => { if(c.id!==excludeId && c.ws.readyState===1) c.ws.send(r); }); };
-// Mémorise le dernier id de connexion de chaque joueur authentifié (persiste les reconnexions)
+// ---- état global ----
+const DEFAULT_WORLD_CONFIG = { size: 64, maxPlayers: 8, resources: { tree: 8, wheat: 4, cotton: 1, iron: 2, coal: 2 } };
+let nextId = 1;
+let nextRoomId = 1;
+let allClients = [];   // tous les clients (lobby + rooms)
+const rooms = new Map();
 const userOwnerRegistry = new Map(); // username → last connection id
-if (startupSave?.state?.playerRegistry && typeof startupSave.state.playerRegistry === 'object') {
-  for (const [username, id] of Object.entries(startupSave.state.playerRegistry)) {
-    const n = Number(id);
-    if (username && Number.isFinite(n)) userOwnerRegistry.set(username, n);
-  }
-  const maxKnownId = Math.max(0, ...Array.from(userOwnerRegistry.values()));
-  nextId = Math.max(nextId, maxKnownId + 1);
-}
 let shuttingDown = false;
 let consoleRl = null;
 
-function broadcastPlayerList() {
-  const list = clients.map(c => ({
+// ---- rooms ----
+function createRoom({ name, worldConfig, saveName, saveUsername } = {}) {
+  const id = nextRoomId++;
+  const room = {
+    id,
+    name: name || `Monde ${id}`,
+    hostId: null,
+    worldConfig: sanitizeWorldConfig(worldConfig || {}),
+    pendingSnapshots: new Map(),
+    saveName: saveName || null,
+    saveUsername: saveUsername || null,
+  };
+  rooms.set(id, room);
+  return room;
+}
+
+function initRooms() {
+  try {
+    const files = fs.readdirSync(SAVES_DIR).filter(f => f.endsWith('.json'));
+    const byName = new Map(); // name → { username, mtimeMs, worldConfig }
+    for (const f of files) {
+      const fullPath = path.join(SAVES_DIR, f);
+      const stat = fs.statSync(fullPath);
+      let data = null;
+      try { data = JSON.parse(fs.readFileSync(fullPath, 'utf8')); } catch {}
+      if (!data?.state) continue;
+      const name = data.meta?.name || f.replace(/\.json$/, '');
+      if (/^\[Auto\]/i.test(name)) continue; // ignorer les auto-sauvegardes
+      const username = data.meta?.username || null;
+      const existing = byName.get(name);
+      if (!existing || stat.mtimeMs > existing.mtimeMs) {
+        byName.set(name, { username, mtimeMs: stat.mtimeMs, worldConfig: data.state?.world });
+      }
+    }
+    if (byName.size === 0) {
+      createRoom({ name: 'Monde 1' });
+    } else {
+      for (const [name, info] of byName.entries()) {
+        createRoom({ name, saveName: name, saveUsername: info.username, worldConfig: info.worldConfig });
+        if (rooms.size >= 20) break; // limite de sécurité
+      }
+    }
+  } catch {
+    createRoom({ name: 'Monde 1' });
+  }
+
+  // Init du registry et du nextId à partir de toutes les saves
+  try {
+    const files = fs.readdirSync(SAVES_DIR).filter(f => f.endsWith('.json'));
+    for (const f of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(SAVES_DIR, f), 'utf8'));
+        const reg = data.state?.playerRegistry;
+        if (reg && typeof reg === 'object') {
+          for (const [username, id] of Object.entries(reg)) {
+            const n = Number(id);
+            if (username && Number.isFinite(n)) {
+              const existing = userOwnerRegistry.get(username);
+              if (!existing || n > existing) userOwnerRegistry.set(username, n);
+            }
+          }
+        }
+      } catch {}
+    }
+    if (userOwnerRegistry.size > 0) {
+      const maxKnownId = Math.max(0, ...Array.from(userOwnerRegistry.values()));
+      nextId = Math.max(nextId, maxKnownId + 1);
+    }
+  } catch {}
+}
+initRooms();
+
+// ---- helpers ----
+const send = (c, msg) => { if (c.ws.readyState === 1) c.ws.send(JSON.stringify(msg)); };
+const roomOf  = c => (c && c.roomId != null) ? rooms.get(c.roomId) : null;
+const roomClients = roomId => allClients.filter(c => c.roomId === roomId);
+const lobbyClients = () => allClients.filter(c => c.roomId == null);
+
+const broadcastRoom = (roomId, msg, excludeId = null) => {
+  const r = JSON.stringify(msg);
+  roomClients(roomId).forEach(c => { if (c.id !== excludeId && c.ws.readyState === 1) c.ws.send(r); });
+};
+const broadcastEveryone = msg => {
+  const r = JSON.stringify(msg);
+  allClients.forEach(c => { if (c.ws.readyState === 1) c.ws.send(r); });
+};
+
+function getRoomInfo(room) {
+  const rc = roomClients(room.id);
+  return {
+    id: room.id,
+    name: room.name,
+    playerCount: rc.length,
+    players: rc.map(c => ({ name: c.username || c.name, color: c.color })),
+    worldConfig: room.worldConfig,
+    saveName: room.saveName,
+  };
+}
+function broadcastRoomList() {
+  const list = Array.from(rooms.values()).map(getRoomInfo);
+  const msg = JSON.stringify({ type: 'rooms_list', rooms: list });
+  lobbyClients().forEach(c => { if (c.ws.readyState === 1) c.ws.send(msg); });
+}
+function sendRoomList(client) {
+  send(client, { type: 'rooms_list', rooms: Array.from(rooms.values()).map(getRoomInfo) });
+}
+
+function broadcastPlayerList(roomId) {
+  const room = rooms.get(roomId);
+  if (!room) return;
+  const rc = roomClients(roomId);
+  const list = rc.map(c => ({
     id: c.id, name: c.name, color: c.color,
-    isHost: c.id === hostId, isAdmin: !!c.isAdmin, username: c.username || null,
+    isHost: c.id === room.hostId, isAdmin: !!c.isAdmin, username: c.username || null,
   }));
-  broadcastAll({ type: 'player_list', players: list });
+  broadcastRoom(roomId, { type: 'player_list', players: list });
 }
 
 function isPrivileged(c) {
-  return c && (c.id === hostId || c.isAdmin);
+  if (!c || c.roomId == null) return false;
+  const room = rooms.get(c.roomId);
+  return room && (c.id === room.hostId || c.isAdmin);
 }
-
 function requirePrivileged(c, errType = 'permission_err') {
   if (isPrivileged(c)) return true;
-  send(c, { type: errType, msg: 'Action réservée à l’hôte ou aux administrateurs' });
+  send(c, { type: errType, msg: 'Action réservée à l\'hôte ou aux administrateurs' });
   return false;
 }
 
 function clientLabel(c) {
   return c?.username || c?.name || (c ? 'Joueur ' + c.id : 'Joueur inconnu');
 }
-
 function logClientJoin(c) {
   if (!c || c.joinLogged) return;
   c.joinLogged = true;
-  console.log(`[+] ${clientLabel(c)} connecté (#${c.id}, ${clients.length} joueurs)`);
+  console.log(`[+] ${clientLabel(c)} connecté (#${c.id}, ${allClients.length} connectés)`);
 }
 
 function replaceExistingAuthenticatedClient(username, replacement) {
-  const old = clients.find(c => c !== replacement && c.username === username);
+  const old = allClients.find(c => c !== replacement && c.username === username);
   if (!old) return;
-
   old.replaced = true;
-  clients = clients.filter(c => c !== old);
-  if (hostId === old.id) {
-    hostId = replacement.id;
-    send(replacement, { type: 'promoted_host', worldConfig });
-    console.log(`[→] ${clientLabel(replacement)} promu hôte`);
+  allClients = allClients.filter(c => c !== old);
+  if (old.roomId != null) {
+    const room = rooms.get(old.roomId);
+    if (room) {
+      if (room.hostId === old.id) {
+        room.hostId = replacement.id;
+        send(replacement, { type: 'promoted_host', worldConfig: room.worldConfig });
+        console.log(`[→] ${clientLabel(replacement)} promu hôte`);
+      }
+      broadcastRoom(old.roomId, { type: 'player_left', id: old.id, name: old.name, username: old.username });
+      broadcastPlayerList(old.roomId);
+      broadcastRoomList();
+    }
   }
-  broadcastAll({ type:'player_left', id: old.id, name: old.name, username: old.username });
   try { old.ws.close(4000, 'replaced_by_new_session'); } catch {}
   console.log(`[~] ${clientLabel(old)} remplacé par une nouvelle connexion`);
 }
@@ -305,9 +381,26 @@ function authenticateClient(client, { username, token, color, isAdmin = false })
   Object.assign(client, { username, token, name: username, color, isAdmin, announced: true });
   replaceExistingAuthenticatedClient(username, client);
   userOwnerRegistry.set(username, client.id);
-  send(client, { type:'auth_ok', username, color, token, prevOwnerId });
+  send(client, { type: 'auth_ok', username, color, token, prevOwnerId });
   logClientJoin(client);
-  broadcastPlayerList();
+  if (client.roomId != null) {
+    const room = rooms.get(client.roomId);
+    if (room && room.hostId === null) {
+      // premier authentifié dans une room sans hôte → promouvoir
+      room.hostId = client.id;
+      send(client, { type: 'promoted_host', worldConfig: room.worldConfig });
+      const saveToLoad = getSave(room.saveName, room.saveUsername);
+      if (saveToLoad) {
+        const state = saveToLoad.state;
+        state.world = state.world ? sanitizeWorldConfig(state.world) : room.worldConfig;
+        room.worldConfig = state.world;
+        send(client, { type: 'game_loaded', state, name: saveToLoad.name, loadedBy: 'serveur' });
+        console.log(`[autoload] "${saveToLoad.name}" → ${client.name} (promu hôte de "${room.name}")`);
+      }
+      console.log(`[→] ${username} promu hôte de "${room.name}" après authentification`);
+    }
+    broadcastPlayerList(client.roomId);
+  }
   return prevOwnerId;
 }
 
@@ -316,24 +409,24 @@ function clampInt(v, min, max, def) {
   if (!Number.isFinite(v)) return def;
   return Math.max(min, Math.min(max, Math.round(v)));
 }
-
 function clampPercent(v, def) {
   v = Number(v);
   if (!Number.isFinite(v)) return def;
   return Math.max(0, Math.min(40, Math.round(v * 10) / 10));
 }
-
 function sanitizeWorldConfig(config = {}) {
+  const base = DEFAULT_WORLD_CONFIG;
   const resources = config.resources || {};
+  const baseRes = base.resources;
   return {
-    size: clampInt(config.size, 32, 128, worldConfig.size),
-    maxPlayers: clampInt(config.maxPlayers, 1, 32, worldConfig.maxPlayers),
+    size:       clampInt(config.size, 32, 128, base.size),
+    maxPlayers: clampInt(config.maxPlayers, 1, 32, base.maxPlayers),
     resources: {
-      tree: clampPercent(resources.tree, worldConfig.resources.tree),
-      wheat: clampPercent(resources.wheat, worldConfig.resources.wheat),
-      cotton: clampPercent(resources.cotton, worldConfig.resources.cotton),
-      iron: clampPercent(resources.iron, worldConfig.resources.iron),
-      coal: clampPercent(resources.coal, worldConfig.resources.coal),
+      tree:   clampPercent(resources.tree,   baseRes.tree),
+      wheat:  clampPercent(resources.wheat,  baseRes.wheat),
+      cotton: clampPercent(resources.cotton, baseRes.cotton),
+      iron:   clampPercent(resources.iron,   baseRes.iron),
+      coal:   clampPercent(resources.coal,   baseRes.coal),
     },
   };
 }
@@ -368,53 +461,41 @@ function sanitizeAction(client, msg) {
     case 'bulldoze_tree':
     case 'terraform':
       if (!intInRange(act.i)) return null;
-      out.i = act.i;
-      break;
+      out.i = act.i; break;
     case 'fill_water':
       if (!intInRange(act.i) || !intInRange(act.depotX) || !intInRange(act.depotY)) return null;
-      Object.assign(out, { i: act.i, depotX: act.depotX, depotY: act.depotY });
-      break;
+      Object.assign(out, { i: act.i, depotX: act.depotX, depotY: act.depotY }); break;
     case 'bulldoze_bld':
       if (!intInRange(act.bx) || !intInRange(act.by)) return null;
-      Object.assign(out, { bx: act.bx, by: act.by });
-      break;
+      Object.assign(out, { bx: act.bx, by: act.by }); break;
     case 'build':
       if (!ALLOWED_BUILD_TYPES.has(act.btype) || !intInRange(act.x) || !intInRange(act.y)) return null;
-      Object.assign(out, { btype: act.btype, x: act.x, y: act.y });
-      break;
+      Object.assign(out, { btype: act.btype, x: act.x, y: act.y }); break;
     case 'toggle_bld_pause':
       if (!intInRange(act.x) || !intInRange(act.y)) return null;
-      Object.assign(out, { x: act.x, y: act.y, paused: !!act.paused });
-      break;
+      Object.assign(out, { x: act.x, y: act.y, paused: !!act.paused }); break;
     case 'toggle_out_block':
       if (!intInRange(act.x) || !intInRange(act.y) || typeof act.res !== 'string' || act.res.length > 32) return null;
-      Object.assign(out, { x: act.x, y: act.y, res: act.res, blocked: !!act.blocked });
-      break;
+      Object.assign(out, { x: act.x, y: act.y, res: act.res, blocked: !!act.blocked }); break;
     case 'clear_bld_stock':
       if (!intInRange(act.x) || !intInRange(act.y)) return null;
-      Object.assign(out, { x: act.x, y: act.y });
-      break;
+      Object.assign(out, { x: act.x, y: act.y }); break;
     case 'upgrade_plant':
       if (!intInRange(act.x) || !intInRange(act.y) || !ALLOWED_BUILD_TYPES.has(act.targetType)) return null;
-      Object.assign(out, { x: act.x, y: act.y, targetType: act.targetType });
-      break;
+      Object.assign(out, { x: act.x, y: act.y, targetType: act.targetType }); break;
     case 'buy_vehicle':
       if (!validName(act.id, 64) || !ALLOWED_VEHICLE_TYPES.has(act.vtype) || !intInRange(act.garageX) || !intInRange(act.garageY)) return null;
-      Object.assign(out, { id: String(act.id), vtype: act.vtype, garageX: act.garageX, garageY: act.garageY });
-      break;
+      Object.assign(out, { id: String(act.id), vtype: act.vtype, garageX: act.garageX, garageY: act.garageY }); break;
     case 'sell_vehicle':
     case 'return_vehicle':
       if (!validName(act.id, 64)) return null;
-      out.id = String(act.id);
-      break;
+      out.id = String(act.id); break;
     case 'route_vehicle':
       if (!validName(act.id, 64) || !intInRange(act.sourceX) || !intInRange(act.sourceY) || !intInRange(act.destX) || !intInRange(act.destY)) return null;
-      Object.assign(out, { id: String(act.id), sourceX: act.sourceX, sourceY: act.sourceY, destX: act.destX, destY: act.destY });
-      break;
+      Object.assign(out, { id: String(act.id), sourceX: act.sourceX, sourceY: act.sourceY, destX: act.destX, destY: act.destY }); break;
     case 'merge_towns':
       if (!intInRange(act.dstId, 0, 1000000) || !intInRange(act.srcId, 0, 1000000)) return null;
-      Object.assign(out, { dstId: act.dstId, srcId: act.srcId });
-      break;
+      Object.assign(out, { dstId: act.dstId, srcId: act.srcId }); break;
     case 'zone_reassign':
       if (!intInRange(act.dstId, 0, 1000000) || !intInRange(act.x1) || !intInRange(act.y1) || !intInRange(act.x2) || !intInRange(act.y2)) return null;
       Object.assign(out, { dstId: act.dstId, x1: act.x1, y1: act.y1, x2: act.x2, y2: act.y2 });
@@ -428,26 +509,20 @@ function sanitizeAction(client, msg) {
       break;
     case 'rename_bus_stop':
       if (!intInRange(act.x) || !intInRange(act.y) || !validName(act.name, 64)) return null;
-      Object.assign(out, { x: act.x, y: act.y, name: act.name || null });
-      break;
+      Object.assign(out, { x: act.x, y: act.y, name: act.name || null }); break;
     case 'owner_remap':
       if (!intInRange(act.oldId, 0, 1000000) || !intInRange(act.newId, 0, 1000000) || act.newId !== client.id) return null;
-      Object.assign(out, { oldId: act.oldId, newId: act.newId });
-      break;
-    case 'pause':
-      break;
+      Object.assign(out, { oldId: act.oldId, newId: act.newId }); break;
+    case 'pause': break;
     case 'speed':
       if (![0.5, 1, 2, 4].includes(Number(act.s))) return null;
-      out.s = Number(act.s);
-      break;
-    default:
-      return null;
+      out.s = Number(act.s); break;
+    default: return null;
   }
   return out;
 }
 
-const pendingSnapshots = new Map(); // targetId -> hostId
-
+// ---- connexion WebSocket ----
 wss.on('connection', (ws) => {
   if (shuttingDown) {
     ws.send(JSON.stringify({ type: 'server_shutdown', msg: 'Serveur arrêté' }));
@@ -455,22 +530,18 @@ wss.on('connection', (ws) => {
     return;
   }
 
-  const overCapacity = clients.length >= worldConfig.maxPlayers;
   const id    = nextId++;
   const color = COLORS[(id - 1) % COLORS.length];
   const name  = 'Joueur ' + id;
-  const client = { ws, id, color, name, username: null, token: null, isAdmin: false, announced: false, joinLogged: false, replaced: false, overCapacity };
-  clients.push(client);
-  if (overCapacity) {
-    setTimeout(() => {
-      if (clients.includes(client) && client.overCapacity && clients.length > worldConfig.maxPlayers) {
-        send(client, { type: 'server_full', msg: 'Serveur complet' });
-        try { ws.close(1008, 'server_full'); } catch {}
-      }
-    }, 5000);
-  }
+  const client = {
+    ws, id, color, name,
+    username: null, token: null, isAdmin: false,
+    announced: false, joinLogged: false, replaced: false,
+    roomId: null,
+  };
+  allClients.push(client);
 
-  // heartbeat : détecte les connexions mortes
+  // heartbeat
   let pongTimeout = null;
   const pingInterval = setInterval(() => {
     if (ws.readyState !== 1) { clearInterval(pingInterval); return; }
@@ -479,45 +550,19 @@ wss.on('connection', (ws) => {
   }, 30000);
   ws.on('pong', () => clearTimeout(pongTimeout));
 
-  // rate limiting : max 60 messages par seconde par client
+  // rate limiting
   let msgCount = 0, msgWindowStart = Date.now();
   const MAX_MSG_PER_SEC = 60;
 
-  if (hostId === null) {
-    hostId = id;
-    send(client, { type: 'hello', id, color, name, role: 'host', isAdmin: false, worldConfig });
-    if (startupSave && !startupSaveLoaded) {
-      startupSaveLoaded = true;
-      const state = startupSave.state;
-      state.world = state.world ? sanitizeWorldConfig(state.world) : worldConfig;
-      // Ne pas écraser state.size : pour le nouveau format, state.size est la taille COMPLÈTE
-      // de la carte (N_FULL), alors que state.world.size est la taille jouable (N_PLAY).
-      // Écraser avec world.size causerait une corruption visuelle dans applySnapshot.
-      worldConfig = state.world;
-      send(client, {
-        type: 'game_loaded',
-        state,
-        name: startupSave.name,
-        loadedBy: 'serveur',
-      });
-      console.log(`[autoload] "${startupSave.name}" envoyée au premier hôte`);
-    }
-  } else {
-    send(client, { type: 'hello', id, color, name, role: 'guest', isAdmin: false, worldConfig });
-    const host = clients.find(c => c.id === hostId);
-    if (host) {
-      pendingSnapshots.set(id, host.id);
-      send(host, { type: 'snapshot_request', forId: id });
-    }
-  }
-  // Délai de grâce : si le joueur s'authentifie (resume/login), cet handler évite
-  // d'annoncer un nom temporaire du type "Joueur 4".
-  // la liste avec le bon nom/couleur. Sinon on annonce après 1,5 s.
+  // Envoyer immédiatement la liste des rooms (lobby)
+  sendRoomList(client);
+
+  // Délai de grâce pour l'authentification avant d'annoncer le nom temporaire
   setTimeout(() => {
-    if (clients.find(c => c.id === id) && !client.announced) {
+    if (allClients.find(c => c.id === id) && !client.announced) {
       client.announced = true;
       logClientJoin(client);
-      broadcastPlayerList();
+      if (client.roomId != null) broadcastPlayerList(client.roomId);
     }
   }, 1500);
 
@@ -540,14 +585,13 @@ wss.on('connection', (ws) => {
         if (!/^[a-zA-Z0-9_\-]{3,32}$/.test(username))
           { send(client, { type:'auth_err', msg:"Nom invalide — lettres, chiffres, _ -" }); break; }
         const users = loadUsers();
-        if (users[username])
-          { send(client, { type:'auth_err', msg:'Ce nom est déjà pris' }); break; }
-        const color = userColor(username);
+        if (users[username]) { send(client, { type:'auth_err', msg:'Ce nom est déjà pris' }); break; }
+        const col = userColor(username);
         const ph = passwordHash(password);
-        users[username] = { passwordAlgo: ph.algo, passwordSalt: ph.salt, passwordHash: ph.hash, color };
+        users[username] = { passwordAlgo: ph.algo, passwordSalt: ph.salt, passwordHash: ph.hash, color: col };
         saveUsers(users);
         const token = issueToken(users, username);
-        authenticateClient(client, { username, token, color });
+        authenticateClient(client, { username, token, color: col });
         console.log(`[register] ${username}`);
         break;
       }
@@ -556,10 +600,8 @@ wss.on('connection', (ws) => {
         const username = typeof msg.username === 'string' ? msg.username : '';
         const password = typeof msg.password === 'string' ? msg.password : '';
         const users = loadUsers();
-        if (!users[username])
-          { send(client, { type:'auth_err', msg:'Utilisateur inconnu' }); break; }
-        if (!verifyPassword(password, users[username]))
-          { send(client, { type:'auth_err', msg:'Mot de passe incorrect' }); break; }
+        if (!users[username]) { send(client, { type:'auth_err', msg:'Utilisateur inconnu' }); break; }
+        if (!verifyPassword(password, users[username])) { send(client, { type:'auth_err', msg:'Mot de passe incorrect' }); break; }
         if (users[username].passwordAlgo !== 'scrypt') {
           const ph = passwordHash(password);
           Object.assign(users[username], { passwordAlgo: ph.algo, passwordSalt: ph.salt, passwordHash: ph.hash });
@@ -580,14 +622,108 @@ wss.on('connection', (ws) => {
 
       case 'logout': {
         Object.assign(client, {
-          username: null,
-          token: null,
+          username: null, token: null,
           name: 'Joueur ' + client.id,
           color: COLORS[(client.id - 1) % COLORS.length],
         });
         send(client, { type:'logout_ok', name: client.name, color: client.color });
-        broadcastPlayerList();
+        if (client.roomId != null) broadcastPlayerList(client.roomId);
         console.log(`[logout] joueur #${client.id}`);
+        break;
+      }
+
+      /* ---- rooms ---- */
+      case 'list_rooms':
+        sendRoomList(client);
+        break;
+
+      case 'join_room': {
+        if (client.roomId != null) { send(client, { type:'room_err', msg:'Déjà dans une partie' }); break; }
+        const roomId = Number(msg.roomId);
+        const room = rooms.get(roomId);
+        if (!room) { send(client, { type:'room_err', msg:'Monde introuvable' }); break; }
+
+        client.roomId = room.id;
+
+        if (room.hostId === null && client.username) {
+          // seul un utilisateur authentifié peut devenir hôte
+          room.hostId = id;
+          send(client, { type:'hello', id, color, name: client.name, role:'host', isAdmin: false, worldConfig: room.worldConfig, roomId: room.id, roomName: room.name, saveName: room.saveName });
+          const saveToLoad = getSave(room.saveName, room.saveUsername);
+          if (saveToLoad) {
+            const state = saveToLoad.state;
+            state.world = state.world ? sanitizeWorldConfig(state.world) : room.worldConfig;
+            room.worldConfig = state.world;
+            send(client, { type:'game_loaded', state, name: saveToLoad.name, loadedBy:'serveur' });
+            console.log(`[autoload] "${saveToLoad.name}" → ${client.name} (hôte de "${room.name}")`);
+          }
+        } else {
+          send(client, { type:'hello', id, color, name: client.name, role:'guest', isAdmin: false, worldConfig: room.worldConfig, roomId: room.id, roomName: room.name, saveName: room.saveName });
+          const host = room.hostId !== null ? allClients.find(c => c.id === room.hostId) : null;
+          if (host) {
+            room.pendingSnapshots.set(id, host.id);
+            send(host, { type:'snapshot_request', forId: id });
+          } else {
+            // pas d'hôte : charger la save pour que le guest voie la carte, puis mettre en pause
+            const saveToLoad = getSave(room.saveName, room.saveUsername);
+            if (saveToLoad) {
+              const state = saveToLoad.state;
+              state.world = state.world ? sanitizeWorldConfig(state.world) : room.worldConfig;
+              send(client, { type:'game_loaded', state, name: saveToLoad.name, loadedBy:'serveur' });
+            }
+            send(client, { type:'host_absent' });
+          }
+        }
+
+        broadcastPlayerList(room.id);
+        broadcastRoomList();
+        console.log(`[room] ${clientLabel(client)} rejoint "${room.name}" (#${room.id})`);
+        break;
+      }
+
+      case 'create_room': {
+        if (!client.username) { send(client, { type:'room_err', msg:'Authentification requise pour créer un monde' }); break; }
+        if (client.roomId != null) { send(client, { type:'room_err', msg:'Quitte ta partie en cours avant de créer un monde' }); break; }
+        const rName = typeof msg.name === 'string' ? msg.name.trim().slice(0, 64) : '';
+        if (!rName) { send(client, { type:'room_err', msg:'Nom du monde requis' }); break; }
+        const room = createRoom({ name: rName, worldConfig: sanitizeWorldConfig(msg.worldConfig || {}) });
+        // Auto-rejoindre comme hôte
+        client.roomId = room.id;
+        room.hostId = id;
+        send(client, { type:'hello', id, color, name: client.name, role:'host', isAdmin: false, worldConfig: room.worldConfig, roomId: room.id, roomName: room.name, saveName: room.saveName });
+        broadcastRoomList();
+        console.log(`[room] ${client.username} crée "${room.name}" (#${room.id})`);
+        break;
+      }
+
+      case 'leave_room': {
+        if (client.roomId == null) break;
+        const room = rooms.get(client.roomId);
+        if (room) {
+          room.pendingSnapshots.delete(client.id);
+          if (room.hostId === client.id) {
+            const remaining = roomClients(room.id).filter(c => c.id !== client.id);
+            const nextHost = remaining.find(c => c.username);
+            if (nextHost) {
+              room.hostId = nextHost.id;
+              send(nextHost, { type:'promoted_host', worldConfig: room.worldConfig });
+              console.log(`[→] ${clientLabel(nextHost)} promu hôte de "${room.name}"`);
+            } else {
+              room.hostId = null;
+              if (remaining.length > 0)
+                broadcastRoom(room.id, { type:'host_absent' }, client.id);
+            }
+          }
+          broadcastRoom(room.id, { type:'player_left', id, name: client.name, username: client.username }, id);
+          client.roomId = null;
+          broadcastPlayerList(room.id);
+          broadcastRoomList();
+          console.log(`[room] ${clientLabel(client)} quitte "${room.name}"`);
+        } else {
+          client.roomId = null;
+        }
+        send(client, { type:'left_room' });
+        sendRoomList(client);
         break;
       }
 
@@ -603,23 +739,25 @@ wss.on('connection', (ws) => {
         if (!requirePrivileged(client, 'save_err')) break;
         const user = validateToken(msg.token);
         if (!user) { send(client, { type:'save_err', msg:'Non authentifié' }); break; }
-        const name = (msg.name || '').trim();
-        if (!name) { send(client, { type:'save_err', msg:'Nom de sauvegarde requis' }); break; }
+        const room = roomOf(client);
+        if (!room) break;
+        const sName = (msg.name || '').trim();
+        if (!sName) { send(client, { type:'save_err', msg:'Nom de sauvegarde requis' }); break; }
         try {
-          const p = resolveSavePath(user.username, name);
-          // Injecter le mapping username→id pour permettre la récupération après redémarrage serveur
+          const p = resolveSavePath(user.username, sName);
           const stateWithRegistry = Object.assign({}, msg.state, {
             playerRegistry: Object.fromEntries(userOwnerRegistry),
           });
           fs.writeFileSync(p, JSON.stringify({
-            meta: { username: user.username, name, date: new Date().toISOString() },
+            meta: { username: user.username, name: sName, date: new Date().toISOString() },
             state: stateWithRegistry,
           }));
-          send(client, { type:'save_ok', name });
-          broadcastAll({ type:'game_saved', name, savedBy: user.username });
-          // rafraîchir la liste pour ce joueur
+          room.saveName = sName;
+          room.saveUsername = user.username;
+          send(client, { type:'save_ok', name: sName });
+          broadcastRoom(room.id, { type:'game_saved', name: sName, savedBy: user.username });
           send(client, { type:'saves_list', saves: listUserSaves(user.username) });
-          console.log(`[save] ${user.username} → "${name}"`);
+          console.log(`[save] ${user.username} → "${sName}" (monde "${room.name}")`);
         } catch(e) { send(client, { type:'save_err', msg:'Erreur: ' + e.message }); }
         break;
       }
@@ -628,14 +766,17 @@ wss.on('connection', (ws) => {
         if (!requirePrivileged(client, 'save_err')) break;
         const user = validateToken(msg.token);
         if (!user) { send(client, { type:'save_err', msg:'Non authentifié' }); break; }
-        const name = (msg.name || '').trim();
+        const room = roomOf(client);
+        if (!room) break;
+        const lName = (msg.name || '').trim();
         try {
-          const p = resolveSavePath(user.username, name, { mustExist: true });
+          const p = resolveSavePath(user.username, lName, { mustExist: true });
           if (!p || !fs.existsSync(p)) { send(client, { type:'save_err', msg:'Sauvegarde introuvable' }); break; }
           const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-          // diffuser l'état à TOUS les joueurs connectés
-          broadcastAll({ type:'game_loaded', state: data.state, name, loadedBy: user.username });
-          console.log(`[load] ${user.username} ← "${name}"`);
+          room.saveName = lName;
+          room.saveUsername = user.username;
+          broadcastRoom(room.id, { type:'game_loaded', state: data.state, name: lName, loadedBy: user.username });
+          console.log(`[load] ${user.username} ← "${lName}" (monde "${room.name}")`);
         } catch(e) { send(client, { type:'save_err', msg:'Erreur: ' + e.message }); }
         break;
       }
@@ -644,73 +785,88 @@ wss.on('connection', (ws) => {
         if (!requirePrivileged(client, 'save_err')) break;
         const user = validateToken(msg.token);
         if (!user) { send(client, { type:'save_err', msg:'Non authentifié' }); break; }
-        const name = (msg.name || '').trim();
+        const dName = (msg.name || '').trim();
         try {
-          const p = resolveSavePath(user.username, name, { mustExist: true });
+          const p = resolveSavePath(user.username, dName, { mustExist: true });
           if (!p || !fs.existsSync(p)) { send(client, { type:'save_err', msg:'Sauvegarde introuvable' }); break; }
           fs.unlinkSync(p);
-          send(client, { type:'save_deleted', name });
+          send(client, { type:'save_deleted', name: dName });
           send(client, { type:'saves_list', saves: listUserSaves(user.username) });
-          console.log(`[delete] ${user.username} ✕ "${name}"`);
+          console.log(`[delete] ${user.username} ✕ "${dName}"`);
         } catch(e) { send(client, { type:'save_err', msg:'Erreur: ' + e.message }); }
         break;
       }
 
-      /* ---- jeu ---- */
+      /* ---- jeu (dans une room) ---- */
       case 'snapshot': {
-        if (client.id !== hostId || pendingSnapshots.get(Number(msg.forId)) !== client.id) break;
-        const target = clients.find(c => c.id === msg.forId);
+        const room = roomOf(client);
+        if (!room) break;
+        if (client.id !== room.hostId || room.pendingSnapshots.get(Number(msg.forId)) !== client.id) break;
+        const target = allClients.find(c => c.id === msg.forId);
         if (target) {
-          // Injecter le registry courant du serveur dans le snapshot
           if (msg.state) msg.state.playerRegistry = Object.fromEntries(userOwnerRegistry);
-          pendingSnapshots.delete(Number(msg.forId));
+          room.pendingSnapshots.delete(Number(msg.forId));
           send(target, msg);
         }
         break;
       }
+
       case 'new_world': {
         if (!requirePrivileged(client, 'permission_err')) break;
-        worldConfig = sanitizeWorldConfig(msg.config);
+        if (!client.username) { send(client, { type:'permission_err', msg:'Authentification requise' }); break; }
+        const room = roomOf(client);
+        if (!room) break;
+        room.worldConfig = sanitizeWorldConfig(msg.config);
         const state = msg.state || {};
-        state.world = worldConfig;
-        // Ne pas écraser state.size : le client sérialise la taille COMPLÈTE (N_FULL = N_PLAY + 2*EXP_MARGIN)
-        // Écraser avec worldConfig.size (= N_PLAY) provoquerait une corruption chez tous les clients.
-        broadcastAll({
-          type: 'game_new_world',
-          state,
-          config: worldConfig,
-          createdBy: client.username || client.name,
-        });
-        broadcastPlayerList();
-        console.log(`[world] ${client.username || client.name} → ${worldConfig.size}x${worldConfig.size}, max ${worldConfig.maxPlayers}`);
+        state.world = room.worldConfig;
+        broadcastRoom(room.id, { type:'game_new_world', state, config: room.worldConfig, createdBy: client.username || client.name });
+        broadcastPlayerList(room.id);
+        broadcastRoomList();
+        console.log(`[world] ${client.username || client.name} → ${room.worldConfig.size}x${room.worldConfig.size} (monde "${room.name}")`);
         break;
       }
+
       case 'promote_admin': {
         if (!requirePrivileged(client, 'permission_err')) break;
+        const room = roomOf(client);
+        if (!room) break;
         const targetId = Number(msg.playerId);
-        if (targetId === hostId) { send(client, { type:'permission_err', msg:'L’hôte a déjà tous les droits' }); break; }
-        const target = clients.find(c => c.id === targetId);
+        if (targetId === room.hostId) { send(client, { type:'permission_err', msg:'L\'hôte a déjà tous les droits' }); break; }
+        const target = roomClients(room.id).find(c => c.id === targetId);
         if (!target) { send(client, { type:'permission_err', msg:'Joueur introuvable' }); break; }
         target.isAdmin = true;
         send(target, { type:'admin_promoted' });
-        broadcastAll({ type:'admin_changed', playerId: target.id, isAdmin: true, by: client.username || client.name });
-        broadcastPlayerList();
+        broadcastRoom(room.id, { type:'admin_changed', playerId: target.id, isAdmin: true, by: client.username || client.name });
+        broadcastPlayerList(room.id);
         console.log(`[admin] ${target.name} promu par ${client.name}`);
         break;
       }
+
       case 'action': {
+        if (!client.username) break;
+        const room = roomOf(client);
+        if (!room) break;
         const act = sanitizeAction(client, msg);
         if (!act) break;
         if ((act.type === 'pause' || act.type === 'speed') && !isPrivileged(client)) break;
-        broadcast({ type:'action', act, from:id, fromUsername: client.username || null }, id);
+        broadcastRoom(room.id, { type:'action', act, from:id, fromUsername: client.username || null }, id);
         break;
       }
-      case 'cursor':  broadcast(msg, id); break;
-      case 'chat':
+
+      case 'cursor': {
+        const room = roomOf(client);
+        if (room) broadcastRoom(room.id, msg, id);
+        break;
+      }
+
+      case 'chat': {
+        const room = roomOf(client);
+        if (!room) break;
         msg.from = id;
         msg.name = client.name;
-        broadcastAll(msg);
+        broadcastRoom(room.id, msg);
         break;
+      }
 
       default: break;
     }
@@ -719,208 +875,182 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     clearInterval(pingInterval);
     clearTimeout(pongTimeout);
-    clients = clients.filter(c => c.id !== id);
+    allClients = allClients.filter(c => c.id !== id);
     if (client.replaced) return;
-    console.log(`[-] ${clientLabel(client)} déconnecté (${clients.length} joueurs)`);
-    if (hostId === id) {
-      if (clients.length > 0) {
-        hostId = clients[0].id;
-        send(clients[0], { type: 'promoted_host', worldConfig });
-        console.log(`[→] ${clientLabel(clients[0])} promu hôte`);
-      } else { hostId = null; }
+
+    console.log(`[-] ${clientLabel(client)} déconnecté (${allClients.length} connectés)`);
+
+    if (client.roomId != null) {
+      const room = rooms.get(client.roomId);
+      if (room) {
+        room.pendingSnapshots.delete(id);
+        if (room.hostId === id) {
+          const remaining = roomClients(room.id);
+          const nextHost = remaining.find(c => c.username);
+          if (nextHost) {
+            room.hostId = nextHost.id;
+            send(nextHost, { type:'promoted_host', worldConfig: room.worldConfig });
+            console.log(`[→] ${clientLabel(nextHost)} promu hôte de "${room.name}"`);
+          } else {
+            room.hostId = null;
+            if (remaining.length > 0)
+              broadcastRoom(room.id, { type:'host_absent' });
+          }
+        }
+        broadcastRoom(room.id, { type:'player_left', id, name: client.name, username: client.username });
+        broadcastPlayerList(room.id);
+        broadcastRoomList();
+      }
     }
-    pendingSnapshots.delete(id);
-    broadcastAll({ type:'player_left', id, name: client.name, username: client.username });
-    broadcastPlayerList();
   });
 });
 
+// ---- console serveur ----
 function printConsoleHelp() {
   console.log('Commandes console:');
   console.log('  help                         Affiche cette aide');
-  console.log('  players                      Liste les joueurs connectés');
-  console.log('  world                        Affiche la configuration du monde');
-  console.log('  saves [username]             Liste les sauvegardes visibles');
-  console.log('  system <message>             Envoie un message système dans le chat');
+  console.log('  rooms                        Liste les mondes actifs');
+  console.log('  players [roomId]             Liste les joueurs connectés');
+  console.log('  saves [username]             Liste les sauvegardes');
+  console.log('  say <message>                Envoie un message système à tous');
   console.log('  kick <id> [raison]           Déconnecte un joueur');
   console.log('  promote <id>                 Donne les droits admin à un joueur');
-  console.log('  setmoney <nom> <montant>     Fixe le solde d\'un joueur connecté');
-  console.log('  regenexpansions              Régénère le terrain des zones d\'expansion non achetées');
-  console.log('  spawnfields <type> [count]   Génère des champs aléatoires (type: wheat/ble, cotton/coton)');
+  console.log('  setmoney <nom> <montant>     Fixe le solde d\'un joueur');
+  console.log('  regenexpansions              Régénère les zones d\'expansion');
+  console.log('  spawnfields <type> [count]   Génère des champs (wheat/cotton)');
   console.log('  stop                         Arrête proprement le serveur');
 }
 
 function handleConsoleCommand(line) {
   const input = String(line || '').trim();
   if (!input) return;
-
   const [cmdRaw, ...args] = input.split(/\s+/);
   const cmd = cmdRaw.toLowerCase();
   const rest = input.slice(cmdRaw.length).trim();
 
   switch (cmd) {
-    case 'help':
-    case '?':
+    case 'help': case '?':
       printConsoleHelp();
       break;
 
-    case 'players':
-      if (!clients.length) {
-        console.log('Aucun joueur connecté.');
-        break;
-      }
-      clients.forEach(c => {
+    case 'rooms':
+      if (!rooms.size) { console.log('Aucun monde.'); break; }
+      rooms.forEach(r => {
+        const rc = roomClients(r.id);
+        console.log(`#${r.id} "${r.name}" — ${rc.length} joueurs${r.hostId ? '' : ' (vide)'}`);
+        rc.forEach(c => {
+          const flags = [c.id === r.hostId ? 'hôte' : '', c.isAdmin ? 'admin' : '', c.username ? `compte:${c.username}` : ''].filter(Boolean).join(', ');
+          console.log(`  #${c.id} ${c.name}${flags ? ' (' + flags + ')' : ''}`);
+        });
+      });
+      break;
+
+    case 'players': {
+      const roomId = args[0] ? Number(args[0]) : null;
+      const list = roomId != null ? roomClients(roomId) : allClients;
+      if (!list.length) { console.log('Aucun joueur.'); break; }
+      list.forEach(c => {
+        const room = roomOf(c);
         const flags = [
-          c.id === hostId ? 'hôte' : '',
+          room ? `monde:${room.name}` : 'lobby',
+          c.id === room?.hostId ? 'hôte' : '',
           c.isAdmin ? 'admin' : '',
           c.username ? `compte:${c.username}` : '',
         ].filter(Boolean).join(', ');
         console.log(`#${c.id} ${c.name}${flags ? ' (' + flags + ')' : ''}`);
       });
       break;
-
-    case 'world':
-      console.log(JSON.stringify(worldConfig, null, 2));
-      break;
+    }
 
     case 'saves': {
       const username = args[0] || 'Fabrice';
       const saves = listUserSaves(username);
-      if (!saves.length) {
-        console.log(`Aucune sauvegarde pour ${username}.`);
-        break;
-      }
+      if (!saves.length) { console.log(`Aucune sauvegarde pour ${username}.`); break; }
       saves.forEach(s => console.log(`${s.date}  ${s.owned ? ' ' : '*'} ${s.name}`));
       break;
     }
 
-    case 'say':
-    case 'system':
-      if (!rest) {
-        console.log('Usage: system <message>');
-        break;
-      }
-      broadcastAll({ type: 'chat', from: 0, name: 'Système', text: rest });
+    case 'say': case 'system':
+      if (!rest) { console.log('Usage: say <message>'); break; }
+      broadcastEveryone({ type:'chat', from:0, name:'Système', text:rest });
       console.log(`[système] ${rest}`);
       break;
 
     case 'kick': {
-      const id = Number(args[0]);
-      const target = clients.find(c => c.id === id);
-      if (!target) {
-        console.log('Joueur introuvable.');
-        break;
-      }
+      const kId = Number(args[0]);
+      const target = allClients.find(c => c.id === kId);
+      if (!target) { console.log('Joueur introuvable.'); break; }
       const reason = args.slice(1).join(' ') || 'Déconnecté par le serveur';
-      send(target, { type: 'server_shutdown', msg: reason });
+      send(target, { type:'server_shutdown', msg:reason });
       target.ws.close(1000, 'kicked');
       console.log(`[kick] #${target.id} ${target.name}: ${reason}`);
       break;
     }
 
     case 'promote': {
-      const id = Number(args[0]);
-      const target = clients.find(c => c.id === id);
-      if (!target) {
-        console.log('Joueur introuvable.');
-        break;
-      }
-      if (target.id === hostId) {
-        console.log('Ce joueur est déjà hôte.');
-        break;
-      }
+      const pId = Number(args[0]);
+      const target = allClients.find(c => c.id === pId);
+      if (!target) { console.log('Joueur introuvable.'); break; }
       target.isAdmin = true;
       send(target, { type:'admin_promoted' });
-      broadcastAll({ type:'admin_changed', playerId: target.id, isAdmin: true, by: 'console serveur' });
-      broadcastPlayerList();
+      if (target.roomId != null) {
+        broadcastRoom(target.roomId, { type:'admin_changed', playerId: target.id, isAdmin: true, by:'console serveur' });
+        broadcastPlayerList(target.roomId);
+      }
       console.log(`[admin] ${target.name} promu depuis la console`);
       break;
     }
 
     case 'setmoney': {
-      const nameArg  = args[0];
-      const amountArg = args[1];
-      if (!nameArg || amountArg === undefined) {
-        console.log('Usage: setmoney <nom_joueur> <montant>');
-        break;
-      }
+      const nameArg = args[0], amountArg = args[1];
+      if (!nameArg || amountArg === undefined) { console.log('Usage: setmoney <nom> <montant>'); break; }
       const amount = Number(amountArg);
-      if (!Number.isFinite(amount)) {
-        console.log('Montant invalide : doit être un nombre.');
-        break;
-      }
+      if (!Number.isFinite(amount)) { console.log('Montant invalide.'); break; }
       const nameLower = nameArg.toLowerCase();
-      const target = clients.find(c =>
-        c.name.toLowerCase() === nameLower ||
-        (c.username || '').toLowerCase() === nameLower
-      );
+      const target = allClients.find(c => c.name.toLowerCase() === nameLower || (c.username || '').toLowerCase() === nameLower);
       if (!target) {
-        console.log(`Joueur "${nameArg}" introuvable. Joueurs connectés :`);
-        clients.forEach(c => console.log(`  #${c.id} ${c.name}${c.username ? ' ('+c.username+')' : ''}`));
+        console.log(`Joueur "${nameArg}" introuvable. Connectés :`);
+        allClients.forEach(c => console.log(`  #${c.id} ${c.name}${c.username ? ' ('+c.username+')' : ''}`));
         break;
       }
-      send(target, { type: 'server_cmd', cmd: 'set_money', amount: Math.round(amount) });
+      send(target, { type:'server_cmd', cmd:'set_money', amount: Math.round(amount) });
       console.log(`[setmoney] ${target.name} → ${Math.round(amount).toLocaleString()} $`);
       break;
     }
 
-    case 'regenexpansions':
-    case 'regenexp': {
-      if (!clients.length) {
-        console.log('Aucun joueur connecté — commande ignorée.');
-        break;
-      }
-      broadcastAll({ type: 'server_cmd', cmd: 'regen_expansions' });
-      console.log('[regenExpansions] Commande envoyée à tous les clients. Le terrain des zones d\'expansion sera régénéré.');
+    case 'regenexpansions': case 'regenexp':
+      if (!allClients.length) { console.log('Aucun joueur connecté.'); break; }
+      broadcastEveryone({ type:'server_cmd', cmd:'regen_expansions' });
+      console.log('[regenExpansions] Commande envoyée.');
       break;
-    }
 
-    case 'spawnfields':
-    case 'spawnfield': {
-      const ALIASES = { ble: 'wheat', blé: 'wheat', coton: 'cotton' };
+    case 'spawnfields': case 'spawnfield': {
+      const ALIASES = { ble:'wheat', blé:'wheat', coton:'cotton' };
       const rawType = (args[0] || '').toLowerCase();
       const fieldType = ALIASES[rawType] || rawType;
       const count = Math.max(1, Math.round(Number(args[1]) || 3));
-
-      if (!['wheat', 'cotton'].includes(fieldType)) {
-        console.log('Type de champ invalide : "' + (args[0] || '') + '".');
-        console.log('Types acceptés : wheat (ou ble/blé), cotton (ou coton)');
-        break;
-      }
-      if (!clients.length) {
-        console.log('Aucun joueur connecté — commande ignorée.');
-        break;
-      }
-      broadcastAll({ type: 'server_cmd', cmd: 'spawn_fields', fieldType, count });
-      console.log(`[spawnFields] ${count} patch(s) de ${fieldType} envoyés à tous les clients.`);
+      if (!['wheat','cotton'].includes(fieldType)) { console.log('Types acceptés : wheat (ble/blé), cotton (coton)'); break; }
+      if (!allClients.length) { console.log('Aucun joueur connecté.'); break; }
+      broadcastEveryone({ type:'server_cmd', cmd:'spawn_fields', fieldType, count });
+      console.log(`[spawnFields] ${count} patch(s) de ${fieldType} envoyés.`);
       break;
     }
 
-    case 'stop':
-    case 'exit':
-    case 'quit':
+    case 'stop': case 'exit': case 'quit':
       shutdown('console');
       break;
 
     default:
-      console.log(`Commande inconnue: ${cmd}. Tape "help" pour la liste.`);
-      break;
+      console.log(`Commande inconnue: ${cmd}. Tape "help".`);
   }
 }
 
 function startConsole() {
   if (!process.stdin.isTTY || consoleRl) return;
-  consoleRl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: 'factopolis> ',
-  });
+  consoleRl = readline.createInterface({ input: process.stdin, output: process.stdout, prompt: 'factopolis> ' });
   console.log('Console serveur prête. Tape "help" pour les commandes.');
   consoleRl.prompt();
-  consoleRl.on('line', line => {
-    handleConsoleCommand(line);
-    if (!shuttingDown) consoleRl.prompt();
-  });
+  consoleRl.on('line', line => { handleConsoleCommand(line); if (!shuttingDown) consoleRl.prompt(); });
   consoleRl.on('SIGINT', () => shutdown('SIGINT'));
 }
 
@@ -928,38 +1058,21 @@ function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[shutdown] ${signal} reçu, déconnexion des joueurs...`);
-  if (consoleRl) {
-    consoleRl.close();
-    consoleRl = null;
+  if (consoleRl) { consoleRl.close(); consoleRl = null; }
+  const notice = JSON.stringify({ type:'server_shutdown', msg:'Serveur arrêté' });
+  for (const client of allClients) {
+    if (client.ws.readyState === 1) { client.ws.send(notice); client.ws.close(1001, 'server_shutdown'); }
   }
-
-  const notice = JSON.stringify({ type: 'server_shutdown', msg: 'Serveur arrêté' });
-  for (const client of clients) {
-    if (client.ws.readyState === 1) {
-      client.ws.send(notice);
-      client.ws.close(1001, 'server_shutdown');
-    }
-  }
-
-  wss.close(() => {
-    httpServer.close(() => {
-      console.log('[shutdown] serveur arrêté');
-      process.exit(0);
-    });
-  });
-
-  setTimeout(() => {
-    console.log('[shutdown] arrêt forcé');
-    process.exit(0);
-  }, 1000).unref();
+  wss.close(() => httpServer.close(() => { console.log('[shutdown] serveur arrêté'); process.exit(0); }));
+  setTimeout(() => { console.log('[shutdown] arrêt forcé'); process.exit(0); }, 1000).unref();
 }
 
-process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 httpServer.listen(PORT, '0.0.0.0', () => {
   console.log(`Factopolis serveur lancé — http://0.0.0.0:${PORT}`);
   console.log(`WebSocket sur ws://0.0.0.0:${PORT}`);
-  console.log(`Données dans : ${DATA_DIR}`);
+  console.log(`${rooms.size} monde(s) chargé(s) : ${Array.from(rooms.values()).map(r => `"${r.name}"`).join(', ')}`);
   startConsole();
 });

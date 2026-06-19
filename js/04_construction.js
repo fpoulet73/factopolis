@@ -4,7 +4,8 @@
 const MP = {
   ws: null, myId: null, myColor: '#ffffff', myName: 'Moi',
   role: null, isAdmin: false, players: [], cursors: {}, chat: [], connected: false,
-  username: null, token: null, saves: [],
+  username: null, token: null, saves: [], rooms: [],
+  roomId: null, roomName: null, roomSaveName: null,
   prevOwnerId: null,   // ancien id de connexion, reçu du serveur lors de l'auth
   savedRegistry: null, // playerRegistry issu de la dernière sauvegarde chargée
   shutdownNotice: false,
