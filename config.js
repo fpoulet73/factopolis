@@ -154,7 +154,7 @@ const CONFIG = {
        On peut aussi écrire les formes sous forme de texte : "2x1".
      facteurs : { nombreDeCases: facteur } — le palier inférieur s'applique. */
   industrie: {
-    formesFusion: [[2,1],[3,1],[4,1],[2,2],[3,2],[4,4]],
+    formesFusion: [[2,1],[3,1],[4,1],[2,2],[3,2],[3,3],[4,4]],
     formesParType: {
       ferme: [[2,1],[3,1],[4,1],[2,2]],
       coton: [[2,1],[2,2]],

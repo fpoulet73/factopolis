@@ -573,7 +573,7 @@ function townAllocatedWorkers(townId){
 }
 
 function refreshWorkerAllocation(){
-  for(const b of buildings){ b.workersAssigned = 0; b.workersByTown = {}; }
+  for(const b of buildings){ b.workersAssigned = 0; b.workersByTown = {}; b.workersIdle = 0; }
   const jobs = buildings
     .filter(b=>!b.dead && !b.paused && workersRequiredOf(b)>0)
     .sort((a,b)=> workersRequiredOf(b) - workersRequiredOf(a)); // les plus grands postes en premier
@@ -599,6 +599,7 @@ function refreshWorkerAllocation(){
       avail.set(home, avail.get(home) - take);
     }
   }
+  for(const [home, remaining] of avail) home.workersIdle = remaining;
   for(const k in WALLETS){
     const oid = +k;
     const req = jobsTotal(oid);

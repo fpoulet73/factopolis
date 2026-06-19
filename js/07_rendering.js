@@ -547,6 +547,13 @@ function drawBuilding(b){
     ctx.strokeText('👤'+b.pop, tc[0], tc[1]-TH*0.55);
     ctx.fillStyle = '#ffe9a0';
     ctx.fillText('👤'+b.pop, tc[0], tc[1]-TH*0.55);
+    if((b.workersIdle||0) > 0){
+      ctx.font = 'bold 10px sans-serif';
+      ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 3;
+      ctx.strokeText('💤'+b.workersIdle, tc[0], tc[1]-TH*0.32);
+      ctx.fillStyle = '#ff9a8a';
+      ctx.fillText('💤'+b.workersIdle, tc[0], tc[1]-TH*0.32);
+    }
   }
   // pas de route adjacente
   if(!drawFast && !adjRoadTiles(b).length){
