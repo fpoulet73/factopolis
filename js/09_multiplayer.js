@@ -25,6 +25,7 @@ function serializeState(){
       ct:b.ct||0, pending:0, pendingProtected:0, starve:b.starve||0,
       ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, sellMin:b.sellMin||null, paused:b.paused||false, blockedOut:b.blockedOut||null, owner:b.owner||null,
       starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
+      mergeBlockedMissing:Array.isArray(b.mergeBlockedMissing) ? b.mergeBlockedMissing.slice() : null,
       passengers:b.passengers||0,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
@@ -202,6 +203,7 @@ function applySnapshot(d){
     if(o.starterSlots) b.starterSlots = o.starterSlots;
     if(o.townId != null) b.townId = o.townId;
     if(o.name   != null) b.name   = o.name;
+    if(Array.isArray(o.mergeBlockedMissing)) b.mergeBlockedMissing = o.mergeBlockedMissing.filter(r => RES[r]);
     if(o.passengers != null && b.type === 'bus_stop') b.passengers = o.passengers;
     buildings.push(b);
     setGrid(b,b);
@@ -982,9 +984,13 @@ function mpInjectUI(){
   };
   $('mpSaveName').addEventListener('keydown', e=>{ if(e.key==='Enter') $('mpBtnSave').click(); });
 
-  $('mpBtnNewWorld').onclick = ()=>{
+  $('mpBtnNewWorld').onclick = async ()=>{
     if(!mpHasAdminRights()){ $('mpWorldErr').textContent = 'Réservé à l’hôte/admin'; return; }
-    if(!confirm('Créer une nouvelle carte ? La partie en cours sera remplacée pour tous les joueurs.')) return;
+    if(!await confirmAction('Créer une nouvelle carte ?\nLa partie en cours sera remplacée pour tous les joueurs.', {
+      title: 'Nouvelle carte',
+      okText: 'Créer',
+      danger: true,
+    })) return;
     const config = normalizeWorldConfig({
       size: $('mpWorldSize').value,
       maxPlayers: $('mpMaxPlayers').value,
@@ -1116,25 +1122,36 @@ function mpRenderSaves(){
   }).join('');
 
   el.querySelectorAll('[data-overwrite]').forEach(btn=>{
-    btn.onclick = ()=>{
+    btn.onclick = async ()=>{
       if(!mpHasAdminRights()) return;
       const name = btn.dataset.overwrite;
-      if(!confirm('Écraser la sauvegarde "'+name+'" avec la partie en cours ?')) return;
+      if(!await confirmAction('Écraser la sauvegarde "'+name+'" avec la partie en cours ?', {
+        title: 'Écraser la sauvegarde',
+        okText: 'Écraser',
+        danger: true,
+      })) return;
       MP.ws.send(JSON.stringify({ type:'save_game', token:MP.token, name, state:serializeState() }));
     };
   });
 
   el.querySelectorAll('[data-load]').forEach(btn=>{
-    btn.onclick = ()=>{
+    btn.onclick = async ()=>{
       if(!mpHasAdminRights()) return;
-      if(!confirm('Charger "'+btn.dataset.load+'" ? La partie en cours sera remplacée pour tous les joueurs.')) return;
+      if(!await confirmAction('Charger "'+btn.dataset.load+'" ?\nLa partie en cours sera remplacée pour tous les joueurs.', {
+        title: 'Charger une sauvegarde',
+        okText: 'Charger',
+      })) return;
       MP.ws.send(JSON.stringify({ type:'load_game', token:MP.token, name:btn.dataset.load }));
     };
   });
   el.querySelectorAll('[data-del]').forEach(btn=>{
-    btn.onclick = ()=>{
+    btn.onclick = async ()=>{
       if(!mpHasAdminRights()) return;
-      if(!confirm('Supprimer "'+btn.dataset.del+'" ?')) return;
+      if(!await confirmAction('Supprimer "'+btn.dataset.del+'" ?', {
+        title: 'Supprimer la sauvegarde',
+        okText: 'Supprimer',
+        danger: true,
+      })) return;
       MP.ws.send(JSON.stringify({ type:'delete_save', token:MP.token, name:btn.dataset.del }));
     };
   });

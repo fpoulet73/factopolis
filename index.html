@@ -29,10 +29,10 @@
 
   /* ---- dropdown options ---- */
   .opt-wrap{position:relative}
-  #optMenu{position:absolute;top:calc(100% + 6px);right:0;min-width:220px;
+  #optMenu,#layerMenu{position:absolute;top:calc(100% + 6px);right:0;min-width:220px;
     background:rgba(13,18,28,.97);border:1px solid #36465e;border-radius:10px;
     box-shadow:0 6px 22px rgba(0,0,0,.55);padding:6px 0;z-index:50;display:none}
-  #optMenu.open{display:block}
+  #optMenu.open,#layerMenu.open{display:block}
   .opt-item{display:flex;align-items:center;gap:10px;padding:7px 14px;
     cursor:pointer;font-size:13px;color:#e8eef7;white-space:nowrap}
   .opt-item:hover{background:rgba(255,255,255,.06)}
@@ -143,6 +143,22 @@
   .toast.win{border-color:#d6a82f;color:#ffe9a0;font-size:15px}
   @keyframes tin{from{opacity:0;transform:translateY(8px)}to{opacity:1}}
 
+  /* ---- confirmations ---- */
+  #confirmOverlay{position:fixed;inset:0;z-index:80;display:none;align-items:center;
+    justify-content:center;background:rgba(6,9,14,.62);backdrop-filter:blur(3px)}
+  #confirmOverlay.open{display:flex}
+  .confirm-dialog{width:min(420px,92vw);background:rgba(13,18,28,.98);
+    border:1px solid #4b5f7d;border-radius:12px;box-shadow:0 18px 48px rgba(0,0,0,.6);
+    padding:18px 20px;animation:confirmIn .14s ease-out}
+  .confirm-dialog h3{margin:0 0 8px;font-size:16px;color:#f3f7ff}
+  .confirm-dialog p{margin:0;color:#b8c7dc;font-size:13px;line-height:1.45;white-space:pre-wrap}
+  .confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+  .confirm-actions .tbtn{width:auto;margin:0;padding:6px 14px}
+  .confirm-actions .danger{background:#7c2d2d;border-color:#b45353}
+  .confirm-actions .danger:hover{background:#963737}
+  .confirm-actions .primary{background:#2f6fd6;border-color:#6fa8ff}
+  @keyframes confirmIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+
   /* ---- aide ---- */
   #help{top:50%;left:50%;transform:translate(-50%,-50%);width:520px;max-width:92vw;
     padding:22px 26px;font-size:14px;line-height:1.55;z-index:30;display:none}
@@ -236,6 +252,17 @@
   <button class="tbtn" id="bHelp" title="Aide (H)" data-i18n-title="topbar.help">❓</button>
   <span class="sep"></span>
   <div class="opt-wrap">
+    <button class="tbtn" id="bLayer" title="Calques" data-i18n-title="layers.title" data-i18n="layers.button">Layer</button>
+    <div id="layerMenu">
+      <div class="opt-title" data-i18n="layers.title">Calques</div>
+      <div class="opt-item" id="layerUnderstaffedFactories" data-opt="highlightUnderstaffedFactories">
+        <span class="chk"></span>
+        <span data-i18n="layers.understaffedFactories">Usines sans assez d'ouvriers</span>
+      </div>
+    </div>
+  </div>
+  <span class="sep"></span>
+  <div class="opt-wrap">
     <button class="tbtn" id="bOptions" title="Options d'affichage" data-i18n-title="settings.title">⚙️</button>
     <div id="optMenu">
       <div class="opt-title" data-i18n="settings.language">Langue</div>
@@ -259,6 +286,16 @@
 <div id="finance" class="panel"></div>
 <div id="info" class="panel"></div>
 <div id="toasts"></div>
+<div id="confirmOverlay">
+  <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <h3 id="confirmTitle">Confirmation</h3>
+    <p id="confirmMessage"></p>
+    <div class="confirm-actions">
+      <button class="tbtn" id="confirmCancel">Annuler</button>
+      <button class="tbtn primary" id="confirmOk">Confirmer</button>
+    </div>
+  </div>
+</div>
 
 <div id="help" class="panel">
 

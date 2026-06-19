@@ -309,6 +309,81 @@ function drawTree(rx,ry,x,y){
   tri(h+14, h*0.55, 6.5, '#43a047');
 }
 
+function isUnderstaffedOwnFactory(b){
+  const d = BUILD[b.type];
+  if(!d?.ind || b.paused || !ownedBy(b, myOwner())) return false;
+  const req = workersRequiredOf(b);
+  return req > 0 && workersAllocatedOf(b) < req;
+}
+
+function drawBuildingLayerDiagnostic(b, rx0, ry0, rw, rh){
+  const d = BUILD[b.type];
+  const target = isUnderstaffedOwnFactory(b);
+  const own = ownedBy(b, myOwner());
+  ctx.save();
+  diamond(rx0, ry0, rw, rh);
+  if(target){
+    ctx.fillStyle = '#ff2d2d';
+    ctx.strokeStyle = '#fff200';
+    ctx.lineWidth = 4.5;
+  } else if(d.ind && own){
+    ctx.fillStyle = '#1557ff';
+    ctx.strokeStyle = '#eaf2ff';
+    ctx.lineWidth = 2.4;
+  } else if(own){
+    ctx.fillStyle = '#111827';
+    ctx.strokeStyle = '#f8fafc';
+    ctx.lineWidth = 1.8;
+  } else {
+    ctx.fillStyle = '#3f4654';
+    ctx.strokeStyle = '#aab4c2';
+    ctx.lineWidth = 1.2;
+  }
+  ctx.fill();
+  ctx.stroke();
+
+  const c = iso(rx0 + rw * 0.5, ry0 + rh * 0.5);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if(target){
+    ctx.fillStyle = '#fff200';
+    ctx.strokeStyle = '#050505';
+    ctx.lineWidth = 4;
+    ctx.font = 'bold 18px sans-serif';
+    ctx.strokeText('!', c[0], c[1]);
+    ctx.fillText('!', c[0], c[1]);
+  } else if(d.ind && own && !b.paused){
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.fillText(workersAllocatedOf(b) + '/' + workersRequiredOf(b), c[0], c[1]);
+  }
+  ctx.restore();
+}
+
+function drawPausedBuildingBadge(tc, rw, rh){
+  const x = tc[0] + TW * rw * 0.24;
+  const y = tc[1] - TH * rh * 0.32;
+  const r = 11;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r + 3, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,.78)';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffcc00';
+  ctx.fill();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = '#111111';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillText('Ⅱ', x, y + 0.5);
+  ctx.restore();
+}
+
 function drawBuilding(b){
   const d = BUILD[b.type];
   const [r1x,r1y] = rotIdx(b.x, b.y);
@@ -316,6 +391,18 @@ function drawBuilding(b){
   const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
   // l'empreinte tournée échange largeur et profondeur selon l'orientation
   const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
+  if(!drawFast && UI_OPTIONS.highlightUnderstaffedFactories){
+    drawBuildingLayerDiagnostic(b, rx0, ry0, rw, rh);
+    if(b === selected){
+      ctx.save();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      diamond(rx0, ry0, rw, rh);
+      ctx.stroke();
+      ctx.restore();
+    }
+    return;
+  }
   // les sites industriels fusionnés gagnent en hauteur avec leur taille
   const hgt = d.ind ? d.hgt*(1+0.18*(Math.max(b.w,b.h)-1)) : d.hgt;
   const bCol = packBuildingColor(b, d);
@@ -367,6 +454,10 @@ function drawBuilding(b){
     } else {
       ctx.fillText(d.ic, tc[0], tc[1]+1);
     }
+  }
+
+  if(!drawFast && d.ind && b.paused){
+    drawPausedBuildingBadge(tc, rw, rh);
   }
 
   // barre de progression

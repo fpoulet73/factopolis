@@ -72,13 +72,16 @@ function renderAutoSaves(){
   el.innerHTML = localHtml + serverHtml;
 
   el.querySelectorAll('[data-autoload]').forEach(btn=>{
-    btn.onclick = ()=>{
+    btn.onclick = async ()=>{
       const slot = +btn.dataset.autoload;
       const sv = loadAutoSaves().find(s => s.slot === slot);
       if(!sv) return;
       const d = new Date(sv.date);
       const label = d.toLocaleDateString('fr-FR')+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
-      if(!confirm('Charger la sauvegarde automatique du '+label+' ?')) return;
+      if(!await confirmAction('Charger la sauvegarde automatique du '+label+' ?', {
+        title: 'Charger une sauvegarde auto',
+        okText: 'Charger',
+      })) return;
       applySnapshot(sv.state);
       autoSaveTimer = AUTO_SAVE_INTERVAL;
       toast('📥 Sauvegarde auto chargée', 'win');
@@ -86,10 +89,13 @@ function renderAutoSaves(){
   });
 
   el.querySelectorAll('[data-svautoload]').forEach(btn=>{
-    btn.onclick = ()=>{
+    btn.onclick = async ()=>{
       if(!mpHasAdminRights()) return;
       const name = btn.dataset.svautoload;
-      if(!confirm('Charger "'+name+'" ? La partie en cours sera remplacée pour tous les joueurs.')) return;
+      if(!await confirmAction('Charger "'+name+'" ?\nLa partie en cours sera remplacée pour tous les joueurs.', {
+        title: 'Charger une sauvegarde',
+        okText: 'Charger',
+      })) return;
       MP.ws.send(JSON.stringify({ type:'load_game', token:MP.token, name }));
     };
   });

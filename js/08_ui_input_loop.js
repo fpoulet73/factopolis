@@ -509,7 +509,7 @@ function renderInfo(){
   p._html = h; p._b = b;
   p.innerHTML = h;
   p.querySelectorAll('[data-plant-upgrade]').forEach(btn=>{
-    btn.onclick = ()=>{
+    btn.onclick = async ()=>{
       const targetType = btn.dataset.plantUpgrade;
       const err = plantUpgradeError(b, targetType);
       if(err){ toast('⛔ '+err, 'err'); return; }
@@ -520,7 +520,10 @@ function renderInfo(){
       const cost = targetDef.cost || 0;
       if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
       const label = (PLANT_UPGRADES[targetType]||{}).label || targetDef.n;
-      if(!confirm('Créer '+label+' pour '+cost+' $ ? Ce choix sera définitif.')) return;
+      if(!await confirmAction('Créer '+label+' pour '+cost+' $ ?\nCe choix sera définitif.', {
+        title: 'Spécialiser l’usine',
+        okText: 'Créer',
+      })) return;
       spendMoney(cost, 'construction');
       const upgradeErr = applyPlantUpgrade(b, targetType);
       if(upgradeErr){ toast('⛔ '+upgradeErr, 'err'); return; }
@@ -614,9 +617,13 @@ function renderInfo(){
     };
   });
   const clearBtn = $('bClearStock');
-  if(clearBtn) clearBtn.onclick = ()=>{
+  if(clearBtn) clearBtn.onclick = async ()=>{
     if(MP.connected && b.owner && b.owner !== MP.myId){ toast('⛔ Bâtiment d\'un autre joueur','err'); return; }
-    if(!confirm('Vider tout le stock de ce bâtiment ?')) return;
+    if(!await confirmAction('Vider tout le stock de ce bâtiment ?', {
+      title: 'Vider le stock',
+      okText: 'Vider',
+      danger: true,
+    })) return;
     b.storage = {};
     b.inc = {};
     if(MP.connected) netSend({ type:'clear_bld_stock', x:b.x, y:b.y });
@@ -675,6 +682,37 @@ function toast(msg, cls){
   while(box.children.length > 4) box.removeChild(box.firstChild);
   setTimeout(()=>{ t.style.transition = 'opacity .4s'; t.style.opacity = '0'; }, 2400);
   setTimeout(()=> t.remove(), 2900);
+}
+
+let confirmResolver = null;
+function closeConfirmDialog(result){
+  const overlay = $('confirmOverlay');
+  if(!overlay || !confirmResolver) return;
+  overlay.classList.remove('open');
+  const resolve = confirmResolver;
+  confirmResolver = null;
+  resolve(result);
+}
+function confirmAction(message, options={}){
+  const overlay = $('confirmOverlay');
+  if(!overlay) return Promise.resolve(false);
+  if(confirmResolver) closeConfirmDialog(false);
+  $('confirmTitle').textContent = options.title || 'Confirmation';
+  $('confirmMessage').textContent = message;
+  const ok = $('confirmOk');
+  const cancel = $('confirmCancel');
+  ok.textContent = options.okText || 'Confirmer';
+  cancel.textContent = options.cancelText || 'Annuler';
+  ok.classList.toggle('danger', options.danger === true);
+  ok.classList.toggle('primary', options.danger !== true);
+  overlay.classList.add('open');
+  return new Promise(resolve=>{
+    confirmResolver = resolve;
+    ok.onclick = () => closeConfirmDialog(true);
+    cancel.onclick = () => closeConfirmDialog(false);
+    overlay.onclick = e => { if(e.target === overlay) closeConfirmDialog(false); };
+    setTimeout(()=>ok.focus(), 0);
+  });
 }
 
 // ---------- barre d'outils ----------
@@ -1068,6 +1106,11 @@ function smoothCamera(dt){
 const keys = new Set();
 addEventListener('keydown', e=>{
   if(e.target.tagName==='INPUT') return;
+  if(e.code==='Escape' && confirmResolver){
+    e.preventDefault();
+    closeConfirmDialog(false);
+    return;
+  }
   keys.add(e.code);
   if(e.code==='Space'){ e.preventDefault(); togglePause(); }
   if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; closeTownPanel(); }
@@ -1152,6 +1195,7 @@ $('sSplashGo').onclick = ()=> $('splash').style.display = 'none';
 
 // ---------- dropdown options ----------
 const optMenu = $('optMenu');
+const layerMenu = $('layerMenu');
 const graphicPackSelect = $('graphicPackSelect');
 const languageSelect = $('languageSelect');
 
@@ -1209,12 +1253,21 @@ addEventListener('factopolis:languagechange', () => {
 
 $('bOptions').onclick = e => {
   e.stopPropagation();
+  layerMenu.classList.remove('open');
   optMenu.classList.toggle('open');
+};
+
+$('bLayer').onclick = e => {
+  e.stopPropagation();
+  optMenu.classList.remove('open');
+  layerMenu.classList.toggle('open');
 };
 
 document.addEventListener('click', e => {
   if(!optMenu.contains(e.target) && e.target.id !== 'bOptions')
     optMenu.classList.remove('open');
+  if(!layerMenu.contains(e.target) && e.target.id !== 'bLayer')
+    layerMenu.classList.remove('open');
 });
 
 document.querySelectorAll('.opt-item[data-opt]').forEach(el => {

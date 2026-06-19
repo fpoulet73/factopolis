@@ -36,6 +36,7 @@ const UI_OPTIONS = (() => {
   return {
     language: (typeof currentLanguage === 'function') ? currentLanguage() : (saved.language || 'fr'),
     hideColorMarkers: saved.hideColorMarkers ?? false,
+    highlightUnderstaffedFactories: saved.highlightUnderstaffedFactories ?? false,
     graphicPack: GRAPHIC_PACKS[saved.graphicPack] || /^asset:/.test(saved.graphicPack || '') ? saved.graphicPack : 'classic',
   };
 })();
@@ -291,7 +292,7 @@ const ownedBy   = (b, oid) => oid == null ? (b.owner == null) : (b.owner === oid
 const popTotal  = (oid=myOwner()) => buildings.filter(b=>ownedBy(b,oid)).reduce((s,b)=> s+(b.pop||0), 0);
 const housingCap= (oid=myOwner()) => buildings.filter(b=>ownedBy(b,oid)).reduce((s,b)=>
       s + (BUILD[b.type].resid ? BUILD[b.type].resid.popCap : 0), 0);
-const jobsTotal = (oid=myOwner()) => buildings.filter(b=>ownedBy(b,oid))
+const jobsTotal = (oid=myOwner()) => buildings.filter(b=>!b.dead && ownedBy(b,oid))
   .reduce((s,b)=> s + (b.paused ? 0 : (BUILD[b.type].workers||0)*b.w*b.h), 0);
 const workersRequiredOf = b => (BUILD[b.type].workers||0)*b.w*b.h;
 const workersAllocatedOf = b => {
@@ -543,10 +544,10 @@ function townHousingCap(townId){
   return townHomes(townId).reduce((s,b)=>s+BUILD[b.type].resid.popCap, 0);
 }
 
-function townReachableJobs(townId){
+function townReachableJobBuildings(townId){
   const homes = townHomes(townId);
   const seen = new Set();
-  let total = 0;
+  const out = [];
   for(const home of homes){
     const radius = workRadiusOf(home);
     for(const job of buildings){
@@ -555,15 +556,19 @@ function townReachableJobs(townId){
       if(req <= 0 || seen.has(job)) continue;
       if(buildingDistance(home, job) <= radius){
         seen.add(job);
-        total += req;
+        out.push(job);
       }
     }
   }
-  return total;
+  return out;
+}
+
+function townReachableJobs(townId){
+  return townReachableJobBuildings(townId).reduce((s,b)=>s+workersRequiredOf(b), 0);
 }
 
 function townAllocatedWorkers(townId){
-  return buildings.reduce((s,b)=>s+((b.workersByTown && b.workersByTown[townId]) || 0), 0);
+  return townReachableJobBuildings(townId).reduce((s,b)=>s+workersAllocatedOf(b), 0);
 }
 
 function refreshWorkerAllocation(){

@@ -34,6 +34,9 @@ function update(dt){
       }
     }
     const rc = BUILD[b.type].resid;
+    if(rc && b.mergeBlockedMissing && residHasAll(b, b.mergeBlockedMissing)){
+      delete b.mergeBlockedMissing;
+    }
     if(rc && !b.starterHome && residHasAll(b, residRequiredOf(b))){
       b.starve = 0;
       b.ct += dt;
@@ -238,8 +241,9 @@ function update(dt){
 
 // un rectangle w×h entièrement couvert de logements pleins strictement plus
 // petits → fusion en bâtiment de niveau supérieur
-function checkRect(x,y,w,h){
+function checkRect(x,y,w,h,targetLevel=null){
   const area = w*h, set = [];
+  const targetFusionRequired = targetLevel?.resid?.fusionRequired || null;
   for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++){
     const b = bgrid[yy*N+xx];
     if(!b) return null;
@@ -248,6 +252,12 @@ function checkRect(x,y,w,h){
     if(b.w*b.h >= area) return null;                            // pas plus petit
     if(b.x<x || b.y<y || b.x+b.w>x+w || b.y+b.h>y+h) return null; // déborde du rectangle
     if(b.pop < rc.popCap) return null;                          // pas plein
+    if(b.mergeBlockedMissing){
+      const blockedMissing = targetFusionRequired
+        ? b.mergeBlockedMissing.filter(r => targetFusionRequired.includes(r))
+        : b.mergeBlockedMissing;
+      if(blockedMissing.length && !residHasAll(b, blockedMissing)) return null;
+    }
     if(!b.starterHome && !residHasAll(b, residFusionRequiredOf(b))) return null;
     if(!set.includes(b)) set.push(b);
   }
@@ -307,7 +317,7 @@ function tryMerge(){
   for(const L of MERGE_ORDER){
     for(const [w,h] of L.shapes){
       for(let y=0; y<=N-h; y++) for(let x=0; x<=N-w; x++){
-        const set = checkRect(x,y,w,h);
+        const set = checkRect(x,y,w,h,L);
         if(!set) continue;
         const d = BUILD[L.key];
         const stock = {};
@@ -441,52 +451,109 @@ function spawnLeavers(b, n){
   }
 }
 
-// pénurie : un bâtiment fusionné se sépare en maisons individuelles,
+function residentialSplitPlan(b){
+  const totalArea = b.w * b.h;
+  const candidates = [];
+  for(let rank=0; rank<LEVELS.length; rank++){
+    const L = LEVELS[rank];
+    if(L.key === b.type) continue;
+    for(const [w,h] of L.shapes){
+      const area = w * h;
+      if(area <= 0 || area >= totalArea || w > b.w || h > b.h) continue;
+      candidates.push({ type:L.key, w, h, area, rank });
+    }
+  }
+  candidates.sort((a,b)=> (b.area-a.area) || (b.rank-a.rank));
+
+  const filled = new Array(b.w * b.h).fill(false);
+  const fits = (x,y,w,h)=>{
+    if(x+w > b.w || y+h > b.h) return false;
+    for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++)
+      if(filled[yy*b.w+xx]) return false;
+    return true;
+  };
+  const mark = (x,y,w,h,val)=>{
+    for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++) filled[yy*b.w+xx] = val;
+  };
+  const scoreOf = plan => plan.reduce((s,p)=>s + p.area*p.area*100 + p.rank*10, 0) - plan.length;
+
+  const search = plan => {
+    let first = -1;
+    for(let i=0; i<filled.length; i++) if(!filled[i]){ first = i; break; }
+    if(first < 0) return { plan:plan.slice(), score:scoreOf(plan) };
+    const x = first % b.w, y = (first / b.w) | 0;
+    let best = null;
+    for(const c of candidates){
+      if(!fits(x,y,c.w,c.h)) continue;
+      mark(x,y,c.w,c.h,true);
+      plan.push({ type:c.type, x:b.x+x, y:b.y+y, w:c.w, h:c.h, area:c.area });
+      const out = search(plan);
+      if(out && (!best || out.score > best.score)) best = out;
+      plan.pop();
+      mark(x,y,c.w,c.h,false);
+    }
+    return best;
+  };
+
+  const best = search([]);
+  if(best) return best.plan;
+  const fallback = [];
+  for(let y=b.y; y<b.y+b.h; y++) for(let x=b.x; x<b.x+b.w; x++)
+    fallback.push({ type:'house', x, y, w:1, h:1, area:1 });
+  return fallback;
+}
+
+// pénurie : un bâtiment fusionné se sépare en meilleure combinaison inférieure,
 // l'excédent d'habitants quitte la ville
 function splitBuilding(b){
   if((b.pop||0) <= (b.protectedPop||0)) return;
-  const houseCap = BUILD.house.resid.popCap;
-  const houseStockCap = BUILD.house.resid.stockCap;
+  const splitPlan = residentialSplitPlan(b);
+  const lowerPopCap = splitPlan.reduce((s,p)=>s + BUILD[p.type].resid.popCap, 0);
   const wasSel = selected===b;
   const owner = b.owner ?? null;
   let pop = b.pop;
   let protectedPop = b.protectedPop||0;
   const pools = {};
   for(const k in b.storage) if(RES[k]) pools[k] = b.storage[k]||0;
-  const area = b.w * b.h;
-  const excess = Math.max(0, pop - area * houseCap);
+  const mergeBlockedMissing = residFusionRequiredOf(b).filter(r => (b.storage[r]||0) <= 0);
+  const excess = Math.max(0, pop - lowerPopCap);
   b.dead = true;
   buildings.splice(buildings.indexOf(b),1);
   setGrid(b,null);
   pop -= excess;
-  const newHouses = [];
-  for(let y=b.y; y<b.y+b.h; y++) for(let x=b.x; x<b.x+b.w; x++){
-    const h = newBuilding('house',x,y);
+  const newHomes = [];
+  for(const piece of splitPlan){
+    const h = newBuilding(piece.type, piece.x, piece.y, piece.w, piece.h);
+    const rc = BUILD[piece.type].resid;
     h.owner = owner;
-    h.pop = Math.min(houseCap, pop);
+    h.pop = Math.min(rc.popCap, pop);
     pop -= h.pop;
     h.protectedPop = Math.min(h.pop, protectedPop);
     h.starterHome = h.protectedPop > 0;
     protectedPop -= h.protectedPop;
     h.starve = 0;
-    // distribuer les stocks résidentiels équitablement entre les nouvelles maisons
-    for(const k in pools){
-      const share = Math.min(houseStockCap, Math.floor(pools[k] / area));
-      h.storage[k] = share;
-      pools[k] -= share;
-    }
+    if(mergeBlockedMissing.length) h.mergeBlockedMissing = mergeBlockedMissing.slice();
     buildings.push(h);
     setGrid(h,h);
-    newHouses.push(h);
-    if(wasSel && x===b.x && y===b.y) selected = h;
+    newHomes.push(h);
+    if(wasSel && piece.x===b.x && piece.y===b.y) selected = h;
   }
-  // donner le reste aux premières maisons
-  for(const h of newHouses){
-    if(Object.values(pools).every(v => v <= 0)) break;
-    for(const k in pools){
-      if(pools[k] <= 0) continue;
-      const space = houseStockCap - (h.storage[k]||0);
-      const give = Math.min(space, pools[k]);
+
+  // distribuer les stocks résidentiels entre les bâtiments issus de la défusion
+  for(const k in pools){
+    const homes = newHomes.filter(h => capOf(h,k) > 0);
+    if(!homes.length) continue;
+    for(const h of homes){
+      if(pools[k] <= 0) break;
+      const share = Math.min(capOf(h,k), Math.floor(pools[k] / homes.length));
+      if(share <= 0) continue;
+      h.storage[k] = (h.storage[k]||0) + share;
+      pools[k] -= share;
+    }
+    for(const h of homes){
+      if(pools[k] <= 0) break;
+      const give = Math.min(capOf(h,k) - (h.storage[k]||0), pools[k]);
+      if(give <= 0) continue;
       h.storage[k] = (h.storage[k]||0) + give;
       pools[k] -= give;
     }
