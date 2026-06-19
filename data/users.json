@@ -8,8 +8,12 @@
     "color": "#58c470"
   },
   "Fabrice": {
-    "passwordHash": "80e1e9bf72dacc29c47a4aae7dbf8a236ccfea5a4e6a7d6ab84ebead1681e1e6",
-    "color": "#e2a93f"
+    "passwordHash": "9ff49efbd69fa3b1a3c0319ccf86cf314655543feac367fb2b85cfbb59d4108d5dbe004049b0a299c9372bf46a21e26ed92305c7a9ca4138a4891b1f2a1ea26d",
+    "color": "#e2a93f",
+    "passwordAlgo": "scrypt",
+    "passwordSalt": "483c4f58a5c343aa390587c1decac2e2",
+    "sessionHash": "c9e472c51ab835725c9eff8a1265ee8ad5264240c5df6e7d13e81b44a30b4fdd",
+    "sessionIssuedAt": "2026-06-19T08:58:59.636Z"
   },
   "gege": {
     "passwordHash": "e7f63be25caefa4d8cff32f04757b158f73c50ae313668a07dc8ee9bec9b43de",

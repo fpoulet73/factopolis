@@ -1152,43 +1152,60 @@ $('sSplashGo').onclick = ()=> $('splash').style.display = 'none';
 
 // ---------- dropdown options ----------
 const optMenu = $('optMenu');
-const graphicPackMenu = $('graphicPackMenu');
+const graphicPackSelect = $('graphicPackSelect');
+const languageSelect = $('languageSelect');
 
-function buildGraphicPackMenu(){
-  graphicPackMenu.innerHTML = '';
-  for(const key in GRAPHIC_PACKS){
-    const pack = GRAPHIC_PACKS[key];
-    const el = document.createElement('div');
-    el.className = 'opt-item';
-    el.dataset.pack = key;
-    el.title = pack.desc || '';
-    el.innerHTML = '<span class="chk"></span>' + pack.n;
-    graphicPackMenu.appendChild(el);
+function buildLanguageSelect(){
+  if(!languageSelect) return;
+  languageSelect.innerHTML = '';
+  for(const lang of (window.I18N_LANGS || ['fr'])){
+    const opt = document.createElement('option');
+    opt.value = lang;
+    opt.textContent = t('language.' + lang);
+    languageSelect.appendChild(opt);
   }
 }
-buildGraphicPackMenu();
+
+function buildGraphicPackSelect(){
+  graphicPackSelect.innerHTML = '';
+  for(const key in GRAPHIC_PACKS){
+    const pack = GRAPHIC_PACKS[key];
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = pack.n;
+    opt.title = pack.desc || '';
+    graphicPackSelect.appendChild(opt);
+  }
+}
+buildLanguageSelect();
+buildGraphicPackSelect();
 loadCommunityGraphicPacks().then(ids => {
   if(!ids.length) return;
-  buildGraphicPackMenu();
+  buildGraphicPackSelect();
   refreshOptMenu();
   if(ids.includes(UI_OPTIONS.graphicPack))
-    toast('Pack graphique chargé : ' + GRAPHIC_PACKS[UI_OPTIONS.graphicPack].n);
+    toast(t('settings.graphicPackLoaded', { pack: GRAPHIC_PACKS[UI_OPTIONS.graphicPack].n }));
 });
 
 function refreshOptMenu(){
+  if(languageSelect){
+    for(const opt of languageSelect.options) opt.textContent = t('language.' + opt.value);
+    languageSelect.value = UI_OPTIONS.language;
+  }
+  if(graphicPackSelect) graphicPackSelect.value = UI_OPTIONS.graphicPack;
   document.querySelectorAll('.opt-item[data-opt]').forEach(el => {
     const key = el.dataset.opt;
     const active = !!UI_OPTIONS[key];
     el.classList.toggle('active', active);
     el.querySelector('.chk').textContent = active ? '✓' : '';
   });
-  document.querySelectorAll('.opt-item[data-pack]').forEach(el => {
-    const active = UI_OPTIONS.graphicPack === el.dataset.pack;
-    el.classList.toggle('active', active);
-    el.querySelector('.chk').textContent = active ? '✓' : '';
-  });
 }
 refreshOptMenu();
+applyI18n();
+addEventListener('factopolis:languagechange', () => {
+  buildLanguageSelect();
+  refreshOptMenu();
+});
 
 $('bOptions').onclick = e => {
   e.stopPropagation();
@@ -1210,14 +1227,18 @@ document.querySelectorAll('.opt-item[data-opt]').forEach(el => {
   };
 });
 
-graphicPackMenu.onclick = e => {
-  const el = e.target.closest('.opt-item[data-pack]');
-  if(!el) return;
+languageSelect.onchange = e => {
   e.stopPropagation();
-  UI_OPTIONS.graphicPack = el.dataset.pack;
+  setLanguage(languageSelect.value);
+  toast(t('settings.languageChanged', { language: t('language.' + UI_OPTIONS.language) }));
+};
+
+graphicPackSelect.onchange = e => {
+  e.stopPropagation();
+  UI_OPTIONS.graphicPack = graphicPackSelect.value;
   saveUIOptions();
   refreshOptMenu();
-  toast('Pack graphique : ' + GRAPHIC_PACKS[UI_OPTIONS.graphicPack].n);
+  toast(t('settings.graphicPackChanged', { pack: GRAPHIC_PACKS[UI_OPTIONS.graphicPack].n }));
 };
 
 // ---------- boucle principale ----------

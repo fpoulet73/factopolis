@@ -34,6 +34,7 @@ const UI_OPTIONS = (() => {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('factopolis_ui_options') || '{}'); } catch(e){}
   return {
+    language: (typeof currentLanguage === 'function') ? currentLanguage() : (saved.language || 'fr'),
     hideColorMarkers: saved.hideColorMarkers ?? false,
     graphicPack: GRAPHIC_PACKS[saved.graphicPack] || /^asset:/.test(saved.graphicPack || '') ? saved.graphicPack : 'classic',
   };

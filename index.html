@@ -39,6 +39,10 @@
   .opt-item .chk{width:16px;height:16px;border-radius:4px;border:1.5px solid #36465e;
     flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px}
   .opt-item.active .chk{background:#2f6fd6;border-color:#5b93e8}
+  .opt-select{display:block;width:calc(100% - 28px);margin:4px 14px 8px;
+    background:#16202f;border:1px solid #36465e;color:#e8eef7;border-radius:7px;
+    padding:6px 8px;font-size:13px;box-sizing:border-box}
+  .opt-select:focus{outline:none;border-color:#5b93e8}
   .opt-title{padding:7px 14px 4px;color:#8fa3bf;font-size:11px;text-transform:uppercase}
   .opt-sep{height:1px;background:#263246;margin:5px 0}
 
@@ -209,37 +213,40 @@
   <!-- scène principale -->
   <div class="splash-scene">
     <div class="splash-title">FACTOPOLIS</div>
-    <p class="splash-sub">Extrais · Produis · Transporte · Peuple</p>
+    <p class="splash-sub" data-i18n="splash.subtitle">Extrais · Produis · Transporte · Peuple</p>
   </div>
-  <button class="tbtn" id="sSplashGo">▶ &nbsp;Commencer</button>
+  <button class="tbtn" id="sSplashGo"><span>▶ &nbsp;</span><span data-i18n="splash.start">Commencer</span></button>
 </div>
 
 <div id="topbar" class="panel">
-  <span class="stat" id="sMoney" title="Cliquer : détail des gains et dépenses">💰 <b id="hMoney">0</b> $</span>
-  <span class="stat" title="Village sélectionné">🏘️ <b id="hTown">—</b></span>
-  <span class="stat" title="Population / logements du village sélectionné">👥 <b id="hPop">0</b></span>
-  <span class="stat" title="Ouvriers employés / emplois accessibles au village sélectionné">🛠️ <b id="hJobs">0</b></span>
-  <span class="stat" title="Camions en circulation">🚚 <b id="hTrucks">0</b></span>
+  <span class="stat" id="sMoney" title="Cliquer : détail des gains et dépenses" data-i18n-title="topbar.moneyTitle">💰 <b id="hMoney">0</b> $</span>
+  <span class="stat" title="Village sélectionné" data-i18n-title="topbar.townTitle">🏘️ <b id="hTown">—</b></span>
+  <span class="stat" title="Population / logements du village sélectionné" data-i18n-title="topbar.popTitle">👥 <b id="hPop">0</b></span>
+  <span class="stat" title="Ouvriers employés / emplois accessibles au village sélectionné" data-i18n-title="topbar.jobsTitle">🛠️ <b id="hJobs">0</b></span>
+  <span class="stat" title="Camions en circulation" data-i18n-title="topbar.trucksTitle">🚚 <b id="hTrucks">0</b></span>
   <span class="sep"></span>
-  <button class="tbtn" id="bRotL" title="Pivoter la vue à gauche (Maj+R)">⟲</button>
-  <button class="tbtn" id="bRotR" title="Pivoter la vue à droite (R)">⟳</button>
+  <button class="tbtn" id="bRotL" title="Pivoter la vue à gauche (Maj+R)" data-i18n-title="topbar.rotateLeft">⟲</button>
+  <button class="tbtn" id="bRotR" title="Pivoter la vue à droite (R)" data-i18n-title="topbar.rotateRight">⟳</button>
   <span class="sep"></span>
-  <button class="tbtn" id="bPause" title="Pause (Espace)">⏸</button>
+  <button class="tbtn" id="bPause" title="Pause (Espace)" data-i18n-title="topbar.pause">⏸</button>
   <button class="tbtn spd on" data-s="1">1×</button>
   <button class="tbtn spd" data-s="2">2×</button>
   <button class="tbtn spd" data-s="3">3×</button>
   <span class="sep"></span>
-  <button class="tbtn" id="bHelp" title="Aide (H)">❓</button>
+  <button class="tbtn" id="bHelp" title="Aide (H)" data-i18n-title="topbar.help">❓</button>
   <span class="sep"></span>
   <div class="opt-wrap">
-    <button class="tbtn" id="bOptions" title="Options d'affichage">⚙️</button>
+    <button class="tbtn" id="bOptions" title="Options d'affichage" data-i18n-title="settings.title">⚙️</button>
     <div id="optMenu">
-      <div class="opt-title">Pack graphique</div>
-      <div id="graphicPackMenu"></div>
+      <div class="opt-title" data-i18n="settings.language">Langue</div>
+      <select class="opt-select" id="languageSelect"></select>
+      <div class="opt-sep"></div>
+      <div class="opt-title" data-i18n="settings.graphicPack">Pack graphique</div>
+      <select class="opt-select" id="graphicPackSelect"></select>
       <div class="opt-sep"></div>
       <div class="opt-item" id="optColorMarkers" data-opt="hideColorMarkers">
         <span class="chk"></span>
-        Cacher les marqueurs de couleur
+        <span data-i18n="settings.hideColorMarkers">Cacher les marqueurs de couleur</span>
       </div>
     </div>
   </div>
@@ -257,10 +264,10 @@
 
   <!-- Page 1 : Introduction -->
   <div class="help-page active" id="hPage0">
-    <h2>🏗️ Factopolis</h2>
-    <p>Bâtis une chaîne industrielle, relie tout par la route, et fais grandir ta ville.
+    <h2 data-i18n="help.introTitle">🏗️ Factopolis</h2>
+    <p data-i18n="help.introText">Bâtis une chaîne industrielle, relie tout par la route, et fais grandir ta ville.
        Les camions transportent automatiquement les ressources entre bâtiments connectés.</p>
-    <div class="chain">
+    <div class="chain" data-i18n-html="help.chain">
       ⛏️ Mine (fer) + ⛏️ Mine (charbon) → 🔥 Fonderie → acier<br>
       🏚️ Usine abandonnée → 🔥 aciérie / 🌾 ferme / ☁️ coton / 🧵 tissage / ⚙️ moulin / 🥖 boulangerie / 🐟 poissonnerie / 🏭 outils<br>
       💧 Pompe → 🛢️ citerne → eau &nbsp;•&nbsp; 🌾 blé → ⚙️ farine → 🥖 pain &nbsp;•&nbsp; ☁️ coton → 🧵 vêtement<br>
@@ -272,64 +279,68 @@
 
   <!-- Page 2 : Bâtiments -->
   <div class="help-page" id="hPage1">
-    <h2>⚙️ Bâtiments</h2>
+    <h2 data-i18n="help.buildingsTitle">⚙️ Bâtiments</h2>
     <ul>
-      <li>Chaque bâtiment doit toucher une <b>route</b> (sinon ⚠️ : aucun camion ne passe).</li>
-      <li>Les usines abandonnées doivent être <b>spécialisées</b> depuis leur panneau de détail.</li>
-      <li>Les pompes se construisent au <b>bord de l'eau</b>. Les camions citernes transportent l'eau vers les citernes.</li>
-      <li>Les boulangeries ont besoin d'une <b>citerne proche</b> pour recevoir l'eau.</li>
-      <li>Les cabanes de pêcheur se construisent au <b>bord de l'eau</b>. Les poissonneries transforment 2 poissons en <b>filet de poisson</b> + <b>huile de poisson</b>.</li>
-      <li>Les usines ont besoin d'<b>ouvriers</b> : sans assez d'habitants, elles tournent au ralenti.</li>
-      <li>L'📦 entrepôt stocke tout et redistribue entre les bâtiments.</li>
-      <li>L'industrie a un <b>coût d'entretien</b> périodique qui grandit plus vite que sa taille — un empire industriel doit être rentable !</li>
+      <li data-i18n-html="help.building1">Chaque bâtiment doit toucher une <b>route</b> (sinon ⚠️ : aucun camion ne passe).</li>
+      <li data-i18n-html="help.building2">Les usines abandonnées doivent être <b>spécialisées</b> depuis leur panneau de détail.</li>
+      <li data-i18n-html="help.building3">Les pompes se construisent au <b>bord de l'eau</b>. Les camions citernes transportent l'eau vers les citernes.</li>
+      <li data-i18n-html="help.building4">Les boulangeries ont besoin d'une <b>citerne proche</b> pour recevoir l'eau.</li>
+      <li data-i18n-html="help.building5">Les cabanes de pêcheur se construisent au <b>bord de l'eau</b>. Les poissonneries transforment 2 poissons en <b>filet de poisson</b> + <b>huile de poisson</b>.</li>
+      <li data-i18n-html="help.building6">Les usines ont besoin d'<b>ouvriers</b> : sans assez d'habitants, elles tournent au ralenti.</li>
+      <li data-i18n-html="help.building7">L'📦 entrepôt stocke tout et redistribue entre les bâtiments.</li>
+      <li data-i18n-html="help.building8">L'industrie a un <b>coût d'entretien</b> périodique qui grandit plus vite que sa taille — un empire industriel doit être rentable !</li>
     </ul>
   </div>
 
   <!-- Page 3 : Logements & Fusion -->
   <div class="help-page" id="hPage2">
-    <h2>🏠 Logements &amp; Fusion</h2>
+    <h2 data-i18n="help.housingTitle">🏠 Logements &amp; Fusion</h2>
     <ul>
-      <li>Les maisons consomment les <b>outils de construction</b> et des <b>vêtements</b> → <b>+1 habitant</b> et argent. Le <b>pain</b> sert aux montées en niveau ; les <b>filets de poisson</b> donnent un bonus de revenu.</li>
-      <li>Sans outils ou vêtements trop longtemps, un logement se <b>dégrade</b> : les bâtiments fusionnés se séparent en maisons et les habitants en trop quittent la ville à pied.</li>
-      <li>Des logements <b>pleins, approvisionnés en outils ET en pain</b> couvrant un rectangle fusionnent en niveau supérieur :<br>
+      <li data-i18n-html="help.housing1">Les maisons consomment les <b>outils de construction</b> et des <b>vêtements</b> → <b>+1 habitant</b> et argent. Le <b>pain</b> sert aux montées en niveau ; les <b>filets de poisson</b> donnent un bonus de revenu.</li>
+      <li data-i18n-html="help.housing2">Sans outils ou vêtements trop longtemps, un logement se <b>dégrade</b> : les bâtiments fusionnés se séparent en maisons et les habitants en trop quittent la ville à pied.</li>
+      <li data-i18n-html="help.housing3">Des logements <b>pleins, approvisionnés en outils ET en pain</b> couvrant un rectangle fusionnent en niveau supérieur :<br>
           🏡 jumelée (2×1) → 🏘️ rangée (3×1) → 🏨 résidence (4×1)<br>
           🏢 immeuble (2×2) → 🏬 grand immeuble (3×2) → 🏙️ tour (3×3) → 🏙️ gratte-ciel (4×4, 150 hab).</li>
-      <li>Les bâtiments de production <b>identiques</b> côte à côte fusionnent aussi (2×1 … 4×4) : production = cases × facteur croissant, plus de stock et de camions.</li>
+      <li data-i18n-html="help.housing4">Les bâtiments de production <b>identiques</b> côte à côte fusionnent aussi (2×1 … 4×4) : production = cases × facteur croissant, plus de stock et de camions.</li>
     </ul>
   </div>
 
   <!-- Page 4 : Contrôles -->
   <div class="help-page" id="hPage3">
-    <h2>🎮 Contrôles</h2>
+    <h2 data-i18n="help.controlsTitle">🎮 Contrôles</h2>
     <ul>
-      <li>🖱️ <b>Clic gauche</b> : construire / inspecter</li>
-      <li>🖱️ <b>Glisser (gauche)</b> : tracer des routes</li>
-      <li>🖱️ <b>Clic droit / glisser (droit)</b> : déplacer la caméra</li>
-      <li>🖱️ <b>Molette</b> : zoom</li>
-      <li>⌨️ <kbd>R</kbd> / <kbd>Maj+R</kbd> : pivoter la vue</li>
-      <li>⌨️ <kbd>Z Q S D</kbd> / flèches : déplacer la caméra</li>
-      <li>⌨️ <kbd>1</kbd>–<kbd>9</kbd> : sélectionner l'outil</li>
-      <li>⌨️ <kbd>Échap</kbd> : annuler — <kbd>Espace</kbd> : pause</li>
-      <li>⌨️ <kbd>H</kbd> : ouvrir / fermer cette aide</li>
+      <li data-i18n-html="help.control1">🖱️ <b>Clic gauche</b> : construire / inspecter</li>
+      <li data-i18n-html="help.control2">🖱️ <b>Glisser (gauche)</b> : tracer des routes</li>
+      <li data-i18n-html="help.control3">🖱️ <b>Clic droit / glisser (droit)</b> : déplacer la caméra</li>
+      <li data-i18n-html="help.control4">🖱️ <b>Molette</b> : zoom</li>
+      <li data-i18n-html="help.control5">⌨️ <kbd>R</kbd> / <kbd>Maj+R</kbd> : pivoter la vue</li>
+      <li data-i18n-html="help.control6">⌨️ <kbd>Z Q S D</kbd> / flèches : déplacer la caméra</li>
+      <li data-i18n-html="help.control7">⌨️ <kbd>1</kbd>–<kbd>9</kbd> : sélectionner l'outil</li>
+      <li data-i18n-html="help.control8">⌨️ <kbd>Échap</kbd> : annuler — <kbd>Espace</kbd> : pause</li>
+      <li data-i18n-html="help.control9">⌨️ <kbd>H</kbd> : ouvrir / fermer cette aide</li>
     </ul>
-    <button class="tbtn go" id="bGo">C'est parti !</button>
+    <button class="tbtn go" id="bGo" data-i18n="help.go">C'est parti !</button>
   </div>
 
   <!-- Navigation -->
   <div class="help-nav">
-    <button class="tbtn" id="bHelpPrev">◀ Préc.</button>
+    <button class="tbtn" id="bHelpPrev"><span>◀ </span><span data-i18n="help.prev">Préc.</span></button>
     <div class="dots" id="helpDots">
       <span class="dot on" data-p="0"></span>
       <span class="dot" data-p="1"></span>
       <span class="dot" data-p="2"></span>
       <span class="dot" data-p="3"></span>
     </div>
-    <button class="tbtn" id="bHelpNext">Suiv. ▶</button>
+    <button class="tbtn" id="bHelpNext"><span data-i18n="help.next">Suiv.</span><span> ▶</span></button>
   </div>
 
 </div>
 
 <script src="config.js?v=8"></script>
+<script src="js/i18n/fr.js?v=8"></script>
+<script src="js/i18n/en.js?v=8"></script>
+<script src="js/i18n/es.js?v=8"></script>
+<script src="js/i18n.js?v=8"></script>
 <script src="js/01_definitions.js?v=8"></script>
 <script src="js/02_world_state.js?v=8"></script>
 <script src="js/03_buildings_population.js?v=8"></script>
