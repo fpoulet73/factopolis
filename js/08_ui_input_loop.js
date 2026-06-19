@@ -841,7 +841,7 @@ function renderTownPanel(tid){
       const srcBuildings = buildings.filter(b=>!b.dead && b.townId===srcId);
       const forbidden = srcBuildings.some(b=>b.owner!=null && b.owner!==myOid && myOid!=null);
       if(forbidden){ toast('⛔ Ce village contient des bâtiments d\'un autre joueur.','err'); return; }
-      if(MP.connected) netSend({ type:'action', act:{ type:'merge_towns', dstId:t.id, srcId } });
+      if(MP.connected) netSend({ type:'merge_towns', dstId:t.id, srcId });
       mergeTowns(t.id, srcId);
       hudTimer=0; updateHUD(0);
       renderTownPanel(t.id);
@@ -869,8 +869,8 @@ function renderTownPanel(tid){
     const cx = (rx1+rx2)/2, cy = (ry1+ry2)/2;
     const newTown = { id: nextTownId++, name: p.newName, cx, cy };
     towns.push(newTown);
-    if(MP.connected) netSend({ type:'action', act:{ type:'zone_reassign', dstId:newTown.id,
-      x1:rx1, y1:ry1, x2:rx2, y2:ry2, owner:oid, newTown:{ id:newTown.id, name:newTown.name, cx, cy } } });
+    if(MP.connected) netSend({ type:'zone_reassign', dstId:newTown.id,
+      x1:rx1, y1:ry1, x2:rx2, y2:ry2, owner:oid, newTown:{ id:newTown.id, name:newTown.name, cx, cy } });
     reassignBuildingsInRect(newTown.id, rx1, ry1, rx2, ry2, oid);
     cancelTownZoneSelect();
     hudTimer=0; updateHUD(0);

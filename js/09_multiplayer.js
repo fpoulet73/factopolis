@@ -262,12 +262,24 @@ function applySnapshot(d){
 // ---- patch minimal d'une action entrante ----
 function applyAction(msg){
   const { act } = msg;
+  if(!act || typeof act.type !== 'string') return;
+  const validIdx = i => Number.isInteger(i) && i >= 0 && i < N*N;
+  const validXY = (x,y) => Number.isInteger(x) && Number.isInteger(y) && inMap(x,y);
   switch(act.type){
-    case 'road':   road[act.i] = 1; break;
-    case 'bulldoze_road': road[act.i] = 0; earnMoney(3, 'rembours', walletOf(msg.from)); break;
-    case 'bulldoze_tree': terrain[act.i] = T.GRASS; break;
-    case 'terraform': terrain[act.i] = T.GRASS; break;
+    case 'road':
+      if(validIdx(act.i)) road[act.i] = 1;
+      break;
+    case 'bulldoze_road':
+      if(validIdx(act.i)){ road[act.i] = 0; earnMoney(3, 'rembours', walletOf(msg.from)); }
+      break;
+    case 'bulldoze_tree':
+      if(validIdx(act.i)) terrain[act.i] = T.GRASS;
+      break;
+    case 'terraform':
+      if(validIdx(act.i)) terrain[act.i] = T.GRASS;
+      break;
     case 'fill_water': {
+      if(!validIdx(act.i) || !validXY(act.depotX, act.depotY)) break;
       terrain[act.i] = T.GRASS;
       const depot = bgrid[act.depotY*N+act.depotX];
       if(depot && depot.type === 'terrassement')
@@ -275,6 +287,7 @@ function applyAction(msg){
       break;
     }
     case 'bulldoze_bld': {
+      if(!validXY(act.bx, act.by)) break;
       const b = bgrid[act.by*N+act.bx];
       if(!b) break;
       // valider le droit de démolition côté receveur aussi
@@ -283,14 +296,17 @@ function applyAction(msg){
       break;
     }
     case 'build': {
+      if(!BUILD[act.btype] || !validXY(act.x, act.y)) break;
       const cost = BUILD[act.btype].cost||0;
       const wSender = walletOf(msg.from);
       if(msg.fromUsername) wSender.username = msg.fromUsername;
       if(act.btype === 'road'){
+        if(bgrid[act.y*N+act.x]) break;
         road[act.y*N+act.x] = 1;
         wSender.money -= cost; wSender.fin.construction += cost;
         break;
       }
+      if(road[act.y*N+act.x] || bgrid[act.y*N+act.x]) break;
       const b = newBuilding(act.btype, act.x, act.y);
       b.owner = msg.from;
       markStarterHomeIfNeeded(b);
@@ -302,6 +318,7 @@ function applyAction(msg){
       break;
     }
     case 'toggle_bld_pause': {
+      if(!validXY(act.x, act.y)) break;
       const b = bgrid[act.y*N+act.x];
       if(!b || !BUILD[b.type]?.ind) break;
       if(b.owner && b.owner !== msg.from) break;
@@ -309,6 +326,7 @@ function applyAction(msg){
       break;
     }
     case 'toggle_out_block': {
+      if(!validXY(act.x, act.y) || typeof act.res !== 'string') break;
       const b = bgrid[act.y*N+act.x];
       if(!b || !BUILD[b.type]?.ind) break;
       if(b.owner && b.owner !== msg.from) break;
@@ -317,6 +335,7 @@ function applyAction(msg){
       break;
     }
     case 'clear_bld_stock': {
+      if(!validXY(act.x, act.y)) break;
       const b = bgrid[act.y*N+act.x];
       if(!b || !BUILD[b.type]?.ind) break;
       if(b.owner && b.owner !== msg.from) break;
@@ -324,6 +343,7 @@ function applyAction(msg){
       break;
     }
     case 'upgrade_plant': {
+      if(!validXY(act.x, act.y) || !BUILD[act.targetType]) break;
       const b = bgrid[act.y*N+act.x];
       if(!b || b.owner !== msg.from) break;
       const targetType = act.targetType;
@@ -338,6 +358,7 @@ function applyAction(msg){
     }
     case 'buy_vehicle': {
       if(!VEHICLE_TYPES[act.vtype]) break;
+      if(!validXY(act.garageX, act.garageY)) break;
       const garage = buildings.find(b=>b.x===act.garageX && b.y===act.garageY && b.type==='garage');
       if(!garage || garage.owner !== msg.from) break;
       if(vehicles.some(v=>String(v.id) === String(act.id))) break;
@@ -360,6 +381,7 @@ function applyAction(msg){
     case 'route_vehicle': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
       if(!v || v.garageRef?.owner !== msg.from) break;
+      if(!validXY(act.sourceX, act.sourceY) || !validXY(act.destX, act.destY)) break;
       const source = buildings.find(b=>b.x===act.sourceX && b.y===act.sourceY);
       const dest   = buildings.find(b=>b.x===act.destX   && b.y===act.destY);
       if(!source || !dest) break;
@@ -377,6 +399,7 @@ function applyAction(msg){
       break;
     }
     case 'merge_towns': {
+      if(!Number.isInteger(act.dstId) || !Number.isInteger(act.srcId)) break;
       const dst = towns.find(t=>t.id===act.dstId);
       const src = towns.find(t=>t.id===act.srcId);
       if(!dst || !src) break;
@@ -384,6 +407,7 @@ function applyAction(msg){
       break;
     }
     case 'zone_reassign': {
+      if(!Number.isInteger(act.dstId) || !validXY(act.x1, act.y1) || !validXY(act.x2, act.y2)) break;
       if(act.newTown){
         // Créer le nouveau village si nécessaire (venant d'un autre joueur)
         if(!towns.find(t=>t.id===act.newTown.id)){
@@ -397,6 +421,7 @@ function applyAction(msg){
       break;
     }
     case 'rename_bus_stop': {
+      if(!validXY(act.x, act.y)) break;
       const b = bgrid[act.y*N+act.x];
       if(!b || b.type !== 'bus_stop') break;
       if(b.owner && b.owner !== msg.from) break;
@@ -404,6 +429,7 @@ function applyAction(msg){
       break;
     }
     case 'owner_remap':
+      if(!Number.isInteger(act.oldId) || !Number.isInteger(act.newId)) break;
       applyOwnerRemap(act.oldId, act.newId);
       break;
     case 'pause': togglePause(); break;

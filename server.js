@@ -27,7 +27,31 @@ if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, '{}');
 
 // ---- utilitaires ----
 const sha256 = s => crypto.createHash('sha256').update(s).digest('hex');
-const makeToken = (username, pwHash) => sha256('token:' + username + ':' + pwHash);
+const randomToken = () => crypto.randomBytes(32).toString('base64url');
+const tokenHash = token => sha256('session:' + token);
+const passwordHash = (password, salt = crypto.randomBytes(16).toString('hex')) => ({
+  algo: 'scrypt',
+  salt,
+  hash: crypto.scryptSync(password, salt, 64).toString('hex'),
+});
+function verifyPassword(password, user) {
+  if (!user) return false;
+  if (user.passwordAlgo === 'scrypt' && user.passwordSalt && user.passwordHash) {
+    const expected = Buffer.from(user.passwordHash, 'hex');
+    const actual = crypto.scryptSync(password, user.passwordSalt, expected.length);
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  }
+  // Legacy accounts created with a plain SHA-256 hash are accepted once and migrated on login.
+  return user.passwordHash === sha256(password);
+}
+function issueToken(users, username) {
+  const token = randomToken();
+  const u = users[username];
+  u.sessionHash = tokenHash(token);
+  u.sessionIssuedAt = new Date().toISOString();
+  saveUsers(users);
+  return token;
+}
 
 function loadUsers() {
   try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); }
@@ -39,8 +63,9 @@ function saveUsers(u) {
 function validateToken(token) {
   if (!token) return null;
   const users = loadUsers();
+  const hash = tokenHash(token);
   for (const [username, u] of Object.entries(users)) {
-    if (makeToken(username, u.passwordHash) === token)
+    if (u.sessionHash && u.sessionHash === hash)
       return { username, color: u.color };
   }
   return null;
@@ -53,7 +78,14 @@ const saveFileName = (username, name) =>
 const savePath = (username, name) =>
   path.join(SAVES_DIR, saveFileName(username, name));
 
-function resolveSavePath(username, name) {
+function saveBelongsToUser(file, data, username) {
+  const userLower = String(username || '').toLowerCase();
+  const prefixLower = safeName(username) + '_';
+  return file.toLowerCase().startsWith(prefixLower.toLowerCase())
+    || String(data?.meta?.username || '').toLowerCase() === userLower;
+}
+
+function resolveSavePath(username, name, { mustExist = false } = {}) {
   const wanted = saveFileName(username, name);
   const exact = path.join(SAVES_DIR, wanted);
   if (fs.existsSync(exact)) return exact;
@@ -61,7 +93,15 @@ function resolveSavePath(username, name) {
   const wantedLower = wanted.toLowerCase();
   try {
     const match = fs.readdirSync(SAVES_DIR)
-      .find(f => f.endsWith('.json') && f.toLowerCase() === wantedLower);
+      .find(f => {
+        if (!f.endsWith('.json') || f.toLowerCase() !== wantedLower) return false;
+        try {
+          const data = JSON.parse(fs.readFileSync(path.join(SAVES_DIR, f), 'utf8'));
+          return saveBelongsToUser(f, data, username);
+        } catch {
+          return f.toLowerCase().startsWith((safeName(username) + '_').toLowerCase());
+        }
+      });
     if (match) return path.join(SAVES_DIR, match);
   } catch {}
 
@@ -74,18 +114,19 @@ function resolveSavePath(username, name) {
         const stat = fs.statSync(fullPath);
         try {
           const data = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-          return { file: f, path: fullPath, mtimeMs: stat.mtimeMs, name: data.meta?.name || null };
+          return { file: f, path: fullPath, mtimeMs: stat.mtimeMs, name: data.meta?.name || null, data };
         } catch {
           return null;
         }
       })
       .filter(Boolean)
+      .filter(s => saveBelongsToUser(s.file, s.data, username))
       .filter(s => String(s.name || '').toLowerCase() === wantedNameLower)
       .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
     if (byMetaName) return byMetaName.path;
   } catch {}
 
-  return exact;
+  return mustExist ? null : exact;
 }
 
 function listUserSaves(username) {
@@ -99,9 +140,7 @@ function listUserSaves(username) {
       const stat = fs.statSync(fullPath);
       let data = null;
       try { data = JSON.parse(fs.readFileSync(fullPath, 'utf8')); } catch {}
-      const owned =
-        f.toLowerCase().startsWith(prefixLower)
-        || String(data?.meta?.username || '').toLowerCase() === userLower;
+      const owned = saveBelongsToUser(f, data, username);
       const name = data?.meta?.name || f.replace(/\.json$/, '');
       return { name, date: stat.mtime.toISOString(), owned };
     };
@@ -112,14 +151,13 @@ function listUserSaves(username) {
         if (f.toLowerCase().startsWith(prefixLower)) return true;
         try {
           const data = JSON.parse(fs.readFileSync(path.join(SAVES_DIR, f), 'utf8'));
-          return String(data.meta?.username || '').toLowerCase() === userLower;
+          return saveBelongsToUser(f, data, username);
         } catch {
           return false;
         }
       })
       .map(readSave);
-    const visible = saves.length ? saves : files.map(readSave);
-    return visible.sort((a, b) => b.date.localeCompare(a.date));
+    return saves.sort((a, b) => b.date.localeCompare(a.date));
   } catch { return []; }
 }
 
@@ -162,10 +200,25 @@ const MIME = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
 };
+const PUBLIC_ROOT_FILES = new Set(['index.html', 'config.js', 'favicon.ico']);
+const PUBLIC_DIRS = ['js', 'assets'];
+function resolvePublicPath(reqUrl) {
+  let urlPath;
+  try { urlPath = decodeURIComponent(reqUrl.split('?')[0]); }
+  catch { return null; }
+  if (urlPath === '/') urlPath = '/index.html';
+  if (urlPath.includes('\0')) return null;
+  const rel = path.normalize(urlPath.replace(/^\/+/, ''));
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  const top = rel.split(path.sep)[0];
+  if (!PUBLIC_ROOT_FILES.has(rel) && !PUBLIC_DIRS.includes(top)) return null;
+  const p = path.join(STATIC, rel);
+  if (!p.startsWith(STATIC + path.sep)) return null;
+  return p;
+}
 const httpServer = http.createServer((req, res) => {
-  const urlPath = req.url.split('?')[0];
-  const p = path.join(STATIC, urlPath === '/' ? 'index.html' : urlPath);
-  if (!p.startsWith(STATIC + path.sep) && p !== path.join(STATIC, 'index.html')) {
+  const p = resolvePublicPath(req.url);
+  if (!p) {
     res.writeHead(403); res.end(); return;
   }
   if (!fs.existsSync(p)) { res.writeHead(404); res.end('Not found'); return; }
@@ -285,6 +338,116 @@ function sanitizeWorldConfig(config = {}) {
   };
 }
 
+const ALLOWED_ACTIONS = new Set([
+  'road', 'bulldoze_road', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
+  'build', 'toggle_bld_pause', 'toggle_out_block', 'clear_bld_stock', 'upgrade_plant',
+  'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'merge_towns',
+  'zone_reassign', 'rename_bus_stop', 'owner_remap', 'pause', 'speed',
+]);
+const ALLOWED_BUILD_TYPES = new Set([
+  'road', 'mine', 'lumber', 'farm', 'cotton_farm', 'weaver', 'pump', 'fisher', 'mill',
+  'bakery', 'fishery', 'smelter', 'factory', 'plant', 'house', 'depot', 'market',
+  'tank', 'garage', 'bus_stop', 'terrassement',
+]);
+const ALLOWED_VEHICLE_TYPES = new Set([
+  'minerai', 'bois', 'ble', 'coton', 'vetement', 'farine', 'citerne', 'pain',
+  'poisson', 'acier', 'marchandises', 'bus',
+]);
+const intInRange = (v, min = 0, max = 4096) => Number.isInteger(v) && v >= min && v <= max;
+const numInRange = (v, min, max) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
+function validName(value, max = 64) {
+  return value == null || (typeof value === 'string' && value.length <= max);
+}
+function sanitizeAction(client, msg) {
+  const act = msg && msg.act;
+  if (!act || typeof act !== 'object' || !ALLOWED_ACTIONS.has(act.type)) return null;
+  const out = { type: act.type };
+  switch (act.type) {
+    case 'road':
+    case 'bulldoze_road':
+    case 'bulldoze_tree':
+    case 'terraform':
+      if (!intInRange(act.i)) return null;
+      out.i = act.i;
+      break;
+    case 'fill_water':
+      if (!intInRange(act.i) || !intInRange(act.depotX) || !intInRange(act.depotY)) return null;
+      Object.assign(out, { i: act.i, depotX: act.depotX, depotY: act.depotY });
+      break;
+    case 'bulldoze_bld':
+      if (!intInRange(act.bx) || !intInRange(act.by)) return null;
+      Object.assign(out, { bx: act.bx, by: act.by });
+      break;
+    case 'build':
+      if (!ALLOWED_BUILD_TYPES.has(act.btype) || !intInRange(act.x) || !intInRange(act.y)) return null;
+      Object.assign(out, { btype: act.btype, x: act.x, y: act.y });
+      break;
+    case 'toggle_bld_pause':
+      if (!intInRange(act.x) || !intInRange(act.y)) return null;
+      Object.assign(out, { x: act.x, y: act.y, paused: !!act.paused });
+      break;
+    case 'toggle_out_block':
+      if (!intInRange(act.x) || !intInRange(act.y) || typeof act.res !== 'string' || act.res.length > 32) return null;
+      Object.assign(out, { x: act.x, y: act.y, res: act.res, blocked: !!act.blocked });
+      break;
+    case 'clear_bld_stock':
+      if (!intInRange(act.x) || !intInRange(act.y)) return null;
+      Object.assign(out, { x: act.x, y: act.y });
+      break;
+    case 'upgrade_plant':
+      if (!intInRange(act.x) || !intInRange(act.y) || !ALLOWED_BUILD_TYPES.has(act.targetType)) return null;
+      Object.assign(out, { x: act.x, y: act.y, targetType: act.targetType });
+      break;
+    case 'buy_vehicle':
+      if (!validName(act.id, 64) || !ALLOWED_VEHICLE_TYPES.has(act.vtype) || !intInRange(act.garageX) || !intInRange(act.garageY)) return null;
+      Object.assign(out, { id: String(act.id), vtype: act.vtype, garageX: act.garageX, garageY: act.garageY });
+      break;
+    case 'sell_vehicle':
+    case 'return_vehicle':
+      if (!validName(act.id, 64)) return null;
+      out.id = String(act.id);
+      break;
+    case 'route_vehicle':
+      if (!validName(act.id, 64) || !intInRange(act.sourceX) || !intInRange(act.sourceY) || !intInRange(act.destX) || !intInRange(act.destY)) return null;
+      Object.assign(out, { id: String(act.id), sourceX: act.sourceX, sourceY: act.sourceY, destX: act.destX, destY: act.destY });
+      break;
+    case 'merge_towns':
+      if (!intInRange(act.dstId, 0, 1000000) || !intInRange(act.srcId, 0, 1000000)) return null;
+      Object.assign(out, { dstId: act.dstId, srcId: act.srcId });
+      break;
+    case 'zone_reassign':
+      if (!intInRange(act.dstId, 0, 1000000) || !intInRange(act.x1) || !intInRange(act.y1) || !intInRange(act.x2) || !intInRange(act.y2)) return null;
+      Object.assign(out, { dstId: act.dstId, x1: act.x1, y1: act.y1, x2: act.x2, y2: act.y2 });
+      if (act.owner == null) out.owner = null;
+      else if (intInRange(act.owner, 0, 1000000)) out.owner = act.owner;
+      else return null;
+      if (act.newTown != null) {
+        if (!intInRange(act.newTown.id, 0, 1000000) || !validName(act.newTown.name, 64) || !numInRange(act.newTown.cx, 0, 4096) || !numInRange(act.newTown.cy, 0, 4096)) return null;
+        out.newTown = { id: act.newTown.id, name: act.newTown.name, cx: act.newTown.cx, cy: act.newTown.cy };
+      }
+      break;
+    case 'rename_bus_stop':
+      if (!intInRange(act.x) || !intInRange(act.y) || !validName(act.name, 64)) return null;
+      Object.assign(out, { x: act.x, y: act.y, name: act.name || null });
+      break;
+    case 'owner_remap':
+      if (!intInRange(act.oldId, 0, 1000000) || !intInRange(act.newId, 0, 1000000) || act.newId !== client.id) return null;
+      Object.assign(out, { oldId: act.oldId, newId: act.newId });
+      break;
+    case 'pause':
+      break;
+    case 'speed':
+      if (![0.5, 1, 2, 4].includes(Number(act.s))) return null;
+      out.s = Number(act.s);
+      break;
+    default:
+      return null;
+  }
+  return out;
+}
+
+const pendingSnapshots = new Map(); // targetId -> hostId
+
 wss.on('connection', (ws) => {
   if (shuttingDown) {
     ws.send(JSON.stringify({ type: 'server_shutdown', msg: 'Serveur arrêté' }));
@@ -292,16 +455,20 @@ wss.on('connection', (ws) => {
     return;
   }
 
-  if (clients.length >= worldConfig.maxPlayers) {
-    ws.send(JSON.stringify({ type: 'server_full', msg: 'Serveur complet' }));
-    ws.close();
-    return;
-  }
+  const overCapacity = clients.length >= worldConfig.maxPlayers;
   const id    = nextId++;
   const color = COLORS[(id - 1) % COLORS.length];
   const name  = 'Joueur ' + id;
-  const client = { ws, id, color, name, username: null, token: null, isAdmin: false, announced: false, joinLogged: false, replaced: false };
+  const client = { ws, id, color, name, username: null, token: null, isAdmin: false, announced: false, joinLogged: false, replaced: false, overCapacity };
   clients.push(client);
+  if (overCapacity) {
+    setTimeout(() => {
+      if (clients.includes(client) && client.overCapacity && clients.length > worldConfig.maxPlayers) {
+        send(client, { type: 'server_full', msg: 'Serveur complet' });
+        try { ws.close(1008, 'server_full'); } catch {}
+      }
+    }, 5000);
+  }
 
   // heartbeat : détecte les connexions mortes
   let pongTimeout = null;
@@ -338,7 +505,10 @@ wss.on('connection', (ws) => {
   } else {
     send(client, { type: 'hello', id, color, name, role: 'guest', isAdmin: false, worldConfig });
     const host = clients.find(c => c.id === hostId);
-    if (host) send(host, { type: 'snapshot_request', forId: id });
+    if (host) {
+      pendingSnapshots.set(id, host.id);
+      send(host, { type: 'snapshot_request', forId: id });
+    }
   }
   // Délai de grâce : si le joueur s'authentifie (resume/login), cet handler évite
   // d'annoncer un nom temporaire du type "Joueur 4".
@@ -372,11 +542,11 @@ wss.on('connection', (ws) => {
         const users = loadUsers();
         if (users[username])
           { send(client, { type:'auth_err', msg:'Ce nom est déjà pris' }); break; }
-        const passwordHash = sha256(password);
         const color = userColor(username);
-        users[username] = { passwordHash, color };
+        const ph = passwordHash(password);
+        users[username] = { passwordAlgo: ph.algo, passwordSalt: ph.salt, passwordHash: ph.hash, color };
         saveUsers(users);
-        const token = makeToken(username, passwordHash);
+        const token = issueToken(users, username);
         authenticateClient(client, { username, token, color });
         console.log(`[register] ${username}`);
         break;
@@ -388,10 +558,13 @@ wss.on('connection', (ws) => {
         const users = loadUsers();
         if (!users[username])
           { send(client, { type:'auth_err', msg:'Utilisateur inconnu' }); break; }
-        const passwordHash = sha256(password);
-        if (users[username].passwordHash !== passwordHash)
+        if (!verifyPassword(password, users[username]))
           { send(client, { type:'auth_err', msg:'Mot de passe incorrect' }); break; }
-        const token = makeToken(username, passwordHash);
+        if (users[username].passwordAlgo !== 'scrypt') {
+          const ph = passwordHash(password);
+          Object.assign(users[username], { passwordAlgo: ph.algo, passwordSalt: ph.salt, passwordHash: ph.hash });
+        }
+        const token = issueToken(users, username);
         authenticateClient(client, { username, token, color: users[username].color });
         console.log(`[login] ${username}`);
         break;
@@ -457,8 +630,8 @@ wss.on('connection', (ws) => {
         if (!user) { send(client, { type:'save_err', msg:'Non authentifié' }); break; }
         const name = (msg.name || '').trim();
         try {
-          const p = resolveSavePath(user.username, name);
-          if (!fs.existsSync(p)) { send(client, { type:'save_err', msg:'Sauvegarde introuvable' }); break; }
+          const p = resolveSavePath(user.username, name, { mustExist: true });
+          if (!p || !fs.existsSync(p)) { send(client, { type:'save_err', msg:'Sauvegarde introuvable' }); break; }
           const data = JSON.parse(fs.readFileSync(p, 'utf8'));
           // diffuser l'état à TOUS les joueurs connectés
           broadcastAll({ type:'game_loaded', state: data.state, name, loadedBy: user.username });
@@ -473,8 +646,9 @@ wss.on('connection', (ws) => {
         if (!user) { send(client, { type:'save_err', msg:'Non authentifié' }); break; }
         const name = (msg.name || '').trim();
         try {
-          const p = resolveSavePath(user.username, name);
-          if (fs.existsSync(p)) fs.unlinkSync(p);
+          const p = resolveSavePath(user.username, name, { mustExist: true });
+          if (!p || !fs.existsSync(p)) { send(client, { type:'save_err', msg:'Sauvegarde introuvable' }); break; }
+          fs.unlinkSync(p);
           send(client, { type:'save_deleted', name });
           send(client, { type:'saves_list', saves: listUserSaves(user.username) });
           console.log(`[delete] ${user.username} ✕ "${name}"`);
@@ -484,10 +658,12 @@ wss.on('connection', (ws) => {
 
       /* ---- jeu ---- */
       case 'snapshot': {
+        if (client.id !== hostId || pendingSnapshots.get(Number(msg.forId)) !== client.id) break;
         const target = clients.find(c => c.id === msg.forId);
         if (target) {
           // Injecter le registry courant du serveur dans le snapshot
           if (msg.state) msg.state.playerRegistry = Object.fromEntries(userOwnerRegistry);
+          pendingSnapshots.delete(Number(msg.forId));
           send(target, msg);
         }
         break;
@@ -522,7 +698,13 @@ wss.on('connection', (ws) => {
         console.log(`[admin] ${target.name} promu par ${client.name}`);
         break;
       }
-      case 'action':  msg.from = id; msg.fromUsername = client.username || null; broadcast(msg, id); break;
+      case 'action': {
+        const act = sanitizeAction(client, msg);
+        if (!act) break;
+        if ((act.type === 'pause' || act.type === 'speed') && !isPrivileged(client)) break;
+        broadcast({ type:'action', act, from:id, fromUsername: client.username || null }, id);
+        break;
+      }
       case 'cursor':  broadcast(msg, id); break;
       case 'chat':
         msg.from = id;
@@ -547,6 +729,7 @@ wss.on('connection', (ws) => {
         console.log(`[→] ${clientLabel(clients[0])} promu hôte`);
       } else { hostId = null; }
     }
+    pendingSnapshots.delete(id);
     broadcastAll({ type:'player_left', id, name: client.name, username: client.username });
     broadcastPlayerList();
   });
