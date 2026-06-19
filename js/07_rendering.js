@@ -585,18 +585,33 @@ function drawWorkRadiusOverlay(center, radius, color, minRx, maxRx, minRy, maxRy
   }
 }
 
-function drawTruck(tk){
-  const a = tk.pts[tk.seg], b = tk.pts[Math.min(tk.seg+1, tk.pts.length-1)];
-  const wx = a.x + (b.x-a.x)*tk.t, wy = a.y + (b.y-a.y)*tk.t;
-  const [u,v] = rotF(wx/TILE, wy/TILE);
+function roadPointAt(pt){
+  const x = Math.floor(pt.x / TILE), y = Math.floor(pt.y / TILE);
+  return inMap(x, y) && road[y*N+x];
+}
+
+function lanePose(pts, seg, t, lane=0.16){
+  const a = pts[seg], b = pts[Math.min(seg+1, pts.length-1)];
+  const wx = a.x + (b.x-a.x)*t, wy = a.y + (b.y-a.y)*t;
+  let [u,v] = rotF(wx/TILE, wy/TILE);
   const [du,dv] = rotDir(b.x-a.x, b.y-a.y);
+  if(roadPointAt(a) && roadPointAt(b)){
+    const len = Math.hypot(du, dv) || 1;
+    u += (-dv / len) * lane;
+    v += ( du / len) * lane;
+  }
+  return { u, v, du, dv };
+}
+
+function drawTruck(tk){
+  const {u, v, du, dv} = lanePose(tk.pts, tk.seg, tk.t, 0.15);
   const alongU = Math.abs(du) >= Math.abs(dv);
-  const au = alongU ? 0.26 : 0.14, av = alongU ? 0.14 : 0.26;
+  const au = alongU ? 0.21 : 0.11, av = alongU ? 0.11 : 0.21;
   const c = iso(u,v);
   ctx.fillStyle = 'rgba(0,0,0,.20)';
-  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 11, 5, 0, 0, 7); ctx.fill();
-  prism(u-au, v-av, u+au, v+av, 5, '#39404c');
-  prism(u-au*0.72, v-av*0.72, u+au*0.72, v+av*0.72, 7, RES[tk.res]?.c ?? '#aaa', 5);
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 9, 4, 0, 0, 7); ctx.fill();
+  prism(u-au, v-av, u+au, v+av, 4, '#39404c');
+  prism(u-au*0.72, v-av*0.72, u+au*0.72, v+av*0.72, 6, RES[tk.res]?.c ?? '#aaa', 4);
 }
 
 function drawVehicleRoute(veh){
@@ -707,18 +722,15 @@ function drawTownLabels(){
 
 function drawVehicle(veh){
   if(!veh.pts || !veh.pts.length) return;
-  const a = veh.pts[veh.seg], b = veh.pts[Math.min(veh.seg+1, veh.pts.length-1)];
-  const wx = a.x + (b.x-a.x)*veh.t, wy = a.y + (b.y-a.y)*veh.t;
-  const [u,v] = rotF(wx/TILE, wy/TILE);
-  const [du,dv] = rotDir(b.x-a.x, b.y-a.y);
+  const {u, v, du, dv} = lanePose(veh.pts, veh.seg, veh.t, 0.17);
   const alongU = Math.abs(du) >= Math.abs(dv);
-  const au = alongU ? 0.30 : 0.18, av = alongU ? 0.18 : 0.30;
+  const au = alongU ? 0.23 : 0.13, av = alongU ? 0.13 : 0.23;
   const vt = VEHICLE_TYPES[veh.vtype];
   const c = iso(u, v);
   ctx.fillStyle = 'rgba(0,0,0,.20)';
-  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 13, 6, 0, 0, 7); ctx.fill();
-  prism(u-au, v-av, u+au, v+av, 6, '#39404c');
-  prism(u-au*0.72, v-av*0.72, u+au*0.72, v+av*0.72, 9, vt.color, 6);
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 10, 4.6, 0, 0, 7); ctx.fill();
+  prism(u-au, v-av, u+au, v+av, 5, '#39404c');
+  prism(u-au*0.72, v-av*0.72, u+au*0.72, v+av*0.72, 7, vt.color, 5);
   if(!drawFast && veh.cargo > 0){
     const label = vt.icone + ' ' + veh.cargo;
     ctx.font = 'bold 10px sans-serif';
@@ -732,7 +744,7 @@ function drawVehicle(veh){
   if(veh === selectedVehicle){
     ctx.save();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.globalAlpha = 0.9;
-    ctx.beginPath(); ctx.ellipse(c[0], c[1], 16, 8, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(c[0], c[1], 13, 6, 0, 0, Math.PI*2); ctx.stroke();
     ctx.restore();
   }
 }
@@ -1142,17 +1154,13 @@ function draw(){
     }
 
     for(const tk of trucks){
-      const a = tk.pts[tk.seg], b = tk.pts[Math.min(tk.seg+1, tk.pts.length-1)];
-      const wx = a.x + (b.x-a.x)*tk.t, wy = a.y + (b.y-a.y)*tk.t;
-      const [u,v] = rotF(wx/TILE, wy/TILE);
+      const {u, v} = lanePose(tk.pts, tk.seg, tk.t, 0.15);
       sprites.push({ k:spriteDepthKey(u, v, 0.5), f:()=>drawTruck(tk) });
     }
 
     for(const veh of vehicles){
       if(veh.state === 'idle' || !veh.pts || !veh.pts.length) continue;
-      const a = veh.pts[veh.seg], b = veh.pts[Math.min(veh.seg+1, veh.pts.length-1)];
-      const wx = a.x + (b.x-a.x)*veh.t, wy = a.y + (b.y-a.y)*veh.t;
-      const [u,v] = rotF(wx/TILE, wy/TILE);
+      const {u, v} = lanePose(veh.pts, veh.seg, veh.t, 0.17);
       sprites.push({ k:spriteDepthKey(u, v, 0.52), f:()=>drawVehicle(veh) });
     }
 

@@ -1,4 +1,10 @@
 // ---------- logistique (camions) ----------
+function roadMoveAllowed(cx, cy, x, y){
+  const dx = x - cx, dy = y - cy;
+  if(Math.abs(dx) !== 1 || Math.abs(dy) !== 1) return true;
+  return !(road[cy*N+x] || road[y*N+cx]);
+}
+
 function tryDispatch(b, res, load = TRUCK_LOAD){
   const starts = adjRoadTiles(b);
   const senderHasRoad = starts.length > 0;
@@ -11,6 +17,7 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
       const x = cx+dx, y = cy+dy;
       if(!inMap(x,y)) continue;
       const ni = y*N+x;
+      if(!roadMoveAllowed(cx, cy, x, y)) continue;
       if(road[ni] && dist[ni]<0){ dist[ni] = dist[c]+1; prev[ni] = c; q.push(ni); }
     }
   }
@@ -189,6 +196,7 @@ function tryRedirect(tk, currentBuilding, remaining){
       const x = cx+dx, y = cy+dy;
       if(!inMap(x,y)) continue;
       const ni = y*N+x;
+      if(!roadMoveAllowed(cx, cy, x, y)) continue;
       if(road[ni] && dist[ni]<0){ dist[ni] = dist[c]+1; prev[ni] = c; q.push(ni); }
     }
   }
@@ -325,6 +333,7 @@ function findRoadPath(fromB, toB){
       const x = cx+dx, y = cy+dy;
       if(!inMap(x,y)) continue;
       const ni = y*N+x;
+      if(!roadMoveAllowed(cx, cy, x, y)) continue;
       if(road[ni] && dist[ni]<0){ dist[ni] = dist[c]+1; prev[ni] = c; q.push(ni); }
     }
   }
