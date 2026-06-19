@@ -651,6 +651,30 @@ function drawVehicleRoute(veh){
   highlightBld(veh.dest,   '#ffaa44');
 }
 
+function drawTrafficLight(c, approaches){
+  ctx.save();
+  for(const { du, dv, green } of approaches){
+    // Position: 0.62 tiles before intersection center (= stop line), 0.22 tiles right of lane
+    // right direction in rotated space = (dv, -du)
+    const along = 0.82, lane = 0.40;
+    const lx = c[0] + (du - dv) * TW2 * along + (dv + du) * TW2 * lane;
+    const ly = c[1] + (du + dv) * TH2 * along + (dv - du) * TH2 * lane;
+    ctx.fillStyle = 'rgba(0,0,0,.75)';
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(lx - 4, ly - 6, 8, 11, 2);
+    else ctx.rect(lx - 4, ly - 6, 8, 11);
+    ctx.fill();
+    ctx.fillStyle = green ? '#35ff64' : '#ff3030';
+    ctx.beginPath();
+    ctx.arc(lx, ly, 2.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#111827';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawTownLabels(){
   townLabelHits = [];
   if(!towns.length) return;
@@ -1036,6 +1060,7 @@ function draw(){
   const roadSegments = [];
   const roadNodes = [];
   const roadSingles = [];
+  const trafficLights = [];
   const roadWidth = 28;
   const roadLineWidth = 14;
   for(let ry=minRy-1; ry<=maxRy+1; ry++) for(let rx=minRx-1; rx<=maxRx+1; rx++){
@@ -1057,6 +1082,18 @@ function draw(){
       roadSegments.push([c, iso(rx+du+0.5, ry+dv+0.5)]);
     }
     if(!links) roadSingles.push(c);
+    else if(!UI_OPTIONS.disableTrafficLights && isTrafficIntersectionTile({ x, y, i })){
+      const tileAxis = trafficGreenAxis({ x, y, i });
+      const approaches = [];
+      for(const [adx,ady] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const nx = x+adx, ny = y+ady;
+        if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
+        const [du,dv] = rotDir(adx,ady);
+        const axisDir = Math.abs(adx) >= Math.abs(ady) ? 'ew' : 'ns';
+        approaches.push({ du, dv, green: tileAxis === axisDir });
+      }
+      if(approaches.length) trafficLights.push({ c, approaches });
+    }
   }
 
   const strokeRoadSegments = (width, color, cap)=>{
@@ -1086,6 +1123,7 @@ function draw(){
     fillRoadNodes(roadNodes, roadLineWidth*0.5, pack.roadLine);
     strokeRoadSegments(1.4, 'rgba(200,206,214,.55)', 'butt');
     fillRoadNodes(roadSingles, roadLineWidth*0.56, pack.roadLine);
+    for(const tl of trafficLights) drawTrafficLight(tl.c, tl.approaches);
   }
 
   if(radiusSel)

@@ -5,6 +5,127 @@ function roadMoveAllowed(cx, cy, x, y){
   return !(road[cy*N+x] || road[y*N+cx]);
 }
 
+const TRAFFIC_LIGHT_GREEN = 6;
+const TRAFFIC_LIGHT_ALL_RED = 1.1;
+const VEHICLE_STOP_GAP   = TILE * 0.82;  // distance d'arrêt devant le feu
+const VEHICLE_FOLLOW_GAP = TILE * 0.42;  // espacement en file (juste sans se toucher)
+
+function roadTileFromPoint(p){
+  const x = Math.floor(p.x / TILE), y = Math.floor(p.y / TILE);
+  return inMap(x, y) && road[y*N+x] ? { x, y, i:y*N+x } : null;
+}
+
+function roadDegreeAt(x, y){
+  let n = 0;
+  for(const [dx,dy] of DIRS8){
+    const nx = x + dx, ny = y + dy;
+    if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
+    if(!roadMoveAllowed(x, y, nx, ny)) continue;
+    n++;
+  }
+  return n;
+}
+
+function isTrafficIntersectionTile(tile){
+  return !!tile && roadDegreeAt(tile.x, tile.y) >= 4;
+}
+
+function trafficAxisForMove(from, to){
+  const dx = to.x - from.x, dy = to.y - from.y;
+  return Math.abs(dx) >= Math.abs(dy) ? 'ew' : 'ns';
+}
+
+function trafficGreenAxis(tile){
+  const cycle = TRAFFIC_LIGHT_GREEN * 2 + TRAFFIC_LIGHT_ALL_RED * 2;
+  const offset = ((tile.x * 7 + tile.y * 11) % 5) * 0.35;
+  const t = (gtime + offset) % cycle;
+  if(t < TRAFFIC_LIGHT_GREEN) return 'ew';
+  if(t < TRAFFIC_LIGHT_GREEN + TRAFFIC_LIGHT_ALL_RED) return 'none';
+  if(t < TRAFFIC_LIGHT_GREEN * 2 + TRAFFIC_LIGHT_ALL_RED) return 'ns';
+  return 'none';
+}
+
+function trafficLightAllows(fromPoint, toPoint){
+  if(UI_OPTIONS.disableTrafficLights) return true;
+  const from = roadTileFromPoint(fromPoint), to = roadTileFromPoint(toPoint);
+  if(!from || !to || !isTrafficIntersectionTile(to)) return true;
+  const dx = to.x - from.x, dy = to.y - from.y;
+  if(Math.abs(dx) + Math.abs(dy) !== 1) return true;  // approche diagonale : pas de feu sur sa voie
+  return trafficGreenAxis(to) === trafficAxisForMove(from, to);
+}
+
+function segmentKey(pts, seg){
+  if(!pts || seg < 0 || seg >= pts.length-1) return null;
+  const a = pts[seg], b = pts[seg+1];
+  return Math.round(a.x)+','+Math.round(a.y)+'>'+Math.round(b.x)+','+Math.round(b.y);
+}
+
+function movingRoadUnits(except){
+  const out = [];
+  for(const tk of trucks) if(tk !== except && tk.pts && tk.seg < tk.pts.length-1) out.push(tk);
+  for(const v of vehicles) if(v !== except && v.state !== 'idle' && v.pts && v.seg < v.pts.length-1) out.push(v);
+  return out;
+}
+
+function limitByTrafficAhead(unit, desiredT){
+  const key = segmentKey(unit.pts, unit.seg);
+  if(!key) return desiredT;
+  const a = unit.pts[unit.seg], b = unit.pts[unit.seg+1];
+  const len = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+  let maxT = desiredT;
+  for(const other of movingRoadUnits(unit)){
+    if(segmentKey(other.pts, other.seg) !== key) continue;
+    if(other.t <= unit.t) continue;
+    const allowed = other.t - VEHICLE_FOLLOW_GAP / len;
+    maxT = Math.min(maxT, allowed);
+  }
+  return Math.max(unit.t, maxT);
+}
+
+function nextSegmentIsBlocked(unit){
+  const nextSeg = unit.seg + 1;
+  if(nextSeg >= unit.pts.length-1) return false;
+  const key = segmentKey(unit.pts, nextSeg);
+  if(!key) return false;
+  const a = unit.pts[nextSeg], b = unit.pts[nextSeg+1];
+  const len = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+  for(const other of movingRoadUnits(unit)){
+    if(segmentKey(other.pts, other.seg) !== key) continue;
+    if(other.t * len < VEHICLE_FOLLOW_GAP) return true;
+  }
+  return false;
+}
+
+function advanceRoadUnit(unit, move){
+  while(move > 0 && unit.seg < unit.pts.length-1){
+    const a = unit.pts[unit.seg], b = unit.pts[unit.seg+1];
+    const d = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+    const redLight = !trafficLightAllows(a, b);
+    const segBlocked = !redLight && nextSegmentIsBlocked(unit);
+    if(redLight || segBlocked){
+      const gap = redLight ? VEHICLE_STOP_GAP : VEHICLE_FOLLOW_GAP;
+      const tStop = Math.max(0, 1 - gap / d);
+      if(unit.t < tStop - 1e-6){
+        const desiredT = Math.min(tStop, unit.t + move / d);
+        unit.t = limitByTrafficAhead(unit, desiredT);
+      }
+      break;
+    }
+    const desiredT = Math.min(1, unit.t + move / d);
+    const limitedT = limitByTrafficAhead(unit, desiredT);
+    if(limitedT < desiredT - 1e-6){
+      unit.t = limitedT;
+      break;
+    }
+    const used = (limitedT - unit.t) * d;
+    unit.t = limitedT;
+    move -= used;
+    if(unit.t < 1 - 1e-6) break;
+    unit.seg++;
+    unit.t = 0;
+  }
+}
+
 function tryDispatch(b, res, load = TRUCK_LOAD){
   const starts = adjRoadTiles(b);
   const senderHasRoad = starts.length > 0;
@@ -139,13 +260,7 @@ function updateTrucks(dt){
   for(let i=trucks.length-1;i>=0;i--){
     const tk = trucks[i];
     let move = TRUCK_SPEED*TILE*dt;
-    while(move>0 && tk.seg < tk.pts.length-1){
-      const a = tk.pts[tk.seg], b = tk.pts[tk.seg+1];
-      const d = Math.hypot(b.x-a.x, b.y-a.y) || 1;
-      const remain = (1-tk.t)*d;
-      if(move >= remain){ move -= remain; tk.seg++; tk.t = 0; }
-      else { tk.t += move/d; move = 0; }
-    }
+    advanceRoadUnit(tk, move);
     if(tk.seg >= tk.pts.length-1){
       let tg = tk.target;
       if(!tg.dead){
@@ -430,13 +545,7 @@ function updateVehicles(dt){
     if(!v.pts || !v.pts.length){ v.waitTimer = 5; continue; }
     const vt = VEHICLE_TYPES[v.vtype];
     let move = vt.speed * TILE * dt;
-    while(move > 0 && v.seg < v.pts.length-1){
-      const a = v.pts[v.seg], b = v.pts[v.seg+1];
-      const d = Math.hypot(b.x-a.x, b.y-a.y) || 1;
-      const remain = (1-v.t)*d;
-      if(move >= remain){ move -= remain; v.seg++; v.t = 0; }
-      else { v.t += move/d; move = 0; }
-    }
+    advanceRoadUnit(v, move);
     if(v.seg >= v.pts.length-1){
       if(v.state === 'returning'){
         v.state = 'idle'; v.pts = [];

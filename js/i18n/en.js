@@ -23,6 +23,7 @@ window.FACTOPOLIS_TRANSLATIONS.en = {
   'settings.language': 'Language',
   'settings.graphicPack': 'Graphic pack',
   'settings.hideColorMarkers': 'Hide color markers',
+  'settings.disableTrafficLights': 'Disable traffic lights',
   'settings.languageChanged': 'Language: {language}',
   'settings.graphicPackChanged': 'Graphic pack: {pack}',
   'settings.graphicPackLoaded': 'Graphic pack loaded: {pack}',

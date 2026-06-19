@@ -37,6 +37,7 @@ const UI_OPTIONS = (() => {
     language: (typeof currentLanguage === 'function') ? currentLanguage() : (saved.language || 'fr'),
     hideColorMarkers: saved.hideColorMarkers ?? false,
     highlightUnderstaffedFactories: saved.highlightUnderstaffedFactories ?? false,
+    disableTrafficLights: saved.disableTrafficLights ?? false,
     graphicPack: GRAPHIC_PACKS[saved.graphicPack] || /^asset:/.test(saved.graphicPack || '') ? saved.graphicPack : 'classic',
   };
 })();
