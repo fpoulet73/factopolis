@@ -303,6 +303,19 @@ wss.on('connection', (ws) => {
   const client = { ws, id, color, name, username: null, token: null, isAdmin: false, announced: false, joinLogged: false, replaced: false };
   clients.push(client);
 
+  // heartbeat : détecte les connexions mortes
+  let pongTimeout = null;
+  const pingInterval = setInterval(() => {
+    if (ws.readyState !== 1) { clearInterval(pingInterval); return; }
+    ws.ping();
+    pongTimeout = setTimeout(() => ws.terminate(), 10000);
+  }, 30000);
+  ws.on('pong', () => clearTimeout(pongTimeout));
+
+  // rate limiting : max 60 messages par seconde par client
+  let msgCount = 0, msgWindowStart = Date.now();
+  const MAX_MSG_PER_SEC = 60;
+
   if (hostId === null) {
     hostId = id;
     send(client, { type: 'hello', id, color, name, role: 'host', isAdmin: false, worldConfig });
@@ -339,6 +352,10 @@ wss.on('connection', (ws) => {
   }, 1500);
 
   ws.on('message', (raw) => {
+    const now = Date.now();
+    if (now - msgWindowStart > 1000) { msgCount = 0; msgWindowStart = now; }
+    if (++msgCount > MAX_MSG_PER_SEC) return;
+
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
 
@@ -346,7 +363,8 @@ wss.on('connection', (ws) => {
 
       /* ---- authentification ---- */
       case 'register': {
-        const { username = '', password = '' } = msg;
+        const username = typeof msg.username === 'string' ? msg.username : '';
+        const password = typeof msg.password === 'string' ? msg.password : '';
         if (username.length < 3 || password.length < 4)
           { send(client, { type:'auth_err', msg:'Nom (≥3 car.) et mot de passe (≥4 car.) requis' }); break; }
         if (!/^[a-zA-Z0-9_\-]{3,32}$/.test(username))
@@ -365,7 +383,8 @@ wss.on('connection', (ws) => {
       }
 
       case 'login': {
-        const { username = '', password = '' } = msg;
+        const username = typeof msg.username === 'string' ? msg.username : '';
+        const password = typeof msg.password === 'string' ? msg.password : '';
         const users = loadUsers();
         if (!users[username])
           { send(client, { type:'auth_err', msg:'Utilisateur inconnu' }); break; }
@@ -516,6 +535,8 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    clearInterval(pingInterval);
+    clearTimeout(pongTimeout);
     clients = clients.filter(c => c.id !== id);
     if (client.replaced) return;
     console.log(`[-] ${clientLabel(client)} déconnecté (${clients.length} joueurs)`);

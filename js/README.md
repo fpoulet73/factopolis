@@ -13,4 +13,4 @@ numeric prefixes and script order stable unless you also update dependencies.
 - `07_rendering.js`: isometric drawing, buildings, overlays, trucks, vehicles, expansion badges.
 - `08_ui_input_loop.js`: HUD, info panels, toolbar, mouse/keyboard/camera, main animation loop.
 - `09_multiplayer.js`: state serialization, snapshots, network actions, WebSocket handling, multiplayer panel.
-- `10_saves_chat_console.js`: autosaves, chat rendering/sending, small console commands.
+- `10_saves_chat_console.js`: autosaves, chat rendering/sending, and server console commands (help, players, world, saves, say, kick, promote, setmoney, regenexpansions, spawnfields).
