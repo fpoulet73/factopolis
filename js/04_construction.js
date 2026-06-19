@@ -65,7 +65,16 @@ function canPlace(t,x,y){
       if(capErr) return { ok:false, msg:capErr };
     }
     if(t==='pump' && !waterNear(x,y,1)) return { ok:false, msg:"La pompe doit être au bord de l'eau" };
-    if(t==='fisher' && !waterNear(x,y,1)) return { ok:false, msg:"La cabane de pêcheur doit être au bord de l'eau" };
+    if(t==='fisher'){
+      if(!waterNear(x,y,1)) return { ok:false, msg:"La cabane de pêcheur doit être au bord de l'eau" };
+      const FISHER_EXCL = 4;
+      for(const b of buildings){
+        if(b.dead || b.type !== 'fisher') continue;
+        const bx = b.x + Math.floor((b.w||1)/2), by = b.y + Math.floor((b.h||1)/2);
+        if(Math.sqrt((x-bx)**2 + (y-by)**2) <= FISHER_EXCL)
+          return { ok:false, msg:'Trop proche d\'une autre pêcherie (rayon '+FISHER_EXCL+' cases)' };
+      }
+    }
   }
   // zone d'exclusion multijoueur
   if(MP.connected && nearbyEnemyOwner(MP.myId, x, y))

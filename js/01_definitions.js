@@ -587,6 +587,8 @@ const PAUSE_UPKEEP = CFG.industrie?.entretienEnPause ?? 0.5;
 const IND_RADIUS_BASE   = CFG.industrie?.rayonBase    ?? 6;
 const IND_RADIUS_FACTOR = CFG.industrie?.rayonFacteur ?? 4;
 const indRadiusOf = b => Math.round(IND_RADIUS_BASE + Math.sqrt(b.w * b.h) * IND_RADIUS_FACTOR);
+const FISHER_FISH_RADIUS = CFG.production?.pecheur?.rayonPeche ?? 5;
+const fisherRadiusOf = () => FISHER_FISH_RADIUS;
 const upkeepOf = b => (BUILD[b.type].upkeep||0) * b.w*b.h * indFactor(b.w*b.h)
                       * (b.paused ? PAUSE_UPKEEP : 1);
 

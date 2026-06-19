@@ -9,7 +9,8 @@
     "mine": {
       "src": "mine-1x1-N.png",
       "anchorX": 0.5,
-      "anchorY": 1,
+      "anchorY": 1.1,	  
+	  "scale": 0.1,
       "views": {
         "N": {
           "src": "mine-1x1-N.png"
@@ -138,6 +139,7 @@
           }
         },
         "2x2": {
+		  "scale": 0.20,
           "views": {
             "N": {
               "src": "mine-2x2-N.png"
@@ -2373,7 +2375,13 @@
     "house": {
       "src": "house-1x1-N.png",
       "anchorX": 0.5,
-      "anchorY": 1,
+      "anchorY": 1.1,
+	  "scale": 0.12,
+	  "variants": {
+		"2x2": { "scale": 1.4 },
+		"3x3": { "scale": 0.5 },
+		"4x4": { "scale": 0.6 }
+	  },
       "views": {
         "N": {
           "src": "house-1x1-N.png"

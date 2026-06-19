@@ -119,6 +119,10 @@ function statusOf(b){
   const req = workersRequiredOf(b);
   if(req && workersAllocatedOf(b) < req)
     return "Production à "+Math.round(workersAllocatedOf(b)/req*100)+" % (manque d'ouvriers à portée)";
+  if(b.type === 'fisher'){
+    const bonus = fisherFishBonus(b);
+    if(bonus > 0) return 'En production · +'+bonus+' poisson'+(bonus>1?'s':'')+' (zones poissonneuses)';
+  }
   return 'En production';
 }
 
@@ -325,6 +329,18 @@ function renderInfo(){
     h += '<div class="row" style="margin:6px 0 2px"><span style="color:#8fa3bf">Recette</span>'
        + '<b style="color:#d4e8ff">'+lhs+fmtRes(r2.out)
        + ' <span style="color:#8fa3bf;font-weight:normal">/ '+time+'s</span></b></div>';
+    if(b.type === 'fisher'){
+      const bonus = fisherFishBonus(b);
+      if(bonus > 0){
+        const effLine = Object.entries(r2.out).map(([k,v]) => {
+          const eff = v + bonus;
+          return eff+' <span class="res-ic" title="'+escHtml(RES[k].n)+'">'+(RES[k].ic||RES[k].n)+'</span>';
+        }).join(' + ');
+        h += '<div class="row"><span style="color:#3bc4f5">Production effective</span>'
+           + '<b style="color:#3bc4f5">'+effLine
+           + ' <span style="color:#8fa3bf;font-weight:normal">/ '+time+'s (+'+bonus+')</span></b></div>';
+      }
+    }
     // sortie (toujours affichée)
     outKeys.forEach(showStock);
     // ressources hors recette (rare)

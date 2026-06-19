@@ -6,6 +6,74 @@ function addFloat(x,y,txt,col){
 // ---------- rendu isométrique ----------
 function hash(x,y){ return ((x*73856093) ^ (y*19349663)) >>> 0; }
 
+// --- Poissons dans les lacs ---
+let _fishTilesCache = null, _fishTerrainRef = null;
+
+function computeFishTiles(){
+  const SHORE_MAX = (CFG.lac?.poissonRayon ?? 4) | 0;
+  const THRESH    = Math.round((CFG.lac?.poissonPct ?? 0.05) * 256);
+  const fish = new Set();
+  for(let y = 0; y < N; y++){
+    for(let x = 0; x < N; x++){
+      if(terrain[y*N+x] !== T.WATER) continue;
+      let near = false;
+      outer: for(let dy = -SHORE_MAX; dy <= SHORE_MAX; dy++){
+        for(let dx = -SHORE_MAX; dx <= SHORE_MAX; dx++){
+          if(Math.abs(dx)+Math.abs(dy) > SHORE_MAX) continue;
+          const nx = x+dx, ny = y+dy;
+          if(nx < 0 || ny < 0 || nx >= N || ny >= N){ near = true; break outer; }
+          if(terrain[ny*N+nx] !== T.WATER){ near = true; break outer; }
+        }
+      }
+      if(near && (hash(x, y) & 0xFF) < THRESH) fish.add(y*N+x);
+    }
+  }
+  return fish;
+}
+
+function getFishTiles(){
+  if(_fishTerrainRef !== terrain){
+    _fishTilesCache = computeFishTiles();
+    _fishTerrainRef = terrain;
+  }
+  return _fishTilesCache;
+}
+
+function drawFishOnTile(rx, ry, x, y){
+  const c = iso(rx+0.5, ry+0.5);
+  const hs = hash(x, y);
+  ctx.save();
+  for(let k = 0; k < 3; k++){
+    const k5 = k * 5;
+    const px = c[0] + (((hs >> k5)      & 15) / 15 * TW * 0.60 - TW * 0.30);
+    const py = c[1] + (((hs >> (k5+4))  &  7) /  7 * TH * 0.58 - TH * 0.29);
+    const sz = 2.6 + ((hs >> (k5+8)) & 3) * 0.45;
+    const dir = ((hs >> (k5+10)) & 1) ? 1 : -1;
+
+    // queue
+    ctx.fillStyle = 'rgba(150,205,240,0.80)';
+    ctx.beginPath();
+    ctx.moveTo(px - dir * sz * 0.85, py);
+    ctx.lineTo(px - dir * sz * 1.65, py - sz * 0.55);
+    ctx.lineTo(px - dir * sz * 1.65, py + sz * 0.55);
+    ctx.closePath();
+    ctx.fill();
+
+    // corps
+    ctx.fillStyle = 'rgba(195,228,255,0.88)';
+    ctx.beginPath();
+    ctx.ellipse(px, py, sz, sz * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // oeil
+    ctx.fillStyle = 'rgba(10,30,55,0.85)';
+    ctx.beginPath();
+    ctx.arc(px + dir * sz * 0.45, py, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 const _shadeCache = {};
 function shade(hex,f){
   const k = hex+f;
@@ -241,7 +309,7 @@ function contentBoundsForSprite(sprite, img){
 function shouldFitSpriteToFootprint(sprite, pack){
   const fit = sprite && Object.prototype.hasOwnProperty.call(sprite, 'fit') ? sprite.fit : pack.defaultFit;
   if(fit != null) return fit === true || fit === 'footprint';
-  return /\.png(?:[?#]|$)/i.test(sprite?.src || '');
+  return false;
 }
 
 function spriteFootprintSize(rw, rh){
@@ -258,7 +326,10 @@ function drawBuildingSprite(b, rx0, ry0, rw, rh, d){
 
   const pack = graphicPack();
   const fitFootprint = shouldFitSpriteToFootprint(sprite, pack);
-  const base = fitFootprint ? iso(rx0 + rw, ry0 + rh) : iso(rx0 + rw*0.5, ry0 + rh*0.5);
+  // PNG sprites anchor to bottom corner of the isometric diamond (most natural for building sprites)
+  // SVG/other sprites without fitFootprint anchor to the tile center (legacy behaviour)
+  const isPng = /\.png(?:[?#]|$)/i.test(sprite?.src || '');
+  const base = (fitFootprint || isPng) ? iso(rx0 + rw, ry0 + rh) : iso(rx0 + rw*0.5, ry0 + rh*0.5);
   const ax = sprite.anchorX == null ? 0.5 : sprite.anchorX;
   const ay = sprite.anchorY == null ? 1 : sprite.anchorY;
   const ox = sprite.offsetX || 0;
@@ -581,6 +652,32 @@ function drawWorkRadiusOverlay(center, radius, color, minRx, maxRx, minRy, maxRy
       ctx.strokeStyle = color + '99';
       ctx.lineWidth = 1;
       diamond(rx,ry); ctx.stroke();
+    }
+  }
+}
+
+// Rayon de pêche : fond bleu clair + tuiles poisson surlignées en cyan vif
+function drawFisherRadiusOverlay(center, radius, minRx, maxRx, minRy, maxRy){
+  const fishTiles = getFishTiles();
+  const bx = Math.round(center.x), by = Math.round(center.y);
+  for(let ry = minRy; ry <= maxRy; ry++) for(let rx = minRx; rx <= maxRx; rx++){
+    const [x, y] = invRotIdx(rx, ry);
+    if(terrain[y * N + x] !== T.WATER) continue;
+    const dx = x - bx, dy = y - by;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if(d > radius) continue;
+    const atEdge = d > radius - 1.0;
+    const isFish = fishTiles.has(y * N + x);
+    ctx.fillStyle = isFish ? '#1de9b633' : '#3bc4f51a';
+    diamond(rx, ry); ctx.fill();
+    if(isFish){
+      ctx.fillStyle = '#1de9b622';
+      diamond(rx, ry); ctx.fill();
+    }
+    if(atEdge){
+      ctx.strokeStyle = '#3bc4f599';
+      ctx.lineWidth = 1;
+      diamond(rx, ry); ctx.stroke();
     }
   }
 }
@@ -945,6 +1042,10 @@ function draw(){
     center: centerOfBuilding(selected),
     r: indRadiusOf(selected),
   } : null;
+  const fisherRadiusSel = selected && !selected.dead && selected.type === 'fisher' ? {
+    center: centerOfBuilding(selected),
+    r: fisherRadiusOf(selected),
+  } : null;
 
   // --- passe 1 : sol (ordre ligne par ligne = peintre) ---
   for(let ry=minRy; ry<=maxRy; ry++) for(let rx=minRx; rx<=maxRx; rx++){
@@ -989,6 +1090,7 @@ function draw(){
     if(t===T.WATER){
       ctx.fillStyle = packTerrain(T.WATER, x, y);
       diamond(rx,ry); ctx.fill();
+      if(!drawFast && getFishTiles().has(i)) drawFishOnTile(rx, ry, x, y);
     } else {
       ctx.fillStyle = packTerrain(T.GRASS, x, y);
       diamond(rx,ry); ctx.fill();
@@ -1183,6 +1285,10 @@ function draw(){
       drawWorkRadiusOverlay(centerOfBuilding(ghost), indRadiusOf(ghost), '#ff8c42', minRx, maxRx, minRy, maxRy);
     }
   }
+
+  // rayon de pêche de la cabane sélectionnée (bleu)
+  if(fisherRadiusSel)
+    drawFisherRadiusOverlay(fisherRadiusSel.center, fisherRadiusSel.r, minRx, maxRx, minRy, maxRy);
 
   // camions
   if(!drawFast){

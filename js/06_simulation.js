@@ -1,4 +1,25 @@
 // ---------- simulation ----------
+
+// Multiplicateur de vitesse de pêche selon les tuiles poissons dans le rayon
+// Retourne ×1 si aucune, ×2 / ×2.5 / ×3 / ×3.5 pour 1/2/3/4+ tuiles poissons
+function fisherFishBonus(b){
+  // getFishTiles() est défini dans 07_rendering.js, disponible à l'exécution
+  const fishTiles = getFishTiles();
+  const cx = b.x + Math.floor((b.w || 1) / 2);
+  const cy = b.y + Math.floor((b.h || 1) / 2);
+  const r  = FISHER_FISH_RADIUS;
+  let count = 0;
+  for(let dy = -r; dy <= r; dy++){
+    for(let dx = -r; dx <= r; dx++){
+      if(Math.sqrt(dx * dx + dy * dy) > r) continue;
+      const nx = cx + dx, ny = cy + dy;
+      if(nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+      if(fishTiles.has(ny * N + nx)) count++;
+    }
+  }
+  return count;
+}
+
 function update(dt){
   gtime += dt;
   let starved = null;
@@ -25,7 +46,8 @@ function update(dt){
         if(b.prog >= r.time){
           b.prog = 0;
           for(const k in r.in)  b.storage[k] -= r.in[k];
-          for(const k of activeOuts) b.storage[k] = (b.storage[k]||0) + r.out[k];
+          const outBonus = b.type === 'fisher' ? fisherFishBonus(b) : 0;
+          for(const k of activeOuts) b.storage[k] = (b.storage[k]||0) + r.out[k] + outBonus;
           // 2% de chance d'extraire de la terre en plus lors d'un cycle de mine
           if(b.type === 'mine' && Math.random() < 0.02 && !b.blockedOut?.['dirt']){
             b.storage['dirt'] = (b.storage['dirt']||0) + 1;

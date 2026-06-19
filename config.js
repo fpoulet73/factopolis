@@ -26,7 +26,7 @@ const CONFIG = {
     coton:    { temps: 3.0, sortie: { cotton: 1 },                               cout: 320,  entretien: 1.2 },
     tissage:  { temps: 3.8, entree: { cotton: 3 }, sortie: { clothes: 1 },        cout: 900,  entretien: 2.4 },
     pompe:    { temps: 2.5, sortie: { water: 1 },                                cout: 500,  entretien: 1.5 },
-    pecheur:  { temps: 3.0, sortie: { fish: 1 },                                 cout: 420,  entretien: 1.4 },
+    pecheur:  { temps: 3.0, sortie: { fish: 1 },                                 cout: 420,  entretien: 1.4, rayonPeche: 5 },
     moulin:   { temps: 3.2, entree: { wheat: 2 }, sortie: { flour: 1 },          cout: 650,  entretien: 2   },
     boulangerie:{ temps: 3.5, entree: { coal: 0.5,flour: 2, water: 1 }, sortie: { bread: 1 }, cout: 950, entretien: 2.5 },
     poissonnerie:{ temps: 3.4, entree: { fish: 2 }, sortie: { fish_fillet: 1, fish_oil: 1 }, cout: 850, entretien: 2.2 },
@@ -257,5 +257,10 @@ const CONFIG = {
       acier:        { nom:'Camion acier',         icone:'🚚', ressources:['steel'],                        cout:1000, capacite:12, vitesse:3.5 },
       marchandises: { nom:'Camion marchandises',  icone:'🚐', ressources:['goods','clothes','bread'],      cout:700,  capacite:12, vitesse:3.5 },
     },
+  },
+
+  lac: {
+    poissonRayon: 4,    // distance max depuis la rive (Manhattan) pour placer des poissons
+    poissonPct:   0.03, // fraction de tuiles de rive éligibles qui reçoivent des poissons
   },
 };
