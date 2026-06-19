@@ -578,7 +578,8 @@ function updateVehicles(dt){
         const src = v.source;
         const isInterPlayer = src.owner != null && src.owner !== (v.garageRef.owner ?? null);
         let res = null, maxAmt = 0;
-        for(const r of vt.resources){
+        const resourcesToTry = v.pinnedRes && vt.resources.includes(v.pinnedRes) ? [v.pinnedRes] : vt.resources;
+        for(const r of resourcesToTry){
           // Respecter le seuil minimum de vente si c'est un commerce inter-joueurs
           const minStock = isInterPlayer ? (src.sellMin?.[r] || 0) : 0;
           const amt = Math.max(0, (src.storage[r]||0) - minStock);

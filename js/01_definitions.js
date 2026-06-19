@@ -78,32 +78,44 @@ const BUS_OWNER_SHARE      = CFG.logistique?.arretBus?.partProprietaire     ?? 0
 
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
-  const COLOR_MAP = { minerai:'#c0763a', bois:'#5e7a3a', ble:'#d7b348', coton:'#f1efe3', vetement:'#b98fcb', farine:'#eadfa8', citerne:'#64b7e8', pain:'#d99a45', poisson:'#4fa6b8', acier:'#7a8fa0', marchandises:'#e6c84f', bus:'#3a8fd4' };
+  const COLOR_MAP = {
+    minerai:'#c0763a', plateau:'#8a7a5a', cereale:'#d4b842', marchandises:'#e6c84f',
+    frigo:'#4fa6b8', citerne:'#64b7e8', bus:'#3a8fd4',
+    // legacy
+    bois:'#5e7a3a', ble:'#d7b348', coton:'#f1efe3', vetement:'#b98fcb',
+    farine:'#eadfa8', pain:'#d99a45', poisson:'#4fa6b8', acier:'#7a8fa0',
+  };
   const DEFS = {
-    minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal','dirt'], cost:800,  capacite:15, speed:4.0 },
-    bois:        { nom:'Camion bois',         icone:'🚜', resources:['wood'],        cost:600,  capacite:15, speed:4.0 },
-    ble:         { nom:'Camion blé',          icone:'🚜', resources:['wheat'],       cost:550,  capacite:15, speed:4.0 },
-    coton:       { nom:'Chariot coton',       icone:'🛒', resources:['cotton'],      cost:550,  capacite:15, speed:4.0 },
-    vetement:    { nom:'Camion vêtements',    icone:'🚐', resources:['clothes'],     cost:650,  capacite:12, speed:3.8 },
-    farine:      { nom:'Camion farine',       icone:'🚚', resources:['flour'],       cost:650,  capacite:15, speed:3.8 },
-    citerne:     { nom:'Camion citerne',      icone:'🚛', resources:['water'],       cost:750,  capacite:20, speed:3.5 },
-    pain:        { nom:'Camion pain',         icone:'🚚', resources:['bread'],       cost:700,  capacite:15, speed:3.8 },
-    poisson:     { nom:'Chariot poisson',     icone:'🛒', resources:['fish','fish_fillet','fish_oil'], cost:650, capacite:14, speed:3.8 },
-    acier:       { nom:'Camion acier',        icone:'🚚', resources:['steel'],       cost:1000, capacite:12, speed:3.5 },
-    marchandises:{ nom:'Camion outils',        icone:'🚐', resources:['goods'],       cost:700,  capacite:12, speed:3.5 },
-    bus:         { nom:'Bus',                 icone:'🚌', resources:[],              cost:1500, capacite:40, speed:3.0 },
+    // --- types achetables ---
+    minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal','dirt'],                                          cost:800,  capacite:15, speed:4.0 },
+    plateau:     { nom:'Camion plateau',     icone:'🚚', resources:['wood','steel'],                                                cost:900,  capacite:14, speed:3.8 },
+    cereale:     { nom:'Camion céréales',    icone:'🚜', resources:['wheat','cotton','flour'],                                      cost:600,  capacite:15, speed:4.0 },
+    marchandises:{ nom:'Camion marchandises',icone:'🚐', resources:['goods','clothes','bread'],                                    cost:700,  capacite:12, speed:3.8 },
+    frigo:       { nom:'Camion frigorifique',icone:'🚚', resources:['fish','fish_fillet'],                                         cost:750,  capacite:14, speed:3.8 },
+    citerne:     { nom:'Camion citerne',     icone:'🚛', resources:['water','fish_oil'],                                           cost:750,  capacite:20, speed:3.5 },
+    bus:         { nom:'Bus',                icone:'🚌', resources:[],                                                             cost:1500, capacite:40, speed:3.0 },
+    // --- legacy (sauvegardes existantes, plus achetables) ---
+    bois:        { nom:'Camion bois',        icone:'🚜', resources:['wood'],                   cost:600,  capacite:15, speed:4.0, buyDisabled:true },
+    ble:         { nom:'Camion blé',         icone:'🚜', resources:['wheat'],                  cost:550,  capacite:15, speed:4.0, buyDisabled:true },
+    coton:       { nom:'Chariot coton',      icone:'🛒', resources:['cotton'],                 cost:550,  capacite:15, speed:4.0, buyDisabled:true },
+    vetement:    { nom:'Camion vêtements',   icone:'🚐', resources:['clothes'],                cost:650,  capacite:12, speed:3.8, buyDisabled:true },
+    farine:      { nom:'Camion farine',      icone:'🚚', resources:['flour'],                  cost:650,  capacite:15, speed:3.8, buyDisabled:true },
+    pain:        { nom:'Camion pain',        icone:'🚚', resources:['bread'],                  cost:700,  capacite:15, speed:3.8, buyDisabled:true },
+    poisson:     { nom:'Chariot poisson',    icone:'🛒', resources:['fish','fish_fillet','fish_oil'], cost:650, capacite:14, speed:3.8, buyDisabled:true },
+    acier:       { nom:'Camion acier',       icone:'🚚', resources:['steel'],                  cost:1000, capacite:12, speed:3.5, buyDisabled:true },
   };
   const out = {};
   for(const k in DEFS){
     const d = DEFS[k], c = cfgV[k] || {};
     out[k] = {
-      nom:      c.nom       ?? d.nom,
-      icone:    c.icone     ?? d.icone,
-      resources: c.ressources ?? d.resources,
-      cost:     c.cout      ?? d.cost,
-      capacite: c.capacite  ?? d.capacite,
-      speed:    c.vitesse   ?? d.speed,
-      color:    COLOR_MAP[k],
+      nom:         c.nom        ?? d.nom,
+      icone:       c.icone      ?? d.icone,
+      resources:   c.ressources ?? d.resources,
+      cost:        c.cout       ?? d.cost,
+      capacite:    c.capacite   ?? d.capacite,
+      speed:       c.vitesse    ?? d.speed,
+      color:       COLOR_MAP[k],
+      buyDisabled: d.buyDisabled ?? false,
     };
   }
   return out;

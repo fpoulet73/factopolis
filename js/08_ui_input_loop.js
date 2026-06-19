@@ -122,6 +122,14 @@ function statusOf(b){
   return 'En production';
 }
 
+function _updVDyn(p, v){
+  const el = p.querySelector('[data-v-state="'+v.id+'"]');
+  if(!el) return;
+  const lbl = v.state==='idle' ? 'En attente' : v.state==='to_source' ? 'Vers source' : 'Vers destination';
+  const cargo = v.cargo > 0 ? ' · '+v.cargo+(v.res ? ' '+RES[v.res].n : '') : '';
+  el.textContent = lbl + cargo;
+}
+
 function renderInfo(){
   const p = $('info');
 
@@ -464,13 +472,19 @@ function renderInfo(){
         const vt = VEHICLE_TYPES[v.vtype];
         const srcName = v.source && !v.source.dead ? BUILD[v.source.type].n : '—';
         const dstName = v.dest   && !v.dest.dead   ? BUILD[v.dest.type].n  : '—';
-        const stateLabel = v.state==='idle' ? 'En attente'
-          : v.state==='to_source' ? 'Vers source' : 'Vers destination';
-        const cargoStr = v.cargo > 0 ? ' · '+v.cargo+(v.res ? ' '+RES[v.res].n : '') : '';
+        let resSel = '';
+        if(vt.resources.length > 1){
+          resSel = '<select style="display:block;width:100%;margin-top:4px;background:#16202f;border:1px solid #36465e;color:#e8eef7;border-radius:7px;padding:4px 6px;font-size:12px;box-sizing:border-box" data-pin-v="'+v.id+'">'
+            + '<option value="">— Toutes les ressources —</option>';
+          for(const r of vt.resources)
+            resSel += '<option value="'+r+'"'+(v.pinnedRes===r?' selected':'')+'>'+( RES[r]?.ic||'')+' '+(RES[r]?.n||r)+'</option>';
+          resSel += '</select>';
+        }
         h += '<div style="padding:5px 0;border-bottom:1px solid #2a3a50">'
            + '<div>'+vt.icone+' <b>'+vt.nom+'</b></div>'
-           + '<div style="font-size:11px;color:#8fa3bf">'+stateLabel+cargoStr+'</div>'
+           + '<div style="font-size:11px;color:#8fa3bf" data-v-state="'+v.id+'"></div>'
            + '<div style="font-size:11px;color:#8fa3bf">'+srcName+' → '+dstName+'</div>'
+           + resSel
            + '<div style="display:flex;gap:4px;margin-top:3px">'
            + '<button class="tbtn" style="flex:1;font-size:11px" data-route-v="'+v.id+'">🔁 Route</button>'
            + '<button class="tbtn" style="font-size:11px;color:#ff9a8a" data-sell-v="'+v.id+'">🗑️ Vendre</button>'
@@ -480,8 +494,12 @@ function renderInfo(){
     h += '<div style="margin-top:8px;color:#8fa3bf">Acheter un véhicule</div>';
     for(const vk in VEHICLE_TYPES){
       const vt = VEHICLE_TYPES[vk];
+      if(vt.buyDisabled) continue;
+      const resLabel = vt.resources.length > 1
+        ? '<span style="color:#8fa3bf;font-size:10px"> · '+ vt.resources.map(r=>RES[r]?.ic||r).join(' ') +'</span>'
+        : '';
       h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:2px" data-buy-v="'+vk+'">'
-         + vt.icone+' '+vt.nom+' <span style="color:#8fa3bf">— '+vt.cost+' $</span></button>';
+         + vt.icone+' '+vt.nom+resLabel+' <span style="color:#8fa3bf">— '+vt.cost+' $</span></button>';
     }
   }
   // Contrôles de production pour les usines industrielles (hors dépôts/citernes)
@@ -505,9 +523,13 @@ function renderInfo(){
   }
   p.style.display = 'block';
   p.classList.toggle('depot-modal', b.type === 'depot' || b.type === 'market');
-  if(p._html === h && p._b === b) return; // ne pas reconstruire le DOM sous la souris
+  if(p._html === h && p._b === b){
+    if(b.type === 'garage') for(const v of (b.vehicles||[])) _updVDyn(p, v);
+    return;
+  }
   p._html = h; p._b = b;
   p.innerHTML = h;
+  if(b.type === 'garage') for(const v of (b.vehicles||[])) _updVDyn(p, v);
   p.querySelectorAll('[data-plant-upgrade]').forEach(btn=>{
     btn.onclick = async ()=>{
       const targetType = btn.dataset.plantUpgrade;
@@ -589,6 +611,15 @@ function renderInfo(){
         removePersistentVehicle(v);
         if(MP.connected) netSend({ type:'sell_vehicle', id:v.id });
         toast('🗑️ Véhicule vendu (+'+refund+' $)');
+        p._html = null;
+      };
+    });
+    p.querySelectorAll('select[data-pin-v]').forEach(sel=>{
+      sel.onchange = ()=>{
+        const vid = +sel.dataset.pinV;
+        const v = vehicles.find(vv=>vv.id===vid);
+        if(!v) return;
+        v.pinnedRes = sel.value || null;
         p._html = null;
       };
     });
