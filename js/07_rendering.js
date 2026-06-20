@@ -1170,70 +1170,189 @@ function draw(){
   const roadSegments = [];
   const roadNodes = [];
   const roadSingles = [];
+  const railSegments = [];
+  const railNodeSleepers = [];
+  const railNodes = [];
+  const railSingles = [];
   const trafficLights = [];
   const roadWidth = 28;
   const roadLineWidth = 14;
+  const railWidth = 12;
+  const railSleeperWidth = 20;
+  const railColor = '#6f747c';
+  const railLineColor = '#c7ccd3';
   for(let ry=minRy-1; ry<=maxRy+1; ry++) for(let rx=minRx-1; rx<=maxRx+1; rx++){
     const [x,y] = invRotIdx(rx,ry);
     if(x<0||y<0||x>=N||y>=N) continue;
     const i = y*N+x;
-    if(!road[i]) continue;
-
     const c = iso(rx+0.5, ry+0.5);
-    roadNodes.push(c);
-    let links = 0;
-    for(const [dx,dy] of DIRS8){
-      const nx = x+dx, ny = y+dy;
-      if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
-      links++;
-      if(ny < y || (ny === y && nx < x)) continue;
-      if(dx !== 0 && dy !== 0 && (road[y*N+nx] || road[ny*N+x])) continue;
-      const [du,dv] = rotDir(dx,dy);
-      roadSegments.push([c, iso(rx+du+0.5, ry+dv+0.5)]);
-    }
-    if(!links) roadSingles.push(c);
-    else if(!UI_OPTIONS.disableTrafficLights && isTrafficIntersectionTile({ x, y, i })){
-      const tileAxis = trafficGreenAxis({ x, y, i });
-      const approaches = [];
-      for(const [adx,ady] of [[1,0],[-1,0],[0,1],[0,-1]]){
-        const nx = x+adx, ny = y+ady;
+    if(road[i]){
+      roadNodes.push(c);
+      let links = 0;
+      for(const [dx,dy] of DIRS8){
+        const nx = x+dx, ny = y+dy;
         if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
-        const [du,dv] = rotDir(adx,ady);
-        const axisDir = Math.abs(adx) >= Math.abs(ady) ? 'ew' : 'ns';
-        approaches.push({ du, dv, green: tileAxis === axisDir });
+        links++;
+        if(ny < y || (ny === y && nx < x)) continue;
+        if(dx !== 0 && dy !== 0 && (road[y*N+nx] || road[ny*N+x])) continue;
+        const [du,dv] = rotDir(dx,dy);
+        roadSegments.push([c, iso(rx+du+0.5, ry+dv+0.5)]);
       }
-      if(approaches.length) trafficLights.push({ c, approaches });
+      if(!links) roadSingles.push(c);
+      else if(!UI_OPTIONS.disableTrafficLights && isTrafficIntersectionTile({ x, y, i })){
+        const tileAxis = trafficGreenAxis({ x, y, i });
+        const approaches = [];
+        for(const [adx,ady] of [[1,0],[-1,0],[0,1],[0,-1]]){
+          const nx = x+adx, ny = y+ady;
+          if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
+          const [du,dv] = rotDir(adx,ady);
+          const axisDir = Math.abs(adx) >= Math.abs(ady) ? 'ew' : 'ns';
+          approaches.push({ du, dv, green: tileAxis === axisDir });
+        }
+        if(approaches.length) trafficLights.push({ c, approaches });
+      }
+    }
+
+    if(rail[i]){
+      railNodes.push(c);
+      let links = 0;
+      const railDirs = [];
+      for(const [dx,dy] of DIRS8){
+        const nx = x+dx, ny = y+dy;
+        if(!inMap(nx,ny) || !rail[ny*N+nx]) continue;
+        links++;
+        const [du,dv] = rotDir(dx,dy);
+        railDirs.push([du, dv]);
+        if(ny < y || (ny === y && nx < x)) continue;
+        if(dx !== 0 && dy !== 0 && (rail[y*N+nx] || rail[ny*N+x])) continue;
+        railSegments.push({ a:c, b:iso(rx+du+0.5, ry+dv+0.5), dir:[du, dv] });
+      }
+      if(!links) railSingles.push(c);
+      else if(links <= 2) railNodeSleepers.push({ center:c, dirs:railDirs });
     }
   }
 
-  const strokeRoadSegments = (width, color, cap)=>{
+  const strokeSegments = (segments, width, color, cap)=>{
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.lineCap = cap || 'butt';
     ctx.lineJoin = 'round';
     ctx.beginPath();
-    for(const [a,b] of roadSegments){
+    for(const [a,b] of segments){
       ctx.moveTo(a[0], a[1]);
       ctx.lineTo(b[0], b[1]);
     }
     ctx.stroke();
   };
-  const fillRoadNodes = (nodes, radius, color)=>{
+  const fillNodes = (nodes, radius, color)=>{
     ctx.fillStyle = color;
     for(const c of nodes){
       ctx.beginPath(); ctx.arc(c[0], c[1], radius, 0, Math.PI*2); ctx.fill();
     }
   };
-  strokeRoadSegments(roadWidth, pack.road, 'butt');
-  fillRoadNodes(roadNodes, roadWidth*0.5, pack.road);
-  fillRoadNodes(roadSingles, roadWidth*0.56, pack.road);
+  const railSleeperHalf = (perp, length)=>{
+    const plen = Math.hypot(perp[0], perp[1]);
+    if(plen < 0.001) return null;
+    const nx = perp[0] / plen;
+    const ny = perp[1] / plen;
+    return [nx * length * 0.5, ny * length * 0.34];
+  };
+  const strokeRailPairs = (segments, gauge, width, color)=>{
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for(const seg of segments){
+      const { a, b } = seg;
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      const len = Math.hypot(dx, dy);
+      if(!len) continue;
+      const ox = -dy / len * gauge;
+      const oy = dx / len * gauge;
+      ctx.moveTo(a[0] + ox, a[1] + oy);
+      ctx.lineTo(b[0] + ox, b[1] + oy);
+      ctx.moveTo(a[0] - ox, a[1] - oy);
+      ctx.lineTo(b[0] - ox, b[1] - oy);
+    }
+    ctx.stroke();
+  };
+  const drawRailSleepers = (segments, count, inset, length, width, color)=>{
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for(const seg of segments){
+      const { a, b, dir } = seg;
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      const segLen = Math.hypot(dx, dy);
+      if(segLen < 0.001) continue;
+      const [du, dv] = dir || [0, 0];
+      const dlen = Math.hypot(du, dv);
+      if(dlen < 0.001) continue;
+      const perp = iso(-dv / dlen, du / dlen);
+      const half = railSleeperHalf(perp, length);
+      if(!half) continue;
+      const [hx, hy] = half;
+      for(let i = 0; i < count; i++){
+        const t = inset + (1 - inset * 2) * ((i + 1) / (count + 1));
+        const cx = a[0] + dx * t;
+        const cy = a[1] + dy * t;
+        ctx.moveTo(cx - hx, cy - hy);
+        ctx.lineTo(cx + hx, cy + hy);
+      }
+    }
+    ctx.stroke();
+  };
+  const drawRailNodeSleepers = (markers, length, width, color)=>{
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for(const marker of markers){
+      const dirs = marker.dirs || [];
+      if(!dirs.length) continue;
+      let tx = 0, ty = 0;
+      if(dirs.length === 1){
+        [tx, ty] = dirs[0];
+      } else {
+        for(const [dx,dy] of dirs){ tx += dx; ty += dy; }
+        if(Math.abs(tx) < 0.001 && Math.abs(ty) < 0.001){
+          tx = dirs[0][0];
+          ty = dirs[0][1];
+        }
+      }
+      const tlen = Math.hypot(tx, ty);
+      if(tlen < 0.001) continue;
+      const perp = iso(-ty / tlen, tx / tlen);
+      const half = railSleeperHalf(perp, length);
+      if(!half) continue;
+      const [hx, hy] = half;
+      ctx.moveTo(marker.center[0] - hx, marker.center[1] - hy);
+      ctx.lineTo(marker.center[0] + hx, marker.center[1] + hy);
+    }
+    ctx.stroke();
+  };
+  strokeSegments(roadSegments, roadWidth, pack.road, 'butt');
+  fillNodes(roadNodes, roadWidth*0.5, pack.road);
+  fillNodes(roadSingles, roadWidth*0.56, pack.road);
 
   if(!drawFast){
-    strokeRoadSegments(roadLineWidth, pack.roadLine, 'butt');
-    fillRoadNodes(roadNodes, roadLineWidth*0.5, pack.roadLine);
-    strokeRoadSegments(1.4, 'rgba(200,206,214,.55)', 'butt');
-    fillRoadNodes(roadSingles, roadLineWidth*0.56, pack.roadLine);
+    strokeSegments(roadSegments, roadLineWidth, pack.roadLine, 'butt');
+    fillNodes(roadNodes, roadLineWidth*0.5, pack.roadLine);
+    strokeSegments(roadSegments, 1.4, 'rgba(200,206,214,.55)', 'butt');
+    fillNodes(roadSingles, roadLineWidth*0.56, pack.roadLine);
     for(const tl of trafficLights) drawTrafficLight(tl.c, tl.approaches);
+  }
+
+  drawRailSleepers(railSegments, 3, 0.08, 18, 3.6, '#5b3e24');
+  drawRailNodeSleepers(railNodeSleepers, 15, 3.2, '#5b3e24');
+  fillNodes(railSingles, railSleeperWidth*0.28, '#5b3e24');
+  strokeRailPairs(railSegments, 4.5, 3.2, railColor);
+  fillNodes(railSingles, 3.2, railColor);
+  if(!drawFast){
+    strokeRailPairs(railSegments, 4.5, 1.2, railLineColor);
+    fillNodes(railSingles, 1.3, railLineColor);
   }
 
   if(radiusSel)
@@ -1337,11 +1456,11 @@ function draw(){
   drawTownLabels();
 
   // aperçu du tracé de route (deux-points)
-  if(tool === 'road' && roadPreviewTiles.length > 0){
+  if((tool === 'road' || tool === 'rail') && roadPreviewTiles.length > 0){
     for(const t of roadPreviewTiles){
       if(!inMap(t.x, t.y)) continue;
       const [rx, ry] = rotIdx(t.x, t.y);
-      ctx.fillStyle = canPlace('road', t.x, t.y).ok ? 'rgba(110,230,120,.55)' : 'rgba(200,200,200,.2)';
+      ctx.fillStyle = canPlace(tool, t.x, t.y).ok ? 'rgba(110,230,120,.55)' : 'rgba(200,200,200,.2)';
       diamond(rx, ry); ctx.fill();
     }
   }

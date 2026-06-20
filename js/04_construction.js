@@ -37,19 +37,27 @@ function nearbyEnemyOwner(myId, cx, cy){
 function canPlace(t,x,y){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
-  if(t==='bulldoze') return { ok: !!(road[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT || ter===T.COTTON) };
+  if(t==='bulldoze') return { ok: !!(road[i] || rail[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT || ter===T.COTTON) };
   if(t==='terraform') return { ok: !bgrid[i] && (ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL) };
   if(t==='fill_water'){
     if(ter !== T.WATER) return { ok:false, msg:'L\'outil Remblai ne s\'applique que sur l\'eau' };
     if(!terrassementNear(x, y, MP.myId ?? 1)) return { ok:false, msg:'Aucune usine de terrassement à portée avec assez de terre ('+FILL_WATER_COST+' terres requises)' };
     return { ok:true };
   }
-  if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
-  if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
   if(t==='road'){
+    if(road[i] || rail[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
+    if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
     if(ter!==T.GRASS) return { ok:false, msg:"Les routes se posent sur l'herbe (démolis les arbres ou champs)" };
     return { ok:true };
   }
+  if(t==='rail'){
+    if(road[i] || rail[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
+    if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
+    if(ter!==T.GRASS) return { ok:false, msg:"Les rails se posent sur l'herbe (démolis les arbres ou champs)" };
+    return { ok:true };
+  }
+  if(road[i] || rail[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
+  if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
   if(t==='mine'){
     if(ter!==T.IRON && ter!==T.COAL) return { ok:false, msg:'La mine doit être sur un gisement' };
   } else {
@@ -192,6 +200,8 @@ function clickAt(x,y){
       if(refund) addFloat(x,y,'+'+refund+' $','#9fe89f');
     } else if(road[i]){
       road[i] = 0; earnMoney(3, 'rembours');
+    } else if(rail[i]){
+      rail[i] = 0; earnMoney(Math.floor((BUILD.rail?.cost||0) * 0.3), 'rembours');
     } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON){
       terrain[i] = T.GRASS;
     }
@@ -227,6 +237,7 @@ function clickAt(x,y){
   if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
   spendMoney(cost, 'construction');
   if(tool==='road'){ road[i] = 1; return; }
+  if(tool==='rail'){ rail[i] = 1; return; }
   const b = newBuilding(tool,x,y);
   b.owner = MP.myId;
   markStarterHomeIfNeeded(b);

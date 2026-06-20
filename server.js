@@ -432,13 +432,13 @@ function sanitizeWorldConfig(config = {}) {
 }
 
 const ALLOWED_ACTIONS = new Set([
-  'road', 'bulldoze_road', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
+  'road', 'bulldoze_road', 'bulldoze_rail', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
   'build', 'toggle_bld_pause', 'toggle_out_block', 'clear_bld_stock', 'upgrade_plant',
   'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'merge_towns',
   'zone_reassign', 'rename_bus_stop', 'owner_remap', 'pause', 'speed',
 ]);
 const ALLOWED_BUILD_TYPES = new Set([
-  'road', 'mine', 'lumber', 'farm', 'cotton_farm', 'weaver', 'pump', 'fisher', 'mill',
+  'road', 'rail', 'mine', 'lumber', 'farm', 'cotton_farm', 'weaver', 'pump', 'fisher', 'mill',
   'bakery', 'fishery', 'smelter', 'factory', 'plant', 'house', 'depot', 'market',
   'tank', 'garage', 'train_depot', 'boat_depot', 'plane_depot', 'bus_stop', 'terrassement',
 ]);
@@ -458,6 +458,7 @@ function sanitizeAction(client, msg) {
   switch (act.type) {
     case 'road':
     case 'bulldoze_road':
+    case 'bulldoze_rail':
     case 'bulldoze_tree':
     case 'terraform':
       if (!intInRange(act.i)) return null;

@@ -16,7 +16,11 @@
     "sessionIssuedAt": "2026-06-20T06:15:52.365Z"
   },
   "gege": {
-    "passwordHash": "e7f63be25caefa4d8cff32f04757b158f73c50ae313668a07dc8ee9bec9b43de",
-    "color": "#e0e0e0"
+    "passwordHash": "b887ec20206d9216b5e49d4a328828fc7d0735ac53424a8a30378fb6b2ef4b462696b0cfecd8940dc32c7ed9abca52e5abe1297c5980f9f1035e36356fcd5b7a",
+    "color": "#e0e0e0",
+    "passwordAlgo": "scrypt",
+    "passwordSalt": "276a2d330e6f3651451a62fab4045097",
+    "sessionHash": "55a4448adc36b8a2dfefb60435ae7e3d69df87764936287d7e1b3a542914cf9a",
+    "sessionIssuedAt": "2026-06-20T08:04:02.535Z"
   }
 }

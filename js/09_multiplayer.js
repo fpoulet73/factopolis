@@ -13,6 +13,7 @@ function serializeState(){
     mapMask: Array.from(mapMask),
     terrain: Array.from(terrain),
     road:    Array.from(road),
+    rail:    Array.from(rail),
     wallets: WALLETS,
     homeless: [],
     gtime,
@@ -106,6 +107,7 @@ function applySnapshot(d){
     setMapSize(d.size || N);
     terrain = Uint8Array.from(d.terrain);
     road    = Uint8Array.from(d.road);
+    rail    = d.rail ? Uint8Array.from(d.rail) : new Uint8Array((d.size || N) * (d.size || N));
     mapBounds = { ...d.mapBounds };
     expansionLevels = d.expansionLevels || { left:0, right:0, top:0, bottom:0 };
     purchasedPieces = new Set(d.purchasedPieces||[]);
@@ -131,11 +133,14 @@ function applySnapshot(d){
     // Déplacer le terrain dans la grande grille
     const oldTerrain = Uint8Array.from(d.terrain);
     const oldRoad    = Uint8Array.from(d.road);
+    const oldRail    = d.rail ? Uint8Array.from(d.rail) : new Uint8Array(N_PLAY * N_PLAY);
     terrain = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     road    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
+    rail    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     for(let y=0; y<N_PLAY; y++) for(let x=0; x<N_PLAY; x++){
       terrain[(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldTerrain[y*N_PLAY+x];
       road   [(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldRoad   [y*N_PLAY+x];
+      rail   [(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldRail   [y*N_PLAY+x];
     }
     // Décaler toutes les coordonnées de EXP_MARGIN tuiles
     for(const o of d.buildings) { o.x += EXP_MARGIN; o.y += EXP_MARGIN; }
@@ -271,6 +276,9 @@ function applyAction(msg){
     case 'road':
       if(validIdx(act.i)) road[act.i] = 1;
       break;
+    case 'bulldoze_rail':
+      if(validIdx(act.i)){ rail[act.i] = 0; earnMoney(Math.floor((BUILD.rail?.cost||0) * 0.3), 'rembours', walletOf(msg.from)); }
+      break;
     case 'bulldoze_road':
       if(validIdx(act.i)){ road[act.i] = 0; earnMoney(3, 'rembours', walletOf(msg.from)); }
       break;
@@ -302,13 +310,14 @@ function applyAction(msg){
       const cost = BUILD[act.btype].cost||0;
       const wSender = walletOf(msg.from);
       if(msg.fromUsername) wSender.username = msg.fromUsername;
-      if(act.btype === 'road'){
-        if(bgrid[act.y*N+act.x]) break;
-        road[act.y*N+act.x] = 1;
+      if(act.btype === 'road' || act.btype === 'rail'){
+        if(bgrid[act.y*N+act.x] || road[act.y*N+act.x] || rail[act.y*N+act.x]) break;
+        if(act.btype === 'road') road[act.y*N+act.x] = 1;
+        else rail[act.y*N+act.x] = 1;
         wSender.money -= cost; wSender.fin.construction += cost;
         break;
       }
-      if(road[act.y*N+act.x] || bgrid[act.y*N+act.x]) break;
+      if(road[act.y*N+act.x] || rail[act.y*N+act.x] || bgrid[act.y*N+act.x]) break;
       const b = newBuilding(act.btype, act.x, act.y);
       b.owner = msg.from;
       markStarterHomeIfNeeded(b);
@@ -838,6 +847,8 @@ clickFn = function(x,y){
       netSend({ type:'bulldoze_bld', bx:bgrid[i].x, by:bgrid[i].y });
     } else if(road[i]){
       netSend({ type:'bulldoze_road', i });
+    } else if(rail[i]){
+      netSend({ type:'bulldoze_rail', i });
     } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON){
       netSend({ type:'bulldoze_tree', i });
     }

@@ -857,16 +857,18 @@ function buildToolbar(){
       continue;
     }
     const d = BUILD[k];
+    if(!d) continue;
     const btn = document.createElement('button');
     btn.className = 'tool' + (k===tool ? ' on' : '');
     btn.dataset.t = k;
     btn.title = d.desc || '';
     btn.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
       + (d.cost ? '<span class="cost">'+d.cost+' $</span>' : '<span class="cost">&nbsp;</span>')
-      + '<span class="hk">['+d.hk+']</span>';
+      + '<span class="hk">'+(d.hk ? '['+d.hk+']' : '&nbsp;')+'</span>';
     btn.onclick = ()=> setTool(k);
     bar.appendChild(btn);
   }
+
   syncToolbarState();
 }
 function setTool(k){
@@ -1127,7 +1129,7 @@ cv.addEventListener('mousedown', e=>{
       townZoneDrag = { x0: mouse.tx, y0: mouse.ty, x1: mouse.tx, y1: mouse.ty };
       return;
     }
-    if(tool === 'road'){
+    if(tool === 'road' || tool === 'rail'){
       roadDragStart = { x: mouse.tx, y: mouse.ty };
       roadPreviewTiles = computeRoadPreview(mouse.tx, mouse.ty, mouse.tx, mouse.ty, e.shiftKey);
     } else {
@@ -1156,7 +1158,7 @@ addEventListener('mousemove', e=>{
   }
   if(mouse.lDown && (tool==='bulldoze'||tool==='terraform'||tool==='fill_water') && (mouse.tx!==ptx || mouse.ty!==pty))
     clickFn(mouse.tx, mouse.ty);
-  if(mouse.lDown && tool==='road' && roadDragStart && (mouse.tx!==ptx || mouse.ty!==pty))
+  if(mouse.lDown && (tool==='road' || tool==='rail') && roadDragStart && (mouse.tx!==ptx || mouse.ty!==pty))
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, e.shiftKey);
 });
 addEventListener('mouseup', e=>{
@@ -1174,9 +1176,9 @@ addEventListener('mouseup', e=>{
       mouse.lDown = false;
       return;
     }
-    if(tool === 'road' && roadDragStart){
+    if((tool === 'road' || tool === 'rail') && roadDragStart){
       for(const t of roadPreviewTiles)
-        if(canPlace('road', t.x, t.y).ok) clickFn(t.x, t.y);
+        if(canPlace(tool, t.x, t.y).ok) clickFn(t.x, t.y);
       roadDragStart = null; roadPreviewTiles = [];
     }
     mouse.lDown = false;
@@ -1252,7 +1254,7 @@ addEventListener('keydown', e=>{
   keys.add(e.code);
   if(e.code==='Space'){ e.preventDefault(); togglePause(); }
   if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; closeTownPanel(); }
-  if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown)
+  if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown && (tool==='road' || tool==='rail'))
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, true);
   if(e.code==='KeyH') toggleHelp();
   if(e.code==='KeyR') rotate(e.shiftKey ? -1 : 1);
@@ -1269,7 +1271,7 @@ addEventListener('click', e=>{
 });
 addEventListener('keyup', e=>{
   keys.delete(e.code);
-  if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown)
+  if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown && (tool==='road' || tool==='rail'))
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, false);
 });
 

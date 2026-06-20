@@ -1,7 +1,7 @@
 const COLORS = ['#e25e4c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#f0a040','#40d0c0','#e0e0e0'];
 
 // ---------- état ----------
-let terrain, road, bgrid, buildings, trucks, walkers, homeless, floats;
+let terrain, road, rail, bgrid, buildings, trucks, walkers, homeless, floats;
 let vehicles = [];        // véhicules persistants
 let vehicleRouteMode = null; // { vehicle, step:'source'|'dest' } ou null
 let selectedVehicle = null;  // véhicule sélectionné
@@ -213,6 +213,7 @@ function genWorld(config){
   setMapSize(N_FULL_MAP);
   terrain = new Uint8Array(N*N);
   road = new Uint8Array(N*N);
+  rail = new Uint8Array(N*N);
   bgrid = new Array(N*N).fill(null);
   buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
   vehicles = []; vehicleRouteMode = null; selectedVehicle = null; nextVehicleId = 0;
