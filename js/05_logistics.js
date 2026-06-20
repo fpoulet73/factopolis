@@ -414,14 +414,15 @@ function railEdgeSignalState(x, y, def){
 }
 
 function railEdgeAllowsDirection(x, y, def){
-  const sig = railEdgeSignalState(x, y, def);
-  if(sig.own) return true;
-  return !sig.opposite;
+  const nx = x + def.dx, ny = y + def.dy;
+  if(!inMap(nx, ny)) return false;
+  return !!(rail[ny * N + nx] & RAIL_DIRS[def.opposite].bit);
 }
 
 function railEdgePassableForPath(x, y, def, vehicle=null){
   const signals = railEdgeSignalState(x, y, def);
-  if(!signals.own && signals.opposite) return false;
+  // A one-way signal controls only trains approaching its face. Passing the
+  // back of the signal is unregulated; it does not make the track one-way.
   if(!signals.own) return true;
   const nx = x + def.dx, ny = y + def.dy;
   if(!inMap(nx, ny)) return false;
@@ -450,7 +451,7 @@ function railReachableExits(tile, vehicle=null){
   return n;
 }
 
-function findRailPath(fromB, toB, startTile=null, vehicle=null){
+function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=null){
   const starts = startTile != null ? [startTile] : adjRailTiles(fromB);
   const targets = new Set(adjRailTiles(toB));
   if(!starts.length || !targets.size) return null;
@@ -472,9 +473,9 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null){
       const nx = cx + def.dx, ny = cy + def.dy;
       if(!inMap(nx, ny)) continue;
       const ni = ny * N + nx;
+      if(startTile != null && cur === startTile && previousTile != null && ni === previousTile) continue;
       const other = RAIL_DIRS[def.opposite];
       if(!rail[ni] || !(rail[ni] & other.bit) || prevRail[ni] !== -2) continue;
-      if(!targets.has(ni) && railReachableExits(ni, vehicle) <= 1) continue;
       prevRail[ni] = cur;
       q.push(ni);
     }
@@ -513,20 +514,42 @@ function railSignalAspect(sig){
   if(!def) return false;
   const nx = sig.x + def.dx, ny = sig.y + def.dy;
   if(!inMap(nx, ny)) return false;
-  const nextBlock = railBlocks?.blockByTile?.[ny * N + nx] ?? -1;
-  if(nextBlock < 0) return false;
-  const occupied = railBlockOccupancy?.[nextBlock] ?? 0;
+  // The lamp reports occupancy on the mast's tile side; the stored bit still
+  // controls the permitted travel direction across the edge.
+  const guardedBlock = railBlocks?.blockByTile?.[sig.y * N + sig.x] ?? -1;
+  if(guardedBlock < 0) return false;
+  const occupied = railBlockOccupancy?.[guardedBlock] ?? 0;
   return occupied <= 0;
 }
 
-function prepareRailTrip(v, fromB, toB, startTile=null){
-  const path = findRailPath(fromB, toB, startTile, v);
+function prepareRailTrip(v, fromB, toB, startTile=null, previousTile=null){
+  const path = findRailPath(fromB, toB, startTile, v, previousTile);
   if(!path) return false;
   v.pts = path.pts;
   v.pathTiles = path.tiles;
   v.seg = 0;
   v.t = 0;
   return true;
+}
+
+function rememberTrainArrivalDirection(v){
+  if(!v?.pathTiles?.length) return;
+  const last = v.pathTiles.length - 1;
+  v.railContinueTile = v.pathTiles[last] ?? null;
+  v.railPreviousTile = last > 0 ? (v.pathTiles[last - 1] ?? null) : null;
+}
+
+function holdTrainAtArrival(v){
+  const tile = v.railContinueTile;
+  if(tile == null){
+    v.pts = [];
+    v.pathTiles = [];
+    return;
+  }
+  v.pts = [{ x:(tile % N) * TILE + TILE / 2, y:((tile / N) | 0) * TILE + TILE / 2 }];
+  v.pathTiles = [tile];
+  v.seg = 0;
+  v.t = 0;
 }
 
 function trainNextMoveState(v){
@@ -546,7 +569,8 @@ function tryRerouteTrain(v){
   if(curTile < 0) return false;
   const targetB = v.state === 'returning' ? v.garageRef : (v.state === 'to_source' ? v.source : v.dest);
   if(!targetB || targetB.dead) return false;
-  const path = findRailPath(v.currentBuilding || v.garageRef, targetB, curTile, v);
+  const previousTile = v.seg > 0 ? (v.pathTiles[v.seg - 1] ?? null) : null;
+  const path = findRailPath(v.currentBuilding || v.garageRef, targetB, curTile, v, previousTile);
   if(!path || path.tiles.length < 2) return false;
   v.pts = path.pts;
   v.pathTiles = path.tiles;
@@ -590,10 +614,14 @@ function updateTrainVehicle(v, dt){
     if(v.waitTimer > 0) return;
     const fromB = v.currentBuilding || v.garageRef;
     const toB = v.state === 'returning' ? v.garageRef : (v.state === 'to_source' ? v.source : v.dest);
-    if(!prepareRailTrip(v, fromB, toB)){
+    const continueTile = v.railContinueTile ?? null;
+    const previousTile = v.railPreviousTile ?? null;
+    if(!prepareRailTrip(v, fromB, toB, continueTile, previousTile)){
       v.waitTimer = 5;
       return;
     }
+    v.railContinueTile = null;
+    v.railPreviousTile = null;
     v.currentBuilding = null;
   }
   if(!v.pts?.length || !v.pathTiles?.length){
@@ -610,18 +638,18 @@ function updateTrainVehicle(v, dt){
     return;
   }
   if(v.state === 'to_source'){
+    rememberTrainArrivalDirection(v);
     v.currentBuilding = v.source;
     v.state = 'to_dest';
     v.waitTimer = TRAIN_DWELL_TIME;
-    v.pts = [];
-    v.pathTiles = [];
+    holdTrainAtArrival(v);
     return;
   }
+  rememberTrainArrivalDirection(v);
   v.currentBuilding = v.dest;
   v.state = 'to_source';
   v.waitTimer = TRAIN_DWELL_TIME;
-  v.pts = [];
-  v.pathTiles = [];
+  holdTrainAtArrival(v);
 }
 
 // ---------- logistique (véhicules persistants) ----------
@@ -643,6 +671,8 @@ function createPersistentVehicle(vtype, garage, id=null){
     waitTimer: 0,
     currentBuilding: garage,
     currentRailBlock: -1,
+    railContinueTile: null,
+    railPreviousTile: null,
   };
   const numericId = Number(v.id);
   if(Number.isFinite(numericId)) nextVehicleId = Math.max(nextVehicleId, numericId + 1);
@@ -810,7 +840,15 @@ function returnToGarage(v){
 function updateVehicles(dt){
   rebuildRailBlockOccupancy();
   for(const v of vehicles){
-    if(v.state === 'idle') continue;
+    if(v.state === 'idle'){
+      // Routes that failed before a rail or signal correction remain assigned.
+      // Retry them periodically so existing trains can leave without reconfiguration.
+      if(v.vtype === 'train' && v.source && v.dest && !v.source.dead && !v.dest.dead){
+        v.waitTimer = Math.max(0, (v.waitTimer || 0) - dt);
+        if(v.waitTimer <= 0 && !startVehicleRoute(v)) v.waitTimer = 2;
+      }
+      if(v.state === 'idle') continue;
+    }
     if(v.vtype === 'train'){
       updateTrainVehicle(v, dt);
       continue;
