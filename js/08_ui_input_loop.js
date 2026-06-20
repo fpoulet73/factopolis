@@ -95,13 +95,16 @@ function statusOf(b){
       return '⚠️ Pénurie : manque '+resNames(missingReq)+' ! Dégradation dans '+Math.max(0,Math.ceil(STARVE_DELAY-b.starve))+' s';
     return 'Attend : '+resNames(missingReq);
   }
-  if(b.type==='depot') return 'Stocke et redistribue';
   if(b.type==='market') return 'Marché — vente aux autres joueurs';
-  if(b.type==='tank') return 'Stocke l’eau pour les boulangeries proches';
-  if(b.type==='garage'){
-    const active = (b.vehicles||[]).filter(v=>v.state!=='idle').length;
-    return active > 0 ? active+' véhicule(s) en tournée' : 'Aucun véhicule en service';
+  if(isVehicleDepot(b)){
+    if(b.type === 'garage'){
+      const active = (b.vehicles||[]).filter(v=>v.state!=='idle').length;
+      return active > 0 ? active+' véhicule(s) en tournée' : 'Aucun véhicule en service';
+    }
+    return (BUILD[b.type]?.n || 'Dépôt')+' — point d’achat de moyens de transport';
   }
+  if(isStorageDepot(b)) return 'Stocke et redistribue';
+  if(b.type==='tank') return 'Stocke l’eau pour les boulangeries proches';
   if(b.type==='bus_stop'){
     const max = b.passengersMax || 0;
     if(max === 0) return 'Aucun habitant à portée (rayon '+BUS_STOP_RADIUS+' cases)';
@@ -347,7 +350,7 @@ function renderInfo(){
     if(extraKeys.length){
       extraKeys.forEach(showStock);
     }
-  } else if(b.type !== 'depot' && b.type !== 'market') {
+  } else if(!isStorageDepot(b) && !isVehicleDepot(b)) {
     // bâtiments non-industriels (logements…)
     const allKeys = [...new Set([
       ...Object.keys(b.storage).filter(k=>b.storage[k]>0 || (b.inc[k]||0)>0),
@@ -357,10 +360,11 @@ function renderInfo(){
       allKeys.forEach(showStock);
     }
   }
-  if(b.type==='depot'){
+  if(isStorageDepot(b) && b.type !== 'market'){
     const myOid = MP.myId;
     const isOwner = !b.owner || b.owner === myOid;
-    h += '<div style="color:#8fa3bf;font-size:10px;margin-bottom:6px">Rayon d\'action : <b style="color:#ffd700">'+depotRadiusOf(b)+' cases</b>'+(b.w*b.h>1?' · Taille <b>'+b.w+'×'+b.h+'</b>':'')+'</div>';
+    const depotRadius = BUILD[b.type]?.radiusOf ? BUILD[b.type].radiusOf(b) : depotRadiusOf(b);
+    h += '<div style="color:#8fa3bf;font-size:10px;margin-bottom:6px">Rayon d\'action : <b style="color:#ffd700">'+depotRadius+' cases</b>'+(b.w*b.h>1?' · Taille <b>'+b.w+'×'+b.h+'</b>':'')+'</div>';
     if(isOwner){
       h += '<div style="color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">📦 Ressources stockées</div>';
       h += '<div class="depot-cols-3">';
@@ -464,8 +468,13 @@ function renderInfo(){
       h += '<div class="row"><span>Nom</span><b style="color:#9fd4f0">'+escHtml(b.name)+'</b></div>';
     }
   }
-  if(b.type==='garage'){
+  if(isVehicleDepot(b)){
     const bvehicles = b.vehicles || [];
+    const buyCatalog = Array.isArray(BUILD[b.type]?.buyCatalog)
+      ? BUILD[b.type].buyCatalog
+      : (b.type === 'garage'
+          ? Object.keys(VEHICLE_TYPES).filter(k => !VEHICLE_TYPES[k].buyDisabled)
+          : []);
     h += '<div class="row"><span>Véhicules</span><b>'+bvehicles.length+'</b></div>';
     // Instruction mode assignation route
     if(vehicleRouteMode && bvehicles.some(v=>v===vehicleRouteMode.vehicle)){
@@ -486,6 +495,7 @@ function renderInfo(){
       h += '<div style="margin-top:8px;color:#8fa3bf">Véhicules assignés</div>';
       for(const v of bvehicles){
         const vt = VEHICLE_TYPES[v.vtype];
+        if(!vt) continue;
         const srcName = v.source && !v.source.dead ? BUILD[v.source.type].n : '—';
         const dstName = v.dest   && !v.dest.dead   ? BUILD[v.dest.type].n  : '—';
         let resSel = '';
@@ -507,15 +517,19 @@ function renderInfo(){
            + '</div></div>';
       }
     }
-    h += '<div style="margin-top:8px;color:#8fa3bf">Acheter un véhicule</div>';
-    for(const vk in VEHICLE_TYPES){
-      const vt = VEHICLE_TYPES[vk];
-      if(vt.buyDisabled) continue;
-      const resLabel = vt.resources.length > 1
-        ? '<span style="color:#8fa3bf;font-size:10px"> · '+ vt.resources.map(r=>RES[r]?.ic||r).join(' ') +'</span>'
-        : '';
-      h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:2px" data-buy-v="'+vk+'">'
-         + vt.icone+' '+vt.nom+resLabel+' <span style="color:#8fa3bf">— '+vt.cost+' $</span></button>';
+    if(buyCatalog.length){
+      h += '<div style="margin-top:8px;color:#8fa3bf">Acheter un véhicule</div>';
+      for(const vk of buyCatalog){
+        const vt = VEHICLE_TYPES[vk];
+        if(!vt || vt.buyDisabled) continue;
+        const resLabel = vt.resources.length > 1
+          ? '<span style="color:#8fa3bf;font-size:10px"> · '+ vt.resources.map(r=>RES[r]?.ic||r).join(' ') +'</span>'
+          : '';
+        h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:2px" data-buy-v="'+vk+'">'
+           + vt.icone+' '+vt.nom+resLabel+' <span style="color:#8fa3bf">— '+vt.cost+' $</span></button>';
+      }
+    } else if(b.type !== 'garage'){
+      h += '<div style="margin-top:8px;color:#8fa3bf;font-style:italic">Catalogue de transport à venir pour ce dépôt.</div>';
     }
   }
   // Contrôles de production pour les usines industrielles (hors dépôts/citernes)
@@ -538,14 +552,14 @@ function renderInfo(){
     }
   }
   p.style.display = 'block';
-  p.classList.toggle('depot-modal', b.type === 'depot' || b.type === 'market');
+  p.classList.toggle('depot-modal', isStorageDepot(b) || isVehicleDepot(b));
   if(p._html === h && p._b === b){
-    if(b.type === 'garage') for(const v of (b.vehicles||[])) _updVDyn(p, v);
+    if(isVehicleDepot(b)) for(const v of (b.vehicles||[])) _updVDyn(p, v);
     return;
   }
   p._html = h; p._b = b;
   p.innerHTML = h;
-  if(b.type === 'garage') for(const v of (b.vehicles||[])) _updVDyn(p, v);
+  if(isVehicleDepot(b)) for(const v of (b.vehicles||[])) _updVDyn(p, v);
   p.querySelectorAll('[data-plant-upgrade]').forEach(btn=>{
     btn.onclick = async ()=>{
       const targetType = btn.dataset.plantUpgrade;
@@ -602,7 +616,7 @@ function renderInfo(){
       p._html = null;
     };
   });
-  if(b.type === 'garage'){
+  if(isVehicleDepot(b)){
     p.querySelectorAll('[data-route-v]').forEach(btn=>{
       btn.onclick = ()=>{
         const vid = +btn.dataset.routeV;
@@ -763,14 +777,84 @@ function confirmAction(message, options={}){
 }
 
 // ---------- barre d'outils ----------
+let depotToolbarGroup = null;
+let depotToolbarMenu = null;
+
+function closeDepotToolbarMenu(){
+  if(!depotToolbarGroup || !depotToolbarMenu) return;
+  depotToolbarGroup.classList.remove('open');
+  depotToolbarMenu.classList.remove('open');
+  syncToolbarState();
+}
+
+function syncToolbarState(){
+  document.querySelectorAll('.tool').forEach(b=> b.classList.toggle('on', b.dataset.t === tool));
+  if(depotToolbarGroup){
+    const active = (DEPOT_TOOLBAR_ITEMS || []).some(item => item.tool === tool);
+    depotToolbarGroup.classList.toggle('on', active);
+    const groupBtn = depotToolbarGroup.querySelector('.tool-group-btn');
+    if(groupBtn) groupBtn.classList.toggle('on', active || depotToolbarGroup.classList.contains('open'));
+  }
+  if(depotToolbarMenu){
+    depotToolbarMenu.querySelectorAll('[data-depot-tool]').forEach(b=>{
+      b.classList.toggle('on', b.dataset.depotTool === tool);
+    });
+  }
+}
+
 function buildToolbar(){
   const bar = $('toolbar');
+  bar.innerHTML = '';
+  depotToolbarGroup = null;
+  depotToolbarMenu = null;
+  const depotItems = (DEPOT_TOOLBAR_ITEMS && DEPOT_TOOLBAR_ITEMS.length)
+    ? DEPOT_TOOLBAR_ITEMS
+    : [
+        { key:'vehicules', tool:'garage', label:'Véhicules', icon:'🚛' },
+        { key:'train', tool:'train_depot', label:'Train', icon:'🚂' },
+        { key:'bateau', tool:'boat_depot', label:'Bateau', icon:'🚢' },
+        { key:'avion', tool:'plane_depot', label:'Avion', icon:'✈️' },
+      ];
   for(const k of TOOL_ORDER){
     if(k === 'garage'){
-      const sep = document.createElement('div');
-      sep.style.cssText = 'padding:4px 6px 2px;font-size:10px;color:#8fa3bf;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap';
-      sep.textContent = '🚛 Logistique';
-      bar.appendChild(sep);
+      const group = document.createElement('div');
+      group.className = 'tool-group';
+      const btn = document.createElement('button');
+      btn.className = 'tool tool-group-btn';
+      btn.dataset.t = 'garage';
+      btn.title = 'Choisir un type de dépôt';
+      btn.innerHTML = '<span class="ic">🏗️</span><span>Dépôts</span><span class="hk">▾</span>';
+      btn.onclick = e => {
+        e.stopPropagation();
+        const open = !group.classList.contains('open');
+        if(open) closeDepotToolbarMenu();
+        group.classList.toggle('open', open);
+        menu.classList.toggle('open', open);
+        syncToolbarState();
+      };
+      group.appendChild(btn);
+
+      const menu = document.createElement('div');
+      menu.className = 'tool-group-menu';
+      for(const item of depotItems){
+        const d = BUILD[item.tool];
+        const choice = document.createElement('button');
+        choice.className = 'tool tool-group-item';
+        choice.dataset.depotTool = item.tool;
+        choice.title = item.desc || d?.desc || '';
+        choice.innerHTML = '<span class="ic">'+(item.icon || d?.ic || '◻')+'</span><span>'+item.label+'</span>'
+          + (d?.cost ? '<span class="cost">'+d.cost+' $</span>' : '<span class="cost">&nbsp;</span>');
+        choice.onclick = e => {
+          e.stopPropagation();
+          setTool(item.tool);
+        };
+        menu.appendChild(choice);
+      }
+      group.appendChild(menu);
+      bar.appendChild(group);
+      depotToolbarGroup = group;
+      depotToolbarMenu = menu;
+      continue;
     }
     const d = BUILD[k];
     const btn = document.createElement('button');
@@ -783,11 +867,13 @@ function buildToolbar(){
     btn.onclick = ()=> setTool(k);
     bar.appendChild(btn);
   }
+  syncToolbarState();
 }
 function setTool(k){
   tool = k;
   roadDragStart = null; roadPreviewTiles = [];
-  document.querySelectorAll('.tool').forEach(b=> b.classList.toggle('on', b.dataset.t===k));
+  closeDepotToolbarMenu();
+  syncToolbarState();
 }
 
 // ---------- souris / clavier ----------
@@ -1158,6 +1244,11 @@ addEventListener('keydown', e=>{
     closeConfirmDialog(false);
     return;
   }
+  if(e.code==='Escape' && depotToolbarMenu?.classList.contains('open')){
+    e.preventDefault();
+    closeDepotToolbarMenu();
+    return;
+  }
   keys.add(e.code);
   if(e.code==='Space'){ e.preventDefault(); togglePause(); }
   if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; closeTownPanel(); }
@@ -1172,6 +1263,9 @@ addEventListener('keydown', e=>{
     const toolKey = TOOL_ORDER.find(k => BUILD[k]?.hk === key);
     if(toolKey) setTool(toolKey);
   }
+});
+addEventListener('click', e=>{
+  if(depotToolbarGroup && !depotToolbarGroup.contains(e.target)) closeDepotToolbarMenu();
 });
 addEventListener('keyup', e=>{
   keys.delete(e.code);

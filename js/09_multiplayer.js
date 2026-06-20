@@ -229,7 +229,7 @@ function applySnapshot(d){
   if(Array.isArray(d.vehicles)){
     for(const sv of d.vehicles){
       if(!VEHICLE_TYPES[sv.vtype]) continue;
-      const garage = buildings.find(b=>b.x===sv.garageX && b.y===sv.garageY && b.type==='garage');
+      const garage = buildings.find(b=>b.x===sv.garageX && b.y===sv.garageY && BUILD[b.type]?.transportDepot);
       if(!garage) continue;
       const source = sv.sourceX != null ? buildings.find(b=>b.x===sv.sourceX && b.y===sv.sourceY) : null;
       const dest   = sv.destX   != null ? buildings.find(b=>b.x===sv.destX   && b.y===sv.destY)   : null;
@@ -361,7 +361,7 @@ function applyAction(msg){
     case 'buy_vehicle': {
       if(!VEHICLE_TYPES[act.vtype]) break;
       if(!validXY(act.garageX, act.garageY)) break;
-      const garage = buildings.find(b=>b.x===act.garageX && b.y===act.garageY && b.type==='garage');
+      const garage = buildings.find(b=>b.x===act.garageX && b.y===act.garageY && BUILD[b.type]?.transportDepot);
       if(!garage || garage.owner !== msg.from) break;
       if(vehicles.some(v=>String(v.id) === String(act.id))) break;
       const cost = VEHICLE_TYPES[act.vtype].cost || 0;

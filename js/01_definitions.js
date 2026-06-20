@@ -422,16 +422,20 @@ const BUILD = {
   house:   { n:'Maison',    ic:'🏠', hk:'6', cost: CFG.batiments?.maison?.cout    ?? 100,
              col:'#9a7e5f', hgt:18, desc:'' },
   depot:   { n:'Entrepôt',        ic:'📦', hk:'7', cost: CFG.batiments?.entrepot?.cout  ?? 400,
-             col:'#7a7048', hgt:22,
+             col:'#7a7048', hgt:22, storageHub:true,
              desc:'Stocke et redistribue. Cliquer dessus pour choisir les ressources acceptées.' },
   market:  { n:'Marché',          ic:'🏬', hk:'M', cost: CFG.batiments?.marche?.cout    ?? 600,
-             col:'#7a5a30', hgt:20,
+             col:'#7a5a30', hgt:20, storageHub:true,
              desc:'Stocke et vend des ressources aux autres joueurs. Configurer les ressources en vente depuis le panneau.' },
   tank:    { n:'Entrepôt citerne', ic:'🛢️', hk:'8', cost: CFG.batiments?.citerne?.cout ?? 450,
-             col:'#3f6f8f', hgt:18,
+             col:'#3f6f8f', hgt:18, storageHub:true,
              desc:"Stocke uniquement l'eau. À placer près des boulangeries." },
   garage:  { n:'Dépôt véhicules', ic:'🚛', hk:'0', cost: GARAGE_COST, col:'#3d4f6b', hgt:20,
+             transportDepot:true,
              desc:'Achète et gère des véhicules de transport spécialisés.' },
+  train_depot:{ n:'Dépôt de train',   ic:'🚂', hk:'', cost: CFG.batiments?.depotTrain?.cout ?? 800,
+                 col:'#7f5a4d', hgt:24, transportDepot:true,
+                 desc:'Dépôt ferroviaire. Réservé à l’achat et à la gestion des trains.' },
   bus_stop:{ n:'Arrêt de bus',   ic:'🚏', hk:'', cost: BUS_STOP_COST, col:'#1e4a8a', hgt:12,
              desc:'Accueille les passagers du quartier (rayon '+BUS_STOP_RADIUS+' cases). Les bus transportent les habitants entre arrêts.' },
   bulldoze: { n:'Démolir',    ic:'🧨', hk:'B', desc:'Détruit routes, bâtiments (30 % remboursés) et arbres.' },
@@ -457,6 +461,13 @@ const PLANT_UPGRADES = {
   factory: { label:'Outils de construction', type:'factory', icon:'🏭' },
   terrassement: { label:'Usine de terrassement', type:'terrassement', icon:'🏗️' },
 };
+
+const DEPOT_TOOLBAR_ITEMS = [];
+function registerDepotTool(item){
+  if(!item || !item.key || !item.tool) return;
+  if(DEPOT_TOOLBAR_ITEMS.some(o => o.key === item.key)) return;
+  DEPOT_TOOLBAR_ITEMS.push(item);
+}
 // ---------- niveaux résidentiels ----------
 // Un rectangle entièrement couvert de logements PLEINS plus petits fusionne
 // en bâtiment du niveau correspondant (les deux orientations comptent).
@@ -764,12 +775,23 @@ const DEPOT_STOCK_PER_CELL  = CFG.entrepot?.stockParCase ?? 20;
 const DEPOT_RADIUS_BASE     = CFG.entrepot?.rayonBase    ?? 5;
 const DEPOT_RADIUS_FACTOR   = CFG.entrepot?.rayonFacteur ?? 3;
 const depotRadiusOf = b => Math.round(DEPOT_RADIUS_BASE + Math.sqrt(b.w * b.h) * DEPOT_RADIUS_FACTOR);
+
 const TANK_STOCK_PER_CELL  = CFG.citerne?.stockParCase ?? 40;
 const TANK_RADIUS_BASE     = CFG.citerne?.rayonBase    ?? 5;
 const TANK_RADIUS_FACTOR   = CFG.citerne?.rayonFacteur ?? 3;
 const BAKERY_TANK_RADIUS   = CFG.citerne?.rayonBoulangerie ?? 8;
 const tankRadiusOf = b => Math.round(TANK_RADIUS_BASE + Math.sqrt(b.w * b.h) * TANK_RADIUS_FACTOR);
-const isStorageHub = b => b && (b.type === 'depot' || b.type === 'market' || b.type === 'tank');
+const isStorageHub = b => !!(b && BUILD[b.type]?.storageHub);
+const isStorageDepot = b => !!(b && BUILD[b.type]?.storageHub && b.type !== 'tank');
+const isVehicleDepot = b => !!(b && BUILD[b.type]?.transportDepot);
+
+BUILD.depot.stockPerCell = DEPOT_STOCK_PER_CELL;
+BUILD.market.stockPerCell = DEPOT_STOCK_PER_CELL;
+BUILD.tank.stockPerCell = TANK_STOCK_PER_CELL;
+BUILD.depot.radiusOf = depotRadiusOf;
+BUILD.market.radiusOf = depotRadiusOf;
+BUILD.tank.radiusOf = tankRadiusOf;
+
 // génère les deux orientations et déduplique, triées du plus grand au plus petit
 const DEPOT_SHAPES = (()=>{
   const raw = CFG.entrepot?.formesFusion ?? [[2,1],[3,1],[2,2],[3,2],[3,3],[4,4]];

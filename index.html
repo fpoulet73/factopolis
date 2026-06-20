@@ -48,7 +48,7 @@
 
   /* ---- barre d'outils ---- */
   #toolbar{bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:6px;
-    padding:8px;z-index:10}
+    padding:8px;z-index:10;overflow:visible;align-items:flex-end}
   .tool{width:74px;padding:7px 2px 5px;border-radius:9px;border:1px solid #36465e;
     background:#1d2939;color:#e8eef7;cursor:pointer;text-align:center;font-size:11px;
     display:flex;flex-direction:column;gap:2px;line-height:1.25}
@@ -58,6 +58,14 @@
   .tool .cost{color:#ffd87a;font-size:10px}
   .tool.on .cost{color:#ffe9b0}
   .tool .hk{color:#8fa3bf;font-size:9px}
+  .tool-group{position:relative;display:flex;flex-direction:column;align-items:stretch}
+  .tool-group-menu{position:absolute;left:0;bottom:calc(100% + 8px);display:none;flex-direction:column;
+    gap:4px;padding:8px;background:rgba(13,18,28,.98);border:1px solid #36465e;border-radius:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.42);z-index:20;max-height:min(42vh,360px);overflow-y:auto}
+  .tool-group-menu.open{display:flex}
+  .tool-group-item{width:180px;text-align:left;align-items:flex-start;padding:7px 10px;white-space:nowrap}
+  .tool-group-item .ic{font-size:18px}
+  .tool-group-item .cost{margin-left:auto}
 
   /* ---- panneau d'info ---- */
   #info{top:70px;right:12px;width:280px;padding:12px 14px;font-size:13px;display:none;z-index:10}
@@ -377,20 +385,24 @@
 
 </div>
 
-<script src="config.js?v=8"></script>
-<script src="js/i18n/fr.js?v=8"></script>
-<script src="js/i18n/en.js?v=8"></script>
-<script src="js/i18n/es.js?v=8"></script>
-<script src="js/i18n.js?v=8"></script>
-<script src="js/01_definitions.js?v=8"></script>
-<script src="js/02_world_state.js?v=8"></script>
-<script src="js/03_buildings_population.js?v=8"></script>
-<script src="js/04_construction.js?v=8"></script>
-<script src="js/05_logistics.js?v=8"></script>
-<script src="js/06_simulation.js?v=8"></script>
-<script src="js/07_rendering.js?v=8"></script>
-<script src="js/08_ui_input_loop.js?v=8"></script>
-<script src="js/09_multiplayer.js?v=8"></script>
-<script src="js/10_saves_chat_console.js?v=8"></script>
+<script src="config.js?v=10"></script>
+<script src="js/i18n/fr.js?v=10"></script>
+<script src="js/i18n/en.js?v=10"></script>
+<script src="js/i18n/es.js?v=10"></script>
+<script src="js/i18n.js?v=10"></script>
+<script src="js/01_definitions.js?v=10"></script>
+<script src="js/05_depots/vehicules.js?v=10"></script>
+<script src="js/05_depots/train.js?v=10"></script>
+<script src="js/05_depots/bateau.js?v=10"></script>
+<script src="js/05_depots/avion.js?v=10"></script>
+<script src="js/02_world_state.js?v=10"></script>
+<script src="js/03_buildings_population.js?v=10"></script>
+<script src="js/04_construction.js?v=10"></script>
+<script src="js/05_logistics.js?v=10"></script>
+<script src="js/06_simulation.js?v=10"></script>
+<script src="js/07_rendering.js?v=10"></script>
+<script src="js/08_ui_input_loop.js?v=10"></script>
+<script src="js/09_multiplayer.js?v=10"></script>
+<script src="js/10_saves_chat_console.js?v=10"></script>
 </body>
 </html>

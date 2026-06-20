@@ -440,7 +440,7 @@ const ALLOWED_ACTIONS = new Set([
 const ALLOWED_BUILD_TYPES = new Set([
   'road', 'mine', 'lumber', 'farm', 'cotton_farm', 'weaver', 'pump', 'fisher', 'mill',
   'bakery', 'fishery', 'smelter', 'factory', 'plant', 'house', 'depot', 'market',
-  'tank', 'garage', 'bus_stop', 'terrassement',
+  'tank', 'garage', 'train_depot', 'boat_depot', 'plane_depot', 'bus_stop', 'terrassement',
 ]);
 const ALLOWED_VEHICLE_TYPES = new Set([
   'minerai', 'bois', 'ble', 'coton', 'vetement', 'farine', 'citerne', 'pain',

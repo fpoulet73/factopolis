@@ -1,4 +1,4 @@
-// ---------- logistique (camions) ----------
+// ---------- logistique (camions et véhicules) ----------
 function roadMoveAllowed(cx, cy, x, y){
   const dx = x - cx, dy = y - cy;
   if(Math.abs(dx) !== 1 || Math.abs(dy) !== 1) return true;
@@ -142,65 +142,70 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
       if(road[ni] && dist[ni]<0){ dist[ni] = dist[c]+1; prev[ni] = c; q.push(ni); }
     }
   }
-  // Les bâtiments non-industriels sans route ne peuvent pas dispatcher
   const senderIsDepot = isStorageHub(b);
   const senderIsInd   = !!BUILD[b.type]?.ind;
   if(!senderHasRoad && !senderIsInd) return false;
+
   let bestB = null, bestScore = Infinity, bestTile = -1;
+
   // rayon d'action de l'expéditeur
-  const senderRadius  = senderIsDepot ? (b.type === 'tank' ? tankRadiusOf(b) : depotRadiusOf(b))
-                      : senderIsInd   ? indRadiusOf(b)
-                      : Infinity;
+  const senderRadius = senderIsInd
+    ? indRadiusOf(b)  // les industries ont un rayon basé sur leur taille
+    : (b.type === 'tank' ? tankRadiusOf(b) : depotRadiusOf(b));
+
   const senderCenter = centerOfBuilding(b);
   for(const c of buildings){
     if(c===b || c.dead || !accepts(c,res) || space(c,res)<=0) continue;
     if(res === 'water' && b.type === 'pump' && c.type === 'bakery') continue;
     if(isStorageHub(b) && isStorageHub(c)) continue;
     const pumpToTank = b.type === 'pump' && res === 'water' && c.type === 'tank';
+
     // vérifier le rayon de l'expéditeur
     if(senderRadius < Infinity){
       const d2 = Math.max(Math.abs(centerOfBuilding(c).x - senderCenter.x),
                           Math.abs(centerOfBuilding(c).y - senderCenter.y));
       if(d2 > senderRadius) continue;
     }
+
     // vérifier le rayon de la cible si c'est un entrepôt
     if(!pumpToTank && isStorageHub(c)){
       const d2 = Math.max(Math.abs(centerOfBuilding(b).x - centerOfBuilding(c).x),
-                          Math.abs(centerOfBuilding(b).y - centerOfBuilding(c).y));
+                            Math.abs(centerOfBuilding(b).y - centerOfBuilding(c).y));
       if(d2 > (c.type === 'tank' ? tankRadiusOf(c) : depotRadiusOf(c))) continue;
     }
+
+    // chemin vers la cible
     let bd = Infinity, bt = -1;
     for(const t of adjRoadTiles(c))
       if(dist[t]>=0 && dist[t]<bd){ bd = dist[t]; bt = t; }
-    // Livraison directe (sans route) pour ind→ind dans le rayon
     const targetIsInd = !!BUILD[c.type]?.ind;
-    const directOk = senderIsInd && targetIsInd;
+    // Livraison directe : ind→ind ou via depot (pas de route requise)
+    const directOk = senderIsInd && targetIsInd || isStorageHub(b);
     if(bt<0 && !directOk) continue;
-    // l'entrepôt en dernier recours ; les logements déjà pleins après ceux qui grandissent
+
+    // score pour la distribution équitable
     const rcc = BUILD[c.type].resid;
     const full = !!rcc && c.pop >= rcc.popCap;
-    // ratio de stock pour les logements (besoins multiples)
     const demand = rcc ? residDeliveryResourcesOf(c) : [];
-    const residRatio = demand.length
-      ? Math.min(...demand.map(r => ((c.storage[r]||0) + (c.inc[r]||0)) / (rcc.stockCap || 1)))
-      : 0;
-    // ratio de stock pour les bâtiments industriels (équité entre consommateurs)
+    const residRatio = demand.length ? Math.min(...demand.map(r => ((c.storage[r]||0) + (c.inc[r]||0)) / (rcc.stockCap || 1))) : 0;
     const cap = capOf(c, res);
-    const indRatio = (targetIsInd && cap > 0)
-      ? ((c.storage[res]||0) + (c.inc[res]||0)) / cap
-      : 0;
+    const indRatio = (targetIsInd && cap > 0) ? ((c.storage[res]||0) + (c.inc[res]||0)) / cap : 0;
     const stockRatio = rcc ? residRatio : indRatio;
-    // distance réelle pour le score : route si disponible, sinon vol direct
+
+    // distance réelle : route si disponible, sinon vol direct
     const distScore = bt >= 0 ? bd : Math.round(Math.hypot(
       centerOfBuilding(c).x - senderCenter.x,
       centerOfBuilding(c).y - senderCenter.y));
-    // stockRatio élevé = déjà bien approvisionné → pénalité → distribution équitable
     const score = distScore + (isStorageHub(c) ? 500 : 0) + (full ? 200 : 0) + stockRatio * 150;
-    if(score<bestScore){ bestScore = score; bestB = c; bestTile = bt; }
+
+    if(score < bestScore){
+      bestScore = score;
+      bestB = c;
+      bestTile = bt;
+    }
   }
 
-  // Fallback pour les bâtiments de production : si aucune cible normale n'est trouvée,
-  // envoyer à l'entrepôt le plus proche dans le rayon d'action de l'expéditeur.
+  // fallback pour industries sans cible normale
   let fallbackB = null, fallbackTile = -1;
   if(!bestB && senderIsInd && !senderIsDepot){
     let fbDist = Infinity;
@@ -209,7 +214,7 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
       if(c.type === 'tank') continue;
       if(c.allow?.[res] === false) continue;
       if(space(c,res) <= 0) continue;
-      // respecter le rayon d'action de l'expéditeur
+      // rayon d'action de l'expéditeur
       if(senderRadius < Infinity){
         const d2 = Math.max(Math.abs(centerOfBuilding(c).x - senderCenter.x),
                             Math.abs(centerOfBuilding(c).y - senderCenter.y));
@@ -232,21 +237,21 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
   b.trucksOut++;
   target.inc[res] = (target.inc[res]||0) + amt;
 
+  // tracer le chemin vers la cible
   const C = i => ({ x:(i%N)*TILE+TILE/2, y:((i/N)|0)*TILE+TILE/2 });
   let pts;
   if(targetTile >= 0){
-    // chemin routier : commence et termine sur la tuile de route adjacente au bâtiment
     const path = [];
     let t = targetTile;
     while(t!==-1){ path.push(t); t = prev[t]; }
     path.reverse();
     pts = path.map(C);
   } else {
-    // vol direct (pas de route) : s'arrête au bord du bâtiment cible
+    // vol direct : s'arrête au bord du bâtiment cible
     const bx = (b.x + b.w/2)*TILE, by = (b.y + b.h/2)*TILE;
     const tx = (target.x + target.w/2)*TILE, ty = (target.y + target.h/2)*TILE;
     const dx = tx - bx, dy = ty - by, len = Math.sqrt(dx*dx+dy*dy)||1;
-    const stop = TILE * 0.5; // s'arrête à ~0.5 tuile du centre de la cible
+    const stop = TILE * 0.5; // arrête à ~0.5 tuile du centre de la cible
     pts = [
       { x: bx, y: by },
       { x: tx - dx/len*stop, y: ty - dy/len*stop },
@@ -383,7 +388,7 @@ function vehicleIdSeed(){
 }
 
 function createPersistentVehicle(vtype, garage, id=null){
-  if(!VEHICLE_TYPES[vtype] || !garage || garage.dead || garage.type !== 'garage') return null;
+  if(!VEHICLE_TYPES[vtype] || !garage || garage.dead || !BUILD[garage.type]?.transportDepot) return null;
   const v = {
     id: id ?? vehicleIdSeed(),
     vtype,

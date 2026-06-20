@@ -150,9 +150,10 @@ function packBuildingColor(b, d){
   const p = graphicBasePack();
   if(b.type === 'mine' && b.ore) return b.ore === 'iron' ? '#8a5c3a' : '#4a4a5a';
   if(p.buildings && p.buildings[b.type]) return p.buildings[b.type];
+  if(BUILD[b.type]?.transportDepot && p.category?.transport) return p.category.transport;
   if(d.resid && p.category?.resid) return p.category.resid;
   if(d.ind && p.category?.ind) return p.category.ind;
-  if((b.type === 'depot' || b.type === 'tank' || b.type === 'garage') && p.category?.storage)
+  if(BUILD[b.type]?.storageHub && p.category?.storage)
     return p.category.storage;
   return d.col;
 }
@@ -579,7 +580,7 @@ function drawBuilding(b){
     diamond(rx0, ry0, rw, rh); ctx.stroke();
   }
   // Indicateur "en vente" : petit $ doré sur le dépôt
-  if(!drawFast && (b.type === 'depot' || b.type === 'market') && b.sellTo && Object.values(b.sellTo).some(v=>v)){
+  if(!drawFast && BUILD[b.type]?.storageHub && b.type !== 'tank' && b.sellTo && Object.values(b.sellTo).some(v=>v)){
     ctx.save();
     ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = '#f0c060';
@@ -1037,9 +1038,9 @@ function draw(){
     r: workRadiusOf(selected),
     color: playerColor(selected.owner),
   } : null;
-  const depotRadiusSel = selected && !selected.dead && selected.type === 'depot' ? {
+  const depotRadiusSel = selected && !selected.dead && BUILD[selected.type]?.storageHub && selected.type !== 'tank' ? {
     center: centerOfBuilding(selected),
-    r: depotRadiusOf(selected),
+    r: BUILD[selected.type]?.radiusOf ? BUILD[selected.type].radiusOf(selected) : depotRadiusOf(selected),
   } : null;
   const tankRadiusSel = selected && !selected.dead && selected.type === 'tank' ? {
     center: centerOfBuilding(selected),

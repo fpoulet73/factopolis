@@ -3,11 +3,7 @@ function newBuilding(type,x,y,w,h){
   const b = { type, x, y, w:w||d.size||1, h:h||d.size||1,
               storage:{}, inc:{}, prog:0, trucksOut:0, dead:false, owner:null };
   if(type==='mine')  b.ore = terrain[y*N+x]===T.IRON ? 'iron' : 'coal';
-  if(type==='depot'){
-    b.allow = {}; b.sellTo = {}; b.sellMin = {};
-    for(const k in RES){ b.allow[k] = k !== 'water'; b.sellTo[k] = false; b.sellMin[k] = 0; }
-  }
-  if(type==='market'){
+  if(d?.storageHub && type !== 'tank'){
     b.allow = {}; b.sellTo = {}; b.sellMin = {};
     for(const k in RES){ b.allow[k] = k !== 'water'; b.sellTo[k] = false; b.sellMin[k] = 0; }
   }
@@ -15,7 +11,7 @@ function newBuilding(type,x,y,w,h){
     b.allow = { water:true };
     b.sellTo = { water:false };
   }
-  if(type==='garage') b.vehicles = [];
+  if(type==='garage' || d?.transportDepot) b.vehicles = [];
   if(type==='bus_stop'){ b.passengers = 0; b.passengersMax = 0; }
   if(d.ind) b.paused = false;
   if(d.resid){ b.pop = 0; b.protectedPop = 0; b.ct = 0; b.bonusCt = 0; b.pending = 0; b.pendingProtected = 0; b.starve = 0; }
@@ -108,8 +104,11 @@ function adjRoadTiles(b){
 function capOf(b,res){
   const rc = BUILD[b.type].resid;
   if(rc) return rc.stockCap;
-  if(b.type==='tank') return res === 'water' ? TANK_STOCK_PER_CELL * b.w * b.h : 0;
-  if(b.type==='depot' || b.type==='market') return DEPOT_STOCK_PER_CELL * b.w * b.h;
+  const d = BUILD[b.type];
+  if(d?.storageHub){
+    if(b.type === 'tank') return res === 'water' ? TANK_STOCK_PER_CELL * b.w * b.h : 0;
+    return (d.stockPerCell ?? DEPOT_STOCK_PER_CELL) * b.w * b.h;
+  }
   if(b.type==='terrassement') return res === 'dirt' ? 80 : 0;
   const r = recipeOf(b);
   // les stocks des bâtiments industriels fusionnés grandissent avec leur taille
@@ -125,7 +124,7 @@ function accepts(b,res){
   }
   if(b.type==='tank') return false;
   if(b.type==='terrassement') return res === 'dirt' && (b.storage['dirt']||0) < 80;
-  if(b.type==='depot' || b.type==='market') return b.allow?.[res] !== false;
+  if(BUILD[b.type]?.storageHub) return b.allow?.[res] !== false;
   if(BUILD[b.type].resid){
     if(!residDeliveryResourcesOf(b).includes(res)) return false;
     if(b.starterHome) return false; // maisons protégées : pas besoin de ravitaillement
@@ -366,8 +365,8 @@ function demolishBuilding(b, refundOwner){
   buildings.splice(buildings.indexOf(b),1);
   setGrid(b,null);
   if(selected===b) selected = null;
-  // retirer les véhicules du garage démoli
-  if(b.type === 'garage' && b.vehicles){
+  // retirer les véhicules du dépôt démoli
+  if((b.type === 'garage' || BUILD[b.type]?.transportDepot) && b.vehicles){
     vehicles = vehicles.filter(v => v.garageRef !== b);
     if(vehicleRouteMode && vehicleRouteMode.vehicle.garageRef === b) vehicleRouteMode = null;
   }
