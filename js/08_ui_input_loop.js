@@ -1176,7 +1176,16 @@ addEventListener('mouseup', e=>{
       mouse.lDown = false;
       return;
     }
-    if((tool === 'road' || tool === 'rail') && roadDragStart){
+    if(tool === 'rail' && roadDragStart){
+      const { updates, cost } = collectRailUpdates(roadPreviewTiles);
+      if(updates.length){
+        if(MP.connected && !MP.username) toast('👤 Connecte-toi avec un compte joueur pour construire','err');
+        else if(myWallet().money < cost) toast('Fonds insuffisants ('+cost+' $)','err');
+        else if(MP.connected && MP.username) applyRailPathWithNetwork(roadPreviewTiles);
+        else railApplyMaskUpdates(updates, cost);
+      }
+      roadDragStart = null; roadPreviewTiles = [];
+    } else if(tool === 'road' && roadDragStart){
       for(const t of roadPreviewTiles)
         if(canPlace(tool, t.x, t.y).ok) clickFn(t.x, t.y);
       roadDragStart = null; roadPreviewTiles = [];

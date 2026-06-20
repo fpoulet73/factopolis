@@ -107,7 +107,7 @@ function applySnapshot(d){
     setMapSize(d.size || N);
     terrain = Uint8Array.from(d.terrain);
     road    = Uint8Array.from(d.road);
-    rail    = d.rail ? Uint8Array.from(d.rail) : new Uint8Array((d.size || N) * (d.size || N));
+    rail    = d.rail ? normalizeLegacyRailGrid(d.rail) : new Uint8Array((d.size || N) * (d.size || N));
     mapBounds = { ...d.mapBounds };
     expansionLevels = d.expansionLevels || { left:0, right:0, top:0, bottom:0 };
     purchasedPieces = new Set(d.purchasedPieces||[]);
@@ -133,7 +133,7 @@ function applySnapshot(d){
     // Déplacer le terrain dans la grande grille
     const oldTerrain = Uint8Array.from(d.terrain);
     const oldRoad    = Uint8Array.from(d.road);
-    const oldRail    = d.rail ? Uint8Array.from(d.rail) : new Uint8Array(N_PLAY * N_PLAY);
+    const oldRail    = d.rail ? normalizeLegacyRailGrid(d.rail) : new Uint8Array(N_PLAY * N_PLAY);
     terrain = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     road    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     rail    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
@@ -276,8 +276,16 @@ function applyAction(msg){
     case 'road':
       if(validIdx(act.i)) road[act.i] = 1;
       break;
-    case 'bulldoze_rail':
-      if(validIdx(act.i)){ rail[act.i] = 0; earnMoney(Math.floor((BUILD.rail?.cost||0) * 0.3), 'rembours', walletOf(msg.from)); }
+    case 'rail_update':
+      if(!validXY(act.x, act.y) || !Number.isInteger(act.mask) || act.mask < 0 || act.mask > 255) break;
+      if(msg.fromUsername) walletOf(msg.from).username = msg.fromUsername;
+      rail[act.y*N+act.x] = act.mask;
+      if(act.costDelta > 0){
+        walletOf(msg.from).money -= act.costDelta;
+        walletOf(msg.from).fin.construction += act.costDelta;
+      } else if(act.costDelta < 0){
+        earnMoney(-act.costDelta, 'rembours', walletOf(msg.from));
+      }
       break;
     case 'bulldoze_road':
       if(validIdx(act.i)){ road[act.i] = 0; earnMoney(3, 'rembours', walletOf(msg.from)); }
@@ -310,10 +318,9 @@ function applyAction(msg){
       const cost = BUILD[act.btype].cost||0;
       const wSender = walletOf(msg.from);
       if(msg.fromUsername) wSender.username = msg.fromUsername;
-      if(act.btype === 'road' || act.btype === 'rail'){
+      if(act.btype === 'road'){
         if(bgrid[act.y*N+act.x] || road[act.y*N+act.x] || rail[act.y*N+act.x]) break;
-        if(act.btype === 'road') road[act.y*N+act.x] = 1;
-        else rail[act.y*N+act.x] = 1;
+        road[act.y*N+act.x] = 1;
         wSender.money -= cost; wSender.fin.construction += cost;
         break;
       }
@@ -848,7 +855,15 @@ clickFn = function(x,y){
     } else if(road[i]){
       netSend({ type:'bulldoze_road', i });
     } else if(rail[i]){
-      netSend({ type:'bulldoze_rail', i });
+      const { updates, refund } = collectRailRemovalUpdates(x, y);
+      if(updates.length){
+        let first = true;
+        for(const update of updates){
+          netSend({ type:'rail_update', x:update.x, y:update.y, mask:update.mask, costDelta:first ? -refund : 0 });
+          first = false;
+        }
+        railApplyMaskUpdates(updates, -refund);
+      }
     } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON){
       netSend({ type:'bulldoze_tree', i });
     }
@@ -876,12 +891,36 @@ clickFn = function(x,y){
     }
     return;
   }
+  if(tool==='rail'){
+    const { updates, cost } = collectRailUpdates([{ x, y }]);
+    if(!updates.length){ clickAt(x,y); return; }
+    if(cost > myWallet().money){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
+    let first = true;
+    for(const update of updates){
+      netSend({ type:'rail_update', x:update.x, y:update.y, mask:update.mask, costDelta:first ? cost : 0 });
+      first = false;
+    }
+    railApplyMaskUpdates(updates, cost);
+    return;
+  }
   const v = canPlace(tool,x,y);
   if(!v.ok){ clickAt(x,y); return; }
   if((BUILD[tool].cost||0) > myWallet().money){ clickAt(x,y); return; }
   netSend({ type:'build', btype:tool, x, y });
   clickAt(x,y);
 };
+
+function applyRailPathWithNetwork(path){
+  const { updates, cost } = collectRailUpdates(path);
+  if(!updates.length) return false;
+  let first = true;
+  for(const update of updates){
+    netSend({ type:'rail_update', x:update.x, y:update.y, mask:update.mask, costDelta:first ? cost : 0 });
+    first = false;
+  }
+  railApplyMaskUpdates(updates, cost);
+  return true;
+}
 
 // ---- envoi du curseur réseau (ajouté à mousemove existant) ----
 let _lastCursorTx = -1, _lastCursorTy = -1;

@@ -45,6 +45,45 @@ const TW2 = TW/2, TH2 = TH/2;
 const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4, WHEAT:5, COTTON:6 };
 const DIRS  = [[1,0],[-1,0],[0,1],[0,-1]];
 const DIRS8 = [[1,0],[-1,0],[0,1],[0,-1],[1,-1],[-1,1],[1,1],[-1,-1]];
+const RAIL_DIRS = [
+  { dx:1, dy:0, bit:1, opposite:1 },
+  { dx:-1, dy:0, bit:2, opposite:0 },
+  { dx:0, dy:1, bit:4, opposite:3 },
+  { dx:0, dy:-1, bit:8, opposite:2 },
+  { dx:1, dy:-1, bit:16, opposite:5 },
+  { dx:-1, dy:1, bit:32, opposite:4 },
+  { dx:1, dy:1, bit:64, opposite:7 },
+  { dx:-1, dy:-1, bit:128, opposite:6 },
+];
+function railDirDef(dx, dy){
+  return RAIL_DIRS.find(d => d.dx === dx && d.dy === dy) || null;
+}
+function railHas(mask, def){
+  return !!(mask && def && (mask & def.bit));
+}
+function railLinkCount(mask){
+  let n = 0;
+  for(const def of RAIL_DIRS) if(mask & def.bit) n++;
+  return n;
+}
+function normalizeLegacyRailGrid(raw){
+  const out = new Uint8Array(raw.length);
+  const hasTypedMask = Array.from(raw).some(v => v > 1);
+  if(hasTypedMask) return Uint8Array.from(raw);
+  for(let i = 0; i < raw.length; i++){
+    if(!raw[i]) continue;
+    const x = i % N, y = (i / N) | 0;
+    let mask = 0;
+    for(const def of RAIL_DIRS){
+      const nx = x + def.dx, ny = y + def.dy;
+      if(nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+      const ni = ny * N + nx;
+      if(raw[ni]) mask |= def.bit;
+    }
+    out[i] = mask;
+  }
+  return out;
+}
 const OUTCAP = 12;       // stock max de sortie par ressource
 const INCAP = 12;        // stock max d'entrée par ressource
 const TRUCK_LOAD  = CFG.camions?.capacite ?? 6; // cargaison max d'un camion

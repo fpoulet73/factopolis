@@ -34,6 +34,105 @@ function nearbyEnemyOwner(myId, cx, cy){
   return null;
 }
 
+function railPlacementMaskAt(x, y){
+  if(!inMap(x, y)) return 0;
+  const i = y*N + x;
+  if(road[i] || bgrid[i] || terrain[i] === T.WATER) return 0;
+  return rail[i] || 0;
+}
+
+function railApplyMaskUpdates(updates, walletDelta = 0, walletTarget = myWallet()){
+  let changed = false;
+  for(const update of updates){
+    const { x, y, mask } = update;
+    if(!inMap(x, y)) continue;
+    const i = y * N + x;
+    if(rail[i] === mask) continue;
+    rail[i] = mask;
+    changed = true;
+  }
+  if(walletDelta > 0) spendMoney(walletDelta, 'construction');
+  else if(walletDelta < 0) earnMoney(-walletDelta, 'rembours', walletTarget);
+  return changed;
+}
+
+function collectRailUpdates(path){
+  if(!Array.isArray(path) || !path.length) return { updates:[], cost:0 };
+  const draft = Uint8Array.from(rail);
+  const touched = new Set();
+  const validTile = ({ x, y }) => inMap(x, y) && !road[y*N+x] && !bgrid[y*N+x] && terrain[y*N+x] === T.GRASS;
+  const sanitized = [];
+  for(const tile of path){
+    if(!tile || !validTile(tile)) continue;
+    const prev = sanitized[sanitized.length - 1];
+    if(prev && prev.x === tile.x && prev.y === tile.y) continue;
+    sanitized.push({ x:tile.x, y:tile.y });
+  }
+  if(!sanitized.length) return { updates:[], cost:0 };
+  const connect = (ax, ay, bx, by)=>{
+    const def = railDirDef(bx - ax, by - ay);
+    if(!def) return;
+    const other = RAIL_DIRS[def.opposite];
+    const ai = ay * N + ax, bi = by * N + bx;
+    draft[ai] |= def.bit;
+    draft[bi] |= other.bit;
+    touched.add(ai);
+    touched.add(bi);
+  };
+  for(let i = 1; i < sanitized.length; i++){
+    const a = sanitized[i - 1], b = sanitized[i];
+    if(Math.abs(a.x - b.x) > 1 || Math.abs(a.y - b.y) > 1) continue;
+    connect(a.x, a.y, b.x, b.y);
+  }
+  if(sanitized.length === 1){
+    const only = sanitized[0];
+    const oi = only.y * N + only.x;
+    touched.add(oi);
+    for(const def of RAIL_DIRS){
+      const nx = only.x + def.dx, ny = only.y + def.dy;
+      if(!inMap(nx, ny)) continue;
+      const ni = ny * N + nx;
+      const other = RAIL_DIRS[def.opposite];
+      if(railHas(draft[ni], other)) draft[oi] |= def.bit;
+    }
+  }
+  const updates = [];
+  let cost = 0;
+  for(const i of touched){
+    const before = rail[i] || 0;
+    const after = draft[i] || 0;
+    if(before === after) continue;
+    if(before === 0 && after !== 0) cost += BUILD.rail.cost || 0;
+    updates.push({ x:i % N, y:(i / N) | 0, mask:after });
+  }
+  return { updates, cost };
+}
+
+function collectRailRemovalUpdates(x, y){
+  if(!inMap(x, y)) return { updates:[], refund:0 };
+  const i = y * N + x;
+  if(!rail[i]) return { updates:[], refund:0 };
+  const draft = Uint8Array.from(rail);
+  const touched = new Set([i]);
+  const mask = draft[i];
+  draft[i] = 0;
+  for(const def of RAIL_DIRS){
+    if(!(mask & def.bit)) continue;
+    const nx = x + def.dx, ny = y + def.dy;
+    if(!inMap(nx, ny)) continue;
+    const ni = ny * N + nx;
+    const other = RAIL_DIRS[def.opposite];
+    draft[ni] &= ~other.bit;
+    touched.add(ni);
+  }
+  const updates = [];
+  for(const idx of touched){
+    if(rail[idx] === draft[idx]) continue;
+    updates.push({ x:idx % N, y:(idx / N) | 0, mask:draft[idx] });
+  }
+  return { updates, refund:Math.floor((BUILD.rail?.cost || 0) * 0.3) };
+}
+
 function canPlace(t,x,y){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
@@ -51,7 +150,7 @@ function canPlace(t,x,y){
     return { ok:true };
   }
   if(t==='rail'){
-    if(road[i] || rail[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
+    if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
     if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
     if(ter!==T.GRASS) return { ok:false, msg:"Les rails se posent sur l'herbe (démolis les arbres ou champs)" };
     return { ok:true };
@@ -201,7 +300,8 @@ function clickAt(x,y){
     } else if(road[i]){
       road[i] = 0; earnMoney(3, 'rembours');
     } else if(rail[i]){
-      rail[i] = 0; earnMoney(Math.floor((BUILD.rail?.cost||0) * 0.3), 'rembours');
+      const { updates, refund } = collectRailRemovalUpdates(x, y);
+      railApplyMaskUpdates(updates, -refund);
     } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON){
       terrain[i] = T.GRASS;
     }
@@ -234,10 +334,16 @@ function clickAt(x,y){
     return;
   }
   const cost = BUILD[tool].cost;
+  if(tool === 'rail'){
+    const { updates, cost:railCost } = collectRailUpdates([{ x, y }]);
+    if(!updates.length) return;
+    if(myWallet().money < railCost){ toast('Fonds insuffisants ('+railCost+' $)','err'); return; }
+    railApplyMaskUpdates(updates, railCost);
+    return;
+  }
   if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
   spendMoney(cost, 'construction');
   if(tool==='road'){ road[i] = 1; return; }
-  if(tool==='rail'){ rail[i] = 1; return; }
   const b = newBuilding(tool,x,y);
   b.owner = MP.myId;
   markStarterHomeIfNeeded(b);

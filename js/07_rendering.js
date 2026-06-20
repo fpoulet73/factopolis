@@ -1215,16 +1215,18 @@ function draw(){
 
     if(rail[i]){
       railNodes.push(c);
+      const mask = rail[i];
       let links = 0;
       const railDirs = [];
-      for(const [dx,dy] of DIRS8){
-        const nx = x+dx, ny = y+dy;
-        if(!inMap(nx,ny) || !rail[ny*N+nx]) continue;
+      for(const def of RAIL_DIRS){
+        if(!(mask & def.bit)) continue;
+        const nx = x+def.dx, ny = y+def.dy;
+        if(!inMap(nx,ny)) continue;
         links++;
-        const [du,dv] = rotDir(dx,dy);
+        const [du,dv] = rotDir(def.dx, def.dy);
         railDirs.push([du, dv]);
         if(ny < y || (ny === y && nx < x)) continue;
-        if(dx !== 0 && dy !== 0 && (rail[y*N+nx] || rail[ny*N+x])) continue;
+        if(def.dx !== 0 && def.dy !== 0 && (railHas(mask, railDirDef(def.dx, 0)) || railHas(mask, railDirDef(0, def.dy)))) continue;
         railSegments.push({ a:c, b:iso(rx+du+0.5, ry+dv+0.5), dir:[du, dv] });
       }
       if(!links) railSingles.push(c);
