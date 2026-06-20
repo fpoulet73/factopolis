@@ -421,9 +421,9 @@ function railEdgeAllowsDirection(x, y, def){
 
 function railEdgePassableForPath(x, y, def, vehicle=null){
   const signals = railEdgeSignalState(x, y, def);
-  // A one-way signal controls only trains approaching its face. Passing the
-  // back of the signal is unregulated; it does not make the track one-way.
-  if(!signals.own) return true;
+  // The signal stored on the destination tile faces this movement. Its back
+  // remains unregulated, while a red face blocks entry into its tile-side block.
+  if(!signals.opposite) return true;
   const nx = x + def.dx, ny = y + def.dy;
   if(!inMap(nx, ny)) return false;
   const curBlock = railBlocks?.blockByTile?.[y * N + x] ?? -1;
@@ -451,7 +451,7 @@ function railReachableExits(tile, vehicle=null){
   return n;
 }
 
-function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=null){
+function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=null, blockedFirstTiles=null){
   const starts = startTile != null ? [startTile] : adjRailTiles(fromB);
   const targets = new Set(adjRailTiles(toB));
   if(!starts.length || !targets.size) return null;
@@ -469,11 +469,12 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=nul
     const cx = cur % N, cy = (cur / N) | 0;
     const mask = rail[cur] || 0;
     for(const def of RAIL_DIRS){
-      if(!(mask & def.bit) || !railEdgePassableForPath(cx, cy, def, vehicle)) continue;
+      if(!(mask & def.bit)) continue;
       const nx = cx + def.dx, ny = cy + def.dy;
       if(!inMap(nx, ny)) continue;
       const ni = ny * N + nx;
       if(startTile != null && cur === startTile && previousTile != null && ni === previousTile) continue;
+      if(startTile != null && cur === startTile && blockedFirstTiles?.has(ni)) continue;
       const other = RAIL_DIRS[def.opposite];
       if(!rail[ni] || !(rail[ni] & other.bit) || prevRail[ni] !== -2) continue;
       prevRail[ni] = cur;
@@ -514,8 +515,7 @@ function railSignalAspect(sig){
   if(!def) return false;
   const nx = sig.x + def.dx, ny = sig.y + def.dy;
   if(!inMap(nx, ny)) return false;
-  // The lamp reports occupancy on the mast's tile side; the stored bit still
-  // controls the permitted travel direction across the edge.
+  // This is the same tile-side block checked when a train approaches the lamp.
   const guardedBlock = railBlocks?.blockByTile?.[sig.y * N + sig.x] ?? -1;
   if(guardedBlock < 0) return false;
   const occupied = railBlockOccupancy?.[guardedBlock] ?? 0;
@@ -563,14 +563,43 @@ function trainNextMoveState(v){
   return { blocked:false };
 }
 
-function tryRerouteTrain(v){
+function trainEdgeHasFacingSignal(v){
+  if(!v?.pathTiles || v.seg >= v.pathTiles.length - 1) return false;
+  const cur = v.pathTiles[v.seg], next = v.pathTiles[v.seg + 1];
+  const cx = cur % N, cy = (cur / N) | 0;
+  const nx = next % N, ny = (next / N) | 0;
+  const def = railDirDef(nx - cx, ny - cy);
+  return !!(def && railEdgeSignalState(cx, cy, def).opposite);
+}
+
+function replanTrainAtSignal(v){
   if(!v?.pathTiles?.length || v.t > 1e-6) return false;
   const curTile = v.pathTiles[v.seg] ?? -1;
   if(curTile < 0) return false;
   const targetB = v.state === 'returning' ? v.garageRef : (v.state === 'to_source' ? v.source : v.dest);
   if(!targetB || targetB.dead) return false;
+  const cx = curTile % N, cy = (curTile / N) | 0;
+  const blockedFirstTiles = new Set();
+  const mask = rail[curTile] || 0;
+  for(const def of RAIL_DIRS){
+    if(!(mask & def.bit)) continue;
+    const nx = cx + def.dx, ny = cy + def.dy;
+    if(!inMap(nx, ny)) continue;
+    const ni = ny * N + nx;
+    const other = RAIL_DIRS[def.opposite];
+    if(!rail[ni] || !(rail[ni] & other.bit)) continue;
+    const signals = railEdgeSignalState(cx, cy, def);
+    if(signals.opposite && !railEdgePassableForPath(cx, cy, def, v)) blockedFirstTiles.add(ni);
+  }
   const previousTile = v.seg > 0 ? (v.pathTiles[v.seg - 1] ?? null) : null;
-  const path = findRailPath(v.currentBuilding || v.garageRef, targetB, curTile, v, previousTile);
+  const path = findRailPath(
+    v.currentBuilding || v.garageRef,
+    targetB,
+    curTile,
+    v,
+    previousTile,
+    blockedFirstTiles
+  );
   if(!path || path.tiles.length < 2) return false;
   v.pts = path.pts;
   v.pathTiles = path.tiles;
@@ -581,11 +610,11 @@ function tryRerouteTrain(v){
 
 function advanceRailVehicle(v, move){
   while(move > 0 && v.seg < v.pts.length - 1){
+    if(v.t <= 1e-6 && trainEdgeHasFacingSignal(v)) replanTrainAtSignal(v);
     const a = v.pts[v.seg], b = v.pts[v.seg + 1];
     const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
     const state = trainNextMoveState(v);
     if(state.blocked){
-      if(tryRerouteTrain(v)) continue;
       const tStop = Math.max(0, 1 - TRAIN_SIGNAL_STOP_GAP / d);
       if(v.t < tStop - 1e-6) v.t = Math.min(tStop, v.t + move / d);
       break;
