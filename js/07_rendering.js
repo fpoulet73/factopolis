@@ -1279,6 +1279,19 @@ function draw(){
     }
     ctx.stroke();
   };
+  const strokeRailBed = (segments, width, color)=>{
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for(const seg of segments){
+      const { a, b } = seg;
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+    }
+    ctx.stroke();
+  };
   const drawRailSleepers = (segments, count, inset, length, width, color)=>{
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
@@ -1347,14 +1360,15 @@ function draw(){
     for(const tl of trafficLights) drawTrafficLight(tl.c, tl.approaches);
   }
 
-  drawRailSleepers(railSegments, 3, 0.08, 18, 3.6, '#5b3e24');
-  drawRailNodeSleepers(railNodeSleepers, 15, 3.2, '#5b3e24');
-  fillNodes(railSingles, railSleeperWidth*0.28, '#5b3e24');
-  strokeRailPairs(railSegments, 4.5, 3.2, railColor);
+  strokeRailBed(railSegments, 11, '#4f3925');
+  drawRailSleepers(railSegments, 4, 0.06, 16, 3.2, '#6a4a2b');
+  drawRailNodeSleepers(railNodeSleepers, 13, 3, '#6a4a2b');
+  fillNodes(railSingles, railSleeperWidth*0.24, '#6a4a2b');
+  strokeRailPairs(railSegments, 4.2, 2.8, railColor);
   fillNodes(railSingles, 3.2, railColor);
   if(!drawFast){
-    strokeRailPairs(railSegments, 4.5, 1.2, railLineColor);
-    fillNodes(railSingles, 1.3, railLineColor);
+    strokeRailPairs(railSegments, 4.2, 1.1, railLineColor);
+    fillNodes(railSingles, 1.2, railLineColor);
   }
 
   if(radiusSel)

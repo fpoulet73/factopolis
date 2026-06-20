@@ -892,8 +892,8 @@ clickFn = function(x,y){
     return;
   }
   if(tool==='rail'){
-    const { updates, cost } = collectRailUpdates([{ x, y }]);
-    if(!updates.length){ clickAt(x,y); return; }
+    const { updates, cost, msg } = collectRailUpdates([{ x, y }]);
+    if(!updates.length){ if(msg) toast(msg, 'err'); else clickAt(x,y); return; }
     if(cost > myWallet().money){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
     let first = true;
     for(const update of updates){
@@ -911,8 +911,11 @@ clickFn = function(x,y){
 };
 
 function applyRailPathWithNetwork(path){
-  const { updates, cost } = collectRailUpdates(path);
-  if(!updates.length) return false;
+  const { updates, cost, msg } = collectRailUpdates(path);
+  if(!updates.length){
+    if(msg) toast(msg, 'err');
+    return false;
+  }
   let first = true;
   for(const update of updates){
     netSend({ type:'rail_update', x:update.x, y:update.y, mask:update.mask, costDelta:first ? cost : 0 });

@@ -1119,6 +1119,29 @@ function computeRoadPreview(x0, y0, x1, y1, shiftMode){
   return tiles;
 }
 
+function computeRailPreview(x0, y0, x1, y1){
+  const dx = x1 - x0, dy = y1 - y0;
+  if(dx === 0 && dy === 0) return [{ x:x0, y:y0 }];
+  const dirs = [
+    [1,0], [-1,0], [0,1], [0,-1],
+    [1,1], [1,-1], [-1,1], [-1,-1],
+  ];
+  let best = dirs[0];
+  let bestScore = -Infinity;
+  for(const dir of dirs){
+    const score = dx * dir[0] + dy * dir[1];
+    if(score > bestScore){
+      bestScore = score;
+      best = dir;
+    }
+  }
+  const denom = Math.abs(best[0]) + Math.abs(best[1]);
+  const steps = Math.max(0, Math.round(bestScore / denom));
+  const tiles = [];
+  for(let i = 0; i <= steps; i++) tiles.push({ x:x0 + best[0] * i, y:y0 + best[1] * i });
+  return tiles;
+}
+
 cv.addEventListener('mousedown', e=>{
   updateMouseTile(e);
   if(e.button===0){
@@ -1131,7 +1154,9 @@ cv.addEventListener('mousedown', e=>{
     }
     if(tool === 'road' || tool === 'rail'){
       roadDragStart = { x: mouse.tx, y: mouse.ty };
-      roadPreviewTiles = computeRoadPreview(mouse.tx, mouse.ty, mouse.tx, mouse.ty, e.shiftKey);
+      roadPreviewTiles = tool === 'rail'
+        ? computeRailPreview(mouse.tx, mouse.ty, mouse.tx, mouse.ty)
+        : computeRoadPreview(mouse.tx, mouse.ty, mouse.tx, mouse.ty, e.shiftKey);
     } else {
       clickFn(mouse.tx, mouse.ty);
     }
@@ -1159,7 +1184,9 @@ addEventListener('mousemove', e=>{
   if(mouse.lDown && (tool==='bulldoze'||tool==='terraform'||tool==='fill_water') && (mouse.tx!==ptx || mouse.ty!==pty))
     clickFn(mouse.tx, mouse.ty);
   if(mouse.lDown && (tool==='road' || tool==='rail') && roadDragStart && (mouse.tx!==ptx || mouse.ty!==pty))
-    roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, e.shiftKey);
+    roadPreviewTiles = tool === 'rail'
+      ? computeRailPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty)
+      : computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, e.shiftKey);
 });
 addEventListener('mouseup', e=>{
   if(e.button===0){
@@ -1177,13 +1204,13 @@ addEventListener('mouseup', e=>{
       return;
     }
     if(tool === 'rail' && roadDragStart){
-      const { updates, cost } = collectRailUpdates(roadPreviewTiles);
+      const { updates, cost, msg } = collectRailUpdates(roadPreviewTiles);
       if(updates.length){
         if(MP.connected && !MP.username) toast('👤 Connecte-toi avec un compte joueur pour construire','err');
         else if(myWallet().money < cost) toast('Fonds insuffisants ('+cost+' $)','err');
         else if(MP.connected && MP.username) applyRailPathWithNetwork(roadPreviewTiles);
         else railApplyMaskUpdates(updates, cost);
-      }
+      } else if(msg) toast(msg, 'err');
       roadDragStart = null; roadPreviewTiles = [];
     } else if(tool === 'road' && roadDragStart){
       for(const t of roadPreviewTiles)
@@ -1263,7 +1290,7 @@ addEventListener('keydown', e=>{
   keys.add(e.code);
   if(e.code==='Space'){ e.preventDefault(); togglePause(); }
   if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; closeTownPanel(); }
-  if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown && (tool==='road' || tool==='rail'))
+  if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown && tool==='road')
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, true);
   if(e.code==='KeyH') toggleHelp();
   if(e.code==='KeyR') rotate(e.shiftKey ? -1 : 1);
@@ -1280,7 +1307,7 @@ addEventListener('click', e=>{
 });
 addEventListener('keyup', e=>{
   keys.delete(e.code);
-  if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown && (tool==='road' || tool==='rail'))
+  if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown && tool==='road')
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, false);
 });
 

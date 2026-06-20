@@ -56,8 +56,14 @@ function railApplyMaskUpdates(updates, walletDelta = 0, walletTarget = myWallet(
   return changed;
 }
 
+function railMaskIsRightAngle(mask){
+  const defs = RAIL_DIRS.filter(def => mask & def.bit);
+  if(defs.length !== 2) return false;
+  return defs[0].dx * defs[1].dx + defs[0].dy * defs[1].dy === 0;
+}
+
 function collectRailUpdates(path){
-  if(!Array.isArray(path) || !path.length) return { updates:[], cost:0 };
+  if(!Array.isArray(path) || !path.length) return { updates:[], cost:0, msg:'' };
   const draft = Uint8Array.from(rail);
   const touched = new Set();
   const validTile = ({ x, y }) => inMap(x, y) && !road[y*N+x] && !bgrid[y*N+x] && terrain[y*N+x] === T.GRASS;
@@ -68,7 +74,7 @@ function collectRailUpdates(path){
     if(prev && prev.x === tile.x && prev.y === tile.y) continue;
     sanitized.push({ x:tile.x, y:tile.y });
   }
-  if(!sanitized.length) return { updates:[], cost:0 };
+  if(!sanitized.length) return { updates:[], cost:0, msg:'' };
   const connect = (ax, ay, bx, by)=>{
     const def = railDirDef(bx - ax, by - ay);
     if(!def) return;
@@ -96,6 +102,9 @@ function collectRailUpdates(path){
       if(railHas(draft[ni], other)) draft[oi] |= def.bit;
     }
   }
+  for(const i of touched){
+    if(railMaskIsRightAngle(draft[i])) return { updates:[], cost:0, msg:'Les rails ne peuvent pas former un angle droit.' };
+  }
   const updates = [];
   let cost = 0;
   for(const i of touched){
@@ -105,7 +114,7 @@ function collectRailUpdates(path){
     if(before === 0 && after !== 0) cost += BUILD.rail.cost || 0;
     updates.push({ x:i % N, y:(i / N) | 0, mask:after });
   }
-  return { updates, cost };
+  return { updates, cost, msg:'' };
 }
 
 function collectRailRemovalUpdates(x, y){
