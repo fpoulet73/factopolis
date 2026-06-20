@@ -432,7 +432,7 @@ function sanitizeWorldConfig(config = {}) {
 }
 
 const ALLOWED_ACTIONS = new Set([
-  'road', 'bulldoze_road', 'rail_update', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
+  'road', 'bulldoze_road', 'rail_update', 'rail_signal_update', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
   'build', 'toggle_bld_pause', 'toggle_out_block', 'clear_bld_stock', 'upgrade_plant',
   'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'merge_towns',
   'zone_reassign', 'rename_bus_stop', 'owner_remap', 'pause', 'speed',
@@ -466,6 +466,11 @@ function sanitizeAction(client, msg) {
       if (!intInRange(act.x) || !intInRange(act.y) || !intInRange(act.mask, 0, 255)) return null;
       if (act.costDelta != null && !numInRange(act.costDelta, -100000, 100000)) return null;
       Object.assign(out, { x:act.x, y:act.y, mask:act.mask, costDelta: act.costDelta || 0 }); break;
+    case 'rail_signal_update':
+      if (!intInRange(act.x) || !intInRange(act.y) || !intInRange(act.bit, 0, 255)) return null;
+      if (typeof act.present !== 'boolean') return null;
+      if (act.costDelta != null && !numInRange(act.costDelta, -100000, 100000)) return null;
+      Object.assign(out, { x:act.x, y:act.y, bit:act.bit, present:act.present, costDelta: act.costDelta || 0 }); break;
     case 'fill_water':
       if (!intInRange(act.i) || !intInRange(act.depotX) || !intInRange(act.depotY)) return null;
       Object.assign(out, { i: act.i, depotX: act.depotX, depotY: act.depotY }); break;

@@ -41,6 +41,94 @@ function railPlacementMaskAt(x, y){
   return rail[i] || 0;
 }
 
+const railSignalKey = (x, y, bit) => x+','+y+','+bit;
+
+function railSignalDefAt(x, y, bit){
+  return railSignals?.[railSignalKey(x, y, bit)] || null;
+}
+
+function railConnectedDefsAt(x, y){
+  if(!inMap(x, y)) return [];
+  const mask = rail[y*N+x] || 0;
+  return RAIL_DIRS.filter(def => mask & def.bit);
+}
+
+function chooseRailSignalDef(x, y){
+  const defs = railConnectedDefsAt(x, y);
+  if(!defs.length) return null;
+  if(defs.length === 1) return defs[0];
+  const [rx, ry] = rotIdx(x, y);
+  const center = iso(rx + 0.5, ry + 0.5);
+  const mx = cam.x + mouse.x / cam.z;
+  const my = cam.y + mouse.y / cam.z;
+  const vx = mx - center[0], vy = my - center[1];
+  let best = defs[0], bestScore = -Infinity;
+  for(const def of defs){
+    const [du, dv] = rotDir(def.dx, def.dy);
+    const target = iso(du, dv);
+    const score = vx * target[0] + vy * target[1];
+    if(score > bestScore){
+      bestScore = score;
+      best = def;
+    }
+  }
+  return best;
+}
+
+function sanitizeRailSignals(){
+  if(!railSignals) railSignals = Object.create(null);
+  for(const key of Object.keys(railSignals)){
+    const sig = railSignals[key];
+    if(!sig || !inMap(sig.x, sig.y)){ delete railSignals[key]; continue; }
+    const mask = rail[sig.y*N+sig.x] || 0;
+    const def = RAIL_DIRS.find(d => d.bit === sig.bit);
+    if(!def || !(mask & sig.bit)){ delete railSignals[key]; continue; }
+    const nx = sig.x + def.dx, ny = sig.y + def.dy;
+    if(!inMap(nx, ny)){ delete railSignals[key]; continue; }
+    const other = RAIL_DIRS[def.opposite];
+    const nmask = rail[ny*N+nx] || 0;
+    if(!(nmask & other.bit)) delete railSignals[key];
+  }
+}
+
+function rebuildRailBlocks(){
+  sanitizeRailSignals();
+  const blockByTile = new Int32Array(N*N).fill(-1);
+  let nextBlockId = 0;
+  const edgeCut = (x, y, def)=>{
+    return !!(railSignalDefAt(x, y, def.bit)
+      || railSignalDefAt(x + def.dx, y + def.dy, RAIL_DIRS[def.opposite].bit));
+  };
+  for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+    const i = y*N+x;
+    if(!rail[i] || blockByTile[i] >= 0) continue;
+    const q = [i];
+    blockByTile[i] = nextBlockId;
+    for(let qi = 0; qi < q.length; qi++){
+      const cur = q[qi], cx = cur % N, cy = (cur / N) | 0;
+      for(const def of railConnectedDefsAt(cx, cy)){
+        if(edgeCut(cx, cy, def)) continue;
+        const nx = cx + def.dx, ny = cy + def.dy;
+        if(!inMap(nx, ny)) continue;
+        const ni = ny*N+nx;
+        if(!rail[ni] || blockByTile[ni] >= 0) continue;
+        blockByTile[ni] = nextBlockId;
+        q.push(ni);
+      }
+    }
+    nextBlockId++;
+  }
+  railBlocks = { blockByTile, count:nextBlockId };
+}
+
+function setRailSignal(x, y, bit, present){
+  if(!railSignals) railSignals = Object.create(null);
+  const key = railSignalKey(x, y, bit);
+  if(present) railSignals[key] = { x, y, bit };
+  else delete railSignals[key];
+  rebuildRailBlocks();
+}
+
 function railApplyMaskUpdates(updates, walletDelta = 0, walletTarget = myWallet()){
   let changed = false;
   for(const update of updates){
@@ -51,6 +139,7 @@ function railApplyMaskUpdates(updates, walletDelta = 0, walletTarget = myWallet(
     rail[i] = mask;
     changed = true;
   }
+  if(changed) rebuildRailBlocks();
   if(walletDelta > 0) spendMoney(walletDelta, 'construction');
   else if(walletDelta < 0) earnMoney(-walletDelta, 'rembours', walletTarget);
   return changed;
@@ -66,6 +155,7 @@ function collectRailUpdates(path){
   if(!Array.isArray(path) || !path.length) return { updates:[], cost:0, msg:'' };
   const draft = Uint8Array.from(rail);
   const touched = new Set();
+  const pathSet = new Set();
   const validTile = ({ x, y }) => inMap(x, y) && !road[y*N+x] && !bgrid[y*N+x] && terrain[y*N+x] === T.GRASS;
   const sanitized = [];
   for(const tile of path){
@@ -73,8 +163,12 @@ function collectRailUpdates(path){
     const prev = sanitized[sanitized.length - 1];
     if(prev && prev.x === tile.x && prev.y === tile.y) continue;
     sanitized.push({ x:tile.x, y:tile.y });
+    pathSet.add(tile.x + ',' + tile.y);
   }
   if(!sanitized.length) return { updates:[], cost:0, msg:'' };
+  const endpointKeys = new Set();
+  endpointKeys.add(sanitized[0].x + ',' + sanitized[0].y);
+  endpointKeys.add(sanitized[sanitized.length - 1].x + ',' + sanitized[sanitized.length - 1].y);
   const connect = (ax, ay, bx, by)=>{
     const def = railDirDef(bx - ax, by - ay);
     if(!def) return;
@@ -85,21 +179,61 @@ function collectRailUpdates(path){
     touched.add(ai);
     touched.add(bi);
   };
+  const connectEndpointToExisting = (tile, prefDx, prefDy)=>{
+    const oi = tile.y * N + tile.x;
+    let best = null;
+    let bestScore = -Infinity;
+    for(const def of RAIL_DIRS){
+      const nx = tile.x + def.dx, ny = tile.y + def.dy;
+      if(!inMap(nx, ny)) continue;
+      const ni = ny * N + nx;
+      const other = RAIL_DIRS[def.opposite];
+      if(pathSet.has(nx + ',' + ny) || !draft[ni]) continue;
+      const score = prefDx * def.dx + prefDy * def.dy;
+      if(score <= 0 || score < bestScore) continue;
+      bestScore = score;
+      best = def;
+    }
+    if(!best) return;
+    const nx = tile.x + best.dx, ny = tile.y + best.dy;
+    const ni = ny * N + nx;
+    const other = RAIL_DIRS[best.opposite];
+    draft[oi] |= best.bit;
+    draft[ni] |= other.bit;
+    touched.add(ni);
+  };
   for(let i = 1; i < sanitized.length; i++){
     const a = sanitized[i - 1], b = sanitized[i];
     if(Math.abs(a.x - b.x) > 1 || Math.abs(a.y - b.y) > 1) continue;
     connect(a.x, a.y, b.x, b.y);
   }
-  if(sanitized.length === 1){
-    const only = sanitized[0];
-    const oi = only.y * N + only.x;
+  for(let si = 0; si < sanitized.length; si++){
+    const tile = sanitized[si];
+    const oi = tile.y * N + tile.x;
+    const hadRailBefore = !!rail[oi];
     touched.add(oi);
-    for(const def of RAIL_DIRS){
-      const nx = only.x + def.dx, ny = only.y + def.dy;
-      if(!inMap(nx, ny)) continue;
-      const ni = ny * N + nx;
-      const other = RAIL_DIRS[def.opposite];
-      if(railHas(draft[ni], other)) draft[oi] |= def.bit;
+    const isEndpoint = sanitized.length === 1 || endpointKeys.has(tile.x + ',' + tile.y);
+    if(!isEndpoint) continue;
+    if(sanitized.length === 1){
+      for(const def of RAIL_DIRS){
+        const nx = tile.x + def.dx, ny = tile.y + def.dy;
+        if(!inMap(nx, ny)) continue;
+        const ni = ny * N + nx;
+        const other = RAIL_DIRS[def.opposite];
+        if(!draft[ni]) continue;
+        draft[oi] |= def.bit;
+        draft[ni] |= other.bit;
+        touched.add(ni);
+      }
+      continue;
+    }
+    if(hadRailBefore) continue;
+    if(si === 0){
+      const next = sanitized[1];
+      connectEndpointToExisting(tile, tile.x - next.x, tile.y - next.y);
+    } else if(si === sanitized.length - 1){
+      const prev = sanitized[sanitized.length - 2];
+      connectEndpointToExisting(tile, tile.x - prev.x, tile.y - prev.y);
     }
   }
   for(const i of touched){
@@ -162,6 +296,11 @@ function canPlace(t,x,y){
     if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
     if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
     if(ter!==T.GRASS) return { ok:false, msg:"Les rails se posent sur l'herbe (démolis les arbres ou champs)" };
+    return { ok:true };
+  }
+  if(t==='rail_signal'){
+    if(!rail[i]) return { ok:false, msg:'Place le signal sur une voie ferrée existante.' };
+    if(!chooseRailSignalDef(x, y)) return { ok:false, msg:'Aucun segment de rail valide à signaler.' };
     return { ok:true };
   }
   if(road[i] || rail[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
@@ -265,14 +404,16 @@ function clickAt(x,y){
           return;
         }
         vehicleRouteMode = null;
-        startVehicleRoute(vRef);
+        const routeStarted = startVehicleRoute(vRef);
         if(MP.connected) netSend({
           type:'route_vehicle',
           id:vRef.id,
           sourceX:vRef.source.x, sourceY:vRef.source.y,
           destX:vRef.dest.x, destY:vRef.dest.y,
         });
-        toast('Route définie ! Le véhicule commence sa tournée.','win');
+        if(routeStarted) toast('Route définie ! Le véhicule commence sa tournée.','win');
+        else if(vRef.vtype === 'train') toast('⛔ Aucun chemin ferroviaire continu depuis le dépôt du train.','err');
+        else toast('⛔ Aucun chemin disponible depuis le dépôt du véhicule.','err');
       }
     }
     return;
@@ -298,6 +439,7 @@ function clickAt(x,y){
     return;
   }
   if(tool==='bulldoze'){
+    const railSigDef = rail[i] ? chooseRailSignalDef(x, y) : null;
     if(bgrid[i]){
       const b = bgrid[i];
       // en multijoueur : impossible de démolir le bâtiment d'un autre joueur
@@ -306,6 +448,9 @@ function clickAt(x,y){
       }
       const refund = demolishBuilding(b, b.owner);
       if(refund) addFloat(x,y,'+'+refund+' $','#9fe89f');
+    } else if(railSigDef && railSignalDefAt(x, y, railSigDef.bit)){
+      setRailSignal(x, y, railSigDef.bit, false);
+      earnMoney(Math.floor((BUILD.rail_signal?.cost||0) * 0.3), 'rembours');
     } else if(road[i]){
       road[i] = 0; earnMoney(3, 'rembours');
     } else if(rail[i]){
@@ -348,6 +493,17 @@ function clickAt(x,y){
     if(!updates.length) return;
     if(myWallet().money < railCost){ toast('Fonds insuffisants ('+railCost+' $)','err'); return; }
     railApplyMaskUpdates(updates, railCost);
+    return;
+  }
+  if(tool === 'rail_signal'){
+    const def = chooseRailSignalDef(x, y);
+    if(!def) return;
+    const exists = !!railSignalDefAt(x, y, def.bit);
+    const delta = exists ? -Math.floor((BUILD.rail_signal?.cost||0) * 0.3) : (BUILD.rail_signal?.cost||0);
+    if(delta > 0 && myWallet().money < delta){ toast('Fonds insuffisants ('+delta+' $)','err'); return; }
+    setRailSignal(x, y, def.bit, !exists);
+    if(delta > 0) spendMoney(delta, 'construction');
+    else if(delta < 0) earnMoney(-delta, 'rembours');
     return;
   }
   if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }

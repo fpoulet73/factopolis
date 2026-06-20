@@ -14,6 +14,7 @@ function serializeState(){
     terrain: Array.from(terrain),
     road:    Array.from(road),
     rail:    Array.from(rail),
+    railSignals: Object.values(railSignals || {}),
     wallets: WALLETS,
     homeless: [],
     gtime,
@@ -108,6 +109,7 @@ function applySnapshot(d){
     terrain = Uint8Array.from(d.terrain);
     road    = Uint8Array.from(d.road);
     rail    = d.rail ? normalizeLegacyRailGrid(d.rail) : new Uint8Array((d.size || N) * (d.size || N));
+    railSignals = Object.create(null);
     mapBounds = { ...d.mapBounds };
     expansionLevels = d.expansionLevels || { left:0, right:0, top:0, bottom:0 };
     purchasedPieces = new Set(d.purchasedPieces||[]);
@@ -137,6 +139,7 @@ function applySnapshot(d){
     terrain = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     road    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     rail    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
+    railSignals = Object.create(null);
     for(let y=0; y<N_PLAY; y++) for(let x=0; x<N_PLAY; x++){
       terrain[(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldTerrain[y*N_PLAY+x];
       road   [(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldRoad   [y*N_PLAY+x];
@@ -166,6 +169,14 @@ function applySnapshot(d){
     centerOn(pcx * TILE + TILE/2, pcy * TILE + TILE/2);
   }
   selectedExpansion = null; hoveredExpansion = null;
+  if(Array.isArray(d.railSignals)){
+    railSignals = Object.create(null);
+    for(const sig of d.railSignals){
+      if(!sig || !Number.isInteger(sig.x) || !Number.isInteger(sig.y) || !Number.isInteger(sig.bit)) continue;
+      railSignals[railSignalKey(sig.x, sig.y, sig.bit)] = { x:sig.x, y:sig.y, bit:sig.bit };
+    }
+  } else railSignals = Object.create(null);
+  rebuildRailBlocks();
   // Sauvegarder le registre des joueurs (pour récupération après redémarrage serveur)
   if(d.playerRegistry && typeof d.playerRegistry === 'object') MP.savedRegistry = d.playerRegistry;
   gtime    = d.gtime || 0;
@@ -253,12 +264,23 @@ function applySnapshot(d){
       if(source && dest && sv.state !== 'idle'){
         const from = sv.state === 'to_dest' ? source : garage;
         const to   = sv.state === 'to_dest' ? dest   : source;
-        const pts = findRoadPath(from, to);
-        if(pts){ v.pts = pts; v.state = sv.state; }
-        // Recompute viz route
-        const fwd = findRoadPath(source, dest);
-        const bwd = findRoadPath(dest, source);
-        v.vizRoute = { fwd: fwd || [], bwd: bwd || [] };
+        if(v.vtype === 'train'){
+          const leg = findRailPath(from, to);
+          if(leg){
+            v.pts = leg.pts;
+            v.pathTiles = leg.tiles;
+            v.state = sv.state;
+          }
+          const fwd = findRailPath(source, dest);
+          const bwd = findRailPath(dest, source);
+          v.vizRoute = { fwd: fwd?.pts || [], bwd: bwd?.pts || [] };
+        } else {
+          const pts = findRoadPath(from, to);
+          if(pts){ v.pts = pts; v.state = sv.state; }
+          const fwd = findRoadPath(source, dest);
+          const bwd = findRoadPath(dest, source);
+          v.vizRoute = { fwd: fwd || [], bwd: bwd || [] };
+        }
       }
     }
   }
@@ -280,6 +302,18 @@ function applyAction(msg){
       if(!validXY(act.x, act.y) || !Number.isInteger(act.mask) || act.mask < 0 || act.mask > 255) break;
       if(msg.fromUsername) walletOf(msg.from).username = msg.fromUsername;
       rail[act.y*N+act.x] = act.mask;
+      rebuildRailBlocks();
+      if(act.costDelta > 0){
+        walletOf(msg.from).money -= act.costDelta;
+        walletOf(msg.from).fin.construction += act.costDelta;
+      } else if(act.costDelta < 0){
+        earnMoney(-act.costDelta, 'rembours', walletOf(msg.from));
+      }
+      break;
+    case 'rail_signal_update':
+      if(!validXY(act.x, act.y) || !Number.isInteger(act.bit)) break;
+      if(act.present) setRailSignal(act.x, act.y, act.bit, true);
+      else setRailSignal(act.x, act.y, act.bit, false);
       if(act.costDelta > 0){
         walletOf(msg.from).money -= act.costDelta;
         walletOf(msg.from).fin.construction += act.costDelta;
@@ -848,10 +882,16 @@ clickFn = function(x,y){
   }
 
   if(tool==='bulldoze'){
+    const railSigDef = rail[i] ? chooseRailSignalDef(x, y) : null;
     if(bgrid[i]){
       // ne pas envoyer l'action si le bâtiment appartient à quelqu'un d'autre
       if(bgrid[i].owner && bgrid[i].owner !== MP.myId){ clickAt(x,y); return; }
       netSend({ type:'bulldoze_bld', bx:bgrid[i].x, by:bgrid[i].y });
+    } else if(railSigDef && railSignalDefAt(x, y, railSigDef.bit)){
+      const refund = Math.floor((BUILD.rail_signal?.cost||0) * 0.3);
+      netSend({ type:'rail_signal_update', x, y, bit:railSigDef.bit, present:false, costDelta:-refund });
+      setRailSignal(x, y, railSigDef.bit, false);
+      earnMoney(refund, 'rembours');
     } else if(road[i]){
       netSend({ type:'bulldoze_road', i });
     } else if(rail[i]){
@@ -901,6 +941,18 @@ clickFn = function(x,y){
       first = false;
     }
     railApplyMaskUpdates(updates, cost);
+    return;
+  }
+  if(tool==='rail_signal'){
+    const def = chooseRailSignalDef(x, y);
+    if(!def){ clickAt(x,y); return; }
+    const exists = !!railSignalDefAt(x, y, def.bit);
+    const delta = exists ? -Math.floor((BUILD.rail_signal?.cost||0) * 0.3) : (BUILD.rail_signal?.cost||0);
+    if(delta > 0 && delta > myWallet().money){ toast('Fonds insuffisants ('+delta+' $)','err'); return; }
+    netSend({ type:'rail_signal_update', x, y, bit:def.bit, present:!exists, costDelta:delta });
+    setRailSignal(x, y, def.bit, !exists);
+    if(delta > 0) spendMoney(delta, 'construction');
+    else if(delta < 0) earnMoney(-delta, 'rembours');
     return;
   }
   const v = canPlace(tool,x,y);

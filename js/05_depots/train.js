@@ -2,7 +2,7 @@
 
 if(BUILD.train_depot){
   BUILD.train_depot.transportDepot = true;
-  BUILD.train_depot.buyCatalog = BUILD.train_depot.buyCatalog || [];
+  BUILD.train_depot.buyCatalog = BUILD.train_depot.buyCatalog || ['train'];
   BUILD.train_depot.desc = BUILD.train_depot.desc || 'Dépôt ferroviaire. Réservé à l’achat et à la gestion des trains.';
 }
 

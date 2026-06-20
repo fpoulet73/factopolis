@@ -556,8 +556,10 @@ function drawBuilding(b){
       ctx.fillText('💤'+b.workersIdle, tc[0], tc[1]-TH*0.32);
     }
   }
-  // pas de route adjacente
-  if(!drawFast && !adjRoadTiles(b).length){
+  // pas d'accès de transport adjacent
+  const lacksRoadAccess = b.type !== 'train_depot' && !adjRoadTiles(b).length;
+  const lacksRailAccess = b.type === 'train_depot' && !adjRailTiles(b).length;
+  if(!drawFast && (lacksRoadAccess || lacksRailAccess)){
     ctx.font = '14px "Segoe UI Emoji",sans-serif';
     ctx.fillText('⚠️', tc[0], tc[1]-TH*0.95);
   }
@@ -780,6 +782,32 @@ function drawTrafficLight(c, approaches){
   ctx.restore();
 }
 
+function drawRailSignal(sig){
+  const def = RAIL_DIRS.find(d => d.bit === sig.bit);
+  if(!def) return;
+  const [rx, ry] = rotIdx(sig.x, sig.y);
+  const c = iso(rx + 0.5, ry + 0.5);
+  const [du, dv] = rotDir(def.dx, def.dy);
+  const along = 0.34, side = 0.18;
+  const sx = c[0] + (du - dv) * TW2 * along + (dv + du) * TW2 * side;
+  const sy = c[1] + (du + dv) * TH2 * along + (dv - du) * TH2 * side;
+  const color = railSignalAspect(sig) ? '#35ff64' : '#ff3030';
+  ctx.save();
+  ctx.fillStyle = 'rgba(18,24,32,.9)';
+  ctx.beginPath();
+  if(ctx.roundRect) ctx.roundRect(sx - 4, sy - 7, 8, 12, 2);
+  else ctx.rect(sx - 4, sy - 7, 8, 12);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(sx, sy - 1.5, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#0b1017';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawTownLabels(){
   townLabelHits = [];
   if(!towns.length) return;
@@ -851,6 +879,25 @@ function drawTownLabels(){
 
 function drawVehicle(veh){
   if(!veh.pts || !veh.pts.length) return;
+  if(veh.vtype === 'train'){
+    const {u, v, du, dv} = lanePose(veh.pts, veh.seg, veh.t, 0);
+    const alongU = Math.abs(du) >= Math.abs(dv);
+    const au = alongU ? 0.34 : 0.16, av = alongU ? 0.16 : 0.34;
+    const vt = VEHICLE_TYPES[veh.vtype];
+    const c = iso(u, v);
+    ctx.fillStyle = 'rgba(0,0,0,.22)';
+    ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 13, 5.5, 0, 0, 7); ctx.fill();
+    prism(u-au, v-av, u+au, v+av, 6, '#2f3640');
+    prism(u-au*0.78, v-av*0.78, u+au*0.78, v+av*0.78, 8, vt.color, 5);
+    prism(u-au*0.22, v-av*0.22, u+au*0.30, v+av*0.30, 10, '#92a2b4', 8);
+    if(veh === selectedVehicle){
+      ctx.save();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.globalAlpha = 0.9;
+      ctx.beginPath(); ctx.ellipse(c[0], c[1], 15, 7, 0, 0, Math.PI*2); ctx.stroke();
+      ctx.restore();
+    }
+    return;
+  }
   const {u, v, du, dv} = lanePose(veh.pts, veh.seg, veh.t, 0.17);
   const alongU = Math.abs(du) >= Math.abs(dv);
   const au = alongU ? 0.23 : 0.13, av = alongU ? 0.13 : 0.23;
@@ -1226,7 +1273,8 @@ function draw(){
         const [du,dv] = rotDir(def.dx, def.dy);
         railDirs.push([du, dv]);
         if(ny < y || (ny === y && nx < x)) continue;
-        if(def.dx !== 0 && def.dy !== 0 && (railHas(mask, railDirDef(def.dx, 0)) || railHas(mask, railDirDef(0, def.dy)))) continue;
+        // Rail masks describe explicit edges. Do not hide a diagonal edge at a
+        // junction merely because the tile also has an orthogonal connection.
         railSegments.push({ a:c, b:iso(rx+du+0.5, ry+dv+0.5), dir:[du, dv] });
       }
       if(!links) railSingles.push(c);
@@ -1369,6 +1417,9 @@ function draw(){
   if(!drawFast){
     strokeRailPairs(railSegments, 4.2, 1.1, railLineColor);
     fillNodes(railSingles, 1.2, railLineColor);
+  }
+  if(railSignals){
+    for(const sig of Object.values(railSignals)) drawRailSignal(sig);
   }
 
   if(radiusSel)

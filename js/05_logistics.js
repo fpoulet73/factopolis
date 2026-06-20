@@ -9,6 +9,7 @@ const TRAFFIC_LIGHT_GREEN = 6;
 const TRAFFIC_LIGHT_ALL_RED = 1.1;
 const VEHICLE_STOP_GAP   = TILE * 0.82;  // distance d'arrêt devant le feu
 const VEHICLE_FOLLOW_GAP = TILE * 0.42;  // espacement en file (juste sans se toucher)
+const TRAIN_SIGNAL_STOP_GAP = TILE * 0.56;
 
 function roadTileFromPoint(p){
   const x = Math.floor(p.x / TILE), y = Math.floor(p.y / TILE);
@@ -382,6 +383,247 @@ function syncResidentReservations(){
   }
 }
 
+function adjRailTiles(b){
+  const out = [];
+  const seen = new Set();
+  const w = b.w || 1, h = b.h || 1;
+  const push = idx => {
+    if(seen.has(idx) || !rail[idx]) return;
+    seen.add(idx);
+    out.push(idx);
+  };
+  // Rails use eight directions, so the four corner tiles are valid depot
+  // entrances too. Scan the complete one-tile ring around the footprint.
+  for(let y = b.y - 1; y <= b.y + h; y++){
+    for(let x = b.x - 1; x <= b.x + w; x++){
+      if(!inMap(x, y)) continue;
+      if(x >= b.x && x < b.x + w && y >= b.y && y < b.y + h) continue;
+      push(y * N + x);
+    }
+  }
+  return out;
+}
+
+function railEdgeSignalState(x, y, def){
+  const nx = x + def.dx, ny = y + def.dy;
+  if(!inMap(nx, ny)) return { own:null, opposite:null };
+  return {
+    own: railSignalDefAt(x, y, def.bit),
+    opposite: railSignalDefAt(nx, ny, RAIL_DIRS[def.opposite].bit),
+  };
+}
+
+function railEdgeAllowsDirection(x, y, def){
+  const sig = railEdgeSignalState(x, y, def);
+  if(sig.own) return true;
+  return !sig.opposite;
+}
+
+function railEdgePassableForPath(x, y, def, vehicle=null){
+  const signals = railEdgeSignalState(x, y, def);
+  if(!signals.own && signals.opposite) return false;
+  if(!signals.own) return true;
+  const nx = x + def.dx, ny = y + def.dy;
+  if(!inMap(nx, ny)) return false;
+  const curBlock = railBlocks?.blockByTile?.[y * N + x] ?? -1;
+  const nextBlock = railBlocks?.blockByTile?.[ny * N + nx] ?? -1;
+  if(nextBlock < 0 || nextBlock === curBlock) return true;
+  const occupied = railBlockOccupancy?.[nextBlock] ?? 0;
+  const ownBlock = vehicle?.currentRailBlock ?? -1;
+  if(nextBlock === ownBlock) return true;
+  return occupied <= 0;
+}
+
+function railReachableExits(tile, vehicle=null){
+  if(tile == null || tile < 0 || !rail[tile]) return 0;
+  const x = tile % N, y = (tile / N) | 0;
+  let n = 0;
+  for(const def of RAIL_DIRS){
+    if(!(rail[tile] & def.bit) || !railEdgePassableForPath(x, y, def, vehicle)) continue;
+    const nx = x + def.dx, ny = y + def.dy;
+    if(!inMap(nx, ny)) continue;
+    const ni = ny * N + nx;
+    const other = RAIL_DIRS[def.opposite];
+    if(!rail[ni] || !(rail[ni] & other.bit)) continue;
+    n++;
+  }
+  return n;
+}
+
+function findRailPath(fromB, toB, startTile=null, vehicle=null){
+  const starts = startTile != null ? [startTile] : adjRailTiles(fromB);
+  const targets = new Set(adjRailTiles(toB));
+  if(!starts.length || !targets.size) return null;
+  const prevRail = new Int32Array(N * N).fill(-2);
+  const q = [];
+  for(const s of starts){
+    if(!rail[s]) continue;
+    prevRail[s] = -1;
+    q.push(s);
+  }
+  let found = -1;
+  for(let qi = 0; qi < q.length && found < 0; qi++){
+    const cur = q[qi];
+    if(targets.has(cur)){ found = cur; break; }
+    const cx = cur % N, cy = (cur / N) | 0;
+    const mask = rail[cur] || 0;
+    for(const def of RAIL_DIRS){
+      if(!(mask & def.bit) || !railEdgePassableForPath(cx, cy, def, vehicle)) continue;
+      const nx = cx + def.dx, ny = cy + def.dy;
+      if(!inMap(nx, ny)) continue;
+      const ni = ny * N + nx;
+      const other = RAIL_DIRS[def.opposite];
+      if(!rail[ni] || !(rail[ni] & other.bit) || prevRail[ni] !== -2) continue;
+      if(!targets.has(ni) && railReachableExits(ni, vehicle) <= 1) continue;
+      prevRail[ni] = cur;
+      q.push(ni);
+    }
+  }
+  if(found < 0) return null;
+  const tiles = [];
+  for(let t = found; t !== -1; t = prevRail[t]) tiles.push(t);
+  tiles.reverse();
+  const pts = tiles.map(idx => ({ x:(idx % N) * TILE + TILE / 2, y:((idx / N) | 0) * TILE + TILE / 2 }));
+  return { tiles, pts };
+}
+
+function trainTileIndex(v){
+  if(!v?.pathTiles?.length) return -1;
+  return v.pathTiles[Math.max(0, Math.min(v.pathTiles.length - 1, v.seg))] ?? -1;
+}
+
+function rebuildRailBlockOccupancy(){
+  if(!railBlocks?.count){
+    railBlockOccupancy = null;
+    return;
+  }
+  const occ = new Int16Array(railBlocks.count);
+  for(const v of vehicles){
+    if(v.vtype !== 'train' || v.state === 'idle') continue;
+    const tile = trainTileIndex(v);
+    const blockId = tile >= 0 ? (railBlocks.blockByTile?.[tile] ?? -1) : -1;
+    v.currentRailBlock = blockId;
+    if(blockId >= 0) occ[blockId]++;
+  }
+  railBlockOccupancy = occ;
+}
+
+function railSignalAspect(sig){
+  const def = RAIL_DIRS.find(d => d.bit === sig.bit);
+  if(!def) return false;
+  const nx = sig.x + def.dx, ny = sig.y + def.dy;
+  if(!inMap(nx, ny)) return false;
+  const nextBlock = railBlocks?.blockByTile?.[ny * N + nx] ?? -1;
+  if(nextBlock < 0) return false;
+  const occupied = railBlockOccupancy?.[nextBlock] ?? 0;
+  return occupied <= 0;
+}
+
+function prepareRailTrip(v, fromB, toB, startTile=null){
+  const path = findRailPath(fromB, toB, startTile, v);
+  if(!path) return false;
+  v.pts = path.pts;
+  v.pathTiles = path.tiles;
+  v.seg = 0;
+  v.t = 0;
+  return true;
+}
+
+function trainNextMoveState(v){
+  if(!v?.pathTiles || v.seg >= v.pathTiles.length - 1) return { blocked:false };
+  const cur = v.pathTiles[v.seg], next = v.pathTiles[v.seg + 1];
+  const cx = cur % N, cy = (cur / N) | 0;
+  const nx = next % N, ny = (next / N) | 0;
+  const def = railDirDef(nx - cx, ny - cy);
+  if(!def) return { blocked:true };
+  if(!railEdgePassableForPath(cx, cy, def, v)) return { blocked:true };
+  return { blocked:false };
+}
+
+function tryRerouteTrain(v){
+  if(!v?.pathTiles?.length || v.t > 1e-6) return false;
+  const curTile = v.pathTiles[v.seg] ?? -1;
+  if(curTile < 0) return false;
+  const targetB = v.state === 'returning' ? v.garageRef : (v.state === 'to_source' ? v.source : v.dest);
+  if(!targetB || targetB.dead) return false;
+  const path = findRailPath(v.currentBuilding || v.garageRef, targetB, curTile, v);
+  if(!path || path.tiles.length < 2) return false;
+  v.pts = path.pts;
+  v.pathTiles = path.tiles;
+  v.seg = 0;
+  v.t = 0;
+  return true;
+}
+
+function advanceRailVehicle(v, move){
+  while(move > 0 && v.seg < v.pts.length - 1){
+    const a = v.pts[v.seg], b = v.pts[v.seg + 1];
+    const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const state = trainNextMoveState(v);
+    if(state.blocked){
+      if(tryRerouteTrain(v)) continue;
+      const tStop = Math.max(0, 1 - TRAIN_SIGNAL_STOP_GAP / d);
+      if(v.t < tStop - 1e-6) v.t = Math.min(tStop, v.t + move / d);
+      break;
+    }
+    const desiredT = Math.min(1, v.t + move / d);
+    const used = (desiredT - v.t) * d;
+    v.t = desiredT;
+    move -= used;
+    if(v.t < 1 - 1e-6) break;
+    v.seg++;
+    v.t = 0;
+    const tile = v.pathTiles[v.seg] ?? -1;
+    v.currentRailBlock = tile >= 0 ? (railBlocks?.blockByTile?.[tile] ?? -1) : -1;
+  }
+}
+
+function updateTrainVehicle(v, dt){
+  if(v.state !== 'returning' && (!v.source || !v.dest || v.source.dead || v.dest.dead)){
+    v.state = 'idle';
+    v.pts = [];
+    v.pathTiles = [];
+    return;
+  }
+  if(v.waitTimer > 0){
+    v.waitTimer -= dt;
+    if(v.waitTimer > 0) return;
+    const fromB = v.currentBuilding || v.garageRef;
+    const toB = v.state === 'returning' ? v.garageRef : (v.state === 'to_source' ? v.source : v.dest);
+    if(!prepareRailTrip(v, fromB, toB)){
+      v.waitTimer = 5;
+      return;
+    }
+    v.currentBuilding = null;
+  }
+  if(!v.pts?.length || !v.pathTiles?.length){
+    v.waitTimer = 5;
+    return;
+  }
+  advanceRailVehicle(v, VEHICLE_TYPES[v.vtype].speed * TILE * dt);
+  if(v.seg < v.pts.length - 1) return;
+  if(v.state === 'returning'){
+    v.state = 'idle';
+    v.pts = [];
+    v.pathTiles = [];
+    v.currentBuilding = v.garageRef;
+    return;
+  }
+  if(v.state === 'to_source'){
+    v.currentBuilding = v.source;
+    v.state = 'to_dest';
+    v.waitTimer = TRAIN_DWELL_TIME;
+    v.pts = [];
+    v.pathTiles = [];
+    return;
+  }
+  v.currentBuilding = v.dest;
+  v.state = 'to_source';
+  v.waitTimer = TRAIN_DWELL_TIME;
+  v.pts = [];
+  v.pathTiles = [];
+}
+
 // ---------- logistique (véhicules persistants) ----------
 function vehicleIdSeed(){
   return MP.connected && MP.myId != null ? MP.myId * 100000 + nextVehicleId : nextVehicleId;
@@ -397,8 +639,10 @@ function createPersistentVehicle(vtype, garage, id=null){
     state: 'idle',
     cargo: 0, res: null,
     pts: [], seg: 0, t: 0,
+    pathTiles: [],
     waitTimer: 0,
     currentBuilding: garage,
+    currentRailBlock: -1,
   };
   const numericId = Number(v.id);
   if(Number.isFinite(numericId)) nextVehicleId = Math.max(nextVehicleId, numericId + 1);
@@ -423,6 +667,7 @@ function removePersistentVehicle(v){
 function vehicleRouteEndpointOk(b, vtype_override){
   const vt = vtype_override || vehicleRouteMode?.vehicle?.vtype;
   if(vt === 'bus') return b?.type === 'bus_stop';
+  if(vt === 'train') return b?.type === 'train_depot';
   return isStorageHub(b);
 }
 
@@ -435,6 +680,7 @@ function vehicleCanServeRoute(v, res=null){
   if(!v?.source || !v?.dest || v.source.dead || v.dest.dead) return false;
   if(!vehicleRouteEndpointOk(v.source, v.vtype) || !vehicleRouteEndpointOk(v.dest, v.vtype)) return false;
   if(v.vtype === 'bus') return true;
+  if(v.vtype === 'train') return true;
   const resource = res || VEHICLE_TYPES[v.vtype]?.resources?.[0] || null;
   if(resource === 'water' && v.source.type === 'tank')
     return buildingChebyshevDistance(v.source, v.dest) <= tankRadiusOf(v.source);
@@ -493,25 +739,61 @@ function busEarnRevenue(v, numPassengers, routeLen, departStop, arrivalStop){
 }
 
 function startVehicleRoute(v){
-  if(!v.source || !v.dest || v.source.dead || v.dest.dead){ v.state = 'idle'; return; }
+  if(!v.source || !v.dest || v.source.dead || v.dest.dead){ v.state = 'idle'; return false; }
   if(!vehicleCanServeRoute(v)){
     v.source = null; v.dest = null; v.state = 'idle'; v.pts = []; v.vizRoute = null;
-    return;
+    return false;
+  }
+  if(v.vtype === 'train'){
+    const fwd = findRailPath(v.source, v.dest);
+    const bwd = findRailPath(v.dest, v.source);
+    v.vizRoute = { fwd: fwd?.pts || [], bwd: bwd?.pts || [] };
+    if(!prepareRailTrip(v, v.garageRef, v.source)){
+      v.waitTimer = 0;
+      v.currentBuilding = v.garageRef;
+      v.state = 'idle';
+      return false;
+    }
+    v.state = 'to_source';
+    v.waitTimer = 0;
+    v.currentBuilding = null;
+    v.cargo = 0;
+    v.res = null;
+    return true;
   }
   // Cache la route complète pour la visualisation (style Transport Tycoon)
   const fwd = findRoadPath(v.source, v.dest);
   const bwd = findRoadPath(v.dest, v.source);
   v.vizRoute = { fwd: fwd || [], bwd: bwd || [] };
   const pts = findRoadPath(v.garageRef, v.source);
-  if(!pts){ v.waitTimer = 5; v.currentBuilding = v.garageRef; return; }
+  if(!pts){ v.waitTimer = 0; v.currentBuilding = v.garageRef; return false; }
   v.state = 'to_source';
+  v.waitTimer = 0;
   v.pts = pts; v.seg = 0; v.t = 0;
   v.cargo = 0; v.res = null;
   v.currentBuilding = null;
+  return true;
 }
 
 function returnToGarage(v){
   if(v.state === 'idle' || v.state === 'returning') return;
+  if(v.vtype === 'train'){
+    const startTile = trainTileIndex(v);
+    const from = v.currentBuilding || v.garageRef;
+    v.source = null; v.dest = null;
+    v.vizRoute = null;
+    v.cargo = 0; v.res = null;
+    const ok = startTile >= 0 ? prepareRailTrip(v, from, v.garageRef, startTile) : prepareRailTrip(v, from, v.garageRef);
+    if(ok){
+      v.state = 'returning';
+      v.currentBuilding = null;
+    } else {
+      v.state = 'idle';
+      v.pts = [];
+      v.pathTiles = [];
+    }
+    return;
+  }
   const from = v.currentBuilding || v.garageRef;
   v.source = null; v.dest = null;
   v.vizRoute = null;
@@ -526,8 +808,13 @@ function returnToGarage(v){
 }
 
 function updateVehicles(dt){
+  rebuildRailBlockOccupancy();
   for(const v of vehicles){
     if(v.state === 'idle') continue;
+    if(v.vtype === 'train'){
+      updateTrainVehicle(v, dt);
+      continue;
+    }
     if(v.state !== 'returning' && (!v.source || v.source.dead || !v.dest || v.dest.dead)){
       v.state = 'idle'; v.cargo = 0; v.res = null; v.pts = []; continue;
     }

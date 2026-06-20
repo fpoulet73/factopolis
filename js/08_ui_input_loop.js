@@ -212,8 +212,10 @@ function renderInfo(){
       $('bVehRoute').onclick = ()=>{
         vehicleRouteMode = { vehicle:veh, step:'source' };
         setTool('select');
-        if(veh.vtype === 'bus')
+      if(veh.vtype === 'bus')
           toast('🚌 Clique sur l\'arrêt de bus de départ pour '+vt.nom+'.');
+        else if(veh.vtype === 'train')
+          toast('🚂 Clique sur le dépôt ferroviaire de départ pour '+vt.nom+'.');
         else
           toast('🔁 Clique sur l\'entrepôt source pour '+vt.nom+'.');
         p._html = null;
@@ -258,8 +260,12 @@ function renderInfo(){
   }
   h += _hdrBtns+'</h3>';
   h += '<div class="status">'+statusOf(b)+'</div>';
-  if(!adjRoadTiles(b).length)
+  if(b.type === 'train_depot'){
+    if(!adjRailTiles(b).length)
+      h += '<div class="warn">⚠️ Aucun rail adjacent — pas de trains !</div>';
+  } else if(!adjRoadTiles(b).length){
     h += '<div class="warn">⚠️ Aucune route adjacente — pas de camions !</div>';
+  }
   if(b.type === 'plant'){
     const canUpgrade = !MP.connected || !b.owner || b.owner === MP.myId;
     h += '<div style="margin-top:8px;color:#8fa3bf">Spécialisation</div>';
@@ -485,6 +491,10 @@ function renderInfo(){
         h += '<div class="warn" style="background:#0e1e30;border-color:#3a6f9c;color:#7dd8ff">'
            + (step==='source' ? '🚌 Clique sur l\'ARRÊT DE BUS de départ' : '🚌 Clique sur l\'ARRÊT DE BUS de destination')
            + '</div>';
+      } else if(rmVeh?.vtype === 'train'){
+        h += '<div class="warn" style="background:#241b12;border-color:#8b6a3b;color:#f0d29a">'
+           + (step==='source' ? '🚂 Clique sur le DÉPÔT FERROVIAIRE de départ' : '🚂 Clique sur le DÉPÔT FERROVIAIRE de destination')
+           + '</div>';
       } else {
         h += '<div class="warn" style="background:#1a2e1a;border-color:#3d8c3d;color:#9fe8a0">'
            + (step==='source' ? '🔁 Clique sur l\'ENTREPÔT source' : '🔁 Clique sur l\'ENTREPÔT destination')
@@ -626,6 +636,8 @@ function renderInfo(){
         setTool('select');
         if(v.vtype === 'bus')
           toast('🚌 Clique sur l\'arrêt de bus de départ pour '+VEHICLE_TYPES[v.vtype].nom+'.');
+        else if(v.vtype === 'train')
+          toast('🚂 Clique sur le dépôt ferroviaire de départ pour '+VEHICLE_TYPES[v.vtype].nom+'.');
         else
           toast('🔁 Clique sur l\'entrepôt source pour '+VEHICLE_TYPES[v.vtype].nom+'.');
         p._html = null;
@@ -1120,26 +1132,71 @@ function computeRoadPreview(x0, y0, x1, y1, shiftMode){
 }
 
 function computeRailPreview(x0, y0, x1, y1){
-  const dx = x1 - x0, dy = y1 - y0;
-  if(dx === 0 && dy === 0) return [{ x:x0, y:y0 }];
-  const dirs = [
-    [1,0], [-1,0], [0,1], [0,-1],
-    [1,1], [1,-1], [-1,1], [-1,-1],
-  ];
-  let best = dirs[0];
-  let bestScore = -Infinity;
-  for(const dir of dirs){
-    const score = dx * dir[0] + dy * dir[1];
-    if(score > bestScore){
-      bestScore = score;
-      best = dir;
+  if(x0 === x1 && y0 === y1) return [{ x:x0, y:y0 }];
+  const dirs = RAIL_DIRS.map(def => [def.dx, def.dy]);
+  const targetDx = Math.sign(x1 - x0), targetDy = Math.sign(y1 - y0);
+  const targetMag = Math.max(1, Math.abs(x1 - x0) + Math.abs(y1 - y0));
+  const keyOf = (x, y, dirIdx) => x+','+y+','+dirIdx;
+  const heuristic = (x, y) => Math.max(Math.abs(x1 - x), Math.abs(y1 - y)) * 1000;
+  const best = new Map();
+  const open = [{
+    x:x0, y:y0, prevDir:-1, prev:null,
+    g:0, f:heuristic(x0, y0),
+  }];
+  best.set(keyOf(x0, y0, -1), 0);
+  while(open.length){
+    open.sort((a, b)=> a.f - b.f || a.g - b.g);
+    const cur = open.shift();
+    if(cur.x === x1 && cur.y === y1){
+      const path = [];
+      for(let n = cur; n; n = n.prev) path.push({ x:n.x, y:n.y });
+      path.reverse();
+      return path;
+    }
+    for(let dirIdx = 0; dirIdx < dirs.length; dirIdx++){
+      const [dx, dy] = dirs[dirIdx];
+      if(cur.prevDir >= 0){
+        const [pdx, pdy] = dirs[cur.prevDir];
+        if(pdx * dx + pdy * dy === 0) continue;
+      }
+      const nx = cur.x + dx, ny = cur.y + dy;
+      if(!inMap(nx, ny)) continue;
+      const turnPenalty = cur.prevDir >= 0 && cur.prevDir !== dirIdx ? 35 : 0;
+      const alignPenalty = ((targetDx && dx !== targetDx) ? 8 : 0) + ((targetDy && dy !== targetDy) ? 8 : 0);
+      const diagonalPenalty = (targetDx && targetDy && (dx === 0 || dy === 0)) ? 10 : 0;
+      const stepCost = 1000 + turnPenalty + alignPenalty + diagonalPenalty;
+      const g = cur.g + stepCost;
+      const stateKey = keyOf(nx, ny, dirIdx);
+      if(g >= (best.get(stateKey) ?? Infinity)) continue;
+      best.set(stateKey, g);
+      open.push({
+        x:nx, y:ny, prevDir:dirIdx, prev:cur,
+        g,
+        f:g + heuristic(nx, ny),
+      });
     }
   }
-  const denom = Math.abs(best[0]) + Math.abs(best[1]);
-  const steps = Math.max(0, Math.round(bestScore / denom));
-  const tiles = [];
-  for(let i = 0; i <= steps; i++) tiles.push({ x:x0 + best[0] * i, y:y0 + best[1] * i });
-  return tiles;
+  return [{ x:x0, y:y0 }];
+}
+
+function snapRailDragAnchor(x, y){
+  if(!inMap(x, y)) return { x, y };
+  if(rail[y * N + x]) return { x, y };
+  let best = null;
+  let bestScore = Infinity;
+  for(let r = 1; r <= 2; r++){
+    for(let dy = -r; dy <= r; dy++) for(let dx = -r; dx <= r; dx++){
+      const nx = x + dx, ny = y + dy;
+      if(!inMap(nx, ny) || !rail[ny * N + nx]) continue;
+      const cheb = Math.max(Math.abs(dx), Math.abs(dy));
+      const manh = Math.abs(dx) + Math.abs(dy);
+      const score = cheb * 100 + manh;
+      if(score >= bestScore) continue;
+      bestScore = score;
+      best = { x:nx, y:ny };
+    }
+  }
+  return best || { x, y };
 }
 
 cv.addEventListener('mousedown', e=>{
@@ -1153,10 +1210,13 @@ cv.addEventListener('mousedown', e=>{
       return;
     }
     if(tool === 'road' || tool === 'rail'){
-      roadDragStart = { x: mouse.tx, y: mouse.ty };
+      const anchor = tool === 'rail' ? snapRailDragAnchor(mouse.tx, mouse.ty) : { x: mouse.tx, y: mouse.ty };
+      roadDragStart = { x: anchor.x, y: anchor.y };
       roadPreviewTiles = tool === 'rail'
-        ? computeRailPreview(mouse.tx, mouse.ty, mouse.tx, mouse.ty)
+        ? computeRailPreview(anchor.x, anchor.y, anchor.x, anchor.y)
         : computeRoadPreview(mouse.tx, mouse.ty, mouse.tx, mouse.ty, e.shiftKey);
+    } else if(tool === 'rail_signal'){
+      clickFn(mouse.tx, mouse.ty);
     } else {
       clickFn(mouse.tx, mouse.ty);
     }
@@ -1185,7 +1245,10 @@ addEventListener('mousemove', e=>{
     clickFn(mouse.tx, mouse.ty);
   if(mouse.lDown && (tool==='road' || tool==='rail') && roadDragStart && (mouse.tx!==ptx || mouse.ty!==pty))
     roadPreviewTiles = tool === 'rail'
-      ? computeRailPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty)
+      ? (() => {
+          const anchor = snapRailDragAnchor(mouse.tx, mouse.ty);
+          return computeRailPreview(roadDragStart.x, roadDragStart.y, anchor.x, anchor.y);
+        })()
       : computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, e.shiftKey);
 });
 addEventListener('mouseup', e=>{

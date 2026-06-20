@@ -114,12 +114,13 @@ const BUS_DWELL_TIME       = (CFG.logistique?.arretBus?.tempsArret      ?? 2) / 
 const VEHICLE_DWELL_TIME   = (CFG.logistique?.garage?.tempsArret         ?? 2) / (CFG.jeu?.heuresParSeconde ?? 1); // gtime-s d'arrêt véhicule chargement/déchargement
 const BUS_STOP_FILL_TIME   = CFG.logistique?.arretBus?.tempsRemplissage ?? 6; // gtime-s de rush pour remplir (6 = 1 journée de pointe)
 const BUS_OWNER_SHARE      = CFG.logistique?.arretBus?.partProprietaire     ?? 0.8;
+const TRAIN_DWELL_TIME     = (CFG.logistique?.train?.tempsArret ?? 2.5) / (CFG.jeu?.heuresParSeconde ?? 1);
 
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
   const COLOR_MAP = {
     minerai:'#c0763a', plateau:'#8a7a5a', cereale:'#d4b842', marchandises:'#e6c84f',
-    frigo:'#4fa6b8', citerne:'#64b7e8', bus:'#3a8fd4',
+    frigo:'#4fa6b8', citerne:'#64b7e8', bus:'#3a8fd4', train:'#4f5c6f',
     // legacy
     bois:'#5e7a3a', ble:'#d7b348', coton:'#f1efe3', vetement:'#b98fcb',
     farine:'#eadfa8', pain:'#d99a45', poisson:'#4fa6b8', acier:'#7a8fa0',
@@ -133,6 +134,7 @@ const VEHICLE_TYPES = (()=>{
     frigo:       { nom:'Camion frigorifique',icone:'🚚', resources:['fish','fish_fillet'],                                         cost:750,  capacite:14, speed:3.8 },
     citerne:     { nom:'Camion citerne',     icone:'🚛', resources:['water','fish_oil'],                                           cost:750,  capacite:20, speed:3.5 },
     bus:         { nom:'Bus',                icone:'🚌', resources:[],                                                             cost:1500, capacite:40, speed:3.0 },
+    train:       { nom:'Train',              icone:'🚂', resources:[],                                                             cost:2200, capacite:0,  speed:2.9 },
     // --- legacy (sauvegardes existantes, plus achetables) ---
     bois:        { nom:'Camion bois',        icone:'🚜', resources:['wood'],                   cost:600,  capacite:15, speed:4.0, buyDisabled:true },
     ble:         { nom:'Camion blé',         icone:'🚜', resources:['wheat'],                  cost:550,  capacite:15, speed:4.0, buyDisabled:true },
@@ -399,6 +401,8 @@ const BUILD = {
              desc:'Relie les bâtiments — les camions y circulent. Glisser pour tracer.' },
   rail:    { n:'Rail',      ic:'🚂', hk:'',  cost: CFG.batiments?.rail?.cout     ?? 12,
              desc:'Pose des rails en glissant, comme pour les routes.' },
+  rail_signal:{ n:'Signal', ic:'🚦', hk:'',  cost: CFG.batiments?.signalRail?.cout ?? 20,
+                desc:'Place un signal ferroviaire sur un segment de rail.' },
   mine:    { n:'Mine',      ic:'⛏️', hk:'3', cost: CFG.production?.mine?.cout     ?? 450,
              workers:3, time:2.2, col:'#7d6457', hgt:16, ind:true,
              upkeep: CFG.production?.mine?.entretien     ?? 2,
@@ -918,5 +922,5 @@ function tryMergeDepot(){
   if(bats.citerne?.cout        != null) BUILD.tank.cost   = bats.citerne.cout;
 })();
 
-const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','bulldoze','terraform','fill_water'];
+const TOOL_ORDER = ['select','road','rail','rail_signal','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','bulldoze','terraform','fill_water'];
 const MILESTONES = [25, 50, 100, 200, 400];
