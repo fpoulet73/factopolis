@@ -93,6 +93,53 @@ function quad(a,b,c,d){
   ctx.closePath(); ctx.fill();
 }
 
+// Prisme isométrique orienté selon la direction (du,dv) en tuiles iso.
+// Contrairement à prism(), la boîte suit le sens du train (rotation réelle).
+function trainPrism(u, v, du, dv, halfLen, halfWid, hp, col, lift){
+  lift = lift || 0;
+  const d = Math.hypot(du, dv) || 1;
+  const fn = du/d, fv = dv/d;    // vecteur unitaire avant
+  const rn = fv,  rv = -fn;      // perpendiculaire droite (rotation CW 90°)
+
+  const FR = [u + fn*halfLen + rn*halfWid, v + fv*halfLen + rv*halfWid];
+  const FL = [u + fn*halfLen - rn*halfWid, v + fv*halfLen - rv*halfWid];
+  const BL = [u - fn*halfLen - rn*halfWid, v - fv*halfLen - rv*halfWid];
+  const BR = [u - fn*halfLen + rn*halfWid, v - fv*halfLen + rv*halfWid];
+
+  const bot = ([iu,iv]) => { const [sx,sy]=iso(iu,iv); return [sx, sy-lift]; };
+  const top = ([iu,iv]) => { const [sx,sy]=iso(iu,iv); return [sx, sy-lift-hp]; };
+
+  const bf=bot(FR), bfl=bot(FL), bbl=bot(BL), bbr=bot(BR);
+  const tf=top(FR), tfl=top(FL), tbl=top(BL), tbr=top(BR);
+
+  // Teinte selon la normale : +u → claire (-0.22), +v → sombre (-0.45)
+  const shadeFor = (nx, ny) => {
+    const pu=Math.max(0,nx), pv=Math.max(0,ny), t=pu+pv+1e-6;
+    return -0.22*pu/t - 0.45*pv/t;
+  };
+
+  // Faces latérales visibles (normale · (1,1) > 0), triées arrière→avant
+  const faces = [];
+  const addF = (p1,p2,p3,p4,nx,ny) => { if(nx+ny > 1e-6) faces.push({p1,p2,p3,p4,nx,ny}); };
+  addF(bf,  bfl, tfl, tf,   fn,  fv);   // avant
+  addF(bbr, bf,  tf,  tbr,  rn,  rv);   // droite
+  addF(bfl, bbl, tbl, tfl, -rn, -rv);   // gauche
+  addF(bbl, bbr, tbr, tbl, -fn, -fv);   // arrière
+  faces.sort((a,b) => (a.nx+a.ny) - (b.nx+b.ny));
+  for(const f of faces){
+    ctx.fillStyle = shade(col, shadeFor(f.nx, f.ny));
+    quad(f.p1, f.p2, f.p3, f.p4);
+  }
+  // Toit
+  ctx.fillStyle = shade(col, 0.20);
+  quad(tf, tfl, tbl, tbr);
+  // Contour du toit
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(...tf); ctx.lineTo(...tfl); ctx.lineTo(...tbl); ctx.lineTo(...tbr);
+  ctx.closePath(); ctx.stroke();
+}
+
 // prisme iso : base [u0,v0]-[u1,v1] (tuiles tournées), hauteur hp px, surélévation lift
 // renvoie le centre du toit
 function prism(u0,v0,u1,v1,hp,col,lift){
@@ -842,19 +889,102 @@ function lanePose(pts, seg, t, lane=0.16){
   return { u, v, du, dv };
 }
 
+// Direction lissée pour les trains : blend entre le segment courant et le précédent/suivant
+// sur la moitié de chaque segment, pour que l'orientation suive les courbes progressivement.
+function trainBlendedDir(pts, seg, t){
+  const a = pts[seg], b = pts[Math.min(seg+1, pts.length-1)];
+  const cdx = b.x - a.x, cdy = b.y - a.y;
+  if(t > 0.5 && seg + 2 < pts.length){
+    const c = pts[seg+2];
+    const ndx = c.x - b.x, ndy = c.y - b.y;
+    if(cdx !== ndx || cdy !== ndy){
+      const alpha = (t - 0.5) * 2;
+      return [cdx*(1-alpha) + ndx*alpha, cdy*(1-alpha) + ndy*alpha];
+    }
+  } else if(t < 0.5 && seg > 0){
+    const prev = pts[seg-1];
+    const pdx = a.x - prev.x, pdy = a.y - prev.y;
+    if(cdx !== pdx || cdy !== pdy){
+      const alpha = t * 2;
+      return [pdx*(1-alpha) + cdx*alpha, pdy*(1-alpha) + cdy*alpha];
+    }
+  }
+  return [cdx, cdy];
+}
+
+// Retourne la pose iso du wagon wagonIndex (0 = premier wagon derrière la loco).
+// Trace en arrière le long des pts (segments de TILE px entre tuiles adjacentes).
+function trainWagonPose(veh, wagonIndex){
+  const pts = veh.pts;
+  const SPACING = TILE * 0.80;
+  const backDist = (wagonIndex + 1) * SPACING;
+
+  if(pts && pts.length >= 2){
+    let ws = veh.seg, wt = veh.t, rem = backDist;
+    while(rem > 1e-3){
+      const d = wt * TILE;
+      if(d >= rem){ wt -= rem / TILE; rem = 0; }
+      else { rem -= d; ws--; if(ws < 0) break; wt = 1; }
+    }
+    if(ws >= 0){
+      wt = Math.max(0, Math.min(1, wt));
+      const pose = lanePose(pts, ws, wt, 0);
+      const [rdx, rdy] = trainBlendedDir(pts, ws, wt);
+      const [du, dv] = rotDir(rdx, rdy);
+      return { u: pose.u, v: pose.v, du, dv };
+    }
+    // Tracé insuffisant : extrapoler en arrière depuis pts[0] dans le sens inverse du 1er segment.
+    const a = pts[0], b = pts[1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const bx = a.x / TILE - (dx / TILE) * (rem / TILE);
+    const by = a.y / TILE - (dy / TILE) * (rem / TILE);
+    const [u, v] = rotF(bx, by);
+    const [du, dv] = rotDir(dx, dy);
+    return { u, v, du, dv };
+  }
+
+  // Train arrêté en gare (pts.length <= 1) : extrapoler en arrière depuis la direction d'arrivée.
+  const curTile = veh.railContinueTile ?? null;
+  const prevTile = veh.railPreviousTile ?? null;
+  if(curTile == null || prevTile == null || curTile === prevTile) return null;
+  const cx = curTile % N, cy = (curTile / N) | 0;
+  const px = prevTile % N, py = (prevTile / N) | 0;
+  const dx = cx - px, dy = cy - py;
+  const [u, v] = rotF((cx + 0.5) - dx * backDist / TILE, (cy + 0.5) - dy * backDist / TILE);
+  const [du, dv] = rotDir(dx, dy);
+  return { u, v, du, dv };
+}
+
+function drawTrainWagon(veh, wagonIndex){
+  const pose = trainWagonPose(veh, wagonIndex);
+  if(!pose) return;
+  const {u, v, du, dv} = pose;
+  const wtype = TRAIN_WAGON_TYPES[veh.wagons?.[wagonIndex]];
+  if(!wtype) return;
+  const c = iso(u, v);
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 11, 4.5, 0, 0, 7); ctx.fill();
+  trainPrism(u, v, du, dv, 0.30,      0.13,      5, '#252e38');
+  trainPrism(u, v, du, dv, 0.30*0.82, 0.13*0.82, 7, wtype.color, 4);
+}
+
 function trainPose(veh){
-  const pose = lanePose(veh.pts, veh.seg, veh.t, 0);
+  const pts = veh.pts;
+  if(pts && pts.length >= 2){
+    const pose = lanePose(pts, veh.seg, veh.t, 0);
+    const [dx, dy] = trainBlendedDir(pts, veh.seg, veh.t);
+    const [du, dv] = rotDir(dx, dy);
+    return { u: pose.u, v: pose.v, du, dv };
+  }
+  const pose = lanePose(pts || [{x:0,y:0}], 0, 0, 0);
   if(Math.abs(pose.du) > 1e-6 || Math.abs(pose.dv) > 1e-6) return pose;
   const curTile = veh?.railContinueTile ?? veh?.pathTiles?.[veh?.seg ?? 0] ?? null;
   const prevTile = veh?.railPreviousTile ?? null;
   if(curTile != null && prevTile != null && curTile !== prevTile){
     const cx = curTile % N, cy = (curTile / N) | 0;
     const px = prevTile % N, py = (prevTile / N) | 0;
-    const a = { x: px * TILE + TILE / 2, y: py * TILE + TILE / 2 };
-    const b = { x: cx * TILE + TILE / 2, y: cy * TILE + TILE / 2 };
-    const wx = b.x, wy = b.y;
-    const [u, v] = rotF(wx / TILE, wy / TILE);
-    const [du, dv] = rotDir(b.x - a.x, b.y - a.y);
+    const [u, v] = rotF(cx + 0.5, cy + 0.5);
+    const [du, dv] = rotDir(cx - px, cy - py);
     return { u, v, du, dv };
   }
   return pose;
@@ -1041,15 +1171,14 @@ function drawVehicle(veh){
   if(!veh.pts || !veh.pts.length) return;
   if(veh.vtype === 'train'){
     const {u, v, du, dv} = trainPose(veh);
-    const alongU = Math.abs(du) >= Math.abs(dv);
-    const au = alongU ? 0.34 : 0.16, av = alongU ? 0.16 : 0.34;
     const vt = VEHICLE_TYPES[veh.vtype];
     const c = iso(u, v);
     ctx.fillStyle = 'rgba(0,0,0,.22)';
     ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 13, 5.5, 0, 0, 7); ctx.fill();
-    prism(u-au, v-av, u+au, v+av, 6, '#2f3640');
-    prism(u-au*0.78, v-av*0.78, u+au*0.78, v+av*0.78, 8, vt.color, 5);
-    prism(u-au*0.22, v-av*0.22, u+au*0.30, v+av*0.30, 10, '#92a2b4', 8);
+    const hl=0.34, hw=0.16, nd=Math.hypot(du,dv)||1;
+    trainPrism(u, v, du, dv, hl,      hw,      6, '#2f3640');
+    trainPrism(u, v, du, dv, hl*0.78, hw*0.78, 8, vt.color, 5);
+    trainPrism(u+(du/nd)*0.06, v+(dv/nd)*0.06, du, dv, hl*0.28, hw, 10, '#92a2b4', 8);
     if(veh === selectedVehicle){
       ctx.save();
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.globalAlpha = 0.9;
@@ -1658,6 +1787,12 @@ function draw(){
 
     for(const veh of vehicles){
       if(veh.state === 'idle' || !veh.pts || !veh.pts.length) continue;
+      if(veh.vtype === 'train'){
+        for(let i = 0; i < (veh.wagons?.length || 0); i++){
+          const wp = trainWagonPose(veh, i);
+          if(wp) sprites.push({ k:spriteDepthKey(wp.u, wp.v, 0.52), f:((wi)=>()=>drawTrainWagon(veh, wi))(i) });
+        }
+      }
       const {u, v} = lanePose(veh.pts, veh.seg, veh.t, 0.17);
       sprites.push({ k:spriteDepthKey(u, v, 0.52), f:()=>drawVehicle(veh) });
     }

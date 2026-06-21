@@ -163,12 +163,12 @@ const VEHICLE_TYPES = (()=>{
   return out;
 })();
 const TRAIN_WAGON_TYPES = {
-  minerai:       { nom:'Wagon minerai',       icone:'🪨', resources:['iron','coal','dirt'],       capacite:20 },
-  cereale:       { nom:'Wagon céréales',      icone:'🌾', resources:['wheat','cotton','flour'],   capacite:20 },
-  marchandises:  { nom:'Wagon marchandises',  icone:'📦', resources:['goods','clothes','bread'],   capacite:18 },
-  plateau:       { nom:'Wagon plateau',       icone:'🪵', resources:['wood','steel'],              capacite:18 },
-  frigo:         { nom:'Wagon frigorifique',  icone:'🐟', resources:['fish','fish_fillet'],        capacite:18 },
-  citerne:       { nom:'Wagon citerne',       icone:'💧', resources:['water','fish_oil'],          capacite:22 },
+  minerai:       { nom:'Wagon minerai',       icone:'🪨', resources:['iron','coal','dirt'],       capacite:20, color:'#9b6844' },
+  cereale:       { nom:'Wagon céréales',      icone:'🌾', resources:['wheat','cotton','flour'],   capacite:20, color:'#c8a228' },
+  marchandises:  { nom:'Wagon marchandises',  icone:'📦', resources:['goods','clothes','bread'],  capacite:18, color:'#3a6b9e' },
+  plateau:       { nom:'Wagon plateau',       icone:'🪵', resources:['wood','steel'],             capacite:18, color:'#7a4928' },
+  frigo:         { nom:'Wagon frigorifique',  icone:'🐟', resources:['fish','fish_fillet'],       capacite:18, color:'#5ea8c4' },
+  citerne:       { nom:'Wagon citerne',       icone:'💧', resources:['water','fish_oil'],         capacite:22, color:'#7a8c9e' },
 };
 
 function trainWagonCapacityForRes(v, res){

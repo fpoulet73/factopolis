@@ -735,6 +735,7 @@ function renderInfo(){
             resSel += '<option value="'+r+'"'+(v.pinnedRes===r?' selected':'')+'>'+( RES[r]?.ic||'')+' '+(RES[r]?.n||r)+'</option>';
           resSel += '</select>';
         }
+        const canStart = v.vtype === 'train' && (v.orders?.length || 0) >= 2;
         h += '<div style="padding:5px 0;border-bottom:1px solid #2a3a50">'
            + '<div>'+vt.icone+' <b>'+vt.nom+'</b></div>'
            + '<div style="font-size:11px;color:#8fa3bf" data-v-state="'+v.id+'"></div>'
@@ -742,6 +743,7 @@ function renderInfo(){
            + resSel
            + '<div style="display:flex;gap:4px;margin-top:3px">'
            + '<button class="tbtn" style="flex:1;font-size:11px" data-route-v="'+v.id+'">'+(v.vtype === 'train' ? '🧭 Configurer' : '🔁 Route')+'</button>'
+           + (canStart ? '<button class="tbtn" style="font-size:11px;color:#7dda5a;font-weight:bold" data-start-v="'+v.id+'">🚩 Démarrer</button>' : '')
            + '<button class="tbtn" style="font-size:11px;color:#ff9a8a" data-sell-v="'+v.id+'">🗑️ Vendre</button>'
            + '</div></div>';
       }
@@ -881,6 +883,23 @@ function renderInfo(){
         removePersistentVehicle(v);
         if(MP.connected) netSend({ type:'sell_vehicle', id:v.id });
         toast('🗑️ Véhicule vendu (+'+refund+' $)');
+        p._html = null;
+      };
+    });
+    p.querySelectorAll('[data-start-v]').forEach(btn=>{
+      btn.onclick = ()=>{
+        const vid = +btn.dataset.startV;
+        const v = vehicles.find(vv=>vv.id===vid);
+        if(!v || v.vtype !== 'train') return;
+        if(!trainPresentAtDepot(v)){ toast('⛔ Le train doit être dans le dépôt.','err'); return; }
+        v.orderIndex = 0;
+        const ok = startVehicleRoute(v);
+        if(ok){
+          if(MP.connected) netSend({ type:'route_vehicle', id:v.id, orderIndex:0, orders:(v.orders||[]).map(b=>({ x:b.x, y:b.y })) });
+          toast('🚩 Train en route !','win');
+        } else {
+          toast('⛔ Aucun chemin depuis le dépôt. Reconfigure le train.','err');
+        }
         p._html = null;
       };
     });

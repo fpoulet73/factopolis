@@ -598,7 +598,7 @@ function railReachableExits(tile, vehicle=null){
   return n;
 }
 
-function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=null, blockedFirstTiles=null, skipFirstSignalCheck=false, occupancyAware=false){
+function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=null, blockedFirstTiles=null, skipFirstSignalCheck=false){
   const starts = startTile != null ? [startTile] : adjRailTiles(fromB);
   let targetTiles = isTrainStationPiece(toB) ? trainStationStopTiles(toB, fromB, startTile) : adjRailTiles(toB);
   if(isTrainStationPiece(toB)){
@@ -623,10 +623,8 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=nul
     const firstHop = prevRail[cur] === -1;
     for(const def of RAIL_DIRS){
       if(!(mask & def.bit)) continue;
-      // En mode occupancyAware (repli d'urgence) on vérifie l'occupation des cantons
-      // pendant le BFS pour ne pas calculer un trajet qui traverse un feu rouge.
-      if(occupancyAware ? !railEdgePassableForPath(cx, cy, def, vehicle) : !railEdgeDirectionAllowedForPath(cx, cy, def)) continue;
-      if(!occupancyAware && firstHop && !skipFirstSignalCheck && !railNextSignalAllowsDirection(cx, cy, def)) continue;
+      if(!railEdgeDirectionAllowedForPath(cx, cy, def)) continue;
+      if(firstHop && !skipFirstSignalCheck && !railNextSignalAllowsDirection(cx, cy, def)) continue;
       const nx = cx + def.dx, ny = cy + def.dy;
       if(!inMap(nx, ny)) continue;
       const ni = ny * N + nx;
@@ -740,8 +738,19 @@ function railSignalAspect(sig){
   // This is the same tile-side block checked when a train approaches the lamp.
   const guardedBlock = railBlocks?.blockByTile?.[sig.y * N + sig.x] ?? -1;
   if(guardedBlock < 0) return false;
-  const occupied = railBlockOccupancy?.[guardedBlock] ?? 0;
-  return occupied <= 0;
+  if((railBlockOccupancy?.[guardedBlock] ?? 0) > 0) return false;
+  // Vérifier si des wagons d'un train occupent encore ce bloc
+  // (la loco a déjà libéré le bloc mais la queue n'est pas encore passée)
+  for(const v of (vehicles ?? [])){
+    if(v.vtype !== 'train' || !v.wagons?.length || !v.pathTiles || v.seg <= 0) continue;
+    const numBack = Math.ceil(v.wagons.length * 0.80) + 1;
+    const tailSeg = Math.max(0, v.seg - numBack);
+    for(let i = tailSeg; i < v.seg; i++){
+      const tile = v.pathTiles[i] ?? -1;
+      if(tile >= 0 && (railBlocks?.blockByTile?.[tile] ?? -1) === guardedBlock) return false;
+    }
+  }
+  return true;
 }
 
 function prepareRailTrip(v, fromB, toB, startTile=null, previousTile=null){
@@ -866,15 +875,11 @@ function replanTrainAtSignal(v){
   const previousTile = v.seg > 0
     ? (v.pathTiles[v.seg - 1] ?? null)
     : (v.railDecisionPreviousTile ?? null);
-  // Tente d'abord un recalcul depuis la position actuelle en explorant les branches.
-  // Si aucune sortie n'est valide (train coincé entre un branchement et un feu rouge),
-  // autorise un repli complet qui peut inclure une marche arrière vers le branchement.
-  let path = findRailPathFromDecision(v, targetB, curTile, previousTile);
-  if(!path || path.tiles.length < 2){
-    // Repli : autoriser la marche arrière (previousTile=null) mais vérifier l'occupation
-    // des cantons pendant le BFS pour ne pas recalculer un trajet qui traverse un feu rouge.
-    path = findRailPath(v.currentBuilding || v.garageRef, targetB, curTile, v, null, null, false, true);
-  }
+  // Recalcul depuis la position actuelle en explorant les branches disponibles.
+  // Un demi-tour est interdit : previousTile bloque le retour en arrière.
+  // Si aucune branche valide n'existe (signal rouge sur toutes les sorties),
+  // le train attend sur place jusqu'au dégagement du canton.
+  const path = findRailPathFromDecision(v, targetB, curTile, previousTile);
   if(!path || path.tiles.length < 2) return false;
   v.pts = path.pts;
   v.pathTiles = path.tiles;
