@@ -503,8 +503,7 @@ function statusOf(b){
     return parts.join(' · ');
   }
   if(isTrainStationPiece(b)){
-    const main = b.type === 'train_station' ? b
-      : buildings.find(o => !o.dead && o.type === 'train_station' && o.stationGroupId === b.stationGroupId) || b;
+    const main = trainStationGroupRepresentative(b.stationGroupId) || b;
     const depot = trainStationLinkedDepot(b);
     const pE = Math.floor(main.passengersEntrant || 0);
     const pEMax = main.passengersEntrantMax || 0;
@@ -750,8 +749,7 @@ function renderInfo(){
     const platformTracks = [...platformTrackLengths.values()].filter(length => length === stationTiles).length;
     h += '<div style="margin-top:6px;color:#b9c8dc">Longueur '+stationTiles
       +' · Nombre de quai '+platformTracks+'</div>';
-    const mainStation = b.type === 'train_station' ? b
-      : stationPieces.find(p => p.type === 'train_station') || b;
+    const mainStation = trainStationGroupRepresentative(b.stationGroupId) || b;
     if(mainStation.passengersEntrant != null){
       const pE = Math.floor(mainStation.passengersEntrant || 0);
       const pEMax = mainStation.passengersEntrantMax || 0;

@@ -1535,10 +1535,12 @@ function updateVehicles(dt){
         if(v.vtype === 'bus'){
           // Déposer les passagers retour (arrivés à leur arrêt de quartier - retournent chez eux)
           if(v.cargo > 0){
-            if(isTrainStationPiece(v.source)){
-              // Dépose à la gare : passagers entrant pour prendre un train
-              const srcMain = trainStationGroupRepresentative(v.source.stationGroupId) || v.source;
-              srcMain.passengersEntrant = (srcMain.passengersEntrant || 0) + v.cargo;
+            const sourceStation = isTrainStationPiece(v.source)
+              ? (trainStationGroupRepresentative(v.source.stationGroupId) || v.source)
+              : trainStationLinkedRepresentative(v.source);
+            if(sourceStation){
+              // Dépose à la gare : passagers entrants pour prendre un train
+              sourceStation.passengersEntrantPending = (sourceStation.passengersEntrantPending || 0) + v.cargo;
             }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.dest, v.source);
             v.cargo = 0;
@@ -1552,9 +1554,18 @@ function updateVehicles(dt){
             takeSrc = Math.min(vt.capacite, availSrc);
             srcMain.passagersSortant = Math.max(0, (srcMain.passagersSortant || 0) - takeSrc);
           } else {
-            const availSrc = Math.floor(v.source.passengers || 0);
-            takeSrc = Math.min(vt.capacite, availSrc);
-            v.source.passengers = Math.max(0, (v.source.passengers || 0) - takeSrc);
+            // Source = arrêt de bus : priorité passagersSortant locaux → gare proche → passagers en attente
+            const nearSourceTrain = findNearbyTrainStation(v.source);
+            const stopSortants = Math.floor(v.source.passagersSortant || 0);
+            const trainSortants = Math.floor(nearSourceTrain?.passagersSortant || 0);
+            let availableSrc, sourceFrom;
+            if(stopSortants >= trainSortants && stopSortants > 0){ availableSrc = stopSortants; sourceFrom = 'stop'; }
+            else if(trainSortants > 0){ availableSrc = trainSortants; sourceFrom = 'train'; }
+            else { availableSrc = Math.floor(v.source.passengers || 0); sourceFrom = 'passengers'; }
+            takeSrc = Math.min(vt.capacite, availableSrc);
+            if(sourceFrom === 'stop') v.source.passagersSortant = Math.max(0, stopSortants - takeSrc);
+            else if(sourceFrom === 'train') nearSourceTrain.passagersSortant = Math.max(0, nearSourceTrain.passagersSortant - takeSrc);
+            else v.source.passengers = Math.max(0, (v.source.passengers || 0) - takeSrc);
           }
           v.cargo = takeSrc;
           v.res = null;
@@ -1614,9 +1625,9 @@ function updateVehicles(dt){
             if(isTrainStationPiece(v.dest)){
               // Destination = gare : passagers arrivent à la gare pour prendre un train
               const destMain = trainStationGroupRepresentative(v.dest.stationGroupId) || v.dest;
-              destMain.passengersEntrant = (destMain.passengersEntrant || 0) + v.cargo;
+              destMain.passengersEntrantPending = (destMain.passengersEntrantPending || 0) + v.cargo;
             } else {
-              // Destination = arrêt de bus : passagers deviennent travailleurs entrants
+              // Destination = arrêt de bus : les voyageurs deviennent passagers entrants
               v.dest.passengersEntrant = (v.dest.passengersEntrant || 0) + v.cargo;
             }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.source, v.dest);

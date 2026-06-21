@@ -160,6 +160,16 @@ function update(dt){
   updateVehicles(dt);
   updateWalkers(dt);
 
+  // Les arrivées bus -> gare sont appliquées après les mouvements du tick,
+  // pour éviter qu'un train à quai les embarque immédiatement.
+  for(const b of buildings){
+    if(b.dead || b.type !== 'train_station') continue;
+    if((b.passengersEntrantPending || 0) > 0){
+      b.passengersEntrant = (b.passengersEntrant || 0) + b.passengersEntrantPending;
+      b.passengersEntrantPending = 0;
+    }
+  }
+
   taxTimer += dt;
   if(taxTimer >= ECO.taxeInterval){
     taxTimer = 0;
