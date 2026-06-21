@@ -40,7 +40,7 @@ const ECO = {
 // ---------- constantes ----------
 let N = 64;              // taille de la carte (tuiles)
 const TILE = 36;         // taille d'une tuile en px monde (simulation)
-const TW = 64, TH = 32;  // taille d'une tuile iso à l'écran
+const TW = 64, TH = 36;  // taille d'une tuile iso à l'écran (36 pour perspective correcte)
 const TW2 = TW/2, TH2 = TH/2;
 const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4, WHEAT:5, COTTON:6 };
 const DIRS  = [[1,0],[-1,0],[0,1],[0,-1]];

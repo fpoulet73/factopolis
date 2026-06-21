@@ -558,15 +558,6 @@ function trainStationGroupBounds(groupId, type){
 function drawTrainStationPiece(b){
   const [rx, ry] = rotIdx(b.x, b.y);
   if(b.type === 'train_platform'){
-    const [r1x,r1y] = rotIdx(b.x, b.y);
-    const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
-    const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
-    const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
-    const d = BUILD[b.type];
-    const hgt = d.hgt;
-    const bCol = packBuildingColor(b, d);
-    prism(rx0, ry0, rx0+rw, ry0+rh, hgt, bCol);
-
     if(trainPlatformTrackAnchor(b) === b){
       const pieces = trainPlatformTrackPieces(b);
       const [adx, ady] = String(b.stationAxis || '1,0').split(',').map(Number);
