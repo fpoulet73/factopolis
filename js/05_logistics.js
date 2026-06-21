@@ -1248,7 +1248,7 @@ function removePersistentVehicle(v){
 
 function vehicleRouteEndpointOk(b, vtype_override){
   const vt = vtype_override || vehicleRouteMode?.vehicle?.vtype;
-  if(vt === 'bus') return b?.type === 'bus_stop' || b?.type === 'train_station' || b?.type === 'train_platform';
+  if(vt === 'bus') return b?.type === 'bus_stop';
   if(vt === 'train') return b?.type === 'train_depot' || isTrainStationPiece(b);
   return isStorageHub(b);
 }
@@ -1303,6 +1303,11 @@ function findRoadPath(fromB, toB){
   path.reverse();
   const C = idx => ({ x:(idx%N)*TILE+TILE/2, y:((idx/N)|0)*TILE+TILE/2 });
   return path.map(C);
+}
+
+function findNearbyTrainStation(busStop){
+  return buildings.find(b => !b.dead && b.type === 'train_station'
+    && buildingChebyshevDistance(busStop, b) <= BUS_STOP_RADIUS);
 }
 
 function busEarnRevenue(v, numPassengers, routeLen, departStop, arrivalStop){
@@ -1463,27 +1468,22 @@ function updateVehicles(dt){
         if(v.vtype === 'bus'){
           // Déposer les passagers retour (chargés à la destination au voyage précédent)
           if(v.cargo > 0){
-            if(v.source.type === 'train_station' || v.source.type === 'train_platform'){
-              // Ajouter aux passagers entrants de la gare
-              const mainStation = v.source.type === 'train_station' ? v.source
-                : buildings.find(b => !b.dead && b.type === 'train_station' && b.stationGroupId === v.source.stationGroupId);
-              if(mainStation){
-                mainStation.passengersEntrant = (mainStation.passengersEntrant || 0) + v.cargo;
-                if(mainStation.passengersEntrantMax > 0)
-                  mainStation.passengersEntrant = Math.min(mainStation.passengersEntrant, mainStation.passengersEntrantMax);
-              }
+            const nearSrc = findNearbyTrainStation(v.source);
+            if(nearSrc){
+              nearSrc.passengersEntrant = (nearSrc.passengersEntrant || 0) + v.cargo;
+              if(nearSrc.passengersEntrantMax > 0)
+                nearSrc.passengersEntrant = Math.min(nearSrc.passengersEntrant, nearSrc.passengersEntrantMax);
             } else {
-              // Ajouter aux passagers de l'arrêt de bus ordinaire
               v.source.passengers = (v.source.passengers || 0) + v.cargo;
             }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.dest, v.source);
             v.cargo = 0;
           }
           // Charger les passagers aller depuis l'arrêt source
-          const srcIsStation = v.source.type === 'train_station' || v.source.type === 'train_platform';
-          const available = Math.floor(srcIsStation ? (v.source.passagersSortant || 0) : (v.source.passengers || 0));
+          const nearSrcStation = findNearbyTrainStation(v.source);
+          const available = Math.floor(nearSrcStation ? (nearSrcStation.passagersSortant || 0) : (v.source.passengers || 0));
           const take = Math.min(vt.capacite, available);
-          if(srcIsStation) v.source.passagersSortant = Math.max(0, (v.source.passagersSortant || 0) - take);
+          if(nearSrcStation) nearSrcStation.passagersSortant = Math.max(0, (nearSrcStation.passagersSortant || 0) - take);
           else v.source.passengers = Math.max(0, (v.source.passengers || 0) - take);
           v.cargo = take;
           v.res = null;
@@ -1540,30 +1540,22 @@ function updateVehicles(dt){
         if(v.vtype === 'bus'){
           // Déposer les passagers aller à la destination
           if(v.cargo > 0){
-            if(v.dest.type === 'train_station' || v.dest.type === 'train_platform'){
-              // Ajouter aux passagers entrants de la gare
-              const mainStation = v.dest.type === 'train_station' ? v.dest
-                : buildings.find(b => !b.dead && b.type === 'train_station' && b.stationGroupId === v.dest.stationGroupId);
-              if(mainStation){
-                mainStation.passengersEntrant = (mainStation.passengersEntrant || 0) + v.cargo;
-                if(mainStation.passengersEntrantMax > 0)
-                  mainStation.passengersEntrant = Math.min(mainStation.passengersEntrant, mainStation.passengersEntrantMax);
-              }
+            const nearDest = findNearbyTrainStation(v.dest);
+            if(nearDest){
+              nearDest.passengersEntrant = (nearDest.passengersEntrant || 0) + v.cargo;
+              if(nearDest.passengersEntrantMax > 0)
+                nearDest.passengersEntrant = Math.min(nearDest.passengersEntrant, nearDest.passengersEntrantMax);
             } else {
-              // Ajouter aux passagers de l'arrêt de bus ordinaire
               v.dest.passengers = (v.dest.passengers || 0) + v.cargo;
             }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.source, v.dest);
             v.cargo = 0;
           }
           // Charger les passagers retour depuis l'arrêt de destination
-          const destIsStation = v.dest.type === 'train_station' || v.dest.type === 'train_platform';
-          const destMainStation = destIsStation
-            ? (v.dest.type === 'train_station' ? v.dest : buildings.find(b => !b.dead && b.type === 'train_station' && b.stationGroupId === v.dest.stationGroupId))
-            : null;
-          const available = Math.floor(destMainStation ? (destMainStation.passagersSortant || 0) : (v.dest.passengers || 0));
+          const nearDestStation = findNearbyTrainStation(v.dest);
+          const available = Math.floor(nearDestStation ? (nearDestStation.passagersSortant || 0) : (v.dest.passengers || 0));
           const take = Math.min(vt.capacite, available);
-          if(destMainStation) destMainStation.passagersSortant = Math.max(0, (destMainStation.passagersSortant || 0) - take);
+          if(nearDestStation) nearDestStation.passagersSortant = Math.max(0, (nearDestStation.passagersSortant || 0) - take);
           else v.dest.passengers = Math.max(0, (v.dest.passengers || 0) - take);
           v.cargo = take;
           const pts = findRoadPath(v.dest, v.source);

@@ -541,7 +541,7 @@ function clickAt(x,y){
       const isBus = veh.vtype === 'bus';
       if(!vehicleRouteEndpointOk(b)){
         if(isBus)
-          toast('⛔ Le bus ne peut utiliser que des arrêts de bus ou des gares comme source et destination.','err');
+          toast('⛔ Le bus ne peut utiliser que des arrêts de bus comme source et destination.','err');
         else if(veh.vtype === 'train')
           toast('⛔ Le train ne peut utiliser que des gares ou des dépôts ferroviaires.','err');
         else
