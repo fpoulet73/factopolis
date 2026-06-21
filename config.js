@@ -221,10 +221,22 @@ const CONFIG = {
 
   /* ---------- LOGISTIQUE ---------- */
   logistique: {
+    tauxHausseMensuelle: 0.03,   // hausse mensuelle du coût d'entretien pour tous les véhicules (+3 % par défaut)
     garage: { cout: 1200, tempsArret: 2 },  // tempsArret : heures de jeu d'arrêt pour chargement/déchargement
     train:  {
       tempsArret: 2.5,             // heures de jeu d'arrêt standard du train
       tempsArretGareSecondes: 5,   // secondes réelles d'arrêt lorsqu'une gare est utilisée comme étape
+      coutEntretienJournalier: 80, // $ prélevés chaque jour de jeu par train
+    },
+    /* coutEntretienJournalier par type de véhicule ($ / jour de jeu) */
+    vehicules: {
+      minerai:      { coutEntretienJournalier: 5  },
+      plateau:      { coutEntretienJournalier: 5  },
+      cereale:      { coutEntretienJournalier: 4  },
+      marchandises: { coutEntretienJournalier: 5  },
+      frigo:        { coutEntretienJournalier: 5  },
+      citerne:      { coutEntretienJournalier: 5  },
+      bus:          { coutEntretienJournalier: 10 },
     },
 
     /* ---------- ARRÊT DE BUS ----------

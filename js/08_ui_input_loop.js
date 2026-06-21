@@ -1,5 +1,12 @@
 // ---------- HUD ----------
 const $ = id => document.getElementById(id);
+
+function formatGameDate(gt){
+  const pad = n => String(n).padStart(2,'0');
+  const d = new Date(GAME_EPOCH_MS + (gt || 0) * GAME_HOURS_PER_SEC * 3600000);
+  return pad(d.getUTCDate())+'/'+pad(d.getUTCMonth()+1)+'/'+d.getUTCFullYear()
+       + ' '+pad(d.getUTCHours())+':'+pad(d.getUTCMinutes());
+}
 let hudTimer = 0;
 function updateHUD(dt){
   hudTimer -= dt;
@@ -240,12 +247,49 @@ function renderTrainPanel(){
   if(flagState)
     h += '<div class="row"><span>Drapeau</span><b style="color:'+(flagState.armed ? '#7dda5a' : '#ff7474')+'">'+(flagState.armed ? 'Vert' : 'Rouge')+'</b></div>';
   h += '<div class="row"><span>Capacité totale</span><b>'+trainTotalCapacity(v)+'</b></div>';
+  const _passCap = trainPassengerCapacity(v);
+  if(_passCap > 0)
+    h += '<div class="row"><span>Passagers à bord</span><b style="color:#c8e040">'+(v.passengersOnBoard||0)+' / '+_passCap+' 🚃</b></div>';
+  if(v.boughtAtGtime != null)
+    h += '<div class="row"><span>Acheté le</span><b style="color:#8fa3bf">'+formatGameDate(v.boughtAtGtime)+'</b></div>';
   const _trainBaseCost = VEHICLE_TYPES['train']?.maintenanceCost ?? 0;
   if(_trainBaseCost > 0){
-    const _months = v.maintenanceMonthsPaid || 0;
-    const _nextCost = Math.round(_trainBaseCost * Math.pow(1 + TRAIN_MAINTENANCE_RATE, _months));
-    h += '<div class="row"><span>Entretien mensuel</span><b style="color:#ff9a8a">'+_nextCost+' $ '+(_months > 0 ? '(mois '+(_months+1)+')' : '')+'</b></div>';
+    const _days = v.maintenanceDaysPaid || 0;
+    const _completedMonths = Math.floor(_days / 30);
+    const _nextCost = Math.round(_trainBaseCost * Math.pow(1 + VEHICLE_MAINTENANCE_RATE, _completedMonths));
+    const _nextDue = v.boughtAtGtime != null ? formatGameDate(v.boughtAtGtime + VEHICLE_MAINTENANCE_DAY * (_days + 1)) : '—';
+    h += '<div class="row"><span>Entretien journalier</span><b style="color:#ff9a8a">'+_nextCost+' $'+(_completedMonths > 0 ? ' <span style="font-size:11px;color:#8fa3bf">(mois '+(_completedMonths+1)+')</span>' : '')+'</b></div>';
+    h += '<div class="row"><span>Prochain paiement</span><b style="color:#8fa3bf">'+_nextDue+'</b></div>';
   }
+  // Distribution du cargo par wagon (pour affichage)
+  const _totalFreightCap = wagons.reduce((s, w) => {
+    const d = trainWagonDef(w);
+    return s + ((!d?.passenger && v.res && trainWagonAcceptedResources(w).includes(v.res)) ? d.capacite : 0);
+  }, 0);
+  const _totalPassCap2 = wagons.reduce((s, w) => {
+    const d = trainWagonDef(w); return s + (d?.passenger ? d.capacite : 0);
+  }, 0);
+  let _freightRemainder = v.cargo || 0;
+  let _passRemainder = v.passengersOnBoard || 0;
+  const _wagonLoad = wagons.map((wagon, idx) => {
+    const d = trainWagonDef(wagon);
+    if(d?.passenger && _totalPassCap2 > 0){
+      const share = idx === wagons.length - 1
+        ? _passRemainder
+        : Math.round((v.passengersOnBoard || 0) * d.capacite / _totalPassCap2);
+      _passRemainder -= share;
+      return { amt: share, res: null, passenger: true, cap: d.capacite };
+    }
+    if(!d?.passenger && v.res && _totalFreightCap > 0 && trainWagonAcceptedResources(wagon).includes(v.res)){
+      const share = idx === wagons.length - 1
+        ? Math.max(0, _freightRemainder)
+        : Math.round((v.cargo || 0) * d.capacite / _totalFreightCap);
+      _freightRemainder -= share;
+      return { amt: share, res: v.res, passenger: false, cap: d.capacite };
+    }
+    return { amt: 0, res: null, passenger: d?.passenger || false, cap: d?.capacite || 0 };
+  });
+
   h += '<div class="tp-section"><div class="tp-section-title">Composition</div>';
   h += '<div style="display:flex;gap:8px;align-items:flex-end;overflow-x:auto;padding:6px 2px 8px">';
   h += '<div style="min-width:72px;text-align:center"><div style="height:32px;border-radius:8px;background:#4f5c6f;border:2px solid #2f3640;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px">🚂</div><div style="font-size:11px;color:#8fa3bf;margin-top:4px">Loco</div></div>';
@@ -254,11 +298,19 @@ function renderTrainPanel(){
     const selected = idx === trainConfigSelectedWagonIndex;
     const res = trainWagonSelectedResource(wagon);
     const resLabel = res ? ((RES[res]?.ic || '') + ' ' + (RES[res]?.n || res)) : 'Toutes';
+    const load = _wagonLoad[idx];
+    const pct = load.cap > 0 ? Math.min(100, Math.round(load.amt / load.cap * 100)) : 0;
+    const loadColor = load.passenger ? '#c8e040' : (load.res ? RES[load.res]?.c || '#ffe082' : '#8fa3bf');
+    const loadLabel = load.passenger
+      ? (load.amt > 0 ? load.amt+' 👤' : '—')
+      : (load.res && load.amt > 0 ? (RES[load.res]?.ic||'')+' '+load.amt : '—');
     h += '<button class="tbtn" data-train-wagon-pick="'+idx+'" style="width:auto;margin:0;min-width:88px;padding:4px 6px;'
       + 'border:'+(selected ? '2px solid #ffe082' : '1px solid #36465e')+';background:#142031;display:flex;flex-direction:column;gap:4px">'
       + '<div style="height:28px;border-radius:7px;background:'+def.color+';border:2px solid #2f3640;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px">'+def.icone+'</div>'
       + '<div style="font-size:11px;font-weight:bold">'+escHtml(def.nom.replace(/^Wagon\s+/,'').replace(/^Wagon\s+/,''))+'</div>'
       + '<div style="font-size:10px;color:'+(res ? '#ffe082' : '#8fa3bf')+'">'+escHtml(resLabel)+'</div>'
+      + '<div style="font-size:11px;font-weight:bold;color:'+loadColor+'">'+loadLabel+'</div>'
+      + (load.cap > 0 ? '<div style="height:3px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+loadColor+';border-radius:2px"></i></div>' : '')
       + '</button>';
   });
   h += '</div>';
@@ -468,6 +520,12 @@ function statusOf(b){
   const req = workersRequiredOf(b);
   if(req && workersAllocatedOf(b) < req)
     return "Production à "+Math.round(workersAllocatedOf(b)/req*100)+" % (manque d'ouvriers à portée)";
+  if(req && (b.workersByBusStop||0) > 0){
+    const byBus = b.workersByBusStop, total = workersAllocatedOf(b);
+    const byHome = total - byBus;
+    if(byHome === 0) return 'En production · '+byBus+'/'+req+' ouvriers via arrêt de bus 🚌';
+    return 'En production · '+byBus+'/'+req+' ouvrier'+(byBus>1?'s':'')+' via arrêt de bus 🚌';
+  }
   if(b.type === 'fisher'){
     const bonus = fisherFishBonus(b);
     if(bonus > 0) return 'En production · +'+bonus+' poisson'+(bonus>1?'s':'')+' (zones poissonneuses)';
@@ -567,8 +625,9 @@ function renderInfo(){
       const cargoStr = isBusVeh
         ? (veh.cargo > 0 ? veh.cargo+' passager(s)' : 'Vide')
         : (veh.cargo > 0 ? veh.cargo+' '+(veh.res ? RES[veh.res].n : '') : 'Vide');
-      const passengerStr = veh.vtype === 'train' && (veh.passengersOnBoard ?? 0) > 0
-        ? veh.passengersOnBoard+' voyageur(s) 🚃' : null;
+      const _vehPassCap = veh.vtype === 'train' ? trainPassengerCapacity(veh) : 0;
+      const passengerStr = _vehPassCap > 0
+        ? (veh.passengersOnBoard||0)+' / '+_vehPassCap+' voyageur(s) 🚃' : null;
       const orderSummary = veh.vtype === 'train' && veh.orders?.length
         ? veh.orders.map(b => trainStopLabel(b)).join(' → ')
         : null;
@@ -584,6 +643,16 @@ function renderInfo(){
         h += '<div class="row"><span>Drapeau</span><b style="color:'+(trainFlagState.armed ? '#7dda5a' : '#ff7474')+'">'+(trainFlagState.armed ? 'Vert' : 'Rouge')+'</b></div>';
       if(orderSummary) h += '<div style="margin-top:6px;color:#b9c8dc">'+escHtml(orderSummary)+'</div>';
       h += '<div class="row"><span>Capacité</span><b>'+(veh.vtype === 'train' ? trainTotalCapacity(veh) : vt.capacite)+'</b></div>';
+      if(veh.boughtAtGtime != null)
+        h += '<div class="row"><span>Acheté le</span><b style="color:#8fa3bf">'+formatGameDate(veh.boughtAtGtime)+'</b></div>';
+      if((vt.maintenanceCost ?? 0) > 0){
+        const _d = veh.maintenanceDaysPaid || 0;
+        const _cm = Math.floor(_d / 30);
+        const _c = Math.round(vt.maintenanceCost * Math.pow(1 + VEHICLE_MAINTENANCE_RATE, _cm));
+        const _nextDue = veh.boughtAtGtime != null ? formatGameDate(veh.boughtAtGtime + VEHICLE_MAINTENANCE_DAY * (_d + 1)) : '—';
+        h += '<div class="row"><span>Entretien journalier</span><b style="color:#ff9a8a">'+_c+' $'+(_cm > 0 ? ' <span style="color:#8fa3bf;font-size:11px">(mois '+(_cm+1)+')</span>' : '')+'</b></div>';
+        h += '<div class="row"><span>Prochain paiement</span><b style="color:#8fa3bf">'+_nextDue+'</b></div>';
+      }
       h += '<div class="row"><span>Vitesse</span><b>'+vt.speed+' cases/s</b></div>';
       const trainConfigDisabled = veh.vtype === 'train' && !trainPresentAtDepot(veh);
       h += '<div style="margin-top:8px;display:flex;gap:4px">'
@@ -937,7 +1006,7 @@ function renderInfo(){
     const buyCatalog = Array.isArray(BUILD[b.type]?.buyCatalog)
       ? BUILD[b.type].buyCatalog
       : (b.type === 'garage'
-          ? Object.keys(VEHICLE_TYPES).filter(k => !VEHICLE_TYPES[k].buyDisabled)
+          ? Object.keys(VEHICLE_TYPES).filter(k => !VEHICLE_TYPES[k].buyDisabled && k !== 'train')
           : []);
     h += '<div class="row"><span>Véhicules</span><b>'+shownVehicles.length+'</b></div>';
     // Instruction mode assignation route
@@ -998,8 +1067,9 @@ function renderInfo(){
         const resLabel = vt.resources.length > 1
           ? '<span style="color:#8fa3bf;font-size:10px"> · '+ vt.resources.map(r=>RES[r]?.ic||r).join(' ') +'</span>'
           : '';
+        const maintLabel = vt.maintenanceCost > 0 ? ' <span style="color:#ff9a8a;font-size:10px">'+vt.maintenanceCost+' $/j</span>' : '';
         h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:2px" data-buy-v="'+vk+'">'
-           + vt.icone+' '+vt.nom+resLabel+' <span style="color:#8fa3bf">— '+vt.cost+' $</span></button>';
+           + vt.icone+' '+vt.nom+resLabel+' <span style="color:#8fa3bf">— '+vt.cost+' $</span>'+maintLabel+'</button>';
       }
     } else if(b.type !== 'garage'){
       h += '<div style="margin-top:8px;color:#8fa3bf;font-style:italic">Catalogue de transport à venir pour ce dépôt.</div>';

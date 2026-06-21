@@ -116,9 +116,9 @@ const BUS_STOP_FILL_TIME   = CFG.logistique?.arretBus?.tempsRemplissage ?? 30; /
 const BUS_OWNER_SHARE      = CFG.logistique?.arretBus?.partProprietaire     ?? 0.8;
 const TRAIN_DWELL_TIME        = (CFG.logistique?.train?.tempsArret ?? 2.5) / (CFG.jeu?.heuresParSeconde ?? 1);
 const TRAIN_STATION_STOP_TIME = CFG.logistique?.train?.tempsArretGareSecondes ?? 5;
-// Durée d'un mois de jeu en gtime-secondes (30 jours × 24h / GAME_HOURS_PER_SEC)
-const TRAIN_MAINTENANCE_MONTH = 30 * 24 / GAME_HOURS_PER_SEC;
-const TRAIN_MAINTENANCE_RATE  = CFG.logistique?.train?.tauxHausseMensuelle ?? 0.03;
+// Durée d'un jour de jeu en gtime-secondes (24h / GAME_HOURS_PER_SEC)
+const VEHICLE_MAINTENANCE_DAY  = 24 / GAME_HOURS_PER_SEC;
+const VEHICLE_MAINTENANCE_RATE = CFG.logistique?.tauxHausseMensuelle ?? CFG.logistique?.train?.tauxHausseMensuelle ?? 0.03;
 const TRAIN_STATION_RADIUS    = CFG.logistique?.gare?.rayon               ?? 12;
 const TRAIN_STATION_FILL_TIME = CFG.logistique?.gare?.tempsRemplissage    ?? 8;
 const TRAIN_FARE_FACTOR       = CFG.logistique?.gare?.tarif               ?? 2;
@@ -134,23 +134,23 @@ const VEHICLE_TYPES = (()=>{
   };
   const DEFS = {
     // --- types achetables ---
-    minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal','dirt'],                                          cost:800,  capacite:15, speed:4.0 },
-    plateau:     { nom:'Camion plateau',     icone:'🚚', resources:['wood','steel'],                                                cost:900,  capacite:14, speed:3.8 },
-    cereale:     { nom:'Camion céréales',    icone:'🚜', resources:['wheat','cotton','flour'],                                      cost:600,  capacite:15, speed:4.0 },
-    marchandises:{ nom:'Camion marchandises',icone:'🚐', resources:['goods','clothes','bread'],                                    cost:700,  capacite:12, speed:3.8 },
-    frigo:       { nom:'Camion frigorifique',icone:'🚚', resources:['fish','fish_fillet'],                                         cost:750,  capacite:14, speed:3.8 },
-    citerne:     { nom:'Camion citerne',     icone:'🚛', resources:['water','fish_oil'],                                           cost:750,  capacite:20, speed:3.5 },
-    bus:         { nom:'Bus',                icone:'🚌', resources:[],                                                             cost:1500, capacite:40, speed:3.0 },
-    train:       { nom:'Train',              icone:'🚂', resources:[],                                                             cost:2200, capacite:0,  speed:2.9, maintenanceCost: CFG.logistique?.train?.coutEntretienMensuel ?? 80 },
+    minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal','dirt'],                                          cost:800,  capacite:15, speed:4.0, maintenanceCost: cfgV.minerai?.coutEntretienJournalier      ?? 5  },
+    plateau:     { nom:'Camion plateau',     icone:'🚚', resources:['wood','steel'],                                                cost:900,  capacite:14, speed:3.8, maintenanceCost: cfgV.plateau?.coutEntretienJournalier      ?? 5  },
+    cereale:     { nom:'Camion céréales',    icone:'🚜', resources:['wheat','cotton','flour'],                                      cost:600,  capacite:15, speed:4.0, maintenanceCost: cfgV.cereale?.coutEntretienJournalier      ?? 4  },
+    marchandises:{ nom:'Camion marchandises',icone:'🚐', resources:['goods','clothes','bread'],                                    cost:700,  capacite:12, speed:3.8, maintenanceCost: cfgV.marchandises?.coutEntretienJournalier ?? 5  },
+    frigo:       { nom:'Camion frigorifique',icone:'🚚', resources:['fish','fish_fillet'],                                         cost:750,  capacite:14, speed:3.8, maintenanceCost: cfgV.frigo?.coutEntretienJournalier        ?? 5  },
+    citerne:     { nom:'Camion citerne',     icone:'🚛', resources:['water','fish_oil'],                                           cost:750,  capacite:20, speed:3.5, maintenanceCost: cfgV.citerne?.coutEntretienJournalier      ?? 5  },
+    bus:         { nom:'Bus',                icone:'🚌', resources:[],                                                             cost:1500, capacite:40, speed:3.0, maintenanceCost: cfgV.bus?.coutEntretienJournalier           ?? 10 },
+    train:       { nom:'Train',              icone:'🚂', resources:[],                                                             cost:2200, capacite:0,  speed:2.9, maintenanceCost: CFG.logistique?.train?.coutEntretienJournalier ?? 80 },
     // --- legacy (sauvegardes existantes, plus achetables) ---
-    bois:        { nom:'Camion bois',        icone:'🚜', resources:['wood'],                   cost:600,  capacite:15, speed:4.0, buyDisabled:true },
-    ble:         { nom:'Camion blé',         icone:'🚜', resources:['wheat'],                  cost:550,  capacite:15, speed:4.0, buyDisabled:true },
-    coton:       { nom:'Chariot coton',      icone:'🛒', resources:['cotton'],                 cost:550,  capacite:15, speed:4.0, buyDisabled:true },
-    vetement:    { nom:'Camion vêtements',   icone:'🚐', resources:['clothes'],                cost:650,  capacite:12, speed:3.8, buyDisabled:true },
-    farine:      { nom:'Camion farine',      icone:'🚚', resources:['flour'],                  cost:650,  capacite:15, speed:3.8, buyDisabled:true },
-    pain:        { nom:'Camion pain',        icone:'🚚', resources:['bread'],                  cost:700,  capacite:15, speed:3.8, buyDisabled:true },
-    poisson:     { nom:'Chariot poisson',    icone:'🛒', resources:['fish','fish_fillet','fish_oil'], cost:650, capacite:14, speed:3.8, buyDisabled:true },
-    acier:       { nom:'Camion acier',       icone:'🚚', resources:['steel'],                  cost:1000, capacite:12, speed:3.5, buyDisabled:true },
+    bois:        { nom:'Camion bois',        icone:'🚜', resources:['wood'],                   cost:600,  capacite:15, speed:4.0, buyDisabled:true, maintenanceCost: cfgV.bois?.coutEntretienJournalier     ?? 4 },
+    ble:         { nom:'Camion blé',         icone:'🚜', resources:['wheat'],                  cost:550,  capacite:15, speed:4.0, buyDisabled:true, maintenanceCost: cfgV.ble?.coutEntretienJournalier      ?? 4 },
+    coton:       { nom:'Chariot coton',      icone:'🛒', resources:['cotton'],                 cost:550,  capacite:15, speed:4.0, buyDisabled:true, maintenanceCost: cfgV.coton?.coutEntretienJournalier    ?? 4 },
+    vetement:    { nom:'Camion vêtements',   icone:'🚐', resources:['clothes'],                cost:650,  capacite:12, speed:3.8, buyDisabled:true, maintenanceCost: cfgV.vetement?.coutEntretienJournalier ?? 4 },
+    farine:      { nom:'Camion farine',      icone:'🚚', resources:['flour'],                  cost:650,  capacite:15, speed:3.8, buyDisabled:true, maintenanceCost: cfgV.farine?.coutEntretienJournalier   ?? 4 },
+    pain:        { nom:'Camion pain',        icone:'🚚', resources:['bread'],                  cost:700,  capacite:15, speed:3.8, buyDisabled:true, maintenanceCost: cfgV.pain?.coutEntretienJournalier     ?? 4 },
+    poisson:     { nom:'Chariot poisson',    icone:'🛒', resources:['fish','fish_fillet','fish_oil'], cost:650, capacite:14, speed:3.8, buyDisabled:true, maintenanceCost: cfgV.poisson?.coutEntretienJournalier ?? 4 },
+    acier:       { nom:'Camion acier',       icone:'🚚', resources:['steel'],                  cost:1000, capacite:12, speed:3.5, buyDisabled:true, maintenanceCost: cfgV.acier?.coutEntretienJournalier    ?? 6 },
   };
   const out = {};
   for(const k in DEFS){

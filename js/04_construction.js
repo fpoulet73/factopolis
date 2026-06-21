@@ -358,6 +358,45 @@ function mergeTrainStationGroups(groups, targetGroupId){
     if(isTrainStationPiece(b) && groups.includes(b.stationGroupId)) b.stationGroupId = targetGroupId;
 }
 
+function tryMergeTrainStations(){
+  // Construire la map groupId → pièces
+  const groupMap = new Map();
+  for(const b of buildings){
+    if(!isTrainStationPiece(b)) continue;
+    if(!groupMap.has(b.stationGroupId)) groupMap.set(b.stationGroupId, []);
+    groupMap.get(b.stationGroupId).push(b);
+  }
+  const groups = [...groupMap.entries()];
+  for(let i = 0; i < groups.length; i++){
+    const [idA, piecesA] = groups[i];
+    const lenA = piecesA.length;
+    const axisKeyA = piecesA[0]?.stationAxis;
+    if(!axisKeyA) continue;
+    const [adx, ady] = axisKeyA.split(',').map(Number);
+    for(let j = i + 1; j < groups.length; j++){
+      const [idB, piecesB] = groups[j];
+      if(piecesB.length !== lenA) continue;
+      if(piecesB[0]?.stationAxis !== axisKeyA) continue;
+      // Chercher une paire de pièces adjacentes perpendiculairement à l'axe
+      let adjacent = false;
+      outer: for(const a of piecesA){
+        for(const b of piecesB){
+          const vx = b.x - a.x, vy = b.y - a.y;
+          if(Math.abs(vx) + Math.abs(vy) !== 1) continue;
+          if(vx * adx + vy * ady === 0){ adjacent = true; break outer; }
+        }
+      }
+      if(!adjacent) continue;
+      const targetId = Math.min(idA, idB);
+      mergeTrainStationGroups([idA, idB], targetId);
+      assignTrainStationName(targetId);
+      toast('🚉 Gares adjacentes fusionnées !', 'win');
+      return true;
+    }
+  }
+  return false;
+}
+
 function trainStationPlacementInfo(x, y, owner = MP.myId){
   if(!inMap(x, y)) return { ok:false, msg:'Hors de la carte' };
   const i = y * N + x;

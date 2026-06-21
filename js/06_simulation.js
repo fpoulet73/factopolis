@@ -120,7 +120,7 @@ function update(dt){
   }
 
   mergeTimer += dt;
-  if(mergeTimer >= 1){ mergeTimer = 0; tryMerge(); tryMergeInd(); tryMergeDepot(); }
+  if(mergeTimer >= 1){ mergeTimer = 0; tryMerge(); tryMergeInd(); tryMergeDepot(); tryMergeTrainStations(); }
 
   dispatchTimer += dt;
   if(dispatchTimer >= 0.7){
@@ -197,22 +197,33 @@ function update(dt){
     }
   }
 
-  vehicleMaintenanceTimer += dt;
-  if(vehicleMaintenanceTimer >= TRAIN_MAINTENANCE_MONTH){
-    vehicleMaintenanceTimer -= TRAIN_MAINTENANCE_MONTH;
-    for(const v of vehicles){
-      if(v.vtype !== 'train') continue;
-      const baseCost = VEHICLE_TYPES[v.vtype]?.maintenanceCost ?? 0;
-      if(baseCost <= 0) continue;
-      const months = v.maintenanceMonthsPaid || 0;
-      const cost = Math.round(baseCost * Math.pow(1 + TRAIN_MAINTENANCE_RATE, months));
-      v.maintenanceMonthsPaid = months + 1;
-      const garage = v.garageRef;
-      if(!garage || garage.dead) continue;
-      const w = walletOf(garage.owner);
-      w.money -= cost; w.fin.entretien += cost;
-      addFloat(garage.x+(garage.w-1)/2, garage.y, '−'+cost+' $ 🚂', '#ff9a8a');
+  for(const v of vehicles){
+    const baseCost = VEHICLE_TYPES[v.vtype]?.maintenanceCost ?? 0;
+    if(baseCost <= 0) continue;
+    // Migration : véhicules achetés avant l'ajout du système d'entretien
+    if(v.boughtAtGtime == null){ v.boughtAtGtime = gtime; v.maintenanceDaysPaid = 0; }
+    const days = v.maintenanceDaysPaid || 0;
+    const nextDue = v.boughtAtGtime + VEHICLE_MAINTENANCE_DAY * (days + 1);
+    if(gtime < nextDue) continue;
+    const completedMonths = Math.floor(days / 30);
+    const cost = Math.round(baseCost * Math.pow(1 + VEHICLE_MAINTENANCE_RATE, completedMonths));
+    v.maintenanceDaysPaid = days + 1;
+    const garage = v.garageRef;
+    if(!garage || garage.dead) continue;
+    const w = walletOf(garage.owner);
+    w.money -= cost; w.fin.entretien += cost;
+    let fx, fy;
+    if(v.pts?.length > 0 && v.state !== 'idle'){
+      const seg = Math.min(v.seg || 0, v.pts.length - 1);
+      const a = v.pts[seg], b = v.pts[Math.min(seg + 1, v.pts.length - 1)];
+      const t = v.t || 0;
+      fx = (a.x + (b.x - a.x) * t) / TILE - 0.5;
+      fy = (a.y + (b.y - a.y) * t) / TILE - 0.5;
+    } else {
+      fx = garage.x + (garage.w - 1) / 2;
+      fy = garage.y;
     }
+    addFloat(fx, fy, '−'+cost+' $ '+VEHICLE_TYPES[v.vtype].icone, '#ff9a8a');
   }
 
   // historique financier par wallet

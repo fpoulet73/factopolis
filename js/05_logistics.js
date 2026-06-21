@@ -971,8 +971,43 @@ function trainNextScheduledStop(v){
   return v.dest;
 }
 
+function trainEarnPassengerRevenue(v, numPassengers, departStop, arrivalStop){
+  if(numPassengers <= 0 || !departStop || !arrivalStop) return;
+  const dx = Math.abs((arrivalStop.x + (arrivalStop.w||1)/2) - (departStop.x + (departStop.w||1)/2));
+  const dy = Math.abs((arrivalStop.y + (arrivalStop.h||1)/2) - (departStop.y + (departStop.h||1)/2));
+  const dist = Math.max(1, Math.round(dx + dy));
+  const revenue = Math.round(numPassengers * dist * TRAIN_FARE_FACTOR);
+  const owner = v.garageRef?.owner ?? null;
+  earnMoney(revenue, 'ventes', walletOf(owner));
+  addFloat(arrivalStop.x + (arrivalStop.w-1)/2, arrivalStop.y, '+'+revenue+' $ 🚃', '#c8e040');
+}
+
 function trainProcessStop(v, stopB, nextStop){
   if(!v || !stopB || stopB.dead) return;
+
+  // --- passagers ---
+  const passCap = trainPassengerCapacity(v);
+  if(passCap > 0){
+    // Déposer les passagers à bord et encaisser le revenu
+    const onBoard = v.passengersOnBoard || 0;
+    if(onBoard > 0){
+      trainEarnPassengerRevenue(v, onBoard, v.passengerBoardStop || stopB, stopB);
+      v.passengersOnBoard = 0;
+      v.passengerBoardStop = null;
+    }
+    // Charger les passagers qui attendent à cet arrêt (si arrêt suivant exist)
+    if(nextStop && isTrainStationPiece(stopB)){
+      const waiting = Math.floor(stopB.passengersEntrant || 0);
+      const take = Math.min(passCap, waiting);
+      if(take > 0){
+        stopB.passengersEntrant = Math.max(0, stopB.passengersEntrant - take);
+        v.passengersOnBoard = take;
+        v.passengerBoardStop = stopB;
+      }
+    }
+  }
+
+  // --- fret ---
   if(v.cargo > 0 && v.res){
     const room = accepts(stopB, v.res) ? Math.max(0, capOf(stopB, v.res) - (stopB.storage[v.res]||0)) : 0;
     const deposit = Math.min(v.cargo, room);
@@ -1193,7 +1228,8 @@ function createPersistentVehicle(vtype, garage, id=null){
     orders: vtype === 'train' ? [] : null,
     orderIndex: 0,
     depotDepartureArmed: false,
-    maintenanceMonthsPaid: 0,
+    maintenanceDaysPaid: 0,
+    boughtAtGtime: gtime,
   };
   const numericId = Number(v.id);
   if(Number.isFinite(numericId)) nextVehicleId = Math.max(nextVehicleId, numericId + 1);

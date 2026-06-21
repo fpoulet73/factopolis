@@ -22,7 +22,7 @@ let selectedExpansion = null;
 let gtime = 0, eff = 1; // eff = snapshot du wallet courant, gardé pour statusOf
 let selected = null, tool = 'select';
 let speed = 1, paused = false;
-let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0, vehicleMaintenanceTimer = 0;
+let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0;
 let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
 const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0, expansion:0 });
 const START_HOMELESS = 0;
@@ -224,7 +224,7 @@ function genWorld(config){
   vehicles = []; vehicleRouteMode = null; selectedVehicle = null; nextVehicleId = 0; nextTrainStationId = 1;
   towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = []; trainDepotFlagHits = [];
   WALLETS = {}; gtime = 0;
-  selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0; busStopTimer = 0; vehicleMaintenanceTimer = 0;
+  selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0; busStopTimer = 0;
   mapBounds = { x0: EXP_MARGIN, y0: EXP_MARGIN, x1: EXP_MARGIN + N_PLAY, y1: EXP_MARGIN + N_PLAY };
   expansions = []; expansionLevels = { left:0, right:0, top:0, bottom:0 };
   purchasedPieces = new Set();
@@ -606,6 +606,27 @@ function refreshWorkerAllocation(){
     }
   }
   for(const [home, remaining] of avail) home.workersIdle = remaining;
+
+  // Pass 2 : postes encore sous-dotés → navetteurs depuis les arrêts de bus proches
+  const busStops = buildings.filter(b => !b.dead && b.type === 'bus_stop' && (b.passengers || 0) >= 1);
+  // pool de navetteurs disponibles par arrêt (snapshot, non consommé définitivement)
+  const busAvail = new Map(busStops.map(bs => [bs, Math.floor(bs.passengers)]));
+  for(const job of jobs){
+    const need = workersRequiredOf(job) - workersAllocatedOf(job);
+    if(need <= 0) continue;
+    const nearbyStops = busStops
+      .filter(bs => busAvail.get(bs) > 0 && buildingDistance(bs, job) <= BUS_STOP_RADIUS)
+      .sort((a, b) => buildingDistance(a, job) - buildingDistance(b, job));
+    for(const stop of nearbyStops){
+      const remaining = workersRequiredOf(job) - workersAllocatedOf(job);
+      if(remaining <= 0) break;
+      const take = Math.min(busAvail.get(stop), remaining);
+      job.workersAssigned = (job.workersAssigned||0) + take;
+      job.workersByBusStop = (job.workersByBusStop||0) + take;
+      busAvail.set(stop, busAvail.get(stop) - take);
+    }
+  }
+
   for(const k in WALLETS){
     const oid = +k;
     const req = jobsTotal(oid);
