@@ -115,6 +115,7 @@ const VEHICLE_DWELL_TIME   = (CFG.logistique?.garage?.tempsArret         ?? 2) /
 const BUS_STOP_FILL_TIME   = CFG.logistique?.arretBus?.tempsRemplissage ?? 6; // gtime-s de rush pour remplir (6 = 1 journée de pointe)
 const BUS_OWNER_SHARE      = CFG.logistique?.arretBus?.partProprietaire     ?? 0.8;
 const TRAIN_DWELL_TIME     = (CFG.logistique?.train?.tempsArret ?? 2.5) / (CFG.jeu?.heuresParSeconde ?? 1);
+const TRAIN_STATION_STOP_TIME = CFG.logistique?.train?.tempsArretGareSecondes ?? 5;
 
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
@@ -161,6 +162,43 @@ const VEHICLE_TYPES = (()=>{
   }
   return out;
 })();
+const TRAIN_WAGON_TYPES = {
+  minerai:       { nom:'Wagon minerai',       icone:'🪨', resources:['iron','coal','dirt'],       capacite:20 },
+  cereale:       { nom:'Wagon céréales',      icone:'🌾', resources:['wheat','cotton','flour'],   capacite:20 },
+  marchandises:  { nom:'Wagon marchandises',  icone:'📦', resources:['goods','clothes','bread'],   capacite:18 },
+  plateau:       { nom:'Wagon plateau',       icone:'🪵', resources:['wood','steel'],              capacite:18 },
+  frigo:         { nom:'Wagon frigorifique',  icone:'🐟', resources:['fish','fish_fillet'],        capacite:18 },
+  citerne:       { nom:'Wagon citerne',       icone:'💧', resources:['water','fish_oil'],          capacite:22 },
+};
+
+function trainWagonCapacityForRes(v, res){
+  if(v?.vtype !== 'train') return VEHICLE_TYPES[v?.vtype]?.capacite || 0;
+  const wagons = Array.isArray(v?.wagons) ? v.wagons : [];
+  return wagons.reduce((sum, key) => {
+    const w = TRAIN_WAGON_TYPES[key];
+    return sum + (w && w.resources.includes(res) ? w.capacite : 0);
+  }, 0);
+}
+
+function trainTotalCapacity(v){
+  if(v?.vtype !== 'train') return VEHICLE_TYPES[v?.vtype]?.capacite || 0;
+  const wagons = Array.isArray(v?.wagons) ? v.wagons : [];
+  return wagons.reduce((sum, key) => sum + (TRAIN_WAGON_TYPES[key]?.capacite || 0), 0);
+}
+
+function trainAllowedResources(v){
+  if(v?.vtype !== 'train') return VEHICLE_TYPES[v?.vtype]?.resources || [];
+  const out = new Set();
+  for(const key of (Array.isArray(v?.wagons) ? v.wagons : [])){
+    for(const r of (TRAIN_WAGON_TYPES[key]?.resources || [])) out.add(r);
+  }
+  return [...out];
+}
+
+function trainPresentAtDepot(v){
+  return !!(v && v.vtype === 'train' && v.state === 'idle' && v.currentBuilding === v.garageRef);
+}
+
 const GARAGE_COST = CFG.logistique?.garage?.cout ?? 1200;
 const BUS_STOP_COST = CFG.logistique?.arretBus?.cout ?? 250;
 
@@ -403,6 +441,12 @@ const BUILD = {
              desc:'Pose des rails en glissant, comme pour les routes.' },
   rail_signal:{ n:'Signal', ic:'🚦', hk:'',  cost: CFG.batiments?.signalRail?.cout ?? 20,
                 desc:'Place un signal ferroviaire sur un segment de rail.' },
+  train_station:{ n:'Gare', ic:'🚉', hk:'', cost: CFG.batiments?.gare?.cout ?? 100,
+                  col:'#b98a55', hgt:12,
+                  desc:'Construit une gare près des rails ou un quai directement sur une voie.' },
+  train_platform:{ n:'Quai', ic:'▥', hk:'', cost: CFG.batiments?.gare?.cout ?? 100,
+                   col:'#a98963', hgt:3,
+                   desc:'Quai ferroviaire rattaché à une gare.' },
   mine:    { n:'Mine',      ic:'⛏️', hk:'3', cost: CFG.production?.mine?.cout     ?? 450,
              workers:3, time:2.2, col:'#7d6457', hgt:16, ind:true,
              upkeep: CFG.production?.mine?.entretien     ?? 2,
@@ -727,6 +771,56 @@ function assignIndustryName(b){
   b.name = pick || (names[0] + ' ' + (used.size + 1));
 }
 
+function nearestTownToPoint(x, y){
+  let nearest = null, nearestDist = Infinity;
+  for(const t of towns){
+    const d = Math.hypot(x - t.cx, y - t.cy);
+    if(d < nearestDist){ nearestDist = d; nearest = t; }
+  }
+  return nearest;
+}
+
+function trainStationGroupPieces(groupId){
+  return buildings.filter(b => !b.dead && (b.type === 'train_station' || b.type === 'train_platform') && b.stationGroupId === groupId);
+}
+
+function assignTrainStationName(groupId){
+  if(groupId == null) return;
+  const pieces = trainStationGroupPieces(groupId);
+  if(!pieces.length) return;
+  const cx = pieces.reduce((sum, b) => sum + b.x + (b.w || 1) / 2, 0) / pieces.length;
+  const cy = pieces.reduce((sum, b) => sum + b.y + (b.h || 1) / 2, 0) / pieces.length;
+  const town = nearestTownToPoint(cx, cy);
+  const baseTownName = town ? town.name : generateTownName(Math.round(cx), Math.round(cy));
+  const baseName = 'Gare de ' + baseTownName;
+  const used = new Set(
+    buildings
+      .filter(b => !b.dead && (b.type === 'train_station' || b.type === 'train_platform'))
+      .filter(b => b.stationGroupId != null && b.stationGroupId !== groupId && b.name)
+      .map(b => b.name)
+  );
+  let name = baseName, suffix = 2;
+  while(used.has(name)) name = baseName + ' ' + (suffix++);
+  for(const piece of pieces) piece.name = name;
+}
+
+function assignTrainDepotName(b){
+  if(!b || b.dead || b.type !== 'train_depot' || b.name) return;
+  const cx = b.x + (b.w || 1) / 2;
+  const cy = b.y + (b.h || 1) / 2;
+  const town = nearestTownToPoint(cx, cy);
+  const baseTownName = town ? town.name : generateTownName(Math.round(cx), Math.round(cy));
+  const baseName = 'Dépôt de ' + baseTownName;
+  const used = new Set(
+    buildings
+      .filter(o => !o.dead && o.type === 'train_depot' && o !== b && o.name)
+      .map(o => o.name)
+  );
+  let name = baseName, suffix = 2;
+  while(used.has(name)) name = baseName + ' ' + (suffix++);
+  b.name = name;
+}
+
 function getTownOf(b){
   if(b.townId != null) return towns.find(t => t.id === b.townId) || null;
   const bx = b.x + b.w/2, by = b.y + b.h/2;
@@ -829,6 +923,10 @@ const tankRadiusOf = b => Math.round(TANK_RADIUS_BASE + Math.sqrt(b.w * b.h) * T
 const isStorageHub = b => !!(b && BUILD[b.type]?.storageHub);
 const isStorageDepot = b => !!(b && BUILD[b.type]?.storageHub && b.type !== 'tank');
 const isVehicleDepot = b => !!(b && BUILD[b.type]?.transportDepot);
+const depotStoredVehicles = b => isVehicleDepot(b)
+  ? (b.vehicles || []).filter(v => !v.garageRef?.dead && v.currentBuilding === b && v.state === 'idle')
+  : [];
+const depotHasStoredVehicles = b => depotStoredVehicles(b).length > 0;
 
 BUILD.depot.stockPerCell = DEPOT_STOCK_PER_CELL;
 BUILD.market.stockPerCell = DEPOT_STOCK_PER_CELL;
@@ -922,5 +1020,5 @@ function tryMergeDepot(){
   if(bats.citerne?.cout        != null) BUILD.tank.cost   = bats.citerne.cout;
 })();
 
-const TOOL_ORDER = ['select','road','rail','rail_signal','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','bulldoze','terraform','fill_water'];
+const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','bulldoze','terraform','fill_water'];
 const MILESTONES = [25, 50, 100, 200, 400];

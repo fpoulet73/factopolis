@@ -440,11 +440,11 @@ const ALLOWED_ACTIONS = new Set([
 const ALLOWED_BUILD_TYPES = new Set([
   'road', 'rail', 'mine', 'lumber', 'farm', 'cotton_farm', 'weaver', 'pump', 'fisher', 'mill',
   'bakery', 'fishery', 'smelter', 'factory', 'plant', 'house', 'depot', 'market',
-  'tank', 'garage', 'train_depot', 'boat_depot', 'plane_depot', 'bus_stop', 'terrassement',
+  'tank', 'garage', 'train_depot', 'train_station', 'boat_depot', 'plane_depot', 'bus_stop', 'terrassement',
 ]);
 const ALLOWED_VEHICLE_TYPES = new Set([
   'minerai', 'bois', 'ble', 'coton', 'vetement', 'farine', 'citerne', 'pain',
-  'poisson', 'acier', 'marchandises', 'bus',
+  'poisson', 'acier', 'marchandises', 'bus', 'train',
 ]);
 const intInRange = (v, min = 0, max = 4096) => Number.isInteger(v) && v >= min && v <= max;
 const numInRange = (v, min, max) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;

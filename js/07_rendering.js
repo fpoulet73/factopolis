@@ -456,8 +456,140 @@ function drawPausedBuildingBadge(tc, rw, rh){
   ctx.restore();
 }
 
+function trainPlatformTrackKey(b){
+  const [dx, dy] = String(b.stationAxis || '0,0').split(',').map(Number);
+  return String(b.stationAxis || '0,0') + '|' + ((b.x * dy) - (b.y * dx));
+}
+
+function trainPlatformTrackPieces(b){
+  const key = trainPlatformTrackKey(b);
+  return buildings.filter(piece => !piece.dead
+    && piece.type === 'train_platform'
+    && piece.stationGroupId === b.stationGroupId
+    && trainPlatformTrackKey(piece) === key);
+}
+
+function trainPlatformTrackAnchor(b){
+  const [dx, dy] = String(b.stationAxis || '0,0').split(',').map(Number);
+  const pieces = trainPlatformTrackPieces(b);
+  let best = b;
+  let bestPos = (b.x * dx) + (b.y * dy);
+  for(const piece of pieces){
+    const pos = (piece.x * dx) + (piece.y * dy);
+    if(pos < bestPos){ best = piece; bestPos = pos; }
+  }
+  return best;
+}
+
+function trainStationGroupBounds(groupId, type){
+  const pieces = buildings.filter(piece => isTrainStationPiece(piece)
+    && piece.stationGroupId === groupId
+    && (!type || piece.type === type));
+  if(!pieces.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for(const piece of pieces){
+    minX = Math.min(minX, piece.x);
+    minY = Math.min(minY, piece.y);
+    maxX = Math.max(maxX, piece.x);
+    maxY = Math.max(maxY, piece.y);
+  }
+  const [r1x, r1y] = rotIdx(minX, minY);
+  const [r2x, r2y] = rotIdx(maxX, maxY);
+  return {
+    minX, minY, maxX, maxY,
+    rx0: Math.min(r1x, r2x),
+    ry0: Math.min(r1y, r2y),
+    rw: Math.abs(r1x - r2x) + 1,
+    rh: Math.abs(r1y - r2y) + 1,
+    pieces,
+  };
+}
+
+function drawTrainStationPiece(b){
+  const [rx, ry] = rotIdx(b.x, b.y);
+  if(b.type === 'train_platform'){
+    if(trainPlatformTrackAnchor(b) === b){
+      const pieces = trainPlatformTrackPieces(b);
+      const [adx, ady] = String(b.stationAxis || '1,0').split(',').map(Number);
+      const [du, dv] = rotDir(adx, ady);
+      const end = iso(du, dv);
+      const len = Math.hypot(end[0], end[1]) || 1;
+      const tx = end[0] / len, ty = end[1] / len;
+      let nx = -ty, ny = tx;
+      const station = buildings.find(piece => piece.stationGroupId === b.stationGroupId && piece.type === 'train_station');
+      if(station){
+        const [sdx, sdy] = rotDir(station.x - b.x, station.y - b.y);
+        const toward = iso(sdx, sdy);
+        if(nx * toward[0] + ny * toward[1] < 0){ nx = -nx; ny = -ny; }
+      }
+      let first = pieces[0], last = pieces[0];
+      let firstPos = (first.x * adx) + (first.y * ady);
+      let lastPos = firstPos;
+      for(const piece of pieces){
+        const pos = (piece.x * adx) + (piece.y * ady);
+        if(pos < firstPos){ first = piece; firstPos = pos; }
+        if(pos > lastPos){ last = piece; lastPos = pos; }
+      }
+      const [frx, fry] = rotIdx(first.x, first.y);
+      const [lrx, lry] = rotIdx(last.x, last.y);
+      const c0 = iso(frx + 0.5, fry + 0.5);
+      const c1 = iso(lrx + 0.5, lry + 0.5);
+      const half = len * 0.48, offset = 9;
+      const x0 = c0[0] - tx * half + nx * offset, y0 = c0[1] - ty * half + ny * offset;
+      const x1 = c1[0] + tx * half + nx * offset, y1 = c1[1] + ty * half + ny * offset;
+      ctx.lineCap = 'butt';
+      ctx.strokeStyle = '#8b6745'; ctx.lineWidth = 10;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      ctx.strokeStyle = '#d8c39a'; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(x0, y0 - 1); ctx.lineTo(x1, y1 - 1); ctx.stroke();
+      ctx.strokeStyle = '#f0d15f'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(x0 - nx * 4, y0 - ny * 4); ctx.lineTo(x1 - nx * 4, y1 - ny * 4); ctx.stroke();
+    }
+  } else {
+    const bounds = trainStationGroupBounds(b.stationGroupId, 'train_station');
+    if(bounds && bounds.pieces[0] === b){
+      const col = b.owner && MP.connected ? playerColor(b.owner) : '#b07b49';
+      prism(bounds.rx0 + 0.08, bounds.ry0 + 0.08, bounds.rx0 + bounds.rw - 0.08, bounds.ry0 + bounds.rh - 0.08, 10, col);
+      const c = iso(bounds.rx0 + bounds.rw * 0.5, bounds.ry0 + bounds.rh * 0.5);
+      ctx.fillStyle = '#f5e7c8';
+      ctx.font = '14px "Segoe UI Emoji",sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('🚉', c[0], c[1] - 9);
+    }
+  }
+  const selectedGroup = selected && isTrainStationPiece(selected)
+    && selected.stationGroupId === b.stationGroupId;
+  const routeEligible = vehicleRouteMode && vehicleRouteEndpointOk(b)
+    && (vehicleRouteMode.step === 'dest' || b.owner == null || b.owner === (MP.connected ? MP.myId : null));
+  if(selectedGroup || routeEligible){
+    ctx.save();
+    if(routeEligible){
+      ctx.strokeStyle = '#9fe8a0'; ctx.lineWidth = 1.5;
+      ctx.setLineDash([4,3]);
+      diamond(rx, ry); ctx.stroke();
+    } else if(b === selected){
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+      const stationPieces = buildings.filter(piece => isTrainStationPiece(piece) && piece.stationGroupId === b.stationGroupId);
+      let rx0 = Infinity, ry0 = Infinity, rx1 = -Infinity, ry1 = -Infinity;
+      for(const piece of stationPieces){
+        const [prx, pry] = rotIdx(piece.x, piece.y);
+        rx0 = Math.min(rx0, prx);
+        ry0 = Math.min(ry0, pry);
+        rx1 = Math.max(rx1, prx);
+        ry1 = Math.max(ry1, pry);
+      }
+      diamond(rx0, ry0, rx1 - rx0 + 1, ry1 - ry0 + 1); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
 function drawBuilding(b){
   const d = BUILD[b.type];
+  if(isTrainStationPiece(b)){
+    drawTrainStationPiece(b);
+    return;
+  }
   const [r1x,r1y] = rotIdx(b.x, b.y);
   const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
   const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
@@ -745,15 +877,25 @@ function drawVehicleRoute(veh){
   // Surligner les bâtiments source et destination
   const highlightBld = (b, col) => {
     if(!b || b.dead) return;
-    const [r1x,r1y] = rotIdx(b.x, b.y);
-    const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
-    const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
-    const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
+    let rx0, ry0, rw, rh;
+    if(isTrainStationPiece(b)){
+      const bounds = trainStationGroupBounds(b.stationGroupId, null);
+      if(!bounds) return;
+      rx0 = bounds.rx0; ry0 = bounds.ry0; rw = bounds.rw; rh = bounds.rh;
+    } else {
+      const [r1x,r1y] = rotIdx(b.x, b.y);
+      const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
+      rx0 = Math.min(r1x,r2x); ry0 = Math.min(r1y,r2y);
+      rw = Math.abs(r1x-r2x)+1; rh = Math.abs(r1y-r2y)+1;
+    }
     ctx.save();
     ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.globalAlpha = 0.9;
     diamond(rx0, ry0, rw, rh); ctx.stroke();
     ctx.restore();
   };
+  if(veh.vtype === 'train' && Array.isArray(veh.orders)){
+    for(const stop of veh.orders) highlightBld(stop, 'rgba(255,255,255,.45)');
+  }
   highlightBld(veh.source, '#4dd9ff');
   highlightBld(veh.dest,   '#ffaa44');
 }

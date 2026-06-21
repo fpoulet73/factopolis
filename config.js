@@ -222,6 +222,10 @@ const CONFIG = {
   /* ---------- LOGISTIQUE ---------- */
   logistique: {
     garage: { cout: 1200, tempsArret: 2 },  // tempsArret : heures de jeu d'arrêt pour chargement/déchargement
+    train:  {
+      tempsArret: 2.5,             // heures de jeu d'arrêt standard du train
+      tempsArretGareSecondes: 5,   // secondes réelles d'arrêt lorsqu'une gare est utilisée comme étape
+    },
 
     /* ---------- ARRÊT DE BUS ----------
        cout          : prix de construction en $

@@ -29,9 +29,11 @@ function serializeState(){
       starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
       mergeBlockedMissing:Array.isArray(b.mergeBlockedMissing) ? b.mergeBlockedMissing.slice() : null,
       passengers:b.passengers||0,
+      stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
     nextTownId,
+    nextTrainStationId,
     vehicles: vehicles.map(v => ({
       id: v.id, vtype: v.vtype,
       garageX: v.garageRef.x, garageY: v.garageRef.y,
@@ -40,6 +42,10 @@ function serializeState(){
       destX:   v.dest   && !v.dest.dead   ? v.dest.x   : null,
       destY:   v.dest   && !v.dest.dead   ? v.dest.y   : null,
       state: v.state, cargo: v.cargo, res: v.res || null, busRouteDistance: v.busRouteDistance ?? null,
+      pinnedRes: v.pinnedRes || null,
+      wagons: Array.isArray(v.wagons) ? v.wagons.slice() : null,
+      orderIndex: v.orderIndex || 0,
+      orders: Array.isArray(v.orders) ? v.orders.filter(b => b && !b.dead).map(b => ({ x:b.x, y:b.y })) : null,
     })),
   };
 }
@@ -188,7 +194,7 @@ function applySnapshot(d){
   document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===speed));
 
   buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
-  vehicles = []; vehicleRouteMode = null; nextVehicleId = 0;
+  vehicles = []; vehicleRouteMode = null; nextVehicleId = 0; nextTrainStationId = d.nextTrainStationId || 1;
   towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = [];
   bgrid = new Array(N*N).fill(null);
   selected = null;
@@ -221,13 +227,21 @@ function applySnapshot(d){
     if(o.name   != null) b.name   = o.name;
     if(Array.isArray(o.mergeBlockedMissing)) b.mergeBlockedMissing = o.mergeBlockedMissing.filter(r => RES[r]);
     if(o.passengers != null && b.type === 'bus_stop') b.passengers = o.passengers;
+    if(o.stationGroupId != null) b.stationGroupId = o.stationGroupId;
+    if(o.stationAxis) b.stationAxis = o.stationAxis;
     buildings.push(b);
     setGrid(b,b);
+    if(b.stationGroupId != null) nextTrainStationId = Math.max(nextTrainStationId, b.stationGroupId + 1);
   }
   // Migration : assign townId aux maisons sans village et noms aux industries sans nom
   for(const b of buildings){
     if(b.townId == null) assignBuildingToTown(b, true);
     if(BUILD[b.type]?.ind   && !b.name)          assignIndustryName(b);
+    if(b.type === 'train_depot' && !b.name)      assignTrainDepotName(b);
+  }
+  for(const groupId of new Set(buildings.filter(b => !b.dead && b.stationGroupId != null).map(b => b.stationGroupId))){
+    const pieces = buildings.filter(b => !b.dead && b.stationGroupId === groupId && (b.type === 'train_station' || b.type === 'train_platform'));
+    if(pieces.length && pieces.some(b => !b.name)) assignTrainStationName(groupId);
   }
   ensureSelectedTown();
   for(const k in WALLETS) WALLETS[k].starterHomes = 0;
@@ -255,6 +269,15 @@ function applySnapshot(d){
       v.dest = dest || null;
       v.cargo = sv.cargo || 0;
       v.res = sv.res || null;
+      v.pinnedRes = sv.pinnedRes || null;
+      if(Array.isArray(sv.wagons)) v.wagons = sv.wagons.filter(k => TRAIN_WAGON_TYPES[k]);
+      if(Array.isArray(sv.orders)){
+        v.orders = sv.orders
+          .map(o => buildings.find(b => b.x === o.x && b.y === o.y))
+          .filter(Boolean);
+      }
+      if(Number.isInteger(sv.orderIndex)) v.orderIndex = sv.orderIndex;
+      if(v.vtype === 'train') syncTrainOrders(v);
       if(sv.busRouteDistance != null) v.busRouteDistance = sv.busRouteDistance;
       if(v.source && v.dest && !vehicleCanServeRoute(v, v.res)){
         v.source = null; v.dest = null; v.cargo = 0; v.res = null;
@@ -344,6 +367,7 @@ function applyAction(msg){
       if(!b) break;
       // valider le droit de démolition côté receveur aussi
       if(b.owner && b.owner !== msg.from) break;
+      if(depotHasStoredVehicles(b)) break;
       demolishBuilding(b, msg.from);
       break;
     }
@@ -352,6 +376,14 @@ function applyAction(msg){
       const cost = BUILD[act.btype].cost||0;
       const wSender = walletOf(msg.from);
       if(msg.fromUsername) wSender.username = msg.fromUsername;
+      if(act.btype === 'train_station'){
+        const info = trainStationPlacementInfo(act.x, act.y, msg.from);
+        if(!info.ok) break;
+        const b = placeTrainStationTile(act.x, act.y, msg.from);
+        if(!b) break;
+        wSender.money -= cost; wSender.fin.construction += cost;
+        break;
+      }
       if(act.btype === 'road'){
         if(bgrid[act.y*N+act.x] || road[act.y*N+act.x] || rail[act.y*N+act.x]) break;
         road[act.y*N+act.x] = 1;
@@ -433,15 +465,29 @@ function applyAction(msg){
     case 'route_vehicle': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
       if(!v || v.garageRef?.owner !== msg.from) break;
-      if(!validXY(act.sourceX, act.sourceY) || !validXY(act.destX, act.destY)) break;
-      const source = buildings.find(b=>b.x===act.sourceX && b.y===act.sourceY);
-      const dest   = buildings.find(b=>b.x===act.destX   && b.y===act.destY);
-      if(!source || !dest) break;
-      if(!vehicleRouteEndpointOk(source, v.vtype) || !vehicleRouteEndpointOk(dest, v.vtype)) break;
-      v.source = source;
-      v.dest = dest;
-      if(!vehicleCanServeRoute(v)){ v.source = null; v.dest = null; break; }
+      if(v.vtype === 'train' && Array.isArray(act.orders)){
+        v.orders = act.orders
+          .map(o => validXY(o.x, o.y) ? buildings.find(b => b.x===o.x && b.y===o.y) : null)
+          .filter(Boolean);
+        v.orderIndex = Number.isInteger(act.orderIndex) ? act.orderIndex : 0;
+        if(!syncTrainOrders(v) || !vehicleCanServeRoute(v)){ v.orders = []; v.source = null; v.dest = null; break; }
+      } else {
+        if(!validXY(act.sourceX, act.sourceY) || !validXY(act.destX, act.destY)) break;
+        const source = buildings.find(b=>b.x===act.sourceX && b.y===act.sourceY);
+        const dest   = buildings.find(b=>b.x===act.destX   && b.y===act.destY);
+        if(!source || !dest) break;
+        if(!vehicleRouteEndpointOk(source, v.vtype) || !vehicleRouteEndpointOk(dest, v.vtype)) break;
+        v.source = source;
+        v.dest = dest;
+        if(!vehicleCanServeRoute(v)){ v.source = null; v.dest = null; break; }
+      }
       startVehicleRoute(v);
+      break;
+    }
+    case 'configure_train': {
+      const v = vehicles.find(v=>String(v.id) === String(act.id));
+      if(!v || v.garageRef?.owner !== msg.from || v.vtype !== 'train') break;
+      v.wagons = Array.isArray(act.wagons) ? act.wagons.filter(k => TRAIN_WAGON_TYPES[k]) : [];
       break;
     }
     case 'return_vehicle': {

@@ -276,6 +276,130 @@ function collectRailRemovalUpdates(x, y){
   return { updates, refund:Math.floor((BUILD.rail?.cost || 0) * 0.3) };
 }
 
+function railStationAxesAt(x, y){
+  if(!inMap(x, y)) return [];
+  const mask = rail[y * N + x] || 0;
+  const axes = [];
+  for(const def of RAIL_DIRS){
+    const opposite = RAIL_DIRS[def.opposite];
+    if(!(mask & def.bit) || !(mask & opposite.bit)) continue;
+    let dx = def.dx, dy = def.dy;
+    if(dx < 0 || (dx === 0 && dy < 0)){ dx = -dx; dy = -dy; }
+    const key = dx + ',' + dy;
+    if(!axes.some(axis => axis.key === key)) axes.push({ dx, dy, key });
+  }
+  if(!axes.length){
+    const defs = RAIL_DIRS.filter(def => mask & def.bit);
+    if(defs.length === 1){
+      let { dx, dy } = defs[0];
+      if(dx < 0 || (dx === 0 && dy < 0)){ dx = -dx; dy = -dy; }
+      axes.push({ dx, dy, key:dx + ',' + dy });
+    }
+  }
+  return axes;
+}
+
+function isTrainStationPiece(b){
+  return !!b && !b.dead && (b.type === 'train_station' || b.type === 'train_platform');
+}
+
+function trainStationGroupHasBuilding(groupId){
+  return buildings.some(b => isTrainStationPiece(b) && b.stationGroupId === groupId && b.type === 'train_station');
+}
+
+function trainStationGroupLength(groupId, type){
+  return buildings.filter(b => isTrainStationPiece(b) && b.stationGroupId === groupId && (!type || b.type === type)).length;
+}
+
+function mergeTrainStationGroups(groups, targetGroupId){
+  for(const b of buildings)
+    if(isTrainStationPiece(b) && groups.includes(b.stationGroupId)) b.stationGroupId = targetGroupId;
+}
+
+function trainStationPlacementInfo(x, y, owner = MP.myId){
+  if(!inMap(x, y)) return { ok:false, msg:'Hors de la carte' };
+  const i = y * N + x;
+  if(bgrid[i] || road[i]) return { ok:false, msg:'Case occupée' };
+  const platform = !!rail[i];
+  const candidates = platform
+    ? railStationAxesAt(x, y)
+    : RAIL_DIRS.flatMap(def => railStationAxesAt(x + def.dx, y + def.dy));
+  const uniqueAxes = [];
+  for(const axis of candidates) if(!uniqueAxes.some(a => a.key === axis.key)) uniqueAxes.push(axis);
+  if(!uniqueAxes.length)
+    return { ok:false, msg:platform ? 'Le quai doit être placé sur une voie droite.' : 'La gare doit être adjacente à des rails.' };
+  if(!platform && terrain[i] !== T.GRASS)
+    return { ok:false, msg:'La gare se construit sur l\'herbe, à côté des rails.' };
+
+  for(const axis of uniqueAxes){
+    const connectors = buildings.filter(b => {
+      if(!isTrainStationPiece(b) || b.stationAxis !== axis.key) return false;
+      if(owner != null && b.owner != null && b.owner !== owner) return false;
+      const ddx = b.x - x, ddy = b.y - y;
+      const distance = Math.max(Math.abs(ddx), Math.abs(ddy));
+      if(distance !== 1) return false;
+      const longitudinal = ddx * axis.dy - ddy * axis.dx === 0;
+      const perpendicular = ddx * axis.dx + ddy * axis.dy === 0;
+      if(b.type === 'train_station')
+        return platform ? perpendicular : longitudinal;
+      if(!platform) return false;
+      if(longitudinal) return true;
+      return perpendicular && trainStationGroupHasBuilding(b.stationGroupId);
+    });
+    if(!platform || connectors.length) return { ok:true, platform, axis, connectors };
+  }
+  return { ok:false, msg:'Le premier quai doit toucher la gare. Les quais suivants doivent être raccordés à un quai existant.' };
+}
+
+function placeTrainStationTile(x, y, owner = MP.myId){
+  const info = trainStationPlacementInfo(x, y, owner);
+  if(!info.ok) return null;
+  let groups = [...new Set(info.connectors.map(b => b.stationGroupId).filter(id => id != null))];
+  let groupId = null;
+  let mergeAfterBuild = null;
+  if(info.platform){
+    const longitudinalGroups = [...new Set(info.connectors.filter(piece => {
+      const ddx = piece.x - x, ddy = piece.y - y;
+      return ddx * info.axis.dy - ddy * info.axis.dx === 0;
+    }).map(piece => piece.stationGroupId).filter(id => id != null))];
+    const perpendicularGroups = [...new Set(info.connectors.filter(piece => {
+      const ddx = piece.x - x, ddy = piece.y - y;
+      return ddx * info.axis.dx + ddy * info.axis.dy === 0;
+    }).map(piece => piece.stationGroupId).filter(id => id != null))];
+
+    if(longitudinalGroups.length){
+      groupId = Math.min(...longitudinalGroups);
+      groups = longitudinalGroups;
+      const mergeTargets = perpendicularGroups.filter(id => id !== groupId && trainStationGroupHasBuilding(id));
+      if(mergeTargets.length) mergeAfterBuild = Math.min(...mergeTargets);
+    } else if(perpendicularGroups.length){
+      const mergeTargets = perpendicularGroups.filter(id => trainStationGroupHasBuilding(id));
+      if(mergeTargets.length) mergeAfterBuild = Math.min(...mergeTargets);
+    }
+  } else if(groups.length){
+    groupId = Math.min(...groups);
+  }
+  if(groupId == null) groupId = nextTrainStationId++;
+  if(groups.length > 1) mergeTrainStationGroups(groups, groupId);
+  const b = newBuilding(info.platform ? 'train_platform' : 'train_station', x, y);
+  b.owner = owner;
+  b.stationGroupId = groupId;
+  b.stationAxis = info.axis.key;
+  buildings.push(b);
+  bgrid[y * N + x] = b;
+  if(info.platform && mergeAfterBuild != null){
+    const platformLength = trainStationGroupLength(groupId, 'train_platform');
+    const stationLength = trainStationGroupLength(mergeAfterBuild, 'train_station');
+    if(platformLength === stationLength){
+      mergeTrainStationGroups([groupId, mergeAfterBuild], Math.min(groupId, mergeAfterBuild));
+      groupId = Math.min(groupId, mergeAfterBuild);
+    }
+  }
+  assignTrainStationName(groupId);
+  nextTrainStationId = Math.max(nextTrainStationId, groupId + 1);
+  return b;
+}
+
 function canPlace(t,x,y){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
@@ -303,6 +427,7 @@ function canPlace(t,x,y){
     if(!chooseRailSignalDef(x, y)) return { ok:false, msg:'Aucun segment de rail valide à signaler.' };
     return { ok:true };
   }
+  if(t==='train_station') return trainStationPlacementInfo(x, y);
   if(road[i] || rail[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
   if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
   if(t==='mine'){
@@ -353,10 +478,30 @@ function clickAt(x,y){
     const b = bgrid[i];
     if(b && !b.dead){
       const veh = vehicleRouteMode.vehicle;
+      if(vehicleRouteMode.step === 'train_order_append'){
+        if(veh?.vtype !== 'train') return;
+        if(!vehicleRouteEndpointOk(b, 'train')){
+          toast('⛔ Le train ne peut utiliser que des gares ou des dépôts ferroviaires.','err');
+          return;
+        }
+        veh.orders = veh.orders || [];
+        const last = veh.orders[veh.orders.length - 1] || null;
+        if(last === b){
+          toast('⛔ Cet arrêt est déjà le dernier ordre.','err');
+          return;
+        }
+        veh.orders.push(b);
+        syncTrainOrders(veh);
+        if(typeof renderTrainPanel === 'function') renderTrainPanel();
+        toast('🚂 Arrêt ajouté : '+trainStopLabel(b));
+        return;
+      }
       const isBus = veh.vtype === 'bus';
       if(!vehicleRouteEndpointOk(b)){
         if(isBus)
           toast('⛔ Le bus ne peut utiliser que des arrêts de bus comme source et destination.','err');
+        else if(veh.vtype === 'train')
+          toast('⛔ Le train ne peut utiliser que des gares ou des dépôts ferroviaires.','err');
         else
           toast('⛔ Les véhicules ne peuvent utiliser que des entrepôts comme source et destination.','err');
         return;
@@ -446,6 +591,9 @@ function clickAt(x,y){
       if(MP.connected && b.owner && b.owner !== MP.myId){
         toast('⛔ Ce bâtiment appartient à un autre joueur','err'); return;
       }
+      if(depotHasStoredVehicles(b)){
+        toast('⛔ Impossible de détruire ce dépôt tant que des véhicules sont à l’intérieur.','err'); return;
+      }
       const refund = demolishBuilding(b, b.owner);
       if(refund) addFloat(x,y,'+'+refund+' $','#9fe89f');
     } else if(railSigDef && railSignalDefAt(x, y, railSigDef.bit)){
@@ -506,6 +654,14 @@ function clickAt(x,y){
     else if(delta < 0) earnMoney(-delta, 'rembours');
     return;
   }
+  if(tool === 'train_station'){
+    if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
+    const b = placeTrainStationTile(x, y, MP.myId);
+    if(!b) return;
+    spendMoney(cost, 'construction');
+    selected = b;
+    return;
+  }
   if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
   spendMoney(cost, 'construction');
   if(tool==='road'){ road[i] = 1; return; }
@@ -514,6 +670,7 @@ function clickAt(x,y){
   markStarterHomeIfNeeded(b);
   assignBuildingToTown(b);
   assignIndustryName(b);
+  assignTrainDepotName(b);
   buildings.push(b);
   bgrid[i] = b;
   selected = b;

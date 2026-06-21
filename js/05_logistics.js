@@ -386,22 +386,71 @@ function syncResidentReservations(){
 function adjRailTiles(b){
   const out = [];
   const seen = new Set();
-  const w = b.w || 1, h = b.h || 1;
   const push = idx => {
     if(seen.has(idx) || !rail[idx]) return;
     seen.add(idx);
     out.push(idx);
   };
-  // Rails use eight directions, so the four corner tiles are valid depot
-  // entrances too. Scan the complete one-tile ring around the footprint.
-  for(let y = b.y - 1; y <= b.y + h; y++){
-    for(let x = b.x - 1; x <= b.x + w; x++){
-      if(!inMap(x, y)) continue;
-      if(x >= b.x && x < b.x + w && y >= b.y && y < b.y + h) continue;
-      push(y * N + x);
+  const pieces = b?.stationGroupId != null
+    ? buildings.filter(piece => isTrainStationPiece(piece) && piece.stationGroupId === b.stationGroupId)
+    : [b];
+  for(const piece of pieces){
+    const w = piece.w || 1, h = piece.h || 1;
+    for(let y = piece.y; y < piece.y + h; y++)
+      for(let x = piece.x; x < piece.x + w; x++)
+        if(inMap(x, y)) push(y * N + x);
+    // Rails use eight directions, so the four corner tiles are valid entrances.
+    for(let y = piece.y - 1; y <= piece.y + h; y++){
+      for(let x = piece.x - 1; x <= piece.x + w; x++){
+        if(!inMap(x, y)) continue;
+        if(x >= piece.x && x < piece.x + w && y >= piece.y && y < piece.y + h) continue;
+        push(y * N + x);
+      }
     }
   }
   return out;
+}
+
+function trainStationStopTiles(b, fromB=null, startTile=null){
+  if(!isTrainStationPiece(b) || b.stationGroupId == null) return adjRailTiles(b);
+  const pieces = buildings.filter(piece => !piece.dead && isTrainStationPiece(piece) && piece.stationGroupId === b.stationGroupId);
+  const stationLength = pieces.filter(piece => piece.type === 'train_station').length;
+  const platforms = pieces.filter(piece => piece.type === 'train_platform');
+  const tracks = new Map();
+  for(const piece of platforms){
+    const [dx, dy] = String(piece.stationAxis || '0,0').split(',').map(Number);
+    const trackKey = String(piece.stationAxis || '0,0') + '|' + ((piece.x * dy) - (piece.y * dx));
+    if(!tracks.has(trackKey)) tracks.set(trackKey, { dx, dy, pieces:[] });
+    tracks.get(trackKey).pieces.push(piece);
+  }
+  const out = [];
+  const seen = new Set();
+  const push = idx => {
+    if(idx == null || seen.has(idx) || !rail[idx]) return;
+    seen.add(idx);
+    out.push(idx);
+  };
+  const approachX = startTile != null ? (startTile % N) : (fromB ? (fromB.x + (fromB.w || 1) * 0.5) : null);
+  const approachY = startTile != null ? ((startTile / N) | 0) : (fromB ? (fromB.y + (fromB.h || 1) * 0.5) : null);
+  for(const track of tracks.values()){
+    if(track.pieces.length !== stationLength) continue;
+    let first = track.pieces[0], last = track.pieces[0];
+    let firstPos = first.x * track.dx + first.y * track.dy;
+    let lastPos = firstPos;
+    for(const piece of track.pieces){
+      const pos = piece.x * track.dx + piece.y * track.dy;
+      if(pos < firstPos){ first = piece; firstPos = pos; }
+      if(pos > lastPos){ last = piece; lastPos = pos; }
+    }
+    if(approachX == null || approachY == null){
+      push(first.y * N + first.x);
+      push(last.y * N + last.x);
+      continue;
+    }
+    const approachPos = approachX * track.dx + approachY * track.dy;
+    push(approachPos <= (firstPos + lastPos) * 0.5 ? last.y * N + last.x : first.y * N + first.x);
+  }
+  return out.length ? out : adjRailTiles(b);
 }
 
 function railEdgeSignalState(x, y, def){
@@ -453,7 +502,7 @@ function railReachableExits(tile, vehicle=null){
 
 function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=null, blockedFirstTiles=null){
   const starts = startTile != null ? [startTile] : adjRailTiles(fromB);
-  const targets = new Set(adjRailTiles(toB));
+  const targets = new Set(isTrainStationPiece(toB) ? trainStationStopTiles(toB, fromB, startTile) : adjRailTiles(toB));
   if(!starts.length || !targets.size) return null;
   const prevRail = new Int32Array(N * N).fill(-2);
   const q = [];
@@ -552,6 +601,41 @@ function holdTrainAtArrival(v){
   v.t = 0;
 }
 
+function trainStopDurationFor(building){
+  return isTrainStationPiece(building) ? TRAIN_STATION_STOP_TIME : TRAIN_DWELL_TIME;
+}
+
+function trainNextScheduledStop(v){
+  if(v?.vtype !== 'train' || !Array.isArray(v.orders) || v.orders.length < 2) return null;
+  if(v.state === 'to_source') return v.dest;
+  return v.dest;
+}
+
+function trainProcessStop(v, stopB, nextStop){
+  if(!v || !stopB || stopB.dead) return;
+  if(v.cargo > 0 && v.res){
+    const room = accepts(stopB, v.res) ? Math.max(0, capOf(stopB, v.res) - (stopB.storage[v.res]||0)) : 0;
+    const deposit = Math.min(v.cargo, room);
+    if(deposit > 0) stopB.storage[v.res] = (stopB.storage[v.res]||0) + deposit;
+    v.cargo -= deposit;
+    if(v.cargo <= 0){ v.cargo = 0; v.res = null; }
+  }
+  if(v.cargo > 0 || !nextStop || !isStorageHub(stopB)) return;
+  let bestRes = null, bestAmt = 0;
+  for(const r of trainAllowedResources(v)){
+    if(!accepts(nextStop, r)) continue;
+    const cap = trainWagonCapacityForRes(v, r);
+    if(cap <= 0) continue;
+    const amt = Math.min(cap, stopB.storage?.[r] || 0);
+    if(amt > bestAmt){ bestAmt = amt; bestRes = r; }
+  }
+  if(bestRes && bestAmt > 0){
+    stopB.storage[bestRes] -= bestAmt;
+    v.cargo = bestAmt;
+    v.res = bestRes;
+  }
+}
+
 function trainNextMoveState(v){
   if(!v?.pathTiles || v.seg >= v.pathTiles.length - 1) return { blocked:false };
   const cur = v.pathTiles[v.seg], next = v.pathTiles[v.seg + 1];
@@ -632,6 +716,13 @@ function advanceRailVehicle(v, move){
 }
 
 function updateTrainVehicle(v, dt){
+  if(v.orders?.length && !syncTrainOrders(v)){
+    v.state = 'idle';
+    v.pts = [];
+    v.pathTiles = [];
+    v.currentBuilding = v.garageRef;
+    return;
+  }
   if(v.state !== 'returning' && (!v.source || !v.dest || v.source.dead || v.dest.dead)){
     v.state = 'idle';
     v.pts = [];
@@ -669,15 +760,23 @@ function updateTrainVehicle(v, dt){
   if(v.state === 'to_source'){
     rememberTrainArrivalDirection(v);
     v.currentBuilding = v.source;
+    trainProcessStop(v, v.source, v.dest);
     v.state = 'to_dest';
-    v.waitTimer = TRAIN_DWELL_TIME;
+    v.waitTimer = trainStopDurationFor(v.source);
     holdTrainAtArrival(v);
     return;
   }
   rememberTrainArrivalDirection(v);
   v.currentBuilding = v.dest;
-  v.state = 'to_source';
-  v.waitTimer = TRAIN_DWELL_TIME;
+  if(v.orders?.length >= 2){
+    v.orderIndex = (v.orderIndex + 1) % v.orders.length;
+    syncTrainOrders(v);
+    trainProcessStop(v, v.source, v.dest);
+    v.state = 'to_dest';
+  } else {
+    v.state = 'to_source';
+  }
+  v.waitTimer = trainStopDurationFor(v.currentBuilding);
   holdTrainAtArrival(v);
 }
 
@@ -702,6 +801,9 @@ function createPersistentVehicle(vtype, garage, id=null){
     currentRailBlock: -1,
     railContinueTile: null,
     railPreviousTile: null,
+    wagons: vtype === 'train' ? [] : null,
+    orders: vtype === 'train' ? [] : null,
+    orderIndex: 0,
   };
   const numericId = Number(v.id);
   if(Number.isFinite(numericId)) nextVehicleId = Math.max(nextVehicleId, numericId + 1);
@@ -710,6 +812,28 @@ function createPersistentVehicle(vtype, garage, id=null){
   garage.vehicles = garage.vehicles || [];
   garage.vehicles.push(v);
   return v;
+}
+
+function syncTrainOrders(v){
+  if(v?.vtype !== 'train') return false;
+  const orders = (v.orders || []).filter(b => b && !b.dead);
+  v.orders = orders;
+  if(orders.length < 2){
+    v.source = orders[0] || null;
+    v.dest = null;
+    v.orderIndex = 0;
+    return false;
+  }
+  v.orderIndex = ((v.orderIndex || 0) % orders.length + orders.length) % orders.length;
+  v.source = orders[v.orderIndex] || null;
+  v.dest = orders[(v.orderIndex + 1) % orders.length] || null;
+  return !!(v.source && v.dest);
+}
+
+function trainStopLabel(b){
+  if(!b || b.dead) return '—';
+  if(isTrainStationPiece(b)) return b.name || 'Gare';
+  return b.name || BUILD[b.type]?.n || '—';
 }
 
 function removePersistentVehicle(v){
@@ -726,7 +850,7 @@ function removePersistentVehicle(v){
 function vehicleRouteEndpointOk(b, vtype_override){
   const vt = vtype_override || vehicleRouteMode?.vehicle?.vtype;
   if(vt === 'bus') return b?.type === 'bus_stop';
-  if(vt === 'train') return b?.type === 'train_depot';
+  if(vt === 'train') return b?.type === 'train_depot' || isTrainStationPiece(b);
   return isStorageHub(b);
 }
 
@@ -736,10 +860,18 @@ function buildingChebyshevDistance(a, b){
 }
 
 function vehicleCanServeRoute(v, res=null){
-  if(!v?.source || !v?.dest || v.source.dead || v.dest.dead) return false;
-  if(!vehicleRouteEndpointOk(v.source, v.vtype) || !vehicleRouteEndpointOk(v.dest, v.vtype)) return false;
+  if(v?.vtype === 'train' && Array.isArray(v.orders)){
+    if(v.orders.length < 2) return false;
+    if(!syncTrainOrders(v)) return false;
+  } else {
+    if(!v?.source || !v?.dest || v.source.dead || v.dest.dead) return false;
+    if(!vehicleRouteEndpointOk(v.source, v.vtype) || !vehicleRouteEndpointOk(v.dest, v.vtype)) return false;
+  }
   if(v.vtype === 'bus') return true;
-  if(v.vtype === 'train') return true;
+  if(v.vtype === 'train'){
+    const resource = res || v.res || null;
+    return !resource || trainAllowedResources(v).includes(resource);
+  }
   const resource = res || VEHICLE_TYPES[v.vtype]?.resources?.[0] || null;
   if(resource === 'water' && v.source.type === 'tank')
     return buildingChebyshevDistance(v.source, v.dest) <= tankRadiusOf(v.source);
@@ -798,15 +930,21 @@ function busEarnRevenue(v, numPassengers, routeLen, departStop, arrivalStop){
 }
 
 function startVehicleRoute(v){
+  if(v.vtype === 'train' && !syncTrainOrders(v)){ v.state = 'idle'; return false; }
   if(!v.source || !v.dest || v.source.dead || v.dest.dead){ v.state = 'idle'; return false; }
   if(!vehicleCanServeRoute(v)){
+    if(v.vtype === 'train'){ v.orders = []; v.orderIndex = 0; }
     v.source = null; v.dest = null; v.state = 'idle'; v.pts = []; v.vizRoute = null;
     return false;
   }
   if(v.vtype === 'train'){
-    const fwd = findRailPath(v.source, v.dest);
-    const bwd = findRailPath(v.dest, v.source);
-    v.vizRoute = { fwd: fwd?.pts || [], bwd: bwd?.pts || [] };
+    const viz = [];
+    for(let i = 0; i < v.orders.length; i++){
+      const from = v.orders[i], to = v.orders[(i + 1) % v.orders.length];
+      const leg = findRailPath(from, to);
+      if(leg?.pts?.length) viz.push(...leg.pts);
+    }
+    v.vizRoute = { fwd: viz, bwd: [] };
     if(!prepareRailTrip(v, v.garageRef, v.source)){
       v.waitTimer = 0;
       v.currentBuilding = v.garageRef;
@@ -839,7 +977,7 @@ function returnToGarage(v){
   if(v.vtype === 'train'){
     const startTile = trainTileIndex(v);
     const from = v.currentBuilding || v.garageRef;
-    v.source = null; v.dest = null;
+    v.source = null; v.dest = null; v.orders = []; v.orderIndex = 0;
     v.vizRoute = null;
     v.cargo = 0; v.res = null;
     const ok = startTile >= 0 ? prepareRailTrip(v, from, v.garageRef, startTile) : prepareRailTrip(v, from, v.garageRef);

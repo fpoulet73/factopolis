@@ -9,7 +9,7 @@ if(BUILD.train_depot){
 registerDepotTool({
   key: 'train',
   tool: 'train_depot',
-  label: 'Train',
+  label: 'Dépôt de train',
   icon: '🚂',
   desc: BUILD.train_depot?.desc || 'Dépôt ferroviaire. Réservé à l’achat et à la gestion des trains.',
 });
