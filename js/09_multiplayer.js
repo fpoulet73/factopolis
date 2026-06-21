@@ -51,6 +51,7 @@ function serializeState(){
       pathTiles: Array.isArray(v.pathTiles) ? v.pathTiles.slice() : [],
       railContinueTile: v.railContinueTile ?? null,
       railPreviousTile: v.railPreviousTile ?? null,
+      railTrail: Array.isArray(v.railTrail) ? v.railTrail.map(p => ({ x:p.x, y:p.y })) : null,
       pinnedRes: v.pinnedRes || null,
       wagons: Array.isArray(v.wagons) ? v.wagons.slice() : null,
       orderIndex: v.orderIndex || 0,
@@ -299,6 +300,8 @@ function applySnapshot(d){
       }
       v.state = sv.state || 'idle';
       if(v.vtype === 'train'){
+        if(Array.isArray(sv.railTrail))
+          v.railTrail = sv.railTrail.filter(p => Number.isFinite(p?.x) && Number.isFinite(p?.y)).map(p => ({ x:p.x, y:p.y }));
         if(Array.isArray(sv.pathTiles) && sv.pathTiles.length){
           v.pathTiles = sv.pathTiles.slice();
           v.pts = v.pathTiles.map(idx => ({ x:(idx % N) * TILE + TILE / 2, y:((idx / N) | 0) * TILE + TILE / 2 }));
@@ -306,6 +309,7 @@ function applySnapshot(d){
           v.t = Math.max(0, Math.min(1, sv.t || 0));
           v.railContinueTile = sv.railContinueTile ?? null;
           v.railPreviousTile = sv.railPreviousTile ?? null;
+          ensureTrainTrail(v);
         } else if(source && dest && sv.state !== 'idle'){
           const from = currentBuilding || (sv.state === 'to_dest' ? source : garage);
           const to   = sv.state === 'to_dest' ? dest : source;
@@ -1140,7 +1144,10 @@ function mpInjectUI(){
     'overflow-y:auto;padding:12px 14px;font-size:13px;display:none;z-index:20';
 
   panel.innerHTML = `
-<h3 style="margin:0 0 8px;font-size:15px">🌐 Multijoueur</h3>
+<div class="panel-head">
+  <h3 style="font-size:15px">🌐 Multijoueur</h3>
+  <button class="tbtn" id="mpBtnClose" aria-label="Fermer">✕</button>
+</div>
 
 <!-- connexion au serveur -->
 <div id="mpConnBlock">
@@ -1255,8 +1262,11 @@ function mpInjectUI(){
 </div>`;
 
   document.body.appendChild(panel);
+  ensurePanelDragHandle('mpPanel');
+  makePanelDraggable('mpPanel');
 
   // --- événements ---
+  $('mpBtnClose').onclick = ()=> $('mpPanel').style.display = 'none';
   $('mpBtnConn').onclick = ()=> mpConnect($('mpUrl').value.trim() || `${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);
   $('mpBtnDisc').onclick = mpDisconnect;
   $('mpBtnSwitchAccount').onclick = mpLogoutAccount;

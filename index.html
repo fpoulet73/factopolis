@@ -72,6 +72,9 @@
   #info.depot-modal{top:50%;left:50%;right:auto;transform:translate(-50%,-50%);
     width:min(680px,92vw);max-height:88vh;overflow-y:auto;padding:18px 22px}
   #info h3{margin:0 0 6px;font-size:15px;display:flex;gap:8px;align-items:center}
+  .panel-head{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+  .panel-head h2,.panel-head h3{margin:0;display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+  .panel-head .tbtn{width:auto;margin:0;padding:2px 8px}
   .panel-drag-handle{color:#8fa3bf;font-size:14px;letter-spacing:1px;cursor:move;opacity:.9;user-select:none}
   /* tooltips pour les boutons icône du header */
   #info h3 button[title]{position:relative}
@@ -115,7 +118,7 @@
   #townPanel{top:50%;left:50%;right:auto;transform:translate(-50%,-50%);
     width:min(520px,92vw);max-height:88vh;overflow-y:auto;padding:18px 22px;
     font-size:13px;display:none;z-index:20}
-  #townPanel h3{margin:0 0 8px;font-size:15px;display:flex;gap:8px;align-items:center}
+  #townPanel h3{margin:0;font-size:15px;display:flex;gap:8px;align-items:center}
   #townPanel .row{display:flex;justify-content:space-between;margin:3px 0}
   #townPanel .tp-section{margin-top:12px}
   #townPanel .tp-section-title{color:#8fa3bf;font-size:11px;text-transform:uppercase;
@@ -130,7 +133,7 @@
   #trainPanel{top:50%;left:50%;right:auto;transform:translate(-50%,-50%);
     width:min(720px,94vw);max-height:88vh;overflow-y:auto;padding:18px 22px;
     font-size:13px;display:none;z-index:25}
-  #trainPanel h3{margin:0 0 8px;font-size:15px;display:flex;gap:8px;align-items:center}
+  #trainPanel h3{margin:0;font-size:15px;display:flex;gap:8px;align-items:center}
   #trainPanel .row{display:flex;justify-content:space-between;margin:3px 0}
   #trainPanel .tp-section{margin-top:12px}
   #trainPanel .tp-section-title{color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
@@ -145,7 +148,7 @@
   #sMoney:hover{border-bottom-color:#8fa3bf}
   #finance{top:62px;left:50%;transform:translateX(-50%);width:340px;
     padding:12px 16px;font-size:13px;display:none;z-index:15}
-  #finance h3{margin:0 0 8px;font-size:15px;display:flex;justify-content:space-between;align-items:center}
+  #finance h3{margin:0;font-size:15px;display:flex;justify-content:space-between;align-items:center}
   #finance h3 .tbtn{width:auto;margin:0;padding:1px 8px}
   #finance table{width:100%;border-collapse:collapse}
   #finance td{padding:3px 0}
@@ -324,10 +327,13 @@
 </div>
 
 <div id="help" class="panel">
+  <div class="panel-head">
+    <h2 data-i18n="help.introTitle">🏗️ Factopolis</h2>
+    <button class="tbtn" id="bHelpClose" aria-label="Fermer">✕</button>
+  </div>
 
   <!-- Page 1 : Introduction -->
   <div class="help-page active" id="hPage0">
-    <h2 data-i18n="help.introTitle">🏗️ Factopolis</h2>
     <p data-i18n="help.introText">Bâtis une chaîne industrielle, relie tout par la route, et fais grandir ta ville.
        Les camions transportent automatiquement les ressources entre bâtiments connectés.</p>
     <div class="chain" data-i18n-html="help.chain">

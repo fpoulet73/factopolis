@@ -64,7 +64,7 @@ function renderFinance(){
              - rate('construction')-rate('entretien')-rate('expansion');
   const sgn = n => n>=0 ? '+' : '−';
   p.innerHTML =
-    '<h3>💰 Finances <button class="tbtn" id="bFinX">✕</button></h3>'
+    '<div class="panel-head"><h3>💰 Finances</h3><button class="tbtn" id="bFinX" aria-label="Fermer">✕</button></div>'
     + '<table>'
     + '<tr class="hdr"><td></td><td class="r">Total</td><td class="r">Par minute</td></tr>'
     + row('Ventes d\'outils','ventes','+','in')
@@ -86,7 +86,7 @@ function makePanelDraggable(id){
   if(!panel) return;
   panel.dataset.draggable = '1';
   panel.addEventListener('mousedown', e => {
-    const handle = e.target.closest('h3');
+    const handle = e.target.closest('.panel-head, h3, h2');
     if(!handle || !panel.contains(handle)) return;
     if(e.target.closest('button, input, select, textarea, label, a')) return;
     const rect = panel.getBoundingClientRect();
@@ -108,7 +108,7 @@ function makePanelDraggable(id){
 function ensurePanelDragHandle(id){
   const panel = $(id);
   if(!panel) return;
-  const h3 = panel.querySelector('h3');
+  const h3 = panel.querySelector('.panel-head, h3, h2');
   if(!h3 || h3.querySelector('.panel-drag-handle')) return;
   const span = document.createElement('span');
   span.className = 'panel-drag-handle';
@@ -137,6 +137,17 @@ makePanelDraggable('trainPanel');
 makePanelDraggable('finance');
 makePanelDraggable('help');
 
+function closeInfoPanel(){
+  const p = $('info');
+  if(!p) return;
+  p.style.display = 'none';
+  p._html = null;
+  p._b = null;
+  selected = null;
+  selectedVehicle = null;
+  selectedExpansion = null;
+}
+
 let trainConfigVehicle = null;
 
 function closeTrainPanel(){
@@ -162,8 +173,8 @@ function renderTrainPanel(){
   if(!p || !v) return;
   const wagons = Array.isArray(v.wagons) ? v.wagons : [];
   const orders = Array.isArray(v.orders) ? v.orders.filter(b => b && !b.dead) : [];
-  let h = '<h3><span style="font-size:22px">🚂</span> Configurer le train'
-    + '<span style="margin-left:auto"><button class="tbtn" id="tpClose" style="width:auto;margin:0">✕</button></span></h3>';
+  let h = '<div class="panel-head"><h3><span style="font-size:22px">🚂</span> Configurer le train</h3>'
+    + '<button class="tbtn" id="tpClose" aria-label="Fermer">✕</button></div>';
   h += '<div class="row"><span>Présence</span><b>'+(trainPresentAtDepot(v) ? 'Dans le dépôt' : 'En ligne')+'</b></div>';
   h += '<div class="row"><span>Capacité totale</span><b>'+trainTotalCapacity(v)+'</b></div>';
   h += '<div class="tp-section"><div class="tp-section-title">Wagons</div><div class="tp-wagon-grid">';
@@ -341,7 +352,7 @@ function renderInfo(){
       const n = EXP_N_PIECES;
       const bought = isCorner ? 0 : Array.from({length:n},(_,i)=>exp.side+'-'+i).filter(k=>purchasedPieces.has(k)).length;
       const canAfford = myWallet().money >= exp.cost;
-      let h_ = '<h3>🧩 Pièce de puzzle</h3>';
+      let h_ = '<div class="panel-head"><h3>🧩 Pièce de puzzle</h3><button class="tbtn" id="infoCloseBtn" aria-label="Fermer">✕</button></div>';
       h_ += '<div class="status">Vers : <b>'+dir+'</b>'+(isCorner?' (coin)':' — pièce '+(exp.pieceIndex+1)+'/'+n)+'</div>';
       if(!isCorner && bought>0)
         h_ += '<div class="row"><span>Pièces achetées</span><b>'+bought+'/'+n+'</b></div>';
@@ -358,6 +369,7 @@ function renderInfo(){
       if(p._html === h_) return;
       p._html = h_; p._b = null;
       p.innerHTML = h_;
+      ensurePanelDragHandle('info');
       return;
     }
   }
@@ -382,7 +394,7 @@ function renderInfo(){
       const orderSummary = veh.vtype === 'train' && veh.orders?.length
         ? veh.orders.map(b => trainStopLabel(b)).join(' → ')
         : null;
-      let h = '<h3><span style="font-size:22px">'+vt.icone+'</span> '+vt.nom+'</h3>';
+      let h = '<h3><span style="font-size:22px">'+vt.icone+'</span> '+vt.nom+'<span style="margin-left:auto"></span><button class="tbtn" id="infoCloseBtn" aria-label="Fermer" style="width:auto;margin:0;padding:2px 8px">✕</button></h3>';
       h += '<div class="status">'+stateLabel+'</div>';
       h += '<div class="row"><span>Cargaison</span><b>'+cargoStr+'</b></div>';
       h += '<div class="row"><span>Source</span><b style="color:#4dd9ff">'+srcNameDisplay+'</b></div>';
@@ -454,6 +466,7 @@ function renderInfo(){
   if(d.ind)
     _hdrBtns += '<button class="tbtn" id="bPauseBld" title="'+(b.paused?'Reprendre':'Mettre en pause')+'" style="padding:2px 6px;font-size:13px;margin:0;width:auto">'+(b.paused?'▶':'⏸')+'</button>';
   _hdrBtns += '<button class="tbtn" id="bDemol" title="Démolir (+'+_demolCost+' $)" style="padding:2px 6px;font-size:13px;margin:0;width:auto">🧨</button>';
+  _hdrBtns += '<button class="tbtn" id="infoCloseBtn" title="Fermer" aria-label="Fermer" style="padding:2px 8px;font-size:13px;margin:0;width:auto">✕</button>';
   _hdrBtns += '</span>';
   let h = '<h3><span style="font-size:22px">'+d.ic+'</span>';
   if(d.ind){
@@ -1265,9 +1278,9 @@ function renderTownPanel(tid){
   const mergeable = mergeableTowns(t);
   const inZone = !!(townZoneSelectMode && townZoneSelectMode.townId===tid);
 
-  let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+  let h = '<div class="panel-head">'
         + '<h3>🏘️ '+t.name+'</h3>'
-        + '<button class="tbtn" id="tpClose" style="width:auto;padding:2px 8px;margin:0">✕</button>'
+        + '<button class="tbtn" id="tpClose" aria-label="Fermer">✕</button>'
         + '</div>';
   h += '<div class="row"><span style="color:#8fa3bf">Population</span><b>'+pop+'</b></div>';
   h += '<div class="row"><span style="color:#8fa3bf">Maisons</span><b>'+resCount+'</b></div>';
@@ -1702,6 +1715,7 @@ $('bRotR').onclick = ()=> rotate(1);
 $('sMoney').onclick = toggleFinance;
 // délégation : le ✕ survit aux reconstructions du panneau (rafraîchi 5×/s)
 $('finance').onclick = e=>{ if(e.target.id==='bFinX') toggleFinance(); };
+$('info').onclick = e=>{ if(e.target.id==='infoCloseBtn') closeInfoPanel(); };
 
 let helpCurrentPage = 0;
 const HELP_PAGES = 4;
@@ -1725,6 +1739,7 @@ function toggleHelp(){
   if(!visible) goHelpPage(helpCurrentPage);
 }
 $('bHelp').onclick = toggleHelp;
+$('bHelpClose').onclick = ()=> $('help').style.display = 'none';
 $('bGo').onclick = ()=> $('help').style.display = 'none';
 $('bHelpPrev').onclick = ()=> goHelpPage(helpCurrentPage - 1);
 $('bHelpNext').onclick = ()=> goHelpPage(helpCurrentPage + 1);

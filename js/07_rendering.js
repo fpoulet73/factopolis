@@ -125,7 +125,7 @@ function trainPrism(u, v, du, dv, halfLen, halfWid, hp, col, lift){
   addF(bbr, bf,  tf,  tbr,  rn,  rv);   // droite
   addF(bfl, bbl, tbl, tfl, -rn, -rv);   // gauche
   addF(bbl, bbr, tbr, tbl, -fn, -fv);   // arrière
-  faces.sort((a,b) => (a.nx+a.ny) - (b.nx+b.ny));
+  faces.sort((a,b) => (a.nx+a.ny) - (b.nx+b.ny) || a.ny - b.ny);
   for(const f of faces){
     ctx.fillStyle = shade(col, shadeFor(f.nx, f.ny));
     quad(f.p1, f.p2, f.p3, f.p4);
@@ -175,6 +175,9 @@ function buildingDepthKey(b){
   const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
   const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
   const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
+  // Les quais sont au niveau du sol. Les dessiner avant tous les véhicules
+  // empêche une extrémité de quai de masquer un train situé plus loin.
+  if(b.type === 'train_platform') return -1e12;
   return spriteDepthKey(rx0+rw*0.5, ry0+rh*0.5, 0.2);
 }
 
@@ -913,18 +916,50 @@ function trainBlendedDir(pts, seg, t){
 }
 
 // Retourne la pose iso du wagon wagonIndex (0 = premier wagon derrière la loco).
-// Trace en arrière le long des pts (segments de TILE px entre tuiles adjacentes).
+// Trace en arrière le long de la polyline réelle, avec longueurs de segments variables.
 function trainWagonPose(veh, wagonIndex){
   const pts = veh.pts;
   const SPACING = TILE * 0.80;
   const backDist = (wagonIndex + 1) * SPACING;
 
+  // Source principale : historique continu de la locomotive. Il survit aux
+  // arrêts en gare et aux changements de chemin aux aiguillages.
+  const trail = veh.railTrail;
+  if(Array.isArray(trail) && trail.length >= 2){
+    let rem = backDist;
+    for(let i = trail.length - 1; i > 0; i--){
+      const newer = trail[i], older = trail[i - 1];
+      const dx = newer.x - older.x, dy = newer.y - older.y;
+      const len = Math.hypot(dx, dy);
+      if(len < 0.001) continue;
+      if(rem <= len){
+        const ratio = rem / len;
+        const wx = newer.x + (older.x - newer.x) * ratio;
+        const wy = newer.y + (older.y - newer.y) * ratio;
+        const [u, v] = rotF(wx / TILE, wy / TILE);
+        const [du, dv] = rotDir(dx, dy);
+        return { u, v, du, dv };
+      }
+      rem -= len;
+    }
+  }
+
   if(pts && pts.length >= 2){
     let ws = veh.seg, wt = veh.t, rem = backDist;
     while(rem > 1e-3){
-      const d = wt * TILE;
-      if(d >= rem){ wt -= rem / TILE; rem = 0; }
-      else { rem -= d; ws--; if(ws < 0) break; wt = 1; }
+      const a = pts[Math.max(0, ws)];
+      const b = pts[Math.min(ws + 1, pts.length - 1)];
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const d = wt * segLen;
+      if(d >= rem){
+        wt -= rem / segLen;
+        rem = 0;
+      } else {
+        rem -= d;
+        ws--;
+        if(ws < 0) break;
+        wt = 1;
+      }
     }
     if(ws >= 0){
       wt = Math.max(0, Math.min(1, wt));
@@ -933,14 +968,19 @@ function trainWagonPose(veh, wagonIndex){
       const [du, dv] = rotDir(rdx, rdy);
       return { u: pose.u, v: pose.v, du, dv };
     }
-    // Tracé insuffisant : extrapoler en arrière depuis pts[0] dans le sens inverse du 1er segment.
-    const a = pts[0], b = pts[1];
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const bx = a.x / TILE - (dx / TILE) * (rem / TILE);
-    const by = a.y / TILE - (dy / TILE) * (rem / TILE);
-    const [u, v] = rotF(bx, by);
-    const [du, dv] = rotDir(dx, dy);
-    return { u, v, du, dv };
+
+    // Tracé insuffisant (train au début de son path) : extrapoler depuis la tuile d'entrée.
+    const startTile = veh.pathTiles?.[0] ?? -1;
+    const entryTile = veh.railPathEntryFromTile ?? null;
+    if(startTile >= 0 && entryTile !== null && entryTile !== startTile){
+      const sx = startTile % N, sy = (startTile / N) | 0;
+      const ex = entryTile % N, ey = (entryTile / N) | 0;
+      const dx = sx - ex, dy = sy - ey;
+      const [u, v] = rotF(sx + 0.5 - dx * rem / TILE, sy + 0.5 - dy * rem / TILE);
+      const [du, dv] = rotDir(dx, dy);
+      return { u, v, du, dv };
+    }
+    return lanePose(pts, 0, 0, 0);
   }
 
   // Train arrêté en gare (pts.length <= 1) : extrapoler en arrière depuis la direction d'arrivée.
@@ -962,8 +1002,11 @@ function drawTrainWagon(veh, wagonIndex){
   const wtype = TRAIN_WAGON_TYPES[veh.wagons?.[wagonIndex]];
   if(!wtype) return;
   const c = iso(u, v);
+  const nd0 = Math.hypot(du, dv) || 1;
+  const fn0 = du/nd0, fv0 = dv/nd0;
+  const shadowAngle0 = Math.atan2((fn0+fv0)*TH2, (fn0-fv0)*TW2);
   ctx.fillStyle = 'rgba(0,0,0,.18)';
-  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 11, 4.5, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 11, 4.5, shadowAngle0, 0, Math.PI*2); ctx.fill();
   trainPrism(u, v, du, dv, 0.30,      0.13,      5, '#252e38');
   trainPrism(u, v, du, dv, 0.30*0.82, 0.13*0.82, 7, wtype.color, 4);
 }
@@ -1173,9 +1216,11 @@ function drawVehicle(veh){
     const {u, v, du, dv} = trainPose(veh);
     const vt = VEHICLE_TYPES[veh.vtype];
     const c = iso(u, v);
-    ctx.fillStyle = 'rgba(0,0,0,.22)';
-    ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 13, 5.5, 0, 0, 7); ctx.fill();
     const hl=0.34, hw=0.16, nd=Math.hypot(du,dv)||1;
+    const fn_l=du/nd, fv_l=dv/nd;
+    const shadowAngle_l = Math.atan2((fn_l+fv_l)*TH2, (fn_l-fv_l)*TW2);
+    ctx.fillStyle = 'rgba(0,0,0,.22)';
+    ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 13, 5.5, shadowAngle_l, 0, Math.PI*2); ctx.fill();
     trainPrism(u, v, du, dv, hl,      hw,      6, '#2f3640');
     trainPrism(u, v, du, dv, hl*0.78, hw*0.78, 8, vt.color, 5);
     trainPrism(u+(du/nd)*0.06, v+(dv/nd)*0.06, du, dv, hl*0.28, hw, 10, '#92a2b4', 8);
@@ -1793,7 +1838,9 @@ function draw(){
           if(wp) sprites.push({ k:spriteDepthKey(wp.u, wp.v, 0.52), f:((wi)=>()=>drawTrainWagon(veh, wi))(i) });
         }
       }
-      const {u, v} = lanePose(veh.pts, veh.seg, veh.t, 0.17);
+      const {u, v} = veh.vtype === 'train'
+        ? trainPose(veh)
+        : lanePose(veh.pts, veh.seg, veh.t, 0.17);
       sprites.push({ k:spriteDepthKey(u, v, 0.52), f:()=>drawVehicle(veh) });
     }
 

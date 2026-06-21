@@ -414,7 +414,8 @@ function adjRailTiles(b){
 function trainStationStopTiles(b, fromB=null, startTile=null){
   if(!isTrainStationPiece(b) || b.stationGroupId == null) return adjRailTiles(b);
   const pieces = buildings.filter(piece => !piece.dead && isTrainStationPiece(piece) && piece.stationGroupId === b.stationGroupId);
-  const stationLength = pieces.filter(piece => piece.type === 'train_station').length;
+  const stationPieces = pieces.filter(piece => piece.type === 'train_station');
+  const stationLength = stationPieces.length;
   const platforms = pieces.filter(piece => piece.type === 'train_platform');
   const tracks = new Map();
   for(const piece of platforms){
@@ -430,10 +431,13 @@ function trainStationStopTiles(b, fromB=null, startTile=null){
     seen.add(idx);
     out.push(idx);
   };
-  const approachX = startTile != null ? (startTile % N) : (fromB ? (fromB.x + (fromB.w || 1) * 0.5) : null);
-  const approachY = startTile != null ? ((startTile / N) | 0) : (fromB ? (fromB.y + (fromB.h || 1) * 0.5) : null);
+  const approachX = startTile != null ? ((startTile % N) + 0.5) : (fromB ? (fromB.x + (fromB.w || 1) * 0.5) : null);
+  const approachY = startTile != null ? (((startTile / N) | 0) + 0.5) : (fromB ? (fromB.y + (fromB.h || 1) * 0.5) : null);
   for(const track of tracks.values()){
-    if(track.pieces.length !== stationLength) continue;
+    if(track.pieces.length < stationLength) continue;
+    const stationPositions = stationPieces.map(piece => piece.x * track.dx + piece.y * track.dy);
+    const stationMinPos = stationPositions.length ? Math.min(...stationPositions) : null;
+    const stationMaxPos = stationPositions.length ? Math.max(...stationPositions) : null;
     let first = track.pieces[0], last = track.pieces[0];
     let firstPos = first.x * track.dx + first.y * track.dy;
     let lastPos = firstPos;
@@ -442,13 +446,31 @@ function trainStationStopTiles(b, fromB=null, startTile=null){
       if(pos < firstPos){ first = piece; firstPos = pos; }
       if(pos > lastPos){ last = piece; lastPos = pos; }
     }
+    const stopNearPos = targetPos => {
+      if(targetPos == null) return null;
+      let best = null;
+      let bestDist = Infinity;
+      for(const piece of track.pieces){
+        const pos = piece.x * track.dx + piece.y * track.dy;
+        const dist = Math.abs(pos - targetPos);
+        if(dist < bestDist){
+          best = piece;
+          bestDist = dist;
+        }
+      }
+      return best;
+    };
+    const stopFirst = stopNearPos(stationMinPos) || first;
+    const stopLast = stopNearPos(stationMaxPos) || last;
     if(approachX == null || approachY == null){
-      push(first.y * N + first.x);
-      push(last.y * N + last.x);
+      push(stopFirst.y * N + stopFirst.x);
+      push(stopLast.y * N + stopLast.x);
       continue;
     }
     const approachPos = approachX * track.dx + approachY * track.dy;
-    push(approachPos <= (firstPos + lastPos) * 0.5 ? last.y * N + last.x : first.y * N + first.x);
+    push(approachPos <= (firstPos + lastPos) * 0.5
+      ? (stopLast.y * N + stopLast.x)
+      : (stopFirst.y * N + stopFirst.x));
   }
   return out.length ? out : adjRailTiles(b);
 }
@@ -603,6 +625,9 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=nul
   let targetTiles = isTrainStationPiece(toB) ? trainStationStopTiles(toB, fromB, startTile) : adjRailTiles(toB);
   if(isTrainStationPiece(toB)){
     const availableTargets = targetTiles.filter(tile => trainTargetTileAvailable(tile, vehicle));
+    // Préférer un quai libre, mais conserver une route si tous les quais sont
+    // momentanément occupés. Sinon les trains restent dans leur gare actuelle,
+    // gardent leur canton et peuvent verrouiller tout le réseau en boucle.
     if(availableTargets.length) targetTiles = availableTargets;
   }
   const targets = new Set(targetTiles);
@@ -770,7 +795,105 @@ function prepareRailTrip(v, fromB, toB, startTile=null, previousTile=null){
   v.seg = 0;
   v.t = 0;
   v.railDecisionPreviousTile = decisionPreviousTile;
+  v.railPathEntryFromTile = previousTile ?? null;
+  seedTrainTrail(v, path.tiles, previousTile);
   return true;
+}
+
+function trainTrailPoint(tile){
+  return { x:(tile % N) * TILE + TILE / 2, y:((tile / N) | 0) * TILE + TILE / 2 };
+}
+
+function trimTrainTrail(v){
+  if(!Array.isArray(v.railTrail) || v.railTrail.length < 3) return;
+  const keepDistance = ((v.wagons?.length || 0) + 2) * TILE * 0.80 + TILE * 2;
+  let distance = 0;
+  let first = v.railTrail.length - 1;
+  for(let i = v.railTrail.length - 1; i > 0; i--){
+    const a = v.railTrail[i], b = v.railTrail[i - 1];
+    distance += Math.hypot(a.x - b.x, a.y - b.y);
+    first = i - 1;
+    if(distance >= keepDistance) break;
+  }
+  if(first > 0) v.railTrail.splice(0, first);
+}
+
+function recordTrainTrailPoint(v, x, y, force=false){
+  if(!Number.isFinite(x) || !Number.isFinite(y)) return;
+  if(!Array.isArray(v.railTrail)) v.railTrail = [];
+  const last = v.railTrail[v.railTrail.length - 1];
+  if(last){
+    const distance = Math.hypot(x - last.x, y - last.y);
+    if(distance < 0.01) return;
+    if(!force && distance < 2) return;
+  }
+  v.railTrail.push({ x, y });
+  trimTrainTrail(v);
+}
+
+// Conserve une vraie voie derrière la locomotive. Cet historique ne doit pas
+// être remplacé lors d'un arrêt ou d'un recalcul d'itinéraire : les wagons
+// occupent encore les tuiles déjà parcourues.
+function seedTrainTrail(v, pathTiles, previousTile=null){
+  if(!pathTiles?.length) return;
+  const startTile = pathTiles[0];
+  const start = trainTrailPoint(startTile);
+  const last = v.railTrail?.[v.railTrail.length - 1];
+  if(last && Math.hypot(last.x - start.x, last.y - start.y) < 2){
+    recordTrainTrailPoint(v, start.x, start.y, true);
+    return;
+  }
+
+  const nextTile = pathTiles[1] ?? null;
+  const wantedDistance = ((v.wagons?.length || 0) + 2) * TILE * 0.80;
+  const backwards = [startTile];
+  const seen = new Set(backwards);
+  let newerTile = nextTile;
+  let currentTile = startTile;
+  let preferredTile = previousTile;
+  let distance = 0;
+  while(distance < wantedDistance){
+    const cx = currentTile % N, cy = (currentTile / N) | 0;
+    const nx0 = newerTile == null ? cx : newerTile % N;
+    const ny0 = newerTile == null ? cy : (newerTile / N) | 0;
+    const backDx = cx - nx0, backDy = cy - ny0;
+    let best = -1, bestScore = -Infinity;
+    for(const def of railConnectedDefsAt(cx, cy)){
+      const nx = cx + def.dx, ny = cy + def.dy;
+      if(!inMap(nx, ny)) continue;
+      const tile = ny * N + nx;
+      if(tile === newerTile || seen.has(tile)) continue;
+      if(!rail[tile] || !(rail[tile] & RAIL_DIRS[def.opposite].bit)) continue;
+      let score = def.dx * backDx + def.dy * backDy;
+      if(tile === preferredTile) score += 100;
+      if(score > bestScore){ best = tile; bestScore = score; }
+    }
+    if(best < 0) break;
+    const a = trainTrailPoint(currentTile), b = trainTrailPoint(best);
+    distance += Math.hypot(a.x - b.x, a.y - b.y);
+    backwards.push(best);
+    seen.add(best);
+    newerTile = currentTile;
+    currentTile = best;
+    preferredTile = null;
+  }
+  v.railTrail = backwards.reverse().map(trainTrailPoint);
+}
+
+function ensureTrainTrail(v){
+  if(Array.isArray(v.railTrail) && v.railTrail.length >= 2) return;
+  if(!v.pathTiles?.length) return;
+  const seg = Math.max(0, Math.min(v.seg || 0, v.pathTiles.length - 1));
+  if(seg > 0){
+    v.railTrail = v.pathTiles.slice(0, seg + 1).map(trainTrailPoint);
+    trimTrainTrail(v);
+  } else {
+    seedTrainTrail(v, v.pathTiles, v.railPathEntryFromTile ?? v.railPreviousTile ?? null);
+  }
+  if(v.pts?.length > seg){
+    const a = v.pts[seg], b = v.pts[Math.min(seg + 1, v.pts.length - 1)];
+    recordTrainTrailPoint(v, a.x + (b.x - a.x) * (v.t || 0), a.y + (b.y - a.y) * (v.t || 0), true);
+  }
 }
 
 function trainOrderStopKey(b){
@@ -887,10 +1010,13 @@ function replanTrainAtSignal(v){
   v.t = 0;
   v.railPlannedJunctionTile = curTile;
   v.railDecisionPreviousTile = previousTile;
+  v.railPathEntryFromTile = previousTile;
+  seedTrainTrail(v, path.tiles, previousTile);
   return true;
 }
 
 function advanceRailVehicle(v, move){
+  ensureTrainTrail(v);
   while(move > 0 && v.seg < v.pts.length - 1){
     const decisionTile = v.pathTiles[v.seg] ?? -1;
     const atJunction = trainAtRailJunction(v);
@@ -914,6 +1040,7 @@ function advanceRailVehicle(v, move){
     v.t = desiredT;
     move -= used;
     if(v.t < 1 - 1e-6) break;
+    recordTrainTrailPoint(v, b.x, b.y, true);
     v.seg++;
     v.t = 0;
     v.railPlannedJunctionTile = -1;
@@ -926,6 +1053,10 @@ function advanceRailVehicle(v, move){
       if(nextBlock >= 0) railBlockOccupancy[nextBlock]++;
     }
     v.currentRailBlock = nextBlock;
+  }
+  if(v.seg < v.pts.length - 1){
+    const a = v.pts[v.seg], b = v.pts[v.seg + 1];
+    recordTrainTrailPoint(v, a.x + (b.x - a.x) * v.t, a.y + (b.y - a.y) * v.t);
   }
 }
 
@@ -1015,6 +1146,7 @@ function createPersistentVehicle(vtype, garage, id=null){
     currentRailBlock: -1,
     railContinueTile: null,
     railPreviousTile: null,
+    railTrail: vtype === 'train' ? [] : null,
     wagons: vtype === 'train' ? [] : null,
     orders: vtype === 'train' ? [] : null,
     orderIndex: 0,
