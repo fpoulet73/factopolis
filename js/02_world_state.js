@@ -607,10 +607,10 @@ function refreshWorkerAllocation(){
   }
   for(const [home, remaining] of avail) home.workersIdle = remaining;
 
-  // Pass 2 : postes encore sous-dotés → navetteurs depuis les arrêts de bus proches
-  const busStops = buildings.filter(b => !b.dead && b.type === 'bus_stop' && (b.passengers || 0) >= 1);
+  // Pass 2 : postes encore sous-dotés → navetteurs arrivés par bus (passengersEntrant)
+  const busStops = buildings.filter(b => !b.dead && b.type === 'bus_stop' && (b.passengersEntrant || 0) >= 1);
   // pool de navetteurs disponibles par arrêt (snapshot, non consommé définitivement)
-  const busAvail = new Map(busStops.map(bs => [bs, Math.floor(bs.passengers)]));
+  const busAvail = new Map(busStops.map(bs => [bs, Math.floor(bs.passengersEntrant)]));
   for(const job of jobs){
     const need = workersRequiredOf(job) - workersAllocatedOf(job);
     if(need <= 0) continue;

@@ -281,6 +281,15 @@ function update(dt){
       const rate = max / BUS_FILL_RATE_SECS;
       b.passengers = Math.min(max, (b.passengers || 0) + rate * Math.min(dt, 0.5));
     }
+    // Travailleurs navetteurs : quittent leur poste et retournent à l'arrêt bus après 1 jour de jeu
+    if(b.passengersEntrant == null) b.passengersEntrant = 0;
+    if(b.passagersSortant == null) b.passagersSortant = 0;
+    if(b.passengersEntrant > 0){
+      const shiftDuration = 24 / GAME_HOURS_PER_SEC;
+      const leave = (b.passengersEntrant / shiftDuration) * Math.min(dt, 0.5);
+      b.passengersEntrant = Math.max(0, b.passengersEntrant - leave);
+      b.passagersSortant = b.passagersSortant + leave;
+    }
   }
 
   // Gares : génération de passagers entrants depuis la population locale (continu, 3 jours)

@@ -988,19 +988,27 @@ function trainProcessStop(v, stopB, nextStop){
   // --- passagers ---
   const passCap = trainPassengerCapacity(v);
   if(passCap > 0){
-    // Déposer les passagers à bord et encaisser le revenu
+    // Résoudre la pièce principale du groupe (passengersEntrant/passagersSortant sur train_station)
+    const stationMain = (isTrainStationPiece(stopB) && stopB.stationGroupId != null)
+      ? (trainStationGroupRepresentative(stopB.stationGroupId) || stopB)
+      : stopB;
+    // Déposer les passagers à bord → passagers sortants de cette gare + revenu
     const onBoard = v.passengersOnBoard || 0;
     if(onBoard > 0){
-      trainEarnPassengerRevenue(v, onBoard, v.passengerBoardStop || stopB, stopB);
+      const boardMain = v.passengerBoardStop
+        ? (trainStationGroupRepresentative(v.passengerBoardStop.stationGroupId) || v.passengerBoardStop)
+        : stationMain;
+      trainEarnPassengerRevenue(v, onBoard, boardMain, stationMain);
+      stationMain.passagersSortant = (stationMain.passagersSortant || 0) + onBoard;
       v.passengersOnBoard = 0;
       v.passengerBoardStop = null;
     }
-    // Charger les passagers qui attendent à cet arrêt (si arrêt suivant exist)
+    // Embarquer les passagers entrants de cette gare (si arrêt suivant existe)
     if(nextStop && isTrainStationPiece(stopB)){
-      const waiting = Math.floor(stopB.passengersEntrant || 0);
+      const waiting = Math.floor(stationMain.passengersEntrant || 0);
       const take = Math.min(passCap, waiting);
       if(take > 0){
-        stopB.passengersEntrant = Math.max(0, stopB.passengersEntrant - take);
+        stationMain.passengersEntrant = Math.max(0, stationMain.passengersEntrant - take);
         v.passengersOnBoard = take;
         v.passengerBoardStop = stopB;
       }
@@ -1314,8 +1322,30 @@ function vehicleCanServeRoute(v, res=null){
   return true;
 }
 
+// Returns adjacent road tiles, or (for buildings with no road access like train stations)
+// the nearest road tile within maxRadius, so buses can route to rail-only buildings.
+function roadTilesFor(b, maxRadius = 6){
+  const adj = adjRoadTiles(b);
+  if(adj.length) return adj;
+  const cx = b.x + Math.floor((b.w||1) / 2), cy = b.y + Math.floor((b.h||1) / 2);
+  for(let r = 1; r <= maxRadius; r++){
+    const found = [];
+    for(let dy = -r; dy <= r; dy++){
+      for(let dx = -r; dx <= r; dx++){
+        if(Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const nx = cx + dx, ny = cy + dy;
+        if(!inMap(nx, ny)) continue;
+        const ni = ny * N + nx;
+        if(road[ni]) found.push(ni);
+      }
+    }
+    if(found.length) return found;
+  }
+  return [];
+}
+
 function findRoadPath(fromB, toB){
-  const starts = adjRoadTiles(fromB);
+  const starts = roadTilesFor(fromB);
   if(!starts.length) return null;
   dist.fill(-1);
   const q = [];
@@ -1331,7 +1361,7 @@ function findRoadPath(fromB, toB){
     }
   }
   let bestTile = -1, bestDist = Infinity;
-  for(const t of adjRoadTiles(toB))
+  for(const t of roadTilesFor(toB))
     if(dist[t]>=0 && dist[t]<bestDist){ bestDist = dist[t]; bestTile = t; }
   if(bestTile < 0) return null;
   const path = [];
@@ -1503,16 +1533,29 @@ function updateVehicles(dt){
       if(v.state === 'to_source'){
         v.currentBuilding = v.source;
         if(v.vtype === 'bus'){
-          // Déposer les passagers retour (arrivés à leur arrêt de quartier)
+          // Déposer les passagers retour (arrivés à leur arrêt de quartier - retournent chez eux)
           if(v.cargo > 0){
-            v.source.passengers = (v.source.passengers || 0) + v.cargo;
+            if(isTrainStationPiece(v.source)){
+              // Dépose à la gare : passagers entrant pour prendre un train
+              const srcMain = trainStationGroupRepresentative(v.source.stationGroupId) || v.source;
+              srcMain.passengersEntrant = (srcMain.passengersEntrant || 0) + v.cargo;
+            }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.dest, v.source);
             v.cargo = 0;
           }
           // Charger les passagers aller depuis l'arrêt source
-          const availableSrc = Math.floor(v.source.passengers || 0);
-          const takeSrc = Math.min(vt.capacite, availableSrc);
-          v.source.passengers = Math.max(0, (v.source.passengers || 0) - takeSrc);
+          let takeSrc = 0;
+          if(isTrainStationPiece(v.source)){
+            // Source = gare : prend les passagersSortant du train
+            const srcMain = trainStationGroupRepresentative(v.source.stationGroupId) || v.source;
+            const availSrc = Math.floor(srcMain.passagersSortant || 0);
+            takeSrc = Math.min(vt.capacite, availSrc);
+            srcMain.passagersSortant = Math.max(0, (srcMain.passagersSortant || 0) - takeSrc);
+          } else {
+            const availSrc = Math.floor(v.source.passengers || 0);
+            takeSrc = Math.min(vt.capacite, availSrc);
+            v.source.passengers = Math.max(0, (v.source.passengers || 0) - takeSrc);
+          }
           v.cargo = takeSrc;
           v.res = null;
           const pts = findRoadPath(v.source, v.dest);
@@ -1568,21 +1611,39 @@ function updateVehicles(dt){
         if(v.vtype === 'bus'){
           // Déposer les passagers aller à la destination
           if(v.cargo > 0){
-            const nearDest = findNearbyTrainStation(v.dest);
-            if(nearDest){
-              nearDest.passengersEntrant = (nearDest.passengersEntrant || 0) + v.cargo;
+            if(isTrainStationPiece(v.dest)){
+              // Destination = gare : passagers arrivent à la gare pour prendre un train
+              const destMain = trainStationGroupRepresentative(v.dest.stationGroupId) || v.dest;
+              destMain.passengersEntrant = (destMain.passengersEntrant || 0) + v.cargo;
             } else {
-              v.dest.passengers = (v.dest.passengers || 0) + v.cargo;
+              // Destination = arrêt de bus : passagers deviennent travailleurs entrants
+              v.dest.passengersEntrant = (v.dest.passengersEntrant || 0) + v.cargo;
             }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.source, v.dest);
             v.cargo = 0;
           }
-          // Charger les passagers retour : depuis la gare proche (passagersSortant) ou l'arrêt
-          const nearDestReturn = findNearbyTrainStation(v.dest);
-          const available = Math.floor(nearDestReturn ? (nearDestReturn.passagersSortant || 0) : (v.dest.passengers || 0));
-          const take = Math.min(vt.capacite, available);
-          if(nearDestReturn) nearDestReturn.passagersSortant = Math.max(0, (nearDestReturn.passagersSortant || 0) - take);
-          else v.dest.passengers = Math.max(0, (v.dest.passengers || 0) - take);
+          // Charger les passagers retour
+          let take = 0;
+          if(isTrainStationPiece(v.dest)){
+            // Dest = gare : prend les passagersSortant
+            const destMain = trainStationGroupRepresentative(v.dest.stationGroupId) || v.dest;
+            const avail = Math.floor(destMain.passagersSortant || 0);
+            take = Math.min(vt.capacite, avail);
+            destMain.passagersSortant = Math.max(0, (destMain.passagersSortant || 0) - take);
+          } else {
+            // Dest = arrêt de bus : priorité passagersSortant → gare proche → passagers en attente
+            const nearDestReturn = findNearbyTrainStation(v.dest);
+            const stopSortants = Math.floor(v.dest.passagersSortant || 0);
+            const trainSortants = Math.floor(nearDestReturn?.passagersSortant || 0);
+            let available, returnFrom;
+            if(stopSortants >= trainSortants && stopSortants > 0){ available = stopSortants; returnFrom = 'stop'; }
+            else if(trainSortants > 0){ available = trainSortants; returnFrom = 'train'; }
+            else { available = Math.floor(v.dest.passengers || 0); returnFrom = 'passengers'; }
+            take = Math.min(vt.capacite, available);
+            if(returnFrom === 'stop') v.dest.passagersSortant = Math.max(0, stopSortants - take);
+            else if(returnFrom === 'train') nearDestReturn.passagersSortant = Math.max(0, nearDestReturn.passagersSortant - take);
+            else v.dest.passengers = Math.max(0, (v.dest.passengers || 0) - take);
+          }
           v.cargo = take;
           const pts = findRoadPath(v.dest, v.source);
           if(!pts){ v.waitTimer = 5; continue; }

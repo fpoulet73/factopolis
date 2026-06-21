@@ -492,10 +492,15 @@ function statusOf(b){
   if(b.type==='tank') return 'Stocke l’eau pour les boulangeries proches';
   if(b.type==='bus_stop'){
     const max = b.passengersMax || 0;
-    if(max === 0) return 'Aucun habitant à portée (rayon '+BUS_STOP_RADIUS+' cases)';
     const cur = Math.floor(b.passengers || 0);
-    if(cur < max) return 'En remplissage : '+cur+' / '+max+' passagers';
-    return 'Complet : '+max+' passager'+(max>1?'s':'')+' en attente';
+    const pE = Math.floor(b.passengersEntrant || 0);
+    const pS = Math.floor(b.passagersSortant || 0);
+    const parts = [];
+    if(max > 0) parts.push('↑ '+cur+'/'+max+' départ');
+    if(pE > 0) parts.push(pE+' arrivant'+(pE>1?'s':''));
+    if(pS > 0) parts.push('↓ '+pS+' retour');
+    if(parts.length === 0) return 'Aucun habitant à portée (rayon '+BUS_STOP_RADIUS+' cases)';
+    return parts.join(' · ');
   }
   if(isTrainStationPiece(b)){
     const main = b.type === 'train_station' ? b
@@ -984,7 +989,11 @@ function renderInfo(){
     const town = getTownOf(b);
     if(town) h += '<div class="row"><span>Village</span><b style="color:#e8d48b">🏘️ '+escHtml(town.name)+'</b></div>';
     const pCur = Math.floor(b.passengers||0), pMax = b.passengersMax||0;
-    h += '<div class="row"><span>Passagers en attente</span><b style="color:#7dd8ff">👥 '+pCur+(pMax>0?' / '+pMax:'')+'</b></div>';
+    h += '<div class="row"><span>Départs</span><b style="color:#7dd8ff">👥 '+pCur+(pMax>0?' / '+pMax:'')+'</b></div>';
+    const pE = Math.floor(b.passengersEntrant||0);
+    const pS = Math.floor(b.passagersSortant||0);
+    if(pE > 0) h += '<div class="row"><span>Arrivants (travailleurs)</span><b style="color:#a0e890">👷 '+pE+'</b></div>';
+    if(pS > 0) h += '<div class="row"><span>Retours (en attente bus)</span><b style="color:#f0c060">🔄 '+pS+'</b></div>';
     h += '<div class="row"><span>Rayon</span><b>'+BUS_STOP_RADIUS+' cases</b></div>';
     h += '<div class="row"><span>Tarif</span><b style="color:#ffe9a0">'+BUS_FARE_FACTOR+' $/passager/tuile</b></div>';
     h += '<div class="row"><span>Intra-ville</span><b style="color:#a0c8e8">÷'+BUS_INTRA_CITY_DIV+' du tarif</b></div>';
