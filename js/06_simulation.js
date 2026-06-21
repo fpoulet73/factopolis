@@ -274,7 +274,6 @@ function update(dt){
         if(Math.max(dx, dy) <= TRAIN_STATION_RADIUS) pop += o.pop || 0;
       }
       b.passengersEntrantMax = pop;
-      if((b.passengersEntrant || 0) > pop) b.passengersEntrant = pop;
     }
     if(!busRushHour) continue;
     const max = b.passengersEntrantMax || 0;

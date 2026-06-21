@@ -497,6 +497,22 @@ function renderInfo(){
       const n = EXP_N_PIECES;
       const bought = isCorner ? 0 : Array.from({length:n},(_,i)=>exp.side+'-'+i).filter(k=>purchasedPieces.has(k)).length;
       const canAfford = myWallet().money >= exp.cost;
+      // Compter les zones de ressource dans la pièce
+      const resCounts = {};
+      for(let ey = exp.y0; ey < exp.y1; ey++)
+        for(let ex2 = exp.x0; ex2 < exp.x1; ex2++){
+          if(!exp.inPiece(ex2, ey)) continue;
+          const tt = terrain[ey * N + ex2];
+          if(tt !== T.GRASS) resCounts[tt] = (resCounts[tt] || 0) + 1;
+        }
+      const terrainResTypes = [
+        { t:T.IRON,   ic:RES.iron.ic,   n:RES.iron.n   },
+        { t:T.COAL,   ic:RES.coal.ic,   n:RES.coal.n   },
+        { t:T.TREE,   ic:RES.wood.ic,   n:RES.wood.n   },
+        { t:T.WHEAT,  ic:RES.wheat.ic,  n:RES.wheat.n  },
+        { t:T.COTTON, ic:RES.cotton.ic, n:RES.cotton.n },
+        { t:T.WATER,  ic:'💧',          n:'Eau'         },
+      ];
       let h_ = '<div class="panel-head"><h3>🧩 Pièce de puzzle</h3><button class="tbtn" id="infoCloseBtn" aria-label="Fermer">✕</button></div>';
       h_ += '<div class="status">Vers : <b>'+dir+'</b>'+(isCorner?' (coin)':' — pièce '+(exp.pieceIndex+1)+'/'+n)+'</div>';
       if(!isCorner && bought>0)
@@ -506,6 +522,12 @@ function renderInfo(){
       h_ += '<div class="row"><span>Prix pièce</span><b style="color:'+(canAfford?'#ffe9a0':'#ff9a8a')+'">'+exp.cost.toLocaleString()+' $</b></div>';
       if(!isCorner && (expansionLevels[exp.side]||0)>0)
         h_ += '<div class="row"><span>Bande n°</span><b>'+((expansionLevels[exp.side]||0)+1)+'</b></div>';
+      const resRows = terrainResTypes.filter(r => resCounts[r.t] > 0);
+      if(resRows.length > 0){
+        h_ += '<div class="row" style="margin-top:4px;border-top:1px solid #334;padding-top:4px"><span style="font-weight:600">Ressources dans la pièce</span></div>';
+        for(const r of resRows)
+          h_ += '<div class="row"><span>'+r.ic+' '+r.n+'</span><b>'+resCounts[r.t]+'</b></div>';
+      }
       h_ += '<button class="tbtn" style="margin-top:8px;width:100%;'+(canAfford?'':'opacity:0.5;cursor:not-allowed;')+'" '
           + 'onclick="buyExpansion(selectedExpansion)">'
           + (canAfford ? '🧩 Acheter cette pièce' : '💸 Fonds insuffisants')
