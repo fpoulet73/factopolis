@@ -519,6 +519,44 @@ function trainPlatformTrackPieces(b){
     && trainPlatformTrackKey(piece) === key);
 }
 
+function drawTrainPlatformTracks(b){
+  const pieces = trainPlatformTrackPieces(b);
+  const [adx, ady] = String(b.stationAxis || '1,0').split(',').map(Number);
+  const [du, dv] = rotDir(adx, ady);
+  const end = iso(du, dv);
+  const len = Math.hypot(end[0], end[1]) || 1;
+  const tx = end[0] / len, ty = end[1] / len;
+  let nx = -ty, ny = tx;
+  const station = buildings.find(piece => piece.stationGroupId === b.stationGroupId && piece.type === 'train_station');
+  if(station){
+    const [sdx, sdy] = rotDir(station.x - b.x, station.y - b.y);
+    const toward = iso(sdx, sdy);
+    if(nx * toward[0] + ny * toward[1] < 0){ nx = -nx; ny = -ny; }
+  }
+  let first = pieces[0], last = pieces[0];
+  let firstPos = (first.x * adx) + (first.y * ady);
+  let lastPos = firstPos;
+  for(const piece of pieces){
+    const pos = (piece.x * adx) + (piece.y * ady);
+    if(pos < firstPos){ first = piece; firstPos = pos; }
+    if(pos > lastPos){ last = piece; lastPos = pos; }
+  }
+  const [frx, fry] = rotIdx(first.x, first.y);
+  const [lrx, lry] = rotIdx(last.x, last.y);
+  const c0 = iso(frx + 0.5, fry + 0.5);
+  const c1 = iso(lrx + 0.5, lry + 0.5);
+  const half = len * 0.48, offset = 9;
+  const x0 = c0[0] - tx * half + nx * offset, y0 = c0[1] - ty * half + ny * offset;
+  const x1 = c1[0] + tx * half + nx * offset, y1 = c1[1] + ty * half + ny * offset;
+  ctx.lineCap = 'butt';
+  ctx.strokeStyle = '#8b6745'; ctx.lineWidth = 10;
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  ctx.strokeStyle = '#d8c39a'; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(x0, y0 - 1); ctx.lineTo(x1, y1 - 1); ctx.stroke();
+  ctx.strokeStyle = '#f0d15f'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(x0 - nx * 4, y0 - ny * 4); ctx.lineTo(x1 - nx * 4, y1 - ny * 4); ctx.stroke();
+}
+
 function trainPlatformTrackAnchor(b){
   const [dx, dy] = String(b.stationAxis || '0,0').split(',').map(Number);
   const pieces = trainPlatformTrackPieces(b);
@@ -557,55 +595,15 @@ function trainStationGroupBounds(groupId, type){
 
 function drawTrainStationPiece(b){
   const [rx, ry] = rotIdx(b.x, b.y);
-  if(b.type === 'train_platform'){
-    if(trainPlatformTrackAnchor(b) === b){
-      const pieces = trainPlatformTrackPieces(b);
-      const [adx, ady] = String(b.stationAxis || '1,0').split(',').map(Number);
-      const [du, dv] = rotDir(adx, ady);
-      const end = iso(du, dv);
-      const len = Math.hypot(end[0], end[1]) || 1;
-      const tx = end[0] / len, ty = end[1] / len;
-      let nx = -ty, ny = tx;
-      const station = buildings.find(piece => piece.stationGroupId === b.stationGroupId && piece.type === 'train_station');
-      if(station){
-        const [sdx, sdy] = rotDir(station.x - b.x, station.y - b.y);
-        const toward = iso(sdx, sdy);
-        if(nx * toward[0] + ny * toward[1] < 0){ nx = -nx; ny = -ny; }
-      }
-      let first = pieces[0], last = pieces[0];
-      let firstPos = (first.x * adx) + (first.y * ady);
-      let lastPos = firstPos;
-      for(const piece of pieces){
-        const pos = (piece.x * adx) + (piece.y * ady);
-        if(pos < firstPos){ first = piece; firstPos = pos; }
-        if(pos > lastPos){ last = piece; lastPos = pos; }
-      }
-      const [frx, fry] = rotIdx(first.x, first.y);
-      const [lrx, lry] = rotIdx(last.x, last.y);
-      const c0 = iso(frx + 0.5, fry + 0.5);
-      const c1 = iso(lrx + 0.5, lry + 0.5);
-      const half = len * 0.48, offset = 9;
-      const x0 = c0[0] - tx * half + nx * offset, y0 = c0[1] - ty * half + ny * offset;
-      const x1 = c1[0] + tx * half + nx * offset, y1 = c1[1] + ty * half + ny * offset;
-      ctx.lineCap = 'butt';
-      ctx.strokeStyle = '#8b6745'; ctx.lineWidth = 10;
-      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-      ctx.strokeStyle = '#d8c39a'; ctx.lineWidth = 6;
-      ctx.beginPath(); ctx.moveTo(x0, y0 - 1); ctx.lineTo(x1, y1 - 1); ctx.stroke();
-      ctx.strokeStyle = '#f0d15f'; ctx.lineWidth = 1.4;
-      ctx.beginPath(); ctx.moveTo(x0 - nx * 4, y0 - ny * 4); ctx.lineTo(x1 - nx * 4, y1 - ny * 4); ctx.stroke();
-    }
-  } else {
-    const bounds = trainStationGroupBounds(b.stationGroupId, 'train_station');
-    if(bounds && bounds.pieces[0] === b){
-      const col = b.owner && MP.connected ? playerColor(b.owner) : '#b07b49';
-      prism(bounds.rx0 + 0.08, bounds.ry0 + 0.08, bounds.rx0 + bounds.rw - 0.08, bounds.ry0 + bounds.rh - 0.08, 10, col);
-      const c = iso(bounds.rx0 + bounds.rw * 0.5, bounds.ry0 + bounds.rh * 0.5);
-      ctx.fillStyle = '#f5e7c8';
-      ctx.font = '14px "Segoe UI Emoji",sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('🚉', c[0], c[1] - 9);
-    }
+  const bounds = trainStationGroupBounds(b.stationGroupId, 'train_station');
+  if(bounds && bounds.pieces[0] === b){
+    const col = b.owner && MP.connected ? playerColor(b.owner) : '#b07b49';
+    prism(bounds.rx0 + 0.08, bounds.ry0 + 0.08, bounds.rx0 + bounds.rw - 0.08, bounds.ry0 + bounds.rh - 0.08, 10, col);
+    const c = iso(bounds.rx0 + bounds.rw * 0.5, bounds.ry0 + bounds.rh * 0.5);
+    ctx.fillStyle = '#f5e7c8';
+    ctx.font = '14px "Segoe UI Emoji",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('🚉', c[0], c[1] - 9);
   }
   const selectedGroup = trainStationSelectionMatches(selected, b);
   const routeEligible = vehicleRouteMode && vehicleRouteEndpointOk(b)
@@ -635,8 +633,21 @@ function drawTrainStationPiece(b){
 
 function drawBuilding(b){
   const d = BUILD[b.type];
-  if(isTrainStationPiece(b)){
+  if(b.type === 'train_station'){
     drawTrainStationPiece(b);
+    return;
+  }
+  if(b.type === 'train_platform'){
+    // Draw platform as a normal building, then draw the track
+    const [r1x,r1y] = rotIdx(b.x, b.y);
+    const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
+    const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
+    const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
+    const hgt = d.hgt;
+    const bCol = packBuildingColor(b, d);
+    prism(rx0, ry0, rx0+rw, ry0+rh, hgt, bCol);
+    // Draw tracks on top
+    if(trainPlatformTrackAnchor(b) === b) drawTrainPlatformTracks(b);
     return;
   }
   const [r1x,r1y] = rotIdx(b.x, b.y);
