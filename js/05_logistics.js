@@ -1461,8 +1461,21 @@ function updateVehicles(dt){
       if(v.state === 'to_source'){
         v.currentBuilding = v.source;
         if(v.vtype === 'bus'){
-          // Encaisser les passagers retour (chargés à la destination au voyage précédent)
+          // Déposer les passagers retour (chargés à la destination au voyage précédent)
           if(v.cargo > 0){
+            if(v.source.type === 'train_station' || v.source.type === 'train_platform'){
+              // Ajouter aux passagers entrants de la gare
+              const mainStation = v.source.type === 'train_station' ? v.source
+                : buildings.find(b => !b.dead && b.type === 'train_station' && b.stationGroupId === v.source.stationGroupId);
+              if(mainStation){
+                mainStation.passengersEntrant = (mainStation.passengersEntrant || 0) + v.cargo;
+                if(mainStation.passengersEntrantMax > 0)
+                  mainStation.passengersEntrant = Math.min(mainStation.passengersEntrant, mainStation.passengersEntrantMax);
+              }
+            } else {
+              // Ajouter aux passagers de l'arrêt de bus ordinaire
+              v.source.passengers = (v.source.passengers || 0) + v.cargo;
+            }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.dest, v.source);
             v.cargo = 0;
           }
@@ -1523,8 +1536,21 @@ function updateVehicles(dt){
       } else {
         v.currentBuilding = v.dest;
         if(v.vtype === 'bus'){
-          // Encaisser le revenu des passagers aller
+          // Déposer les passagers aller à la destination
           if(v.cargo > 0){
+            if(v.dest.type === 'train_station' || v.dest.type === 'train_platform'){
+              // Ajouter aux passagers entrants de la gare
+              const mainStation = v.dest.type === 'train_station' ? v.dest
+                : buildings.find(b => !b.dead && b.type === 'train_station' && b.stationGroupId === v.dest.stationGroupId);
+              if(mainStation){
+                mainStation.passengersEntrant = (mainStation.passengersEntrant || 0) + v.cargo;
+                if(mainStation.passengersEntrantMax > 0)
+                  mainStation.passengersEntrant = Math.min(mainStation.passengersEntrant, mainStation.passengersEntrantMax);
+              }
+            } else {
+              // Ajouter aux passagers de l'arrêt de bus ordinaire
+              v.dest.passengers = (v.dest.passengers || 0) + v.cargo;
+            }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.source, v.dest);
             v.cargo = 0;
           }
