@@ -607,8 +607,7 @@ function drawTrainStationPiece(b){
       ctx.fillText('🚉', c[0], c[1] - 9);
     }
   }
-  const selectedGroup = selected && isTrainStationPiece(selected)
-    && selected.stationGroupId === b.stationGroupId;
+  const selectedGroup = trainStationSelectionMatches(selected, b);
   const routeEligible = vehicleRouteMode && vehicleRouteEndpointOk(b)
     && (vehicleRouteMode.step === 'dest' || b.owner == null || b.owner === (MP.connected ? MP.myId : null));
   if(selectedGroup || routeEligible){
@@ -617,7 +616,7 @@ function drawTrainStationPiece(b){
       ctx.strokeStyle = '#9fe8a0'; ctx.lineWidth = 1.5;
       ctx.setLineDash([4,3]);
       diamond(rx, ry); ctx.stroke();
-    } else if(b === selected){
+    } else if(trainStationSelectionMatches(selected, b) && isTrainStationPiece(selected)){
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
       const stationPieces = buildings.filter(piece => isTrainStationPiece(piece) && piece.stationGroupId === b.stationGroupId);
       let rx0 = Infinity, ry0 = Infinity, rx1 = -Infinity, ry1 = -Infinity;
@@ -647,7 +646,7 @@ function drawBuilding(b){
   const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
   if(!drawFast && UI_OPTIONS.highlightUnderstaffedFactories){
     drawBuildingLayerDiagnostic(b, rx0, ry0, rw, rh);
-    if(b === selected){
+    if(b === selected || trainStationSelectionMatches(selected, b)){
       ctx.save();
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
@@ -748,18 +747,18 @@ function drawBuilding(b){
   // contour couleur propriétaire (multijoueur)
   if(!drawFast && !UI_OPTIONS.hideColorMarkers && b.owner && MP.connected){
     const ownerColor = (MP.players.find(p=>p.id===b.owner)||{}).color || '#aaa';
-    ctx.strokeStyle = ownerColor; ctx.lineWidth = b===selected ? 3 : 1.5;
+    ctx.strokeStyle = ownerColor; ctx.lineWidth = (b===selected || trainStationSelectionMatches(selected, b)) ? 3 : 1.5;
     diamond(rx0, ry0, rw, rh); ctx.stroke();
     // petit drapeau couleur en haut à gauche du toit
     ctx.fillStyle = ownerColor;
     ctx.beginPath(); ctx.arc(tc[0]-TW*rw*0.28, tc[1]-4, 4, 0, 7); ctx.fill();
-  } else if(b===selected){
+  } else if(b===selected || trainStationSelectionMatches(selected, b)){
     // sélection solo
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
     diamond(rx0, ry0, rw, rh); ctx.stroke();
   }
   // sélection par-dessus (multijoueur)
-  if(b===selected && MP.connected){
+  if((b===selected || trainStationSelectionMatches(selected, b)) && MP.connected){
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
     diamond(rx0, ry0, rw, rh); ctx.stroke();
   }
@@ -999,8 +998,10 @@ function drawTrainWagon(veh, wagonIndex){
   const pose = trainWagonPose(veh, wagonIndex);
   if(!pose) return;
   const {u, v, du, dv} = pose;
-  const wtype = TRAIN_WAGON_TYPES[veh.wagons?.[wagonIndex]];
+  const wagon = veh.wagons?.[wagonIndex];
+  const wtype = trainWagonDef(wagon);
   if(!wtype) return;
+  const selectedRes = trainWagonSelectedResource(wagon);
   const c = iso(u, v);
   const nd0 = Math.hypot(du, dv) || 1;
   const fn0 = du/nd0, fv0 = dv/nd0;
@@ -1009,6 +1010,24 @@ function drawTrainWagon(veh, wagonIndex){
   ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 11, 4.5, shadowAngle0, 0, Math.PI*2); ctx.fill();
   trainPrism(u, v, du, dv, 0.30,      0.13,      5, '#252e38');
   trainPrism(u, v, du, dv, 0.30*0.82, 0.13*0.82, 7, wtype.color, 4);
+  if(selectedRes && RES[selectedRes]?.ic){
+    const label = RES[selectedRes].ic;
+    ctx.save();
+    ctx.font = 'bold 11px "Segoe UI Emoji","Segoe UI",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const badgeY = c[1] - 11;
+    ctx.fillStyle = 'rgba(12,24,38,.92)';
+    ctx.beginPath();
+    ctx.ellipse(c[0], badgeY, 8.5, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = RES[selectedRes].c || '#ffe082';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(label, c[0], badgeY + 0.5);
+    ctx.restore();
+  }
 }
 
 function trainPose(veh){

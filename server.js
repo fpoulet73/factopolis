@@ -68,6 +68,7 @@ function validateToken(token) {
 const safeName = s => s.replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 64);
 const saveFileName = (username, name) => safeName(username) + '_' + safeName(name) + '.json';
 const savePath = (username, name) => path.join(SAVES_DIR, saveFileName(username, name));
+const isAutoSaveName = name => /^\[Auto\]/i.test(String(name || '').trim());
 
 function saveBelongsToUser(file, data, username) {
   const userLower = String(username || '').toLowerCase();
@@ -761,8 +762,10 @@ wss.on('connection', (ws) => {
             meta: { username: user.username, name: sName, date: new Date().toISOString() },
             state: stateWithRegistry,
           }));
-          room.saveName = sName;
-          room.saveUsername = user.username;
+          if (!isAutoSaveName(sName)) {
+            room.saveName = sName;
+            room.saveUsername = user.username;
+          }
           send(client, { type:'save_ok', name: sName });
           broadcastRoom(room.id, { type:'game_saved', name: sName, savedBy: user.username });
           send(client, { type:'saves_list', saves: listUserSaves(user.username) });

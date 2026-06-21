@@ -29,6 +29,7 @@ function serializeState(){
       starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
       mergeBlockedMissing:Array.isArray(b.mergeBlockedMissing) ? b.mergeBlockedMissing.slice() : null,
       passengers:b.passengers||0,
+      passengersEntrant:b.passengersEntrant??null, passengersEntrantMax:b.passengersEntrantMax??null, passagersSortant:b.passagersSortant??null,
       stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
@@ -36,12 +37,16 @@ function serializeState(){
     nextTrainStationId,
     vehicles: vehicles.map(v => ({
       id: v.id, vtype: v.vtype,
+      name: v.name || null,
       garageX: v.garageRef.x, garageY: v.garageRef.y,
       sourceX: v.source && !v.source.dead ? v.source.x : null,
       sourceY: v.source && !v.source.dead ? v.source.y : null,
       destX:   v.dest   && !v.dest.dead   ? v.dest.x   : null,
       destY:   v.dest   && !v.dest.dead   ? v.dest.y   : null,
       state: v.state, cargo: v.cargo, res: v.res || null, busRouteDistance: v.busRouteDistance ?? null,
+      passengersOnBoard: v.passengersOnBoard ?? null,
+      passengersFromStationX: v.passengersFromStation && !v.passengersFromStation.dead ? v.passengersFromStation.x : null,
+      passengersFromStationY: v.passengersFromStation && !v.passengersFromStation.dead ? v.passengersFromStation.y : null,
       currentBuildingX: v.currentBuilding && !v.currentBuilding.dead ? v.currentBuilding.x : null,
       currentBuildingY: v.currentBuilding && !v.currentBuilding.dead ? v.currentBuilding.y : null,
       seg: v.seg || 0,
@@ -54,7 +59,7 @@ function serializeState(){
       railTrail: Array.isArray(v.railTrail) ? v.railTrail.map(p => ({ x:p.x, y:p.y })) : null,
       depotDepartureArmed: !!v.depotDepartureArmed,
       pinnedRes: v.pinnedRes || null,
-      wagons: Array.isArray(v.wagons) ? v.wagons.slice() : null,
+      wagons: Array.isArray(v.wagons) ? v.wagons.map(w => typeof w === 'string' ? w : ({ type:w.type, resource:w.resource || null })) : null,
       orderIndex: v.orderIndex || 0,
       orders: Array.isArray(v.orders) ? v.orders.filter(b => b && !b.dead).map(b => ({ x:b.x, y:b.y })) : null,
     })),
@@ -238,6 +243,7 @@ function applySnapshot(d){
     if(o.name   != null) b.name   = o.name;
     if(Array.isArray(o.mergeBlockedMissing)) b.mergeBlockedMissing = o.mergeBlockedMissing.filter(r => RES[r]);
     if(o.passengers != null && b.type === 'bus_stop') b.passengers = o.passengers;
+    if(o.passengersEntrant != null && b.type === 'train_station'){ b.passengersEntrant = o.passengersEntrant; b.passengersEntrantMax = o.passengersEntrantMax ?? 0; b.passagersSortant = o.passagersSortant ?? 0; }
     if(o.stationGroupId != null) b.stationGroupId = o.stationGroupId;
     if(o.stationAxis) b.stationAxis = o.stationAxis;
     buildings.push(b);
@@ -279,6 +285,8 @@ function applySnapshot(d){
         : null;
       const v = createPersistentVehicle(sv.vtype, garage, sv.id ?? null);
       if(!v) continue;
+      if(sv.name != null) v.name = sv.name;
+      else if(v.vtype === 'train') assignTrainVehicleName(v);
       v.source = source || null;
       v.dest = dest || null;
       v.currentBuilding = currentBuilding || (sv.state === 'idle' ? garage : null);
@@ -287,7 +295,12 @@ function applySnapshot(d){
       v.pinnedRes = sv.pinnedRes || null;
       v.waitTimer = sv.waitTimer || 0;
       v.depotDepartureArmed = !!sv.depotDepartureArmed;
-      if(Array.isArray(sv.wagons)) v.wagons = sv.wagons.filter(k => TRAIN_WAGON_TYPES[k]);
+      if(Array.isArray(sv.wagons)) v.wagons = sv.wagons
+        .map(w => typeof w === 'string'
+          ? trainCreateWagon(w)
+          : (w && typeof w === 'object' ? trainCreateWagon(w.type, w.resource || null) : null))
+        .filter(Boolean);
+      if(v.vtype === 'train') trainNormalizeWagons(v);
       if(Array.isArray(sv.orders)){
         v.orders = sv.orders
           .map(o => buildings.find(b => b.x === o.x && b.y === o.y))
@@ -296,6 +309,10 @@ function applySnapshot(d){
       if(Number.isInteger(sv.orderIndex)) v.orderIndex = sv.orderIndex;
       if(v.vtype === 'train') syncTrainOrders(v);
       if(sv.busRouteDistance != null) v.busRouteDistance = sv.busRouteDistance;
+      if(sv.passengersOnBoard != null) v.passengersOnBoard = sv.passengersOnBoard;
+      if(sv.passengersFromStationX != null){
+        v.passengersFromStation = buildings.find(b => b.x === sv.passengersFromStationX && b.y === sv.passengersFromStationY && b.type === 'train_station') || null;
+      }
       if(v.source && v.dest && !vehicleCanServeRoute(v, v.res)){
         v.source = null; v.dest = null; v.cargo = 0; v.res = null;
         continue;
@@ -507,7 +524,8 @@ function applyAction(msg){
       const wSender = walletOf(msg.from);
       wSender.money -= cost;
       wSender.fin.construction = (wSender.fin.construction||0) + cost;
-      createPersistentVehicle(act.vtype, garage, act.id);
+      const v = createPersistentVehicle(act.vtype, garage, act.id);
+      if(v?.vtype === 'train') assignTrainVehicleName(v);
       break;
     }
     case 'sell_vehicle': {
@@ -559,7 +577,12 @@ function applyAction(msg){
     case 'configure_train': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
       if(!v || v.garageRef?.owner !== msg.from || v.vtype !== 'train') break;
-      v.wagons = Array.isArray(act.wagons) ? act.wagons.filter(k => TRAIN_WAGON_TYPES[k]) : [];
+      v.wagons = Array.isArray(act.wagons) ? act.wagons
+        .map(w => typeof w === 'string'
+          ? trainCreateWagon(w)
+          : (w && typeof w === 'object' ? trainCreateWagon(w.type, w.resource || null) : null))
+        .filter(Boolean) : [];
+      if(v.res && trainWagonCapacityForRes(v, v.res) < v.cargo){ v.cargo = 0; v.res = null; }
       break;
     }
     case 'return_vehicle': {
@@ -854,7 +877,7 @@ function mpConnect(url){
         break;
 
       case 'save_ok':
-        MP.roomSaveName = msg.name;
+        if(!mpIsAutoSaveName(msg.name)) MP.roomSaveName = msg.name;
         document.title = 'Factopolis — ' + (MP.roomName || msg.name);
         toast('💾 Sauvegarde "'+msg.name+'" enregistrée');
         $('mpSaveName').value = '';
@@ -873,6 +896,7 @@ function mpConnect(url){
         break;
 
       case 'game_saved':
+        if(!mpIsAutoSaveName(msg.name)) MP.roomSaveName = msg.name;
         if(msg.savedBy !== MP.username)
           toast('💾 '+msg.savedBy+' a sauvegardé la partie : "'+msg.name+'"');
         break;
@@ -1459,12 +1483,16 @@ function mpRenderPlayerList(){
   });
 }
 
+function mpIsAutoSaveName(name){
+  return /^\[Auto\]/i.test(String(name || '').trim());
+}
+
 function mpRenderSaves(){
   const el = $('mpSaveList');
   if(!el) return;
   const roomFilter = MP.roomSaveName || MP.roomName;
   const saves = MP.saves.filter(s => {
-    if(/^[\[_]Auto[\]_ ]/i.test(s.name)) return false;
+    if(mpIsAutoSaveName(s.name)) return false;
     if(roomFilter) return s.name === roomFilter;
     return true;
   });

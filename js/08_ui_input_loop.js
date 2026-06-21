@@ -149,6 +149,7 @@ function closeInfoPanel(){
 }
 
 let trainConfigVehicle = null;
+let trainConfigSelectedWagonIndex = -1;
 
 function closeTrainPanel(){
   const p = $('trainPanel');
@@ -159,6 +160,7 @@ function closeTrainPanel(){
   }
   if(vehicleRouteMode?.step === 'train_order_append') vehicleRouteMode = null;
   trainConfigVehicle = null;
+  trainConfigSelectedWagonIndex = -1;
 }
 
 function trainDepotFlagButtonHtml(v, attrs=''){
@@ -207,25 +209,70 @@ function openTrainPanel(v){
     return;
   }
   trainConfigVehicle = v;
+  trainNormalizeWagons(v);
+  trainConfigSelectedWagonIndex = Math.min(Math.max(0, trainConfigSelectedWagonIndex), Math.max(0, (v.wagons?.length || 0) - 1));
   renderTrainPanel();
+}
+
+function syncTrainConfig(v){
+  trainNormalizeWagons(v);
+  if(v.res && trainWagonCapacityForRes(v, v.res) < v.cargo){ v.cargo = 0; v.res = null; }
+  if(MP.connected) netSend({
+    type:'configure_train',
+    id:v.id,
+    wagons:(v.wagons || []).map(w => ({ type:w.type, resource:w.resource || null })),
+  });
 }
 
 function renderTrainPanel(){
   const p = $('trainPanel');
   const v = trainConfigVehicle;
   if(!p || !v) return;
-  const wagons = Array.isArray(v.wagons) ? v.wagons : [];
+  if(v.vtype === 'train' && !v.name) assignTrainVehicleName(v);
+  const wagons = trainNormalizeWagons(v);
   const orders = Array.isArray(v.orders) ? v.orders.filter(b => b && !b.dead) : [];
   const flagState = trainDepotFlagState(v);
-  let h = '<div class="panel-head"><h3><span style="font-size:22px">🚂</span> Configurer le train</h3>'
+  const selectedWagon = wagons[trainConfigSelectedWagonIndex] || null;
+  const selectedWagonDef = selectedWagon ? trainWagonDef(selectedWagon) : null;
+  let h = '<div class="panel-head"><h3><span style="font-size:22px">🚂</span> '+escHtml(v.name || 'Configurer le train')+'</h3>'
     + '<button class="tbtn" id="tpClose" aria-label="Fermer">✕</button></div>';
   h += '<div class="row"><span>Présence</span><b>'+(trainPresentAtDepot(v) ? 'Dans le dépôt' : 'En ligne')+'</b></div>';
   if(flagState)
     h += '<div class="row"><span>Drapeau</span><b style="color:'+(flagState.armed ? '#7dda5a' : '#ff7474')+'">'+(flagState.armed ? 'Vert' : 'Rouge')+'</b></div>';
   h += '<div class="row"><span>Capacité totale</span><b>'+trainTotalCapacity(v)+'</b></div>';
+  h += '<div class="tp-section"><div class="tp-section-title">Composition</div>';
+  h += '<div style="display:flex;gap:8px;align-items:flex-end;overflow-x:auto;padding:6px 2px 8px">';
+  h += '<div style="min-width:72px;text-align:center"><div style="height:32px;border-radius:8px;background:#4f5c6f;border:2px solid #2f3640;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px">🚂</div><div style="font-size:11px;color:#8fa3bf;margin-top:4px">Loco</div></div>';
+  wagons.forEach((wagon, idx) => {
+    const def = trainWagonDef(wagon);
+    const selected = idx === trainConfigSelectedWagonIndex;
+    const res = trainWagonSelectedResource(wagon);
+    const resLabel = res ? ((RES[res]?.ic || '') + ' ' + (RES[res]?.n || res)) : 'Toutes';
+    h += '<button class="tbtn" data-train-wagon-pick="'+idx+'" style="width:auto;margin:0;min-width:88px;padding:4px 6px;'
+      + 'border:'+(selected ? '2px solid #ffe082' : '1px solid #36465e')+';background:#142031;display:flex;flex-direction:column;gap:4px">'
+      + '<div style="height:28px;border-radius:7px;background:'+def.color+';border:2px solid #2f3640;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px">'+def.icone+'</div>'
+      + '<div style="font-size:11px;font-weight:bold">'+escHtml(def.nom.replace(/^Wagon\s+/,'').replace(/^Wagon\s+/,''))+'</div>'
+      + '<div style="font-size:10px;color:'+(res ? '#ffe082' : '#8fa3bf')+'">'+escHtml(resLabel)+'</div>'
+      + '</button>';
+  });
+  h += '</div>';
+  if(selectedWagon && selectedWagonDef){
+    h += '<div style="margin-top:4px;padding:8px;border:1px solid #36465e;border-radius:8px;background:#142031">';
+    h += '<div style="font-size:12px;margin-bottom:6px"><b>'+selectedWagonDef.icone+' '+escHtml(selectedWagonDef.nom)+'</b> · capacité '+selectedWagonDef.capacite+'</div>';
+    h += '<div style="font-size:11px;color:#8fa3bf;margin-bottom:6px">Ressource acceptée par ce wagon</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:4px">';
+    h += '<button class="tbtn" data-train-wagon-resource="-1" style="width:auto;margin:0;'+(!trainWagonSelectedResource(selectedWagon) ? 'border-color:#ffe082;color:#ffe082' : '')+'">Toutes</button>';
+    for(const res of selectedWagonDef.resources){
+      const active = trainWagonSelectedResource(selectedWagon) === res;
+      h += '<button class="tbtn" data-train-wagon-resource="'+escHtml(res)+'" style="width:auto;margin:0;'+(active ? 'border-color:#ffe082;color:#ffe082' : '')+'">'
+        + (RES[res]?.ic || '')+' '+escHtml(RES[res]?.n || res)+'</button>';
+    }
+    h += '</div></div>';
+  }
+  h += '</div>';
   h += '<div class="tp-section"><div class="tp-section-title">Wagons</div><div class="tp-wagon-grid">';
   for(const [key, def] of Object.entries(TRAIN_WAGON_TYPES)){
-    const count = wagons.filter(k => k === key).length;
+    const count = wagons.filter(w => trainWagonTypeKey(w) === key).length;
     h += '<div class="tp-order"><div><div>'+def.icone+' <b>'+def.nom+'</b></div><div style="font-size:11px;color:#8fa3bf">'+def.resources.map(r => RES[r]?.ic || r).join(' ')+' · '+def.capacite+'</div></div>'
       + '<div class="tp-inline"><button class="tbtn" data-train-wagon-del="'+key+'" style="width:auto;margin:0">−</button><b>'+count+'</b><button class="tbtn" data-train-wagon-add="'+key+'" style="width:auto;margin:0">+</button></div></div>';
   }
@@ -259,19 +306,39 @@ function renderTrainPanel(){
   p.innerHTML = h;
   ensurePanelDragHandle('trainPanel');
   $('tpClose').onclick = () => closeTrainPanel();
+  p.querySelectorAll('[data-train-wagon-pick]').forEach(btn => btn.onclick = ()=>{
+    trainConfigSelectedWagonIndex = +btn.dataset.trainWagonPick;
+    renderTrainPanel();
+  });
+  p.querySelectorAll('[data-train-wagon-resource]').forEach(btn => btn.onclick = ()=>{
+    const idx = trainConfigSelectedWagonIndex;
+    const wagon = v.wagons?.[idx];
+    if(!wagon) return;
+    wagon.resource = btn.dataset.trainWagonResource === '-1' ? null : btn.dataset.trainWagonResource;
+    syncTrainConfig(v);
+    renderTrainPanel();
+    renderInfo();
+  });
   p.querySelectorAll('[data-train-wagon-add]').forEach(btn => btn.onclick = ()=>{
-    v.wagons = v.wagons || [];
-    v.wagons.push(btn.dataset.trainWagonAdd);
-    if(MP.connected) netSend({ type:'configure_train', id:v.id, wagons:v.wagons.slice() });
+    v.wagons = trainNormalizeWagons(v);
+    const wagon = trainCreateWagon(btn.dataset.trainWagonAdd);
+    if(!wagon) return;
+    v.wagons.push(wagon);
+    trainConfigSelectedWagonIndex = v.wagons.length - 1;
+    syncTrainConfig(v);
     renderTrainPanel();
     renderInfo();
   });
   p.querySelectorAll('[data-train-wagon-del]').forEach(btn => btn.onclick = ()=>{
     const key = btn.dataset.trainWagonDel;
-    const idx = (v.wagons || []).lastIndexOf(key);
+    v.wagons = trainNormalizeWagons(v);
+    let idx = -1;
+    for(let i = v.wagons.length - 1; i >= 0; i--){
+      if(trainWagonTypeKey(v.wagons[i]) === key){ idx = i; break; }
+    }
     if(idx >= 0) v.wagons.splice(idx, 1);
-    if(v.res && trainWagonCapacityForRes(v, v.res) < v.cargo){ v.cargo = 0; v.res = null; }
-    if(MP.connected) netSend({ type:'configure_train', id:v.id, wagons:v.wagons.slice() });
+    trainConfigSelectedWagonIndex = Math.min(trainConfigSelectedWagonIndex, Math.max(0, v.wagons.length - 1));
+    syncTrainConfig(v);
     renderTrainPanel();
     renderInfo();
   });
@@ -372,6 +439,19 @@ function statusOf(b){
     if(cur < max) return 'En remplissage : '+cur+' / '+max+' passagers';
     return 'Complet : '+max+' passager'+(max>1?'s':'')+' en attente';
   }
+  if(isTrainStationPiece(b)){
+    const main = b.type === 'train_station' ? b
+      : buildings.find(o => !o.dead && o.type === 'train_station' && o.stationGroupId === b.stationGroupId) || b;
+    const depot = trainStationLinkedDepot(b);
+    const pE = Math.floor(main.passengersEntrant || 0);
+    const pEMax = main.passengersEntrantMax || 0;
+    const pS = Math.floor(main.passagersSortant || 0);
+    const parts = [];
+    if(pEMax > 0) parts.push('↑ '+pE+'/'+pEMax);
+    if(pS > 0) parts.push('↓ '+pS);
+    const pasStr = parts.length ? 'Passagers : '+parts.join(' · ') : 'Gare ferroviaire';
+    return pasStr + (depot ? ' · Entrepôt lié' : '');
+  }
   if(b.type === 'plant') return 'Usine abandonnée — choisir une spécialisation';
   if(b.type === 'bakery' && !tankNear(b)) return '⚠️ Aucune citerne proche pour recevoir l’eau';
   if(b.paused) return 'En pause — ouvriers libérés';
@@ -445,6 +525,7 @@ function renderInfo(){
     else {
       const veh = selectedVehicle;
       const vt = VEHICLE_TYPES[veh.vtype];
+      if(veh.vtype === 'train' && !veh.name) assignTrainVehicleName(veh);
       let stateLabel = { idle:'En attente 💤', to_source:'Vers source 🔵', to_dest:'Vers destination 🟠', returning:'Retour au dépôt 🏪' }[veh.state] || veh.state;
       if(veh.vtype === 'train' && trainPresentAtDepot(veh) && (veh.orders?.length || 0) >= 2)
         stateLabel = trainDepotDepartureArmed(veh) ? 'Départ autorisé 🚩' : 'À l’arrêt au dépôt 🟥';
@@ -458,13 +539,17 @@ function renderInfo(){
       const cargoStr = isBusVeh
         ? (veh.cargo > 0 ? veh.cargo+' passager(s)' : 'Vide')
         : (veh.cargo > 0 ? veh.cargo+' '+(veh.res ? RES[veh.res].n : '') : 'Vide');
+      const passengerStr = veh.vtype === 'train' && (veh.passengersOnBoard ?? 0) > 0
+        ? veh.passengersOnBoard+' voyageur(s) 🚃' : null;
       const orderSummary = veh.vtype === 'train' && veh.orders?.length
         ? veh.orders.map(b => trainStopLabel(b)).join(' → ')
         : null;
       const trainFlagState = veh.vtype === 'train' ? trainDepotFlagState(veh) : null;
-      let h = '<h3><span style="font-size:22px">'+vt.icone+'</span> '+vt.nom+'<span style="margin-left:auto"></span><button class="tbtn" id="infoCloseBtn" aria-label="Fermer" style="width:auto;margin:0;padding:2px 8px">✕</button></h3>';
+      const vehLabel = veh.vtype === 'train' ? (veh.name || 'Train') : vt.nom;
+      let h = '<h3><span style="font-size:22px">'+vt.icone+'</span> '+escHtml(vehLabel)+'<span style="margin-left:auto"></span><button class="tbtn" id="infoCloseBtn" aria-label="Fermer" style="width:auto;margin:0;padding:2px 8px">✕</button></h3>';
       h += '<div class="status">'+stateLabel+'</div>';
       h += '<div class="row"><span>Cargaison</span><b>'+cargoStr+'</b></div>';
+      if(passengerStr) h += '<div class="row"><span>Voyageurs</span><b style="color:#c8e040">'+passengerStr+'</b></div>';
       h += '<div class="row"><span>Source</span><b style="color:#4dd9ff">'+srcNameDisplay+'</b></div>';
       h += '<div class="row"><span>Destination</span><b style="color:#ffaa44">'+dstNameDisplay+'</b></div>';
       if(trainFlagState)
@@ -500,7 +585,7 @@ function renderInfo(){
         vehicleRouteMode = { vehicle:veh, step:'source' };
         setTool('select');
         if(veh.vtype === 'bus')
-          toast('🚌 Clique sur l\'arrêt de bus de départ pour '+vt.nom+'.');
+          toast('🚌 Clique sur l\'arrêt de bus ou la gare de départ pour '+vt.nom+'.');
         else if(veh.vtype === 'train')
           toast('🚂 Clique sur la gare ou le dépôt ferroviaire de départ pour '+vt.nom+'.');
         else
@@ -563,6 +648,46 @@ function renderInfo(){
     const platformTracks = [...platformTrackLengths.values()].filter(length => length === stationTiles).length;
     h += '<div style="margin-top:6px;color:#b9c8dc">Longueur '+stationTiles
       +' · Nombre de quai '+platformTracks+'</div>';
+    const mainStation = b.type === 'train_station' ? b
+      : stationPieces.find(p => p.type === 'train_station') || b;
+    if(mainStation.passengersEntrant != null){
+      const pE = Math.floor(mainStation.passengersEntrant || 0);
+      const pEMax = mainStation.passengersEntrantMax || 0;
+      const pS = Math.floor(mainStation.passagersSortant || 0);
+      h += '<div class="row"><span>Passagers entrants</span><b style="color:#c8e040">🚶 '+pE+(pEMax>0?' / '+pEMax:'')+'</b></div>';
+      h += '<div class="row"><span>Passagers sortants</span><b style="color:#9fd4f0">🚶 '+pS+'</b></div>';
+      h += '<div class="row"><span>Rayon</span><b>'+TRAIN_STATION_RADIUS+' cases</b></div>';
+      h += '<div class="row"><span>Tarif</span><b style="color:#ffe9a0">'+TRAIN_FARE_FACTOR+' $/passager/case</b></div>';
+    }
+    const linkedDepot = trainStationLinkedDepot(b);
+    if(linkedDepot){
+      const isOwner = !linkedDepot.owner || linkedDepot.owner === (MP.myId ?? null);
+      const depotRadius = depotRadiusOf(linkedDepot);
+      h += '<div style="margin-top:10px;color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">📦 Entrepôt fusionné</div>';
+      h += '<div style="color:#8fa3bf;font-size:10px;margin-bottom:6px">Rayon d\'action : <b style="color:#ffd700">'+depotRadius+' cases</b></div>';
+      if(isOwner){
+        h += '<div class="depot-cols-3">';
+        for(const k in RES){
+          if(k === 'water') continue;
+          const on = linkedDepot.allow?.[k] !== false;
+          const val = linkedDepot.storage[k]||0, cap = capOf(linkedDepot,k);
+          const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
+          h += '<div class="depot-res-item'+(on?' on':'')+'" style="cursor:pointer;flex-direction:column;align-items:stretch;padding:5px 7px" data-station-depot-toggle-res="'+k+'">'
+             + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
+             + '<span class="dot" style="background:'+RES[k].c+'"></span>'
+             + '<span style="flex:1;font-size:11px;'+(on?'':'opacity:.4')+'">'+RES[k].n+'</span>'
+             + (on ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '<span style="font-size:10px;color:#555">off</span>')
+             + '</div>'
+             + (on && cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px"></i></div>' : '')
+             + '</div>';
+        }
+        h += '</div>';
+      } else {
+        h += '<div style="color:#8fa3bf;font-size:12px;font-style:italic">Appartient à un autre joueur.</div>';
+      }
+    } else {
+      h += '<div style="margin-top:8px;color:#8fa3bf;font-size:11px;font-style:italic">Aucun entrepôt adjacent — les trains ne peuvent pas charger de ressources.</div>';
+    }
   }
   if(b.type === 'train_depot' || isTrainStationPiece(b)){
     if(!adjRailTiles(b).length)
@@ -794,7 +919,7 @@ function renderInfo(){
       const isBusRM = rmVeh?.vtype === 'bus';
       if(isBusRM){
         h += '<div class="warn" style="background:#0e1e30;border-color:#3a6f9c;color:#7dd8ff">'
-           + (step==='source' ? '🚌 Clique sur l\'ARRÊT DE BUS de départ' : '🚌 Clique sur l\'ARRÊT DE BUS de destination')
+           + (step==='source' ? '🚌 Clique sur l\'ARRÊT DE BUS ou la GARE de départ' : '🚌 Clique sur l\'ARRÊT DE BUS ou la GARE de destination')
            + '</div>';
       } else if(rmVeh?.vtype === 'train'){
         h += '<div class="warn" style="background:#241b12;border-color:#8b6a3b;color:#f0d29a">'
@@ -811,6 +936,7 @@ function renderInfo(){
       for(const v of shownVehicles){
         const vt = VEHICLE_TYPES[v.vtype];
         if(!vt) continue;
+        if(v.vtype === 'train' && !v.name) assignTrainVehicleName(v);
         const srcName = v.source && !v.source.dead ? trainStopLabel(v.source) : '—';
         const dstName = v.dest   && !v.dest.dead   ? trainStopLabel(v.dest)  : '—';
         let resSel = '';
@@ -823,8 +949,9 @@ function renderInfo(){
         }
         const canStart = v.vtype === 'train' && (v.orders?.length || 0) >= 2;
         const trainFlag = canStart ? trainDepotFlagButtonHtml(v) : '';
+        const vehName = v.vtype === 'train' ? (v.name || 'Train') : vt.nom;
         h += '<div style="padding:5px 0;border-bottom:1px solid #2a3a50">'
-           + '<div>'+vt.icone+' <b>'+vt.nom+'</b></div>'
+           + '<div>'+vt.icone+' <b>'+escHtml(vehName)+'</b></div>'
            + '<div style="font-size:11px;color:#8fa3bf" data-v-state="'+v.id+'"></div>'
            + '<div style="font-size:11px;color:#8fa3bf">'+srcName+' → '+dstName+'</div>'
            + resSel
@@ -905,6 +1032,14 @@ function renderInfo(){
       toast('🏭 Usine créée : '+targetDef.n, 'win');
     };
   });
+  p.querySelectorAll('[data-station-depot-toggle-res]').forEach(el=>{
+    el.onclick = ()=>{
+      const depot = isTrainStationPiece(b) ? trainStationLinkedDepot(b) : null;
+      if(!depot || !depot.allow) return;
+      depot.allow[el.dataset.stationDepotToggleRes] = depot.allow[el.dataset.stationDepotToggleRes] === false ? undefined : false;
+      p._html = null;
+    };
+  });
   p.querySelectorAll('[data-toggle-res]').forEach(el=>{
     el.onclick = ()=>{
       if(!b.allow) b.allow = {};
@@ -952,7 +1087,7 @@ function renderInfo(){
         vehicleRouteMode = { vehicle:v, step:'source' };
         setTool('select');
         if(v.vtype === 'bus')
-          toast('🚌 Clique sur l\'arrêt de bus de départ pour '+VEHICLE_TYPES[v.vtype].nom+'.');
+          toast('🚌 Clique sur l\'arrêt de bus ou la gare de départ pour '+VEHICLE_TYPES[v.vtype].nom+'.');
         else if(v.vtype === 'train')
           toast('🚂 Clique sur la gare ou le dépôt ferroviaire de départ pour '+VEHICLE_TYPES[v.vtype].nom+'.');
         else

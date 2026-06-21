@@ -40,7 +40,7 @@ const ECO = {
 // ---------- constantes ----------
 let N = 64;              // taille de la carte (tuiles)
 const TILE = 36;         // taille d'une tuile en px monde (simulation)
-const TW = 64, TH = 32;  // taille d'une tuile iso à l'écran
+const TW = 64, TH = 36;  // taille d'une tuile iso à l'écran (36 pour perspective correcte)
 const TW2 = TW/2, TH2 = TH/2;
 const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4, WHEAT:5, COTTON:6 };
 const DIRS  = [[1,0],[-1,0],[0,1],[0,-1]];
@@ -112,10 +112,13 @@ const BUS_FARE_FACTOR      = CFG.logistique?.arretBus?.tarif         ?? 1;
 const BUS_INTRA_CITY_DIV   = CFG.logistique?.arretBus?.diviseurIntra ?? 3;
 const BUS_DWELL_TIME       = (CFG.logistique?.arretBus?.tempsArret      ?? 2) / (CFG.jeu?.heuresParSeconde ?? 1); // gtime-s d'arrêt bus à quai
 const VEHICLE_DWELL_TIME   = (CFG.logistique?.garage?.tempsArret         ?? 2) / (CFG.jeu?.heuresParSeconde ?? 1); // gtime-s d'arrêt véhicule chargement/déchargement
-const BUS_STOP_FILL_TIME   = CFG.logistique?.arretBus?.tempsRemplissage ?? 6; // gtime-s de rush pour remplir (6 = 1 journée de pointe)
+const BUS_STOP_FILL_TIME   = CFG.logistique?.arretBus?.tempsRemplissage ?? 30; // gtime-s de rush pour remplir
 const BUS_OWNER_SHARE      = CFG.logistique?.arretBus?.partProprietaire     ?? 0.8;
-const TRAIN_DWELL_TIME     = (CFG.logistique?.train?.tempsArret ?? 2.5) / (CFG.jeu?.heuresParSeconde ?? 1);
+const TRAIN_DWELL_TIME        = (CFG.logistique?.train?.tempsArret ?? 2.5) / (CFG.jeu?.heuresParSeconde ?? 1);
 const TRAIN_STATION_STOP_TIME = CFG.logistique?.train?.tempsArretGareSecondes ?? 5;
+const TRAIN_STATION_RADIUS    = CFG.logistique?.gare?.rayon               ?? 12;
+const TRAIN_STATION_FILL_TIME = CFG.logistique?.gare?.tempsRemplissage    ?? 8;
+const TRAIN_FARE_FACTOR       = CFG.logistique?.gare?.tarif               ?? 2;
 
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
@@ -169,30 +172,86 @@ const TRAIN_WAGON_TYPES = {
   plateau:       { nom:'Wagon plateau',       icone:'🪵', resources:['wood','steel'],             capacite:18, color:'#7a4928' },
   frigo:         { nom:'Wagon frigorifique',  icone:'🐟', resources:['fish','fish_fillet'],       capacite:18, color:'#5ea8c4' },
   citerne:       { nom:'Wagon citerne',       icone:'💧', resources:['water','fish_oil'],         capacite:22, color:'#7a8c9e' },
+  voiture:       { nom:'Voiture voyageurs',   icone:'🚃', resources:[],                           capacite:40, color:'#c8e040', passenger:true },
 };
+
+function trainWagonTypeKey(wagon){
+  if(typeof wagon === 'string') return wagon;
+  if(wagon && typeof wagon.type === 'string') return wagon.type;
+  return null;
+}
+
+function trainWagonDef(wagon){
+  const key = trainWagonTypeKey(wagon);
+  return key ? (TRAIN_WAGON_TYPES[key] || null) : null;
+}
+
+function trainWagonSelectedResource(wagon){
+  return wagon && typeof wagon === 'object' && typeof wagon.resource === 'string' ? wagon.resource : null;
+}
+
+function trainWagonAcceptedResources(wagon){
+  const def = trainWagonDef(wagon);
+  if(!def) return [];
+  const selected = trainWagonSelectedResource(wagon);
+  return selected && def.resources.includes(selected) ? [selected] : def.resources.slice();
+}
+
+function trainCreateWagon(type, resource=null){
+  const def = TRAIN_WAGON_TYPES[type];
+  if(!def) return null;
+  return {
+    type,
+    resource: resource && def.resources.includes(resource) ? resource : null,
+  };
+}
+
+function trainNormalizeWagons(v){
+  if(v?.vtype !== 'train'){
+    return Array.isArray(v?.wagons) ? v.wagons : [];
+  }
+  if(!Array.isArray(v.wagons)) v.wagons = [];
+  v.wagons = v.wagons
+    .map(w => {
+      if(typeof w === 'string') return trainCreateWagon(w);
+      if(w && typeof w === 'object' && typeof w.type === 'string') return trainCreateWagon(w.type, w.resource || null);
+      return null;
+    })
+    .filter(Boolean);
+  return v.wagons;
+}
 
 function trainWagonCapacityForRes(v, res){
   if(v?.vtype !== 'train') return VEHICLE_TYPES[v?.vtype]?.capacite || 0;
-  const wagons = Array.isArray(v?.wagons) ? v.wagons : [];
-  return wagons.reduce((sum, key) => {
-    const w = TRAIN_WAGON_TYPES[key];
-    return sum + (w && w.resources.includes(res) ? w.capacite : 0);
+  const wagons = trainNormalizeWagons(v);
+  return wagons.reduce((sum, wagon) => {
+    const w = trainWagonDef(wagon);
+    return sum + (w && trainWagonAcceptedResources(wagon).includes(res) ? w.capacite : 0);
   }, 0);
 }
 
 function trainTotalCapacity(v){
   if(v?.vtype !== 'train') return VEHICLE_TYPES[v?.vtype]?.capacite || 0;
-  const wagons = Array.isArray(v?.wagons) ? v.wagons : [];
-  return wagons.reduce((sum, key) => sum + (TRAIN_WAGON_TYPES[key]?.capacite || 0), 0);
+  const wagons = trainNormalizeWagons(v);
+  return wagons.reduce((sum, wagon) => sum + (trainWagonDef(wagon)?.capacite || 0), 0);
 }
 
 function trainAllowedResources(v){
   if(v?.vtype !== 'train') return VEHICLE_TYPES[v?.vtype]?.resources || [];
   const out = new Set();
-  for(const key of (Array.isArray(v?.wagons) ? v.wagons : [])){
-    for(const r of (TRAIN_WAGON_TYPES[key]?.resources || [])) out.add(r);
+  for(const wagon of trainNormalizeWagons(v)){
+    for(const r of trainWagonAcceptedResources(wagon)) out.add(r);
   }
   return [...out];
+}
+
+function trainPassengerCapacity(v){
+  if(v?.vtype !== 'train') return 0;
+  const wagons = trainNormalizeWagons(v);
+  return wagons.reduce((sum, wagon) => {
+    const w = trainWagonDef(wagon);
+    return sum + (w?.passenger ? w.capacite : 0);
+  }, 0);
 }
 
 function trainPresentAtDepot(v){
@@ -520,7 +579,7 @@ const BUILD = {
   house:   { n:'Maison',    ic:'🏠', hk:'6', cost: CFG.batiments?.maison?.cout    ?? 100,
              col:'#9a7e5f', hgt:18, desc:'' },
   depot:   { n:'Entrepôt',        ic:'📦', hk:'7', cost: CFG.batiments?.entrepot?.cout  ?? 400,
-             col:'#7a7048', hgt:22, storageHub:true,
+             col:'#7a7048', hgt:12, storageHub:true,
              desc:'Stocke et redistribue. Cliquer dessus pour choisir les ressources acceptées.' },
   market:  { n:'Marché',          ic:'🏬', hk:'M', cost: CFG.batiments?.marche?.cout    ?? 600,
              col:'#7a5a30', hgt:20, storageHub:true,
@@ -828,6 +887,24 @@ function assignTrainDepotName(b){
   let name = baseName, suffix = 2;
   while(used.has(name)) name = baseName + ' ' + (suffix++);
   b.name = name;
+}
+
+function assignTrainVehicleName(v){
+  if(!v || v.dead || v.vtype !== 'train' || v.name) return;
+  const depot = v.garageRef || null;
+  const cx = depot ? (depot.x + (depot.w || 1) / 2) : 0;
+  const cy = depot ? (depot.y + (depot.h || 1) / 2) : 0;
+  const town = nearestTownToPoint(cx, cy);
+  const baseTownName = depot?.name || (town ? town.name : generateTownName(Math.round(cx), Math.round(cy)));
+  const baseName = 'Train ' + baseTownName;
+  const used = new Set(
+    vehicles
+      .filter(o => o && o !== v && o.vtype === 'train' && o.name)
+      .map(o => o.name)
+  );
+  let name = baseName, suffix = 2;
+  while(used.has(name)) name = baseName + ' ' + (suffix++);
+  v.name = name;
 }
 
 function getTownOf(b){

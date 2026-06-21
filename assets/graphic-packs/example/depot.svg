@@ -1,8 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="96" height="80" viewBox="0 0 96 80">
-  <ellipse cx="48" cy="66" rx="34" ry="10" fill="rgba(0,0,0,.24)"/>
-  <polygon points="16,50 48,30 82,50 49,69" fill="#8b784e"/>
-  <polygon points="16,50 49,69 49,77 16,58" fill="#65583d"/>
-  <polygon points="82,50 49,69 49,77 82,58" fill="#514632"/>
-  <polygon points="30,49 48,39 66,49 48,59" fill="#c89d54"/>
-  <path d="M36 54 L48 61 L60 54" fill="none" stroke="#3e3324" stroke-width="3"/>
+  <!-- Shadow -->
+  <ellipse cx="48" cy="78" rx="26" ry="5" fill="rgba(0,0,0,.22)"/>
+  <!-- Left face (darkest) -->
+  <polygon points="0,56 48,80 48,62 0,38" fill="#514632"/>
+  <!-- Right face (medium dark) -->
+  <polygon points="96,56 48,80 48,62 96,38" fill="#65583d"/>
+  <!-- Top face (lightest) -->
+  <polygon points="48,14 96,38 48,62 0,38" fill="#8b784e"/>
+  <!-- Door/opening detail -->
+  <polygon points="34,52 48,60 62,52 48,44" fill="#c89d54"/>
+  <!-- Cross lines on door -->
+  <path d="M40 56 L48 60 L56 56" fill="none" stroke="#3e3324" stroke-width="2"/>
 </svg>

@@ -43,7 +43,7 @@
       }
     },
     "plant": { "src": "plant.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.2 },
-    "depot": { "src": "depot.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 },
+    "depot": { "src": "depot.svg", "fit": true, "anchorX": 0.5, "anchorY": 1, "scale": 1.0 },
     "tank": { "src": "tank.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 },
     "garage": { "src": "garage.svg", "anchorX": 0.5, "anchorY": 1, "scale": 1.35 }
   }

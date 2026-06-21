@@ -311,6 +311,48 @@ function trainStationGroupLength(groupId, type){
   return buildings.filter(b => isTrainStationPiece(b) && b.stationGroupId === groupId && (!type || b.type === type)).length;
 }
 
+function trainStationGroupRepresentative(groupId){
+  if(groupId == null) return null;
+  return buildings.find(b => isTrainStationPiece(b) && b.stationGroupId === groupId && b.type === 'train_station')
+    || buildings.find(b => isTrainStationPiece(b) && b.stationGroupId === groupId)
+    || null;
+}
+
+function trainStationLinkedRepresentative(b){
+  if(!b || b.dead) return null;
+  if(isTrainStationPiece(b)) return trainStationGroupRepresentative(b.stationGroupId) || b;
+  if(b.type !== 'bus_stop' && b.type !== 'depot') return null;
+  let best = null;
+  for(const other of buildings){
+    if(!isTrainStationPiece(other)) continue;
+    if(buildingEdgeGap(b, other) > 0) continue;
+    const rep = trainStationGroupRepresentative(other.stationGroupId) || other;
+    if(!best || (rep.stationGroupId ?? Infinity) < (best.stationGroupId ?? Infinity)) best = rep;
+  }
+  return best;
+}
+
+function trainStationLinkedDepot(b){
+  if(!b || b.dead || b.stationGroupId == null) return null;
+  const pieces = trainStationGroupPieces(b.stationGroupId);
+  for(const piece of pieces){
+    for(const other of buildings){
+      if(!other.dead && isStorageDepot(other) && buildingEdgeGap(piece, other) === 0) return other;
+    }
+  }
+  return null;
+}
+
+function trainStationSelectionRepresentative(b){
+  return trainStationLinkedRepresentative(b) || b || null;
+}
+
+function trainStationSelectionMatches(a, b){
+  const ra = trainStationSelectionRepresentative(a);
+  const rb = trainStationSelectionRepresentative(b);
+  return !!(ra && rb && isTrainStationPiece(ra) && isTrainStationPiece(rb) && ra.stationGroupId === rb.stationGroupId);
+}
+
 function mergeTrainStationGroups(groups, targetGroupId){
   for(const b of buildings)
     if(isTrainStationPiece(b) && groups.includes(b.stationGroupId)) b.stationGroupId = targetGroupId;
@@ -499,7 +541,7 @@ function clickAt(x,y){
       const isBus = veh.vtype === 'bus';
       if(!vehicleRouteEndpointOk(b)){
         if(isBus)
-          toast('⛔ Le bus ne peut utiliser que des arrêts de bus comme source et destination.','err');
+          toast('⛔ Le bus ne peut utiliser que des arrêts de bus ou des gares comme source et destination.','err');
         else if(veh.vtype === 'train')
           toast('⛔ Le train ne peut utiliser que des gares ou des dépôts ferroviaires.','err');
         else
@@ -580,7 +622,7 @@ function clickAt(x,y){
       }
     }
     selectedVehicle = null;
-    selected = bgrid[i];
+    selected = trainStationSelectionRepresentative(bgrid[i]);
     return;
   }
   if(tool==='bulldoze'){

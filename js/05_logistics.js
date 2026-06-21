@@ -1248,7 +1248,7 @@ function removePersistentVehicle(v){
 
 function vehicleRouteEndpointOk(b, vtype_override){
   const vt = vtype_override || vehicleRouteMode?.vehicle?.vtype;
-  if(vt === 'bus') return b?.type === 'bus_stop';
+  if(vt === 'bus') return b?.type === 'bus_stop' || b?.type === 'train_station' || b?.type === 'train_platform';
   if(vt === 'train') return b?.type === 'train_depot' || isTrainStationPiece(b);
   return isStorageHub(b);
 }
@@ -1480,9 +1480,11 @@ function updateVehicles(dt){
             v.cargo = 0;
           }
           // Charger les passagers aller depuis l'arrêt source
-          const available = Math.floor(v.source.passengers || 0);
+          const srcIsStation = v.source.type === 'train_station' || v.source.type === 'train_platform';
+          const available = Math.floor(srcIsStation ? (v.source.passagersSortant || 0) : (v.source.passengers || 0));
           const take = Math.min(vt.capacite, available);
-          v.source.passengers = Math.max(0, (v.source.passengers || 0) - take);
+          if(srcIsStation) v.source.passagersSortant = Math.max(0, (v.source.passagersSortant || 0) - take);
+          else v.source.passengers = Math.max(0, (v.source.passengers || 0) - take);
           v.cargo = take;
           v.res = null;
           const pts = findRoadPath(v.source, v.dest);
@@ -1555,9 +1557,14 @@ function updateVehicles(dt){
             v.cargo = 0;
           }
           // Charger les passagers retour depuis l'arrêt de destination
-          const available = Math.floor(v.dest.passengers || 0);
+          const destIsStation = v.dest.type === 'train_station' || v.dest.type === 'train_platform';
+          const destMainStation = destIsStation
+            ? (v.dest.type === 'train_station' ? v.dest : buildings.find(b => !b.dead && b.type === 'train_station' && b.stationGroupId === v.dest.stationGroupId))
+            : null;
+          const available = Math.floor(destMainStation ? (destMainStation.passagersSortant || 0) : (v.dest.passengers || 0));
           const take = Math.min(vt.capacite, available);
-          v.dest.passengers = Math.max(0, (v.dest.passengers || 0) - take);
+          if(destMainStation) destMainStation.passagersSortant = Math.max(0, (destMainStation.passagersSortant || 0) - take);
+          else v.dest.passengers = Math.max(0, (v.dest.passengers || 0) - take);
           v.cargo = take;
           const pts = findRoadPath(v.dest, v.source);
           if(!pts){ v.waitTimer = 5; continue; }

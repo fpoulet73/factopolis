@@ -259,6 +259,36 @@ function update(dt){
       b.passengers = Math.min(max, (b.passengers || 0) + rate * capped);
     }
   }
+
+  // Gares : génération de passagers entrants depuis la population locale
+  for(const b of buildings){
+    if(b.dead || b.type !== 'train_station') continue;
+    if(b.passengersEntrant == null){ b.passengersEntrant = 0; b.passengersEntrantMax = 0; b.passagersSortant = 0; }
+    if(updateBusMax){
+      const cx = b.x + 0.5, cy = b.y + 0.5;
+      let pop = 0;
+      for(const o of buildings){
+        if(o.dead || !BUILD[o.type]?.resid) continue;
+        const dx = Math.abs((o.x + o.w/2) - cx);
+        const dy = Math.abs((o.y + o.h/2) - cy);
+        if(Math.max(dx, dy) <= TRAIN_STATION_RADIUS) pop += o.pop || 0;
+      }
+      b.passengersEntrantMax = pop;
+      if((b.passengersEntrant || 0) > pop) b.passengersEntrant = pop;
+    }
+    if(!busRushHour) continue;
+    const max = b.passengersEntrantMax || 0;
+    if(max > 0 && (b.passengersEntrant || 0) < max){
+      const rate = max / TRAIN_STATION_FILL_TIME;
+      const capped = Math.min(dt, 0.5);
+      b.passengersEntrant = Math.min(max, (b.passengersEntrant || 0) + rate * capped);
+    }
+    // Les passagers sortants quittent progressivement la gare (se dispersent en ville)
+    if((b.passagersSortant || 0) > 0){
+      const disperse = Math.min(b.passagersSortant, (b.passagersSortant / TRAIN_STATION_FILL_TIME) * Math.min(dt, 0.5));
+      b.passagersSortant = Math.max(0, b.passagersSortant - disperse);
+    }
+  }
 }
 
 // un rectangle w×h entièrement couvert de logements pleins strictement plus

@@ -13,6 +13,7 @@ function newBuilding(type,x,y,w,h){
   }
   if(type==='garage' || d?.transportDepot) b.vehicles = [];
   if(type==='bus_stop'){ b.passengers = 0; b.passengersMax = 0; }
+  if(type==='train_station'){ b.passengersEntrant = 0; b.passengersEntrantMax = 0; b.passagersSortant = 0; }
   if(d.ind) b.paused = false;
   if(d.resid){ b.pop = 0; b.protectedPop = 0; b.ct = 0; b.bonusCt = 0; b.pending = 0; b.pendingProtected = 0; b.starve = 0; }
   return b;
