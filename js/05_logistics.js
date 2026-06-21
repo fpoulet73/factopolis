@@ -470,9 +470,14 @@ function railEdgeAllowsDirection(x, y, def){
 
 function railEdgePassableForPath(x, y, def, vehicle=null){
   const signals = railEdgeSignalState(x, y, def);
-  // The signal stored on the destination tile faces this movement. Its back
-  // remains unregulated, while a red face blocks entry into its tile-side block.
-  if(!signals.opposite) return true;
+  // Sens ferroviaire :
+  // - signal sur la face d'arrivée => mouvement autorisé dans ce sens
+  // - signal uniquement sur la face de départ => sens inverse uniquement
+  // - aucun signal sur l'arête => bidirectionnel
+  if(!signals.opposite){
+    if(signals.own) return false;
+    return true;
+  }
   const nx = x + def.dx, ny = y + def.dy;
   if(!inMap(nx, ny)) return false;
   const curBlock = railBlocks?.blockByTile?.[y * N + x] ?? -1;
@@ -484,12 +489,105 @@ function railEdgePassableForPath(x, y, def, vehicle=null){
   return occupied <= 0;
 }
 
+function railEdgeDirectionAllowedForPath(x, y, def){
+  const signals = railEdgeSignalState(x, y, def);
+  // Vérification statique uniquement :
+  // - respecte le sens imposé par les signaux
+  // - ignore l'occupation momentanée des cantons, qui relève du mouvement
+  //   et non du calcul global d'itinéraire
+  if(!signals.opposite){
+    if(signals.own) return false;
+    return true;
+  }
+  const nx = x + def.dx, ny = y + def.dy;
+  if(!inMap(nx, ny)) return false;
+  return true;
+}
+
+function railNextSignalAllowsDirection(x, y, def){
+  const startX = x + def.dx, startY = y + def.dy;
+  if(!inMap(startX, startY)) return false;
+  const firstState = railEdgeSignalState(x, y, def);
+  if(firstState.own || firstState.opposite){
+    return !!(firstState.opposite && railSignalAspect(firstState.opposite));
+  }
+
+  // Cherche le premier feu rencontré après cette sortie, même si une autre
+  // bifurcation se trouve avant lui. La recherche avance par distance : un
+  // feu plus éloigné ne peut donc pas masquer un feu rouge plus proche.
+  const q = [{ x:startX, y:startY, incoming:def.opposite, distance:0 }];
+  const seen = new Set([startX + ',' + startY + ',' + def.opposite]);
+  let signalDistance = Infinity;
+  let foundSignal = false;
+  for(let qi = 0; qi < q.length; qi++){
+    const cur = q[qi];
+    if(cur.distance > signalDistance) break;
+    for(const forward of railConnectedDefsAt(cur.x, cur.y)){
+      if(forward.bit === RAIL_DIRS[cur.incoming]?.bit) continue;
+      const nx = cur.x + forward.dx, ny = cur.y + forward.dy;
+      if(!inMap(nx, ny)) continue;
+      const ni = ny * N + nx;
+      if(!rail[ni] || !(rail[ni] & RAIL_DIRS[forward.opposite].bit)) continue;
+      const state = railEdgeSignalState(cur.x, cur.y, forward);
+      if(state.own || state.opposite){
+        foundSignal = true;
+        signalDistance = cur.distance;
+        if(state.opposite && railSignalAspect(state.opposite)) return true;
+        continue;
+      }
+      if(cur.distance >= signalDistance) continue;
+      const key = nx + ',' + ny + ',' + forward.opposite;
+      if(seen.has(key)) continue;
+      seen.add(key);
+      q.push({ x:nx, y:ny, incoming:forward.opposite, distance:cur.distance + 1 });
+    }
+  }
+  // Sans feu en aval, la voie reste utilisable. Si le premier niveau de feux
+  // trouvé ne contient aucun vert, cette sortie d'embranchement est refusée.
+  return !foundSignal;
+}
+
+function trainAtRailJunction(v){
+  if(!v?.pathTiles?.length || v.t > 1e-6) return false;
+  const cur = v.pathTiles[v.seg] ?? -1;
+  if(cur < 0) return false;
+  const previous = v.seg > 0 ? (v.pathTiles[v.seg - 1] ?? -1) : -1;
+  const x = cur % N, y = (cur / N) | 0;
+  let exits = 0;
+  for(const def of railConnectedDefsAt(x, y)){
+    const nx = x + def.dx, ny = y + def.dy;
+    if(!inMap(nx, ny) || ny * N + nx === previous) continue;
+    const ni = ny * N + nx;
+    if(!rail[ni] || !(rail[ni] & RAIL_DIRS[def.opposite].bit)) continue;
+    if(!railEdgeDirectionAllowedForPath(x, y, def)) continue;
+    exits++;
+  }
+  return exits > 1;
+}
+
+function trainTargetTileAvailable(tile, vehicle=null){
+  const blockId = railBlocks?.blockByTile?.[tile] ?? -1;
+  if(blockId < 0) return true;
+  const ownBlock = vehicle?.currentRailBlock ?? -1;
+  if(blockId !== ownBlock && (railBlockOccupancy?.[blockId] ?? 0) > 0) return false;
+
+  // Un itinéraire déjà calculé réserve son canton de quai.
+  // On respecte la réservation de tous les autres trains, quel que soit leur identifiant,
+  // car la priorité se détermine par l'ordre de traitement dans la boucle de jeu.
+  for(const other of vehicles){
+    if(other === vehicle || other.vtype !== 'train' || other.state === 'idle') continue;
+    const endTile = other.pathTiles?.length ? other.pathTiles[other.pathTiles.length - 1] : -1;
+    if(endTile >= 0 && (railBlocks?.blockByTile?.[endTile] ?? -1) === blockId) return false;
+  }
+  return true;
+}
+
 function railReachableExits(tile, vehicle=null){
   if(tile == null || tile < 0 || !rail[tile]) return 0;
   const x = tile % N, y = (tile / N) | 0;
   let n = 0;
   for(const def of RAIL_DIRS){
-    if(!(rail[tile] & def.bit) || !railEdgePassableForPath(x, y, def, vehicle)) continue;
+    if(!(rail[tile] & def.bit) || !railEdgePassableForPath(x, y, def, vehicle) || !railNextSignalAllowsDirection(x, y, def)) continue;
     const nx = x + def.dx, ny = y + def.dy;
     if(!inMap(nx, ny)) continue;
     const ni = ny * N + nx;
@@ -500,9 +598,14 @@ function railReachableExits(tile, vehicle=null){
   return n;
 }
 
-function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=null, blockedFirstTiles=null){
+function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=null, blockedFirstTiles=null, skipFirstSignalCheck=false, occupancyAware=false){
   const starts = startTile != null ? [startTile] : adjRailTiles(fromB);
-  const targets = new Set(isTrainStationPiece(toB) ? trainStationStopTiles(toB, fromB, startTile) : adjRailTiles(toB));
+  let targetTiles = isTrainStationPiece(toB) ? trainStationStopTiles(toB, fromB, startTile) : adjRailTiles(toB);
+  if(isTrainStationPiece(toB)){
+    const availableTargets = targetTiles.filter(tile => trainTargetTileAvailable(tile, vehicle));
+    if(availableTargets.length) targetTiles = availableTargets;
+  }
+  const targets = new Set(targetTiles);
   if(!starts.length || !targets.size) return null;
   const prevRail = new Int32Array(N * N).fill(-2);
   const q = [];
@@ -517,8 +620,13 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=nul
     if(targets.has(cur)){ found = cur; break; }
     const cx = cur % N, cy = (cur / N) | 0;
     const mask = rail[cur] || 0;
+    const firstHop = prevRail[cur] === -1;
     for(const def of RAIL_DIRS){
       if(!(mask & def.bit)) continue;
+      // En mode occupancyAware (repli d'urgence) on vérifie l'occupation des cantons
+      // pendant le BFS pour ne pas calculer un trajet qui traverse un feu rouge.
+      if(occupancyAware ? !railEdgePassableForPath(cx, cy, def, vehicle) : !railEdgeDirectionAllowedForPath(cx, cy, def)) continue;
+      if(!occupancyAware && firstHop && !skipFirstSignalCheck && !railNextSignalAllowsDirection(cx, cy, def)) continue;
       const nx = cx + def.dx, ny = cy + def.dy;
       if(!inMap(nx, ny)) continue;
       const ni = ny * N + nx;
@@ -536,6 +644,71 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=nul
   tiles.reverse();
   const pts = tiles.map(idx => ({ x:(idx % N) * TILE + TILE / 2, y:((idx / N) | 0) * TILE + TILE / 2 }));
   return { tiles, pts };
+}
+
+function railPathNextSignalAllows(tiles){
+  if(!Array.isArray(tiles) || tiles.length < 2) return true;
+  for(let i = 0; i < tiles.length - 1; i++){
+    const cur = tiles[i], next = tiles[i + 1];
+    const cx = cur % N, cy = (cur / N) | 0;
+    const nx = next % N, ny = (next / N) | 0;
+    const def = railDirDef(nx - cx, ny - cy);
+    if(!def) return false;
+    const state = railEdgeSignalState(cx, cy, def);
+    if(state.own || state.opposite)
+      return !!(state.opposite && railSignalAspect(state.opposite));
+  }
+  return true;
+}
+
+function railPathIsPassable(tiles, vehicle=null){
+  for(let i = 0; i < tiles.length - 1; i++){
+    const cx = tiles[i] % N, cy = (tiles[i] / N) | 0;
+    const nx = tiles[i + 1] % N, ny = (tiles[i + 1] / N) | 0;
+    const def = railDirDef(nx - cx, ny - cy);
+    if(!def) return false;
+    if(!railEdgePassableForPath(cx, cy, def, vehicle)) return false;
+  }
+  return true;
+}
+
+function findRailPathFromDecision(v, targetB, curTile, previousTile=null){
+  const cx = curTile % N, cy = (curTile / N) | 0;
+  let best = null;
+  for(const def of RAIL_DIRS){
+    if(!((rail[curTile] || 0) & def.bit)) continue;
+    if(!railEdgeDirectionAllowedForPath(cx, cy, def)) continue;
+    const nx = cx + def.dx, ny = cy + def.dy;
+    if(!inMap(nx, ny)) continue;
+    const nextTile = ny * N + nx;
+    if(nextTile === previousTile) continue;
+    if(!rail[nextTile] || !(rail[nextTile] & RAIL_DIRS[def.opposite].bit)) continue;
+
+    // Chaque branche est calculée indépendamment. Le contrôle du feu est fait
+    // ensuite sur le chemin exact obtenu, jamais sur une branche voisine.
+    const tail = findRailPath(
+      v.currentBuilding || v.garageRef,
+      targetB,
+      nextTile,
+      v,
+      curTile,
+      null,
+      true
+    );
+    if(!tail?.tiles?.length) continue;
+    const tiles = [curTile, ...tail.tiles];
+    // Vérifie que TOUS les feux sur le trajet sont verts (pas seulement le premier).
+    // Sans ça, un train peut s'engager dans un canton intermédiaire et se retrouver
+    // bloqué immédiatement face au feu suivant qui est rouge.
+    if(!railPathIsPassable(tiles, v)) continue;
+    if(!best || tiles.length < best.tiles.length){
+      best = {
+        tiles,
+        pts:tiles.map(idx => ({ x:(idx % N) * TILE + TILE / 2, y:((idx / N) | 0) * TILE + TILE / 2 }))
+      };
+    }
+  }
+  return best;
 }
 
 function trainTileIndex(v){
@@ -572,13 +745,29 @@ function railSignalAspect(sig){
 }
 
 function prepareRailTrip(v, fromB, toB, startTile=null, previousTile=null){
-  const path = findRailPath(fromB, toB, startTile, v, previousTile);
+  let path = findRailPath(fromB, toB, startTile, v, previousTile);
+  let decisionPreviousTile = previousTile;
+  // Après un arrêt en gare, interdire systématiquement la tuile précédente
+  // peut bloquer certains quais en cul-de-sac ou certaines géométries de sortie.
+  // On préfère d'abord éviter le demi-tour, puis on autorise ce repli si aucun
+  // trajet valide n'existe autrement.
+  if(!path && startTile != null && previousTile != null){
+    path = findRailPath(fromB, toB, startTile, v, null);
+    decisionPreviousTile = null;
+  }
   if(!path) return false;
   v.pts = path.pts;
   v.pathTiles = path.tiles;
   v.seg = 0;
   v.t = 0;
+  v.railDecisionPreviousTile = decisionPreviousTile;
   return true;
+}
+
+function trainOrderStopKey(b){
+  if(!b || b.dead) return null;
+  if(isTrainStationPiece(b) && b.stationGroupId != null) return 'station:' + b.stationGroupId;
+  return (b.type || 'b') + ':' + b.x + ',' + b.y;
 }
 
 function rememberTrainArrivalDirection(v){
@@ -643,6 +832,18 @@ function trainNextMoveState(v){
   const nx = next % N, ny = (next / N) | 0;
   const def = railDirDef(nx - cx, ny - cy);
   if(!def) return { blocked:true };
+  const curBlock = railBlocks?.blockByTile?.[cur] ?? -1;
+  if(curBlock >= 0 && (railBlockOccupancy?.[curBlock] ?? 0) > 1){
+    // Récupération d'une ancienne sauvegarde où plusieurs trains sont déjà
+    // dans le même canton : un seul repart, les autres attendent sa sortie.
+    let leader = null;
+    for(const other of vehicles){
+      if(other.vtype !== 'train' || other.state === 'idle') continue;
+      if((other.currentRailBlock ?? -1) !== curBlock) continue;
+      if(!leader || (other.id ?? Infinity) < (leader.id ?? Infinity)) leader = other;
+    }
+    if(leader && leader !== v) return { blocked:true, holdPosition:true };
+  }
   if(!railEdgePassableForPath(cx, cy, def, v)) return { blocked:true };
   return { blocked:false };
 }
@@ -662,43 +863,43 @@ function replanTrainAtSignal(v){
   if(curTile < 0) return false;
   const targetB = v.state === 'returning' ? v.garageRef : (v.state === 'to_source' ? v.source : v.dest);
   if(!targetB || targetB.dead) return false;
-  const cx = curTile % N, cy = (curTile / N) | 0;
-  const blockedFirstTiles = new Set();
-  const mask = rail[curTile] || 0;
-  for(const def of RAIL_DIRS){
-    if(!(mask & def.bit)) continue;
-    const nx = cx + def.dx, ny = cy + def.dy;
-    if(!inMap(nx, ny)) continue;
-    const ni = ny * N + nx;
-    const other = RAIL_DIRS[def.opposite];
-    if(!rail[ni] || !(rail[ni] & other.bit)) continue;
-    const signals = railEdgeSignalState(cx, cy, def);
-    if(signals.opposite && !railEdgePassableForPath(cx, cy, def, v)) blockedFirstTiles.add(ni);
+  const previousTile = v.seg > 0
+    ? (v.pathTiles[v.seg - 1] ?? null)
+    : (v.railDecisionPreviousTile ?? null);
+  // Tente d'abord un recalcul depuis la position actuelle en explorant les branches.
+  // Si aucune sortie n'est valide (train coincé entre un branchement et un feu rouge),
+  // autorise un repli complet qui peut inclure une marche arrière vers le branchement.
+  let path = findRailPathFromDecision(v, targetB, curTile, previousTile);
+  if(!path || path.tiles.length < 2){
+    // Repli : autoriser la marche arrière (previousTile=null) mais vérifier l'occupation
+    // des cantons pendant le BFS pour ne pas recalculer un trajet qui traverse un feu rouge.
+    path = findRailPath(v.currentBuilding || v.garageRef, targetB, curTile, v, null, null, false, true);
   }
-  const previousTile = v.seg > 0 ? (v.pathTiles[v.seg - 1] ?? null) : null;
-  const path = findRailPath(
-    v.currentBuilding || v.garageRef,
-    targetB,
-    curTile,
-    v,
-    previousTile,
-    blockedFirstTiles
-  );
   if(!path || path.tiles.length < 2) return false;
   v.pts = path.pts;
   v.pathTiles = path.tiles;
   v.seg = 0;
   v.t = 0;
+  v.railPlannedJunctionTile = curTile;
+  v.railDecisionPreviousTile = previousTile;
   return true;
 }
 
 function advanceRailVehicle(v, move){
   while(move > 0 && v.seg < v.pts.length - 1){
-    if(v.t <= 1e-6 && trainEdgeHasFacingSignal(v)) replanTrainAtSignal(v);
+    const decisionTile = v.pathTiles[v.seg] ?? -1;
+    const atJunction = trainAtRailJunction(v);
+    const selectedBranchGreen = !atJunction || railPathNextSignalAllows(v.pathTiles.slice(v.seg));
+    if(v.t <= 1e-6 && (
+      trainEdgeHasFacingSignal(v)
+      || (atJunction && (v.railPlannedJunctionTile !== decisionTile || !selectedBranchGreen))
+    ))
+      replanTrainAtSignal(v);
     const a = v.pts[v.seg], b = v.pts[v.seg + 1];
     const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
     const state = trainNextMoveState(v);
     if(state.blocked){
+      if(state.holdPosition) break;
       const tStop = Math.max(0, 1 - TRAIN_SIGNAL_STOP_GAP / d);
       if(v.t < tStop - 1e-6) v.t = Math.min(tStop, v.t + move / d);
       break;
@@ -710,8 +911,16 @@ function advanceRailVehicle(v, move){
     if(v.t < 1 - 1e-6) break;
     v.seg++;
     v.t = 0;
+    v.railPlannedJunctionTile = -1;
+    v.railDecisionPreviousTile = null;
     const tile = v.pathTiles[v.seg] ?? -1;
-    v.currentRailBlock = tile >= 0 ? (railBlocks?.blockByTile?.[tile] ?? -1) : -1;
+    const previousBlock = v.currentRailBlock ?? -1;
+    const nextBlock = tile >= 0 ? (railBlocks?.blockByTile?.[tile] ?? -1) : -1;
+    if(nextBlock !== previousBlock && railBlockOccupancy){
+      if(previousBlock >= 0) railBlockOccupancy[previousBlock] = Math.max(0, railBlockOccupancy[previousBlock] - 1);
+      if(nextBlock >= 0) railBlockOccupancy[nextBlock]++;
+    }
+    v.currentRailBlock = nextBlock;
   }
 }
 
@@ -816,7 +1025,17 @@ function createPersistentVehicle(vtype, garage, id=null){
 
 function syncTrainOrders(v){
   if(v?.vtype !== 'train') return false;
-  const orders = (v.orders || []).filter(b => b && !b.dead);
+  const orders = [];
+  for(const b of (v.orders || [])){
+    if(!b || b.dead) continue;
+    const key = trainOrderStopKey(b);
+    if(!key) continue;
+    const prev = orders.length ? orders[orders.length - 1] : null;
+    if(prev && trainOrderStopKey(prev) === key) continue;
+    orders.push(b);
+  }
+  while(orders.length > 1 && trainOrderStopKey(orders[0]) === trainOrderStopKey(orders[orders.length - 1]))
+    orders.pop();
   v.orders = orders;
   if(orders.length < 2){
     v.source = orders[0] || null;

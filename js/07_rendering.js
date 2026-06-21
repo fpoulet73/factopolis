@@ -842,6 +842,24 @@ function lanePose(pts, seg, t, lane=0.16){
   return { u, v, du, dv };
 }
 
+function trainPose(veh){
+  const pose = lanePose(veh.pts, veh.seg, veh.t, 0);
+  if(Math.abs(pose.du) > 1e-6 || Math.abs(pose.dv) > 1e-6) return pose;
+  const curTile = veh?.railContinueTile ?? veh?.pathTiles?.[veh?.seg ?? 0] ?? null;
+  const prevTile = veh?.railPreviousTile ?? null;
+  if(curTile != null && prevTile != null && curTile !== prevTile){
+    const cx = curTile % N, cy = (curTile / N) | 0;
+    const px = prevTile % N, py = (prevTile / N) | 0;
+    const a = { x: px * TILE + TILE / 2, y: py * TILE + TILE / 2 };
+    const b = { x: cx * TILE + TILE / 2, y: cy * TILE + TILE / 2 };
+    const wx = b.x, wy = b.y;
+    const [u, v] = rotF(wx / TILE, wy / TILE);
+    const [du, dv] = rotDir(b.x - a.x, b.y - a.y);
+    return { u, v, du, dv };
+  }
+  return pose;
+}
+
 function drawTruck(tk){
   const {u, v, du, dv} = lanePose(tk.pts, tk.seg, tk.t, 0.15);
   const alongU = Math.abs(du) >= Math.abs(dv);
@@ -1022,7 +1040,7 @@ function drawTownLabels(){
 function drawVehicle(veh){
   if(!veh.pts || !veh.pts.length) return;
   if(veh.vtype === 'train'){
-    const {u, v, du, dv} = lanePose(veh.pts, veh.seg, veh.t, 0);
+    const {u, v, du, dv} = trainPose(veh);
     const alongU = Math.abs(du) >= Math.abs(dv);
     const au = alongU ? 0.34 : 0.16, av = alongU ? 0.16 : 0.34;
     const vt = VEHICLE_TYPES[veh.vtype];

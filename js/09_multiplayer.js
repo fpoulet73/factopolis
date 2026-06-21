@@ -42,6 +42,15 @@ function serializeState(){
       destX:   v.dest   && !v.dest.dead   ? v.dest.x   : null,
       destY:   v.dest   && !v.dest.dead   ? v.dest.y   : null,
       state: v.state, cargo: v.cargo, res: v.res || null, busRouteDistance: v.busRouteDistance ?? null,
+      currentBuildingX: v.currentBuilding && !v.currentBuilding.dead ? v.currentBuilding.x : null,
+      currentBuildingY: v.currentBuilding && !v.currentBuilding.dead ? v.currentBuilding.y : null,
+      seg: v.seg || 0,
+      t: v.t || 0,
+      waitTimer: v.waitTimer || 0,
+      pts: Array.isArray(v.pts) ? v.pts.map(p => ({ x:p.x, y:p.y })) : [],
+      pathTiles: Array.isArray(v.pathTiles) ? v.pathTiles.slice() : [],
+      railContinueTile: v.railContinueTile ?? null,
+      railPreviousTile: v.railPreviousTile ?? null,
       pinnedRes: v.pinnedRes || null,
       wagons: Array.isArray(v.wagons) ? v.wagons.slice() : null,
       orderIndex: v.orderIndex || 0,
@@ -263,13 +272,18 @@ function applySnapshot(d){
       if(!garage) continue;
       const source = sv.sourceX != null ? buildings.find(b=>b.x===sv.sourceX && b.y===sv.sourceY) : null;
       const dest   = sv.destX   != null ? buildings.find(b=>b.x===sv.destX   && b.y===sv.destY)   : null;
+      const currentBuilding = sv.currentBuildingX != null
+        ? buildings.find(b=>b.x===sv.currentBuildingX && b.y===sv.currentBuildingY) || null
+        : null;
       const v = createPersistentVehicle(sv.vtype, garage, sv.id ?? null);
       if(!v) continue;
       v.source = source || null;
       v.dest = dest || null;
+      v.currentBuilding = currentBuilding || (sv.state === 'idle' ? garage : null);
       v.cargo = sv.cargo || 0;
       v.res = sv.res || null;
       v.pinnedRes = sv.pinnedRes || null;
+      v.waitTimer = sv.waitTimer || 0;
       if(Array.isArray(sv.wagons)) v.wagons = sv.wagons.filter(k => TRAIN_WAGON_TYPES[k]);
       if(Array.isArray(sv.orders)){
         v.orders = sv.orders
@@ -283,29 +297,66 @@ function applySnapshot(d){
         v.source = null; v.dest = null; v.cargo = 0; v.res = null;
         continue;
       }
-      // Recalculer le chemin si la route était en cours
-      if(source && dest && sv.state !== 'idle'){
-        const from = sv.state === 'to_dest' ? source : garage;
-        const to   = sv.state === 'to_dest' ? dest   : source;
-        if(v.vtype === 'train'){
+      v.state = sv.state || 'idle';
+      if(v.vtype === 'train'){
+        if(Array.isArray(sv.pathTiles) && sv.pathTiles.length){
+          v.pathTiles = sv.pathTiles.slice();
+          v.pts = v.pathTiles.map(idx => ({ x:(idx % N) * TILE + TILE / 2, y:((idx / N) | 0) * TILE + TILE / 2 }));
+          v.seg = Math.max(0, Math.min((sv.seg || 0), Math.max(0, v.pts.length - 1)));
+          v.t = Math.max(0, Math.min(1, sv.t || 0));
+          v.railContinueTile = sv.railContinueTile ?? null;
+          v.railPreviousTile = sv.railPreviousTile ?? null;
+        } else if(source && dest && sv.state !== 'idle'){
+          const from = currentBuilding || (sv.state === 'to_dest' ? source : garage);
+          const to   = sv.state === 'to_dest' ? dest : source;
           const leg = findRailPath(from, to);
           if(leg){
             v.pts = leg.pts;
             v.pathTiles = leg.tiles;
-            v.state = sv.state;
           }
+        }
+        if(v.orders?.length >= 2){
+          const viz = [];
+          for(let i = 0; i < v.orders.length; i++){
+            const from = v.orders[i], to = v.orders[(i + 1) % v.orders.length];
+            const leg = findRailPath(from, to);
+            if(leg?.pts?.length) viz.push(...leg.pts);
+          }
+          v.vizRoute = { fwd: viz, bwd: [] };
+        } else if(source && dest){
           const fwd = findRailPath(source, dest);
           const bwd = findRailPath(dest, source);
           v.vizRoute = { fwd: fwd?.pts || [], bwd: bwd?.pts || [] };
-        } else {
+        }
+      } else {
+        if(Array.isArray(sv.pts) && sv.pts.length){
+          v.pts = sv.pts.map(p => ({ x:p.x, y:p.y }));
+          v.seg = Math.max(0, Math.min((sv.seg || 0), Math.max(0, v.pts.length - 1)));
+          v.t = Math.max(0, Math.min(1, sv.t || 0));
+        } else if(source && dest && sv.state !== 'idle'){
+          const from = currentBuilding || (sv.state === 'to_dest' ? source : garage);
+          const to   = sv.state === 'to_dest' ? dest : source;
           const pts = findRoadPath(from, to);
-          if(pts){ v.pts = pts; v.state = sv.state; }
+          if(pts) v.pts = pts;
+        }
+        if(source && dest){
           const fwd = findRoadPath(source, dest);
           const bwd = findRoadPath(dest, source);
           v.vizRoute = { fwd: fwd || [], bwd: bwd || [] };
         }
       }
     }
+  }
+  // Valider immédiatement les choix ferroviaires restaurés, même lorsque la
+  // sauvegarde est chargée en pause. Un train au milieu d'une arête conserve
+  // sa position et sera réévalué sur la prochaine tuile.
+  rebuildRailBlockOccupancy();
+  for(const v of vehicles){
+    if(v.vtype !== 'train' || v.state === 'idle' || !v.pathTiles?.length) continue;
+    v.railPlannedJunctionTile = -1;
+    v.railDecisionPreviousTile = v.seg > 0 ? (v.pathTiles[v.seg - 1] ?? null) : null;
+    if(v.t <= 1e-6 && (trainAtRailJunction(v) || trainEdgeHasFacingSignal(v)))
+      replanTrainAtSignal(v);
   }
   refreshExpansionSlots();
   remapOwnerId();

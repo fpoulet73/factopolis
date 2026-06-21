@@ -486,7 +486,7 @@ function clickAt(x,y){
         }
         veh.orders = veh.orders || [];
         const last = veh.orders[veh.orders.length - 1] || null;
-        if(last === b){
+        if(last && typeof trainOrderStopKey === 'function' && trainOrderStopKey(last) === trainOrderStopKey(b)){
           toast('⛔ Cet arrêt est déjà le dernier ordre.','err');
           return;
         }
