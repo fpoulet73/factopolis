@@ -1475,26 +1475,6 @@ function computeRailPreview(x0, y0, x1, y1){
   return [{ x:x0, y:y0 }];
 }
 
-function snapRailDragAnchor(x, y){
-  if(!inMap(x, y)) return { x, y };
-  if(rail[y * N + x]) return { x, y };
-  let best = null;
-  let bestScore = Infinity;
-  for(let r = 1; r <= 2; r++){
-    for(let dy = -r; dy <= r; dy++) for(let dx = -r; dx <= r; dx++){
-      const nx = x + dx, ny = y + dy;
-      if(!inMap(nx, ny) || !rail[ny * N + nx]) continue;
-      const cheb = Math.max(Math.abs(dx), Math.abs(dy));
-      const manh = Math.abs(dx) + Math.abs(dy);
-      const score = cheb * 100 + manh;
-      if(score >= bestScore) continue;
-      bestScore = score;
-      best = { x:nx, y:ny };
-    }
-  }
-  return best || { x, y };
-}
-
 cv.addEventListener('mousedown', e=>{
   updateMouseTile(e);
   if(e.button===0){
@@ -1506,7 +1486,7 @@ cv.addEventListener('mousedown', e=>{
       return;
     }
     if(tool === 'road' || tool === 'rail'){
-      const anchor = tool === 'rail' ? snapRailDragAnchor(mouse.tx, mouse.ty) : { x: mouse.tx, y: mouse.ty };
+      const anchor = { x: mouse.tx, y: mouse.ty };
       roadDragStart = { x: anchor.x, y: anchor.y };
       roadPreviewTiles = tool === 'rail'
         ? computeRailPreview(anchor.x, anchor.y, anchor.x, anchor.y)
@@ -1541,10 +1521,7 @@ addEventListener('mousemove', e=>{
     clickFn(mouse.tx, mouse.ty);
   if(mouse.lDown && (tool==='road' || tool==='rail') && roadDragStart && (mouse.tx!==ptx || mouse.ty!==pty))
     roadPreviewTiles = tool === 'rail'
-      ? (() => {
-          const anchor = snapRailDragAnchor(mouse.tx, mouse.ty);
-          return computeRailPreview(roadDragStart.x, roadDragStart.y, anchor.x, anchor.y);
-        })()
+      ? computeRailPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty)
       : computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, e.shiftKey);
 });
 addEventListener('mouseup', e=>{
