@@ -240,6 +240,12 @@ function renderTrainPanel(){
   if(flagState)
     h += '<div class="row"><span>Drapeau</span><b style="color:'+(flagState.armed ? '#7dda5a' : '#ff7474')+'">'+(flagState.armed ? 'Vert' : 'Rouge')+'</b></div>';
   h += '<div class="row"><span>Capacité totale</span><b>'+trainTotalCapacity(v)+'</b></div>';
+  const _trainBaseCost = VEHICLE_TYPES['train']?.maintenanceCost ?? 0;
+  if(_trainBaseCost > 0){
+    const _months = v.maintenanceMonthsPaid || 0;
+    const _nextCost = Math.round(_trainBaseCost * Math.pow(1 + TRAIN_MAINTENANCE_RATE, _months));
+    h += '<div class="row"><span>Entretien mensuel</span><b style="color:#ff9a8a">'+_nextCost+' $ '+(_months > 0 ? '(mois '+(_months+1)+')' : '')+'</b></div>';
+  }
   h += '<div class="tp-section"><div class="tp-section-title">Composition</div>';
   h += '<div style="display:flex;gap:8px;align-items:flex-end;overflow-x:auto;padding:6px 2px 8px">';
   h += '<div style="min-width:72px;text-align:center"><div style="height:32px;border-radius:8px;background:#4f5c6f;border:2px solid #2f3640;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px">🚂</div><div style="font-size:11px;color:#8fa3bf;margin-top:4px">Loco</div></div>';

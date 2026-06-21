@@ -116,6 +116,9 @@ const BUS_STOP_FILL_TIME   = CFG.logistique?.arretBus?.tempsRemplissage ?? 30; /
 const BUS_OWNER_SHARE      = CFG.logistique?.arretBus?.partProprietaire     ?? 0.8;
 const TRAIN_DWELL_TIME        = (CFG.logistique?.train?.tempsArret ?? 2.5) / (CFG.jeu?.heuresParSeconde ?? 1);
 const TRAIN_STATION_STOP_TIME = CFG.logistique?.train?.tempsArretGareSecondes ?? 5;
+// Durée d'un mois de jeu en gtime-secondes (30 jours × 24h / GAME_HOURS_PER_SEC)
+const TRAIN_MAINTENANCE_MONTH = 30 * 24 / GAME_HOURS_PER_SEC;
+const TRAIN_MAINTENANCE_RATE  = CFG.logistique?.train?.tauxHausseMensuelle ?? 0.03;
 const TRAIN_STATION_RADIUS    = CFG.logistique?.gare?.rayon               ?? 12;
 const TRAIN_STATION_FILL_TIME = CFG.logistique?.gare?.tempsRemplissage    ?? 8;
 const TRAIN_FARE_FACTOR       = CFG.logistique?.gare?.tarif               ?? 2;
@@ -138,7 +141,7 @@ const VEHICLE_TYPES = (()=>{
     frigo:       { nom:'Camion frigorifique',icone:'🚚', resources:['fish','fish_fillet'],                                         cost:750,  capacite:14, speed:3.8 },
     citerne:     { nom:'Camion citerne',     icone:'🚛', resources:['water','fish_oil'],                                           cost:750,  capacite:20, speed:3.5 },
     bus:         { nom:'Bus',                icone:'🚌', resources:[],                                                             cost:1500, capacite:40, speed:3.0 },
-    train:       { nom:'Train',              icone:'🚂', resources:[],                                                             cost:2200, capacite:0,  speed:2.9 },
+    train:       { nom:'Train',              icone:'🚂', resources:[],                                                             cost:2200, capacite:0,  speed:2.9, maintenanceCost: CFG.logistique?.train?.coutEntretienMensuel ?? 80 },
     // --- legacy (sauvegardes existantes, plus achetables) ---
     bois:        { nom:'Camion bois',        icone:'🚜', resources:['wood'],                   cost:600,  capacite:15, speed:4.0, buyDisabled:true },
     ble:         { nom:'Camion blé',         icone:'🚜', resources:['wheat'],                  cost:550,  capacite:15, speed:4.0, buyDisabled:true },
@@ -159,8 +162,9 @@ const VEHICLE_TYPES = (()=>{
       cost:        c.cout       ?? d.cost,
       capacite:    c.capacite   ?? d.capacite,
       speed:       c.vitesse    ?? d.speed,
-      color:       COLOR_MAP[k],
-      buyDisabled: d.buyDisabled ?? false,
+      color:           COLOR_MAP[k],
+      buyDisabled:     d.buyDisabled ?? false,
+      maintenanceCost: d.maintenanceCost ?? 0,
     };
   }
   return out;

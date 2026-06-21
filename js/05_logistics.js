@@ -1193,6 +1193,7 @@ function createPersistentVehicle(vtype, garage, id=null){
     orders: vtype === 'train' ? [] : null,
     orderIndex: 0,
     depotDepartureArmed: false,
+    maintenanceMonthsPaid: 0,
   };
   const numericId = Number(v.id);
   if(Number.isFinite(numericId)) nextVehicleId = Math.max(nextVehicleId, numericId + 1);

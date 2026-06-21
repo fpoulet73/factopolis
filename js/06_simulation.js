@@ -197,6 +197,24 @@ function update(dt){
     }
   }
 
+  vehicleMaintenanceTimer += dt;
+  if(vehicleMaintenanceTimer >= TRAIN_MAINTENANCE_MONTH){
+    vehicleMaintenanceTimer -= TRAIN_MAINTENANCE_MONTH;
+    for(const v of vehicles){
+      if(v.vtype !== 'train') continue;
+      const baseCost = VEHICLE_TYPES[v.vtype]?.maintenanceCost ?? 0;
+      if(baseCost <= 0) continue;
+      const months = v.maintenanceMonthsPaid || 0;
+      const cost = Math.round(baseCost * Math.pow(1 + TRAIN_MAINTENANCE_RATE, months));
+      v.maintenanceMonthsPaid = months + 1;
+      const garage = v.garageRef;
+      if(!garage || garage.dead) continue;
+      const w = walletOf(garage.owner);
+      w.money -= cost; w.fin.entretien += cost;
+      addFloat(garage.x+(garage.w-1)/2, garage.y, '−'+cost+' $ 🚂', '#ff9a8a');
+    }
+  }
+
   // historique financier par wallet
   for(const k in WALLETS){
     const w = WALLETS[k];
@@ -231,10 +249,8 @@ function update(dt){
   busStopTimer += dt;
   const updateBusMax = busStopTimer >= 3;
   if(updateBusMax) busStopTimer = 0;
-  // Heures de pointe : les arrêts se remplissent seulement pendant ces tranches horaires
-  const _busH = new Date(GAME_EPOCH_MS + (gtime||0) * GAME_HOURS_PER_SEC * 3600000).getUTCHours();
-  const busRushHour = (_busH >= 7 && _busH < 9) || (_busH >= 12 && _busH < 13)
-                   || (_busH >= 16 && _busH < 18) || (_busH >= 22 && _busH < 23);
+  // Remplissage continu sur 3 jours (72 heures de jeu)
+  const BUS_FILL_RATE_SECS = 3 * 24 / GAME_HOURS_PER_SEC; // gtime-secondes pour remplir à 100%
   for(const b of buildings){
     if(b.dead || b.type !== 'bus_stop') continue;
     if(updateBusMax){
@@ -249,18 +265,14 @@ function update(dt){
       b.passengersMax = pop;
       if((b.passengers || 0) > pop) b.passengers = pop; // cap si pop a baissé
     }
-    // Remplissage progressif uniquement aux heures de pointe
-    // taux linéaire = pop / FILL_TIME → même durée pour tous, vitesse et capacité proportionnelles à pop
-    if(!busRushHour) continue;
     const max = b.passengersMax || 0;
     if(max > 0 && (b.passengers || 0) < max){
-      const rate = max / BUS_STOP_FILL_TIME;
-      const capped = Math.min(dt, 0.5); // évite les sauts en cas de grand dt (reprise d'onglet, etc.)
-      b.passengers = Math.min(max, (b.passengers || 0) + rate * capped);
+      const rate = max / BUS_FILL_RATE_SECS;
+      b.passengers = Math.min(max, (b.passengers || 0) + rate * Math.min(dt, 0.5));
     }
   }
 
-  // Gares : génération de passagers entrants depuis la population locale
+  // Gares : génération de passagers entrants depuis la population locale (continu, 3 jours)
   for(const b of buildings){
     if(b.dead || b.type !== 'train_station') continue;
     if(b.passengersEntrant == null){ b.passengersEntrant = 0; b.passengersEntrantMax = 0; b.passagersSortant = 0; }
@@ -275,17 +287,17 @@ function update(dt){
       }
       b.passengersEntrantMax = pop;
     }
-    if(!busRushHour) continue;
-    const max = b.passengersEntrantMax || 0;
-    if(max > 0 && (b.passengersEntrant || 0) < max){
-      const rate = max / TRAIN_STATION_FILL_TIME;
-      const capped = Math.min(dt, 0.5);
-      b.passengersEntrant = Math.min(max, (b.passengersEntrant || 0) + rate * capped);
+    const maxE = b.passengersEntrantMax || 0;
+    if(maxE > 0 && (b.passengersEntrant || 0) < maxE){
+      const rate = maxE / BUS_FILL_RATE_SECS;
+      b.passengersEntrant = Math.min(maxE, (b.passengersEntrant || 0) + rate * Math.min(dt, 0.5));
     }
-    // Les passagers sortants quittent progressivement la gare (se dispersent en ville)
-    if((b.passagersSortant || 0) > 0){
-      const disperse = Math.min(b.passagersSortant, (b.passagersSortant / TRAIN_STATION_FILL_TIME) * Math.min(dt, 0.5));
-      b.passagersSortant = Math.max(0, b.passagersSortant - disperse);
+    // Passagers qui attendent depuis trop longtemps : deviennent sortants après 3 jours
+    if((b.passengersEntrant || 0) > 0){
+      const timeout = 3 * 24 / GAME_HOURS_PER_SEC;
+      const leave = (b.passengersEntrant / timeout) * Math.min(dt, 0.5);
+      b.passengersEntrant = Math.max(0, b.passengersEntrant - leave);
+      b.passagersSortant = (b.passagersSortant || 0) + leave;
     }
   }
 }
