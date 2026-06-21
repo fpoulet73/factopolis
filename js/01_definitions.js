@@ -199,6 +199,15 @@ function trainPresentAtDepot(v){
   return !!(v && v.vtype === 'train' && v.state === 'idle' && v.currentBuilding === v.garageRef);
 }
 
+function trainDepotDepartureArmed(v){
+  return !!(v && v.vtype === 'train' && v.depotDepartureArmed);
+}
+
+function resetTrainDepotDeparture(v){
+  if(!v || v.vtype !== 'train') return;
+  v.depotDepartureArmed = false;
+}
+
 const GARAGE_COST = CFG.logistique?.garage?.cout ?? 1200;
 const BUS_STOP_COST = CFG.logistique?.arretBus?.cout ?? 250;
 

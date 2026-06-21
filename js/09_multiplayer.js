@@ -52,6 +52,7 @@ function serializeState(){
       railContinueTile: v.railContinueTile ?? null,
       railPreviousTile: v.railPreviousTile ?? null,
       railTrail: Array.isArray(v.railTrail) ? v.railTrail.map(p => ({ x:p.x, y:p.y })) : null,
+      depotDepartureArmed: !!v.depotDepartureArmed,
       pinnedRes: v.pinnedRes || null,
       wagons: Array.isArray(v.wagons) ? v.wagons.slice() : null,
       orderIndex: v.orderIndex || 0,
@@ -285,6 +286,7 @@ function applySnapshot(d){
       v.res = sv.res || null;
       v.pinnedRes = sv.pinnedRes || null;
       v.waitTimer = sv.waitTimer || 0;
+      v.depotDepartureArmed = !!sv.depotDepartureArmed;
       if(Array.isArray(sv.wagons)) v.wagons = sv.wagons.filter(k => TRAIN_WAGON_TYPES[k]);
       if(Array.isArray(sv.orders)){
         v.orders = sv.orders
@@ -526,6 +528,15 @@ function applyAction(msg){
           .filter(Boolean);
         v.orderIndex = Number.isInteger(act.orderIndex) ? act.orderIndex : 0;
         if(!syncTrainOrders(v) || !vehicleCanServeRoute(v)){ v.orders = []; v.source = null; v.dest = null; break; }
+        v.state = 'idle';
+        v.currentBuilding = v.garageRef;
+        v.pts = [];
+        v.pathTiles = [];
+        v.railTrail = [];
+        v.railContinueTile = null;
+        v.railPreviousTile = null;
+        v.waitTimer = 0;
+        resetTrainDepotDeparture(v);
       } else {
         if(!validXY(act.sourceX, act.sourceY) || !validXY(act.destX, act.destY)) break;
         const source = buildings.find(b=>b.x===act.sourceX && b.y===act.sourceY);
@@ -536,7 +547,13 @@ function applyAction(msg){
         v.dest = dest;
         if(!vehicleCanServeRoute(v)){ v.source = null; v.dest = null; break; }
       }
-      startVehicleRoute(v);
+      if(v.vtype !== 'train') startVehicleRoute(v);
+      break;
+    }
+    case 'train_depot_flag': {
+      const v = vehicles.find(v=>String(v.id) === String(act.id));
+      if(!v || v.garageRef?.owner !== msg.from || v.vtype !== 'train') break;
+      setTrainDepotDeparture(v, !!act.armed);
       break;
     }
     case 'configure_train': {

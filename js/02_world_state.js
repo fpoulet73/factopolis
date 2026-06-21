@@ -11,6 +11,7 @@ let towns = [];           // villages / villes
 let nextTownId = 0;
 let selectedTownId = null;
 let townLabelHits = [];
+let trainDepotFlagHits = [];
 let mapBounds = { x0:0, y0:0, x1:64, y1:64 }; // boîte englobante jouable (caméra, clamps)
 let mapMask = null;         // Uint8Array(N*N) : 1 = tuile jouable
 let expansions = [];        // pièces d'expansion disponibles (chacune achetable individuellement)
@@ -221,7 +222,7 @@ function genWorld(config){
   bgrid = new Array(N*N).fill(null);
   buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
   vehicles = []; vehicleRouteMode = null; selectedVehicle = null; nextVehicleId = 0; nextTrainStationId = 1;
-  towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = [];
+  towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = []; trainDepotFlagHits = [];
   WALLETS = {}; gtime = 0;
   selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0; busStopTimer = 0;
   mapBounds = { x0: EXP_MARGIN, y0: EXP_MARGIN, x1: EXP_MARGIN + N_PLAY, y1: EXP_MARGIN + N_PLAY };

@@ -898,6 +898,49 @@ function trainOrderStopKey(b){
   return (b.type || 'b') + ':' + b.x + ',' + b.y;
 }
 
+function trainDepotExitPreview(v){
+  if(v?.vtype !== 'train') return null;
+  if(!syncTrainOrders(v) || !v.source || !v.dest || v.source.dead || v.dest.dead) return null;
+  return findRailPath(v.garageRef, v.source, null, v);
+}
+
+function trainCanLeaveDepotNow(v){
+  if(!trainPresentAtDepot(v)) return { ok:false, reason:'not_in_depot' };
+  const path = trainDepotExitPreview(v);
+  if(!path?.tiles?.length) return { ok:false, reason:'no_path' };
+  const firstTile = path.tiles[0];
+  const firstBlock = railBlocks?.blockByTile?.[firstTile] ?? -1;
+  if(firstBlock >= 0 && (railBlockOccupancy?.[firstBlock] ?? 0) > 0)
+    return { ok:false, reason:'occupied', path, firstTile, firstBlock };
+  return { ok:true, path, firstTile, firstBlock };
+}
+
+function setTrainDepotDeparture(v, armed){
+  if(v?.vtype !== 'train') return { ok:false, reason:'not_train' };
+  if(!trainPresentAtDepot(v)) return { ok:false, reason:'not_in_depot' };
+  if(!armed){
+    v.depotDepartureArmed = false;
+    return { ok:true, armed:false };
+  }
+  if((v.orders?.length || 0) < 2 || !syncTrainOrders(v) || !vehicleCanServeRoute(v))
+    return { ok:false, reason:'route_missing' };
+  const dep = trainCanLeaveDepotNow(v);
+  if(dep.reason === 'no_path') return dep;
+  v.depotDepartureArmed = true;
+  return { ok:true, armed:true, waiting:!dep.ok, path:dep.path, firstTile:dep.firstTile };
+}
+
+function trainDepotFlagState(v){
+  if(!trainPresentAtDepot(v) || (v.orders?.length || 0) < 2) return null;
+  const armed = trainDepotDepartureArmed(v);
+  const dep = armed ? trainCanLeaveDepotNow(v) : null;
+  return {
+    armed,
+    canLeaveNow: armed ? !!dep?.ok : false,
+    reason: armed ? (dep?.reason || null) : null,
+  };
+}
+
 function rememberTrainArrivalDirection(v){
   if(!v?.pathTiles?.length) return;
   const last = v.pathTiles.length - 1;
@@ -1062,12 +1105,14 @@ function updateTrainVehicle(v, dt){
     v.pts = [];
     v.pathTiles = [];
     v.currentBuilding = v.garageRef;
+    resetTrainDepotDeparture(v);
     return;
   }
   if(v.state !== 'returning' && (!v.source || !v.dest || v.source.dead || v.dest.dead)){
     v.state = 'idle';
     v.pts = [];
     v.pathTiles = [];
+    resetTrainDepotDeparture(v);
     return;
   }
   if(v.waitTimer > 0){
@@ -1096,6 +1141,7 @@ function updateTrainVehicle(v, dt){
     v.pts = [];
     v.pathTiles = [];
     v.currentBuilding = v.garageRef;
+    resetTrainDepotDeparture(v);
     return;
   }
   if(v.state === 'to_source'){
@@ -1146,6 +1192,7 @@ function createPersistentVehicle(vtype, garage, id=null){
     wagons: vtype === 'train' ? [] : null,
     orders: vtype === 'train' ? [] : null,
     orderIndex: 0,
+    depotDepartureArmed: false,
   };
   const numericId = Number(v.id);
   if(Number.isFinite(numericId)) nextVehicleId = Math.max(nextVehicleId, numericId + 1);
@@ -1308,6 +1355,7 @@ function startVehicleRoute(v){
     v.currentBuilding = null;
     v.cargo = 0;
     v.res = null;
+    resetTrainDepotDeparture(v);
     return true;
   }
   // Cache la route complète pour la visualisation (style Transport Tycoon)
@@ -1336,10 +1384,12 @@ function returnToGarage(v){
     if(ok){
       v.state = 'returning';
       v.currentBuilding = null;
+      resetTrainDepotDeparture(v);
     } else {
       v.state = 'idle';
       v.pts = [];
       v.pathTiles = [];
+      resetTrainDepotDeparture(v);
     }
     return;
   }
@@ -1363,8 +1413,15 @@ function updateVehicles(dt){
       // Routes that failed before a rail or signal correction remain assigned.
       // Retry them periodically so existing trains can leave without reconfiguration.
       if(v.vtype === 'train' && v.source && v.dest && !v.source.dead && !v.dest.dead){
-        v.waitTimer = Math.max(0, (v.waitTimer || 0) - dt);
-        if(v.waitTimer <= 0 && !startVehicleRoute(v)) v.waitTimer = 2;
+        if(trainPresentAtDepot(v)){
+          if(trainDepotDepartureArmed(v)){
+            const dep = trainCanLeaveDepotNow(v);
+            if(dep.ok) startVehicleRoute(v);
+          }
+        } else {
+          v.waitTimer = Math.max(0, (v.waitTimer || 0) - dt);
+          if(v.waitTimer <= 0 && !startVehicleRoute(v)) v.waitTimer = 2;
+        }
       }
       if(v.state === 'idle') continue;
     }

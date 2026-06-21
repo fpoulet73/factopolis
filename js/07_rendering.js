@@ -1210,6 +1210,44 @@ function drawTownLabels(){
   }
 }
 
+function drawTrainDepotFlags(){
+  trainDepotFlagHits = [];
+  ctx.save();
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 11px "Segoe UI Emoji","Segoe UI",sans-serif';
+  for(const depot of buildings){
+    if(depot.dead || depot.type !== 'train_depot') continue;
+    const trains = (depot.vehicles || []).filter(v => trainPresentAtDepot(v) && (v.orders?.length || 0) >= 2);
+    if(!trains.length) continue;
+    const center = centerOfBuilding(depot);
+    const [u, v] = rotF(center.x, center.y);
+    const [ix, iy] = iso(u, v);
+    const cssX = (ix - cam.x) * cam.z;
+    const cssY = (iy - cam.y) * cam.z - 28;
+    if(cssX < -60 || cssX > W + 60 || cssY < -80 || cssY > H + 40) continue;
+    for(let i = 0; i < trains.length; i++){
+      const train = trains[i];
+      const state = trainDepotFlagState(train);
+      if(!state) continue;
+      const bx = cssX - 12 + i * 18;
+      const by = cssY - ((i % 2) * 8);
+      trainDepotFlagHits.push({ id:train.id, x:bx - 4, y:by - 10, w:18, h:18 });
+      ctx.fillStyle = '#c8d3df';
+      ctx.fillRect(bx, by - 9, 2, 14);
+      ctx.fillStyle = state.armed ? '#7dda5a' : '#ff7474';
+      ctx.beginPath();
+      ctx.moveTo(bx + 2, by - 8);
+      ctx.lineTo(bx + 11, by - 5);
+      ctx.lineTo(bx + 2, by - 1);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
 function drawVehicle(veh){
   if(!veh.pts || !veh.pts.length) return;
   if(veh.vtype === 'train'){
@@ -1863,6 +1901,7 @@ function draw(){
 
   // Noms des villages au centre de chaque groupe de maisons
   drawTownLabels();
+  drawTrainDepotFlags();
 
   // aperçu du tracé de route (deux-points)
   if((tool === 'road' || tool === 'rail') && roadPreviewTiles.length > 0){

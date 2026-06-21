@@ -152,9 +152,52 @@ let trainConfigVehicle = null;
 
 function closeTrainPanel(){
   const p = $('trainPanel');
-  if(p) p.style.display = 'none';
+  if(p){
+    p.style.display = 'none';
+    p._html = null;
+    p._trainId = null;
+  }
   if(vehicleRouteMode?.step === 'train_order_append') vehicleRouteMode = null;
   trainConfigVehicle = null;
+}
+
+function trainDepotFlagButtonHtml(v, attrs=''){
+  const state = trainDepotFlagState(v);
+  if(!state) return '';
+  const color = state.armed ? '#7dda5a' : '#ff7474';
+  const icon = state.armed ? '🚩' : '🟥';
+  const label = state.armed ? 'Drapeau vert' : 'Drapeau rouge';
+  return '<button class="tbtn" data-train-flag="'+v.id+'" style="width:auto;margin:0;color:'+color+';font-weight:bold"'
+    + attrs + '>'+icon+' '+label+'</button>';
+}
+
+function handleTrainDepotFlagClick(v){
+  if(!v || v.vtype !== 'train') return;
+  if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId){
+    toast('⛔ Ce train appartient à un autre joueur.','err');
+    return;
+  }
+  if(!trainPresentAtDepot(v)){
+    toast('⛔ Le train doit être dans le dépôt.','err');
+    return;
+  }
+  const nextArmed = !trainDepotDepartureArmed(v);
+  const res = setTrainDepotDeparture(v, nextArmed);
+  if(!res.ok){
+    if(res.reason === 'route_missing') toast('⛔ Il faut d’abord une route valide avec au moins 2 arrêts.','err');
+    else if(res.reason === 'no_path') toast('⛔ Aucun chemin ferroviaire continu depuis le dépôt.','err');
+    else toast('⛔ Départ impossible depuis ce dépôt.','err');
+    return;
+  }
+  if(MP.connected) netSend({ type:'train_depot_flag', id:v.id, armed:nextArmed });
+  if(nextArmed){
+    if(res.waiting) toast('🚩 Drapeau vert. Le train partira dès que la voie de sortie sera libre.','win');
+    else toast('🚩 Drapeau vert. Départ autorisé.','win');
+  } else {
+    toast('🟥 Drapeau rouge. Départ annulé.','win');
+  }
+  if(trainConfigVehicle === v) renderTrainPanel();
+  renderInfo();
 }
 
 function openTrainPanel(v){
@@ -173,9 +216,12 @@ function renderTrainPanel(){
   if(!p || !v) return;
   const wagons = Array.isArray(v.wagons) ? v.wagons : [];
   const orders = Array.isArray(v.orders) ? v.orders.filter(b => b && !b.dead) : [];
+  const flagState = trainDepotFlagState(v);
   let h = '<div class="panel-head"><h3><span style="font-size:22px">🚂</span> Configurer le train</h3>'
     + '<button class="tbtn" id="tpClose" aria-label="Fermer">✕</button></div>';
   h += '<div class="row"><span>Présence</span><b>'+(trainPresentAtDepot(v) ? 'Dans le dépôt' : 'En ligne')+'</b></div>';
+  if(flagState)
+    h += '<div class="row"><span>Drapeau</span><b style="color:'+(flagState.armed ? '#7dda5a' : '#ff7474')+'">'+(flagState.armed ? 'Vert' : 'Rouge')+'</b></div>';
   h += '<div class="row"><span>Capacité totale</span><b>'+trainTotalCapacity(v)+'</b></div>';
   h += '<div class="tp-section"><div class="tp-section-title">Wagons</div><div class="tp-wagon-grid">';
   for(const [key, def] of Object.entries(TRAIN_WAGON_TYPES)){
@@ -202,11 +248,15 @@ function renderTrainPanel(){
   h += '</div>';
   h += '<div class="tp-section"><div class="tp-section-title">Actions</div>'
     + '<div class="tp-inline">'
-    + '<button class="tbtn" id="tpApplyRoute" style="width:auto;margin:0">✅ Appliquer la route</button>'
+    + '<button class="tbtn" id="tpApplyRoute" style="width:auto;margin:0">✅ Enregistrer la route</button>'
+    + (flagState ? trainDepotFlagButtonHtml(v, ' id="tpTrainFlag"') : '')
     + '<button class="tbtn" id="tpSelectTrain" style="width:auto;margin:0">🎯 Sélectionner le train</button>'
     + '</div></div>';
-  p.innerHTML = h;
   p.style.display = 'block';
+  if(p._html === h && p._trainId === v.id) return;
+  p._html = h;
+  p._trainId = v.id;
+  p.innerHTML = h;
   ensurePanelDragHandle('trainPanel');
   $('tpClose').onclick = () => closeTrainPanel();
   p.querySelectorAll('[data-train-wagon-add]').forEach(btn => btn.onclick = ()=>{
@@ -229,6 +279,7 @@ function renderTrainPanel(){
     const idx = +btn.dataset.trainOrderDel;
     v.orders.splice(idx, 1);
     syncTrainOrders(v);
+    resetTrainDepotDeparture(v);
     renderTrainPanel();
     renderInfo();
   });
@@ -243,6 +294,7 @@ function renderTrainPanel(){
     v.dest = null;
     v.orderIndex = 0;
     v.vizRoute = null;
+    resetTrainDepotDeparture(v);
     renderTrainPanel();
     renderInfo();
   };
@@ -257,18 +309,27 @@ function renderTrainPanel(){
     }
     v.orderIndex = 0;
     syncTrainOrders(v);
-    const routeStarted = startVehicleRoute(v);
+    v.state = 'idle';
+    v.currentBuilding = v.garageRef;
+    v.pts = [];
+    v.pathTiles = [];
+    v.railTrail = [];
+    v.railContinueTile = null;
+    v.railPreviousTile = null;
+    v.waitTimer = 0;
+    resetTrainDepotDeparture(v);
     if(MP.connected) netSend({
       type:'route_vehicle',
       id:v.id,
       orderIndex:v.orderIndex || 0,
       orders:(v.orders || []).map(b => ({ x:b.x, y:b.y })),
     });
-    if(routeStarted) toast('Route du train mise à jour.','win');
-    else toast('⛔ Aucun chemin ferroviaire continu depuis le dépôt du train.','err');
+    toast('Route du train enregistrée. Appuie sur le drapeau pour autoriser le départ.','win');
     renderTrainPanel();
     renderInfo();
   };
+  const tpTrainFlag = $('tpTrainFlag');
+  if(tpTrainFlag) tpTrainFlag.onclick = ()=> handleTrainDepotFlagClick(v);
   $('tpSelectTrain').onclick = ()=>{
     selectedVehicle = v;
     selected = null;
@@ -331,9 +392,13 @@ function statusOf(b){
 function _updVDyn(p, v){
   const el = p.querySelector('[data-v-state="'+v.id+'"]');
   if(!el) return;
-  const lbl = v.state==='idle' ? 'En attente' : v.state==='returning' ? 'Retour dépôt' : v.state==='to_source' ? 'Vers source' : 'Vers destination';
+  let lbl = v.state==='idle' ? 'En attente' : v.state==='returning' ? 'Retour dépôt' : v.state==='to_source' ? 'Vers source' : 'Vers destination';
+  if(v.vtype === 'train' && trainPresentAtDepot(v) && (v.orders?.length || 0) >= 2)
+    lbl = trainDepotDepartureArmed(v) ? 'Départ autorisé' : 'À l’arrêt au dépôt';
   const cargo = v.cargo > 0 ? ' · '+v.cargo+(v.res ? ' '+RES[v.res].n : '') : '';
-  el.textContent = lbl + cargo;
+  const flagState = v.vtype === 'train' ? trainDepotFlagState(v) : null;
+  const flagLbl = flagState ? (flagState.armed ? ' · drapeau vert' : ' · drapeau rouge') : '';
+  el.textContent = lbl + cargo + flagLbl;
 }
 
 function renderInfo(){
@@ -380,7 +445,9 @@ function renderInfo(){
     else {
       const veh = selectedVehicle;
       const vt = VEHICLE_TYPES[veh.vtype];
-      const stateLabel = { idle:'En attente 💤', to_source:'Vers source 🔵', to_dest:'Vers destination 🟠', returning:'Retour au dépôt 🏪' }[veh.state] || veh.state;
+      let stateLabel = { idle:'En attente 💤', to_source:'Vers source 🔵', to_dest:'Vers destination 🟠', returning:'Retour au dépôt 🏪' }[veh.state] || veh.state;
+      if(veh.vtype === 'train' && trainPresentAtDepot(veh) && (veh.orders?.length || 0) >= 2)
+        stateLabel = trainDepotDepartureArmed(veh) ? 'Départ autorisé 🚩' : 'À l’arrêt au dépôt 🟥';
       const srcName = veh.source && !veh.source.dead ? trainStopLabel(veh.source) : '—';
       const dstName = veh.dest   && !veh.dest.dead   ? trainStopLabel(veh.dest)  : '—';
       const isBusVeh = veh.vtype === 'bus';
@@ -394,11 +461,14 @@ function renderInfo(){
       const orderSummary = veh.vtype === 'train' && veh.orders?.length
         ? veh.orders.map(b => trainStopLabel(b)).join(' → ')
         : null;
+      const trainFlagState = veh.vtype === 'train' ? trainDepotFlagState(veh) : null;
       let h = '<h3><span style="font-size:22px">'+vt.icone+'</span> '+vt.nom+'<span style="margin-left:auto"></span><button class="tbtn" id="infoCloseBtn" aria-label="Fermer" style="width:auto;margin:0;padding:2px 8px">✕</button></h3>';
       h += '<div class="status">'+stateLabel+'</div>';
       h += '<div class="row"><span>Cargaison</span><b>'+cargoStr+'</b></div>';
       h += '<div class="row"><span>Source</span><b style="color:#4dd9ff">'+srcNameDisplay+'</b></div>';
       h += '<div class="row"><span>Destination</span><b style="color:#ffaa44">'+dstNameDisplay+'</b></div>';
+      if(trainFlagState)
+        h += '<div class="row"><span>Drapeau</span><b style="color:'+(trainFlagState.armed ? '#7dda5a' : '#ff7474')+'">'+(trainFlagState.armed ? 'Vert' : 'Rouge')+'</b></div>';
       if(orderSummary) h += '<div style="margin-top:6px;color:#b9c8dc">'+escHtml(orderSummary)+'</div>';
       h += '<div class="row"><span>Capacité</span><b>'+(veh.vtype === 'train' ? trainTotalCapacity(veh) : vt.capacite)+'</b></div>';
       h += '<div class="row"><span>Vitesse</span><b>'+vt.speed+' cases/s</b></div>';
@@ -407,6 +477,7 @@ function renderInfo(){
          + '<button class="tbtn" style="flex:1'
          + (trainConfigDisabled ? ';opacity:.5;cursor:not-allowed' : '')
          + '" id="bVehRoute">'+(veh.vtype === 'train' ? '🧭 Configurer' : '🔁 Nouvelle route')+'</button>'
+         + (trainFlagState ? trainDepotFlagButtonHtml(veh, ' id="bVehTrainFlag"') : '')
          + '</div>';
       if(veh.state !== 'idle' && veh.state !== 'returning')
         h += '<button class="tbtn" style="width:100%;margin-top:4px" id="bVehReturn">🏪 Retour au dépôt</button>';
@@ -436,6 +507,8 @@ function renderInfo(){
           toast('🔁 Clique sur l\'entrepôt source pour '+vt.nom+'.');
         p._html = null;
       };
+      const vehFlagBtn = $('bVehTrainFlag');
+      if(vehFlagBtn) vehFlagBtn.onclick = ()=> handleTrainDepotFlagClick(veh);
       const retBtn = $('bVehReturn');
       if(retBtn) retBtn.onclick = ()=>{
         returnToGarage(veh);
@@ -749,6 +822,7 @@ function renderInfo(){
           resSel += '</select>';
         }
         const canStart = v.vtype === 'train' && (v.orders?.length || 0) >= 2;
+        const trainFlag = canStart ? trainDepotFlagButtonHtml(v) : '';
         h += '<div style="padding:5px 0;border-bottom:1px solid #2a3a50">'
            + '<div>'+vt.icone+' <b>'+vt.nom+'</b></div>'
            + '<div style="font-size:11px;color:#8fa3bf" data-v-state="'+v.id+'"></div>'
@@ -756,7 +830,7 @@ function renderInfo(){
            + resSel
            + '<div style="display:flex;gap:4px;margin-top:3px">'
            + '<button class="tbtn" style="flex:1;font-size:11px" data-route-v="'+v.id+'">'+(v.vtype === 'train' ? '🧭 Configurer' : '🔁 Route')+'</button>'
-           + (canStart ? '<button class="tbtn" style="font-size:11px;color:#7dda5a;font-weight:bold" data-start-v="'+v.id+'">🚩 Démarrer</button>' : '')
+           + trainFlag
            + '<button class="tbtn" style="font-size:11px;color:#ff9a8a" data-sell-v="'+v.id+'">🗑️ Vendre</button>'
            + '</div></div>';
       }
@@ -899,20 +973,12 @@ function renderInfo(){
         p._html = null;
       };
     });
-    p.querySelectorAll('[data-start-v]').forEach(btn=>{
+    p.querySelectorAll('[data-train-flag]').forEach(btn=>{
       btn.onclick = ()=>{
-        const vid = +btn.dataset.startV;
+        const vid = +btn.dataset.trainFlag;
         const v = vehicles.find(vv=>vv.id===vid);
         if(!v || v.vtype !== 'train') return;
-        if(!trainPresentAtDepot(v)){ toast('⛔ Le train doit être dans le dépôt.','err'); return; }
-        v.orderIndex = 0;
-        const ok = startVehicleRoute(v);
-        if(ok){
-          if(MP.connected) netSend({ type:'route_vehicle', id:v.id, orderIndex:0, orders:(v.orders||[]).map(b=>({ x:b.x, y:b.y })) });
-          toast('🚩 Train en route !','win');
-        } else {
-          toast('⛔ Aucun chemin depuis le dépôt. Reconfigure le train.','err');
-        }
+        handleTrainDepotFlagClick(v);
         p._html = null;
       };
     });
@@ -1246,6 +1312,18 @@ function selectTownLabelAt(x,y){
   return false;
 }
 
+function selectTrainDepotFlagAt(x,y){
+  for(let i=trainDepotFlagHits.length-1; i>=0; i--){
+    const h = trainDepotFlagHits[i];
+    if(x < h.x || x > h.x + h.w || y < h.y || y > h.y + h.h) continue;
+    const train = vehicles.find(v => String(v.id) === String(h.id));
+    if(!train) return false;
+    handleTrainDepotFlagClick(train);
+    return true;
+  }
+  return false;
+}
+
 // ---- Panel village ----
 let townZoneSelectMode = null; // { townId } si mode sélection de zone actif
 let townZoneDrag = null;       // { x0,y0,x1,y1 } en tiles pendant le drag
@@ -1512,6 +1590,7 @@ cv.addEventListener('mousedown', e=>{
   if(e.button===0){
     mouse.lDown = true;
     if(selectTownLabelAt(e.clientX, e.clientY)){ mouse.lDown = false; return; }
+    if(selectTrainDepotFlagAt(e.clientX, e.clientY)){ mouse.lDown = false; return; }
     // Mode sélection de zone pour village
     if(townZoneSelectMode){
       townZoneDrag = { x0: mouse.tx, y0: mouse.ty, x1: mouse.tx, y1: mouse.ty };
