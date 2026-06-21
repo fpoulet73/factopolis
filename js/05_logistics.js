@@ -435,9 +435,6 @@ function trainStationStopTiles(b, fromB=null, startTile=null){
   const approachY = startTile != null ? (((startTile / N) | 0) + 0.5) : (fromB ? (fromB.y + (fromB.h || 1) * 0.5) : null);
   for(const track of tracks.values()){
     if(track.pieces.length < stationLength) continue;
-    const stationPositions = stationPieces.map(piece => piece.x * track.dx + piece.y * track.dy);
-    const stationMinPos = stationPositions.length ? Math.min(...stationPositions) : null;
-    const stationMaxPos = stationPositions.length ? Math.max(...stationPositions) : null;
     let first = track.pieces[0], last = track.pieces[0];
     let firstPos = first.x * track.dx + first.y * track.dy;
     let lastPos = firstPos;
@@ -446,31 +443,15 @@ function trainStationStopTiles(b, fromB=null, startTile=null){
       if(pos < firstPos){ first = piece; firstPos = pos; }
       if(pos > lastPos){ last = piece; lastPos = pos; }
     }
-    const stopNearPos = targetPos => {
-      if(targetPos == null) return null;
-      let best = null;
-      let bestDist = Infinity;
-      for(const piece of track.pieces){
-        const pos = piece.x * track.dx + piece.y * track.dy;
-        const dist = Math.abs(pos - targetPos);
-        if(dist < bestDist){
-          best = piece;
-          bestDist = dist;
-        }
-      }
-      return best;
-    };
-    const stopFirst = stopNearPos(stationMinPos) || first;
-    const stopLast = stopNearPos(stationMaxPos) || last;
     if(approachX == null || approachY == null){
-      push(stopFirst.y * N + stopFirst.x);
-      push(stopLast.y * N + stopLast.x);
+      push(first.y * N + first.x);
+      push(last.y * N + last.x);
       continue;
     }
     const approachPos = approachX * track.dx + approachY * track.dy;
     push(approachPos <= (firstPos + lastPos) * 0.5
-      ? (stopLast.y * N + stopLast.x)
-      : (stopFirst.y * N + stopFirst.x));
+      ? (last.y * N + last.x)
+      : (first.y * N + first.x));
   }
   return out.length ? out : adjRailTiles(b);
 }
@@ -587,19 +568,34 @@ function trainAtRailJunction(v){
   return exits > 1;
 }
 
-function trainTargetTileAvailable(tile, vehicle=null){
+function trainTargetTileAvailable(tile, vehicle=null, startTiles=null){
   const blockId = railBlocks?.blockByTile?.[tile] ?? -1;
   if(blockId < 0) return true;
   const ownBlock = vehicle?.currentRailBlock ?? -1;
   if(blockId !== ownBlock && (railBlockOccupancy?.[blockId] ?? 0) > 0) return false;
 
-  // Un itinéraire déjà calculé réserve son canton de quai.
-  // On respecte la réservation de tous les autres trains, quel que soit leur identifiant,
-  // car la priorité se détermine par l'ordre de traitement dans la boucle de jeu.
+  const tx = tile % N, ty = (tile / N) | 0;
+  let candidateDistance = Infinity;
+  for(const start of (startTiles || [])){
+    const sx = start % N, sy = (start / N) | 0;
+    candidateDistance = Math.min(candidateDistance, Math.max(Math.abs(tx - sx), Math.abs(ty - sy)));
+  }
+
+  // Une réservation de quai est souple : le train le plus proche garde la
+  // priorité. Sans cela, un train très éloigné peut réserver un quai vide et
+  // forcer un train déjà à l'entrée à attendre derrière une voie occupée.
   for(const other of vehicles){
     if(other === vehicle || other.vtype !== 'train' || other.state === 'idle') continue;
     const endTile = other.pathTiles?.length ? other.pathTiles[other.pathTiles.length - 1] : -1;
-    if(endTile >= 0 && (railBlocks?.blockByTile?.[endTile] ?? -1) === blockId) return false;
+    if(endTile < 0 || (railBlocks?.blockByTile?.[endTile] ?? -1) !== blockId) continue;
+    const otherDistance = Math.max(0,
+      (other.pathTiles.length - 1) - (other.seg || 0) - Math.max(0, Math.min(1, other.t || 0)));
+    const candidateWins = Number.isFinite(candidateDistance) && (
+      candidateDistance < otherDistance - 0.5
+      || (Math.abs(candidateDistance - otherDistance) <= 0.5
+        && Number(vehicle?.id ?? Infinity) < Number(other.id ?? Infinity))
+    );
+    if(!candidateWins) return false;
   }
   return true;
 }
@@ -624,7 +620,7 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=nul
   const starts = startTile != null ? [startTile] : adjRailTiles(fromB);
   let targetTiles = isTrainStationPiece(toB) ? trainStationStopTiles(toB, fromB, startTile) : adjRailTiles(toB);
   if(isTrainStationPiece(toB)){
-    const availableTargets = targetTiles.filter(tile => trainTargetTileAvailable(tile, vehicle));
+    const availableTargets = targetTiles.filter(tile => trainTargetTileAvailable(tile, vehicle, starts));
     // Préférer un quai libre, mais conserver une route si tous les quais sont
     // momentanément occupés. Sinon les trains restent dans leur gare actuelle,
     // gardent leur canton et peuvent verrouiller tout le réseau en boucle.
