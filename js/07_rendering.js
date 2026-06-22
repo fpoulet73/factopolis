@@ -1053,14 +1053,17 @@ function trainPose(veh){
 }
 
 function drawTruck(tk){
-  const {u, v, du, dv} = lanePose(tk.pts, tk.seg, tk.t, tk.overtaking ? -0.15 : 0.15);
-  const alongU = Math.abs(du) >= Math.abs(dv);
-  const au = alongU ? 0.21 : 0.11, av = alongU ? 0.11 : 0.21;
+  const {u, v} = lanePose(tk.pts, tk.seg, tk.t, tk.overtaking ? -0.15 : 0.15);
+  const [bDx, bDy] = trainBlendedDir(tk.pts, tk.seg, tk.t);
+  const [du, dv] = rotDir(bDx, bDy);
+  const nd = Math.hypot(du, dv) || 1;
+  const fn = du/nd, fv = dv/nd;
+  const shadowAngle = Math.atan2((fn+fv)*TH2, (fn-fv)*TW2);
   const c = iso(u,v);
   ctx.fillStyle = 'rgba(0,0,0,.20)';
-  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 9, 4, 0, 0, 7); ctx.fill();
-  prism(u-au, v-av, u+au, v+av, 4, '#39404c');
-  prism(u-au*0.72, v-av*0.72, u+au*0.72, v+av*0.72, 6, RES[tk.res]?.c ?? '#aaa', 4);
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 9, 4, shadowAngle, 0, Math.PI*2); ctx.fill();
+  trainPrism(u, v, du, dv, 0.21, 0.11, 4, '#39404c');
+  trainPrism(u, v, du, dv, 0.21*0.72, 0.11*0.72, 6, RES[tk.res]?.c ?? '#aaa', 4);
 }
 
 function drawVehicleRoute(veh){
@@ -1289,15 +1292,18 @@ function drawVehicle(veh){
     }
     return;
   }
-  const {u, v, du, dv} = lanePose(veh.pts, veh.seg, veh.t, veh.overtaking ? -0.17 : 0.17);
-  const alongU = Math.abs(du) >= Math.abs(dv);
-  const au = alongU ? 0.23 : 0.13, av = alongU ? 0.13 : 0.23;
+  const {u, v} = lanePose(veh.pts, veh.seg, veh.t, veh.overtaking ? -0.17 : 0.17);
+  const [bDx, bDy] = trainBlendedDir(veh.pts, veh.seg, veh.t);
+  const [du, dv] = rotDir(bDx, bDy);
+  const nd = Math.hypot(du, dv) || 1;
+  const fn = du/nd, fv = dv/nd;
+  const shadowAngle = Math.atan2((fn+fv)*TH2, (fn-fv)*TW2);
   const vt = VEHICLE_TYPES[veh.vtype];
   const c = iso(u, v);
   ctx.fillStyle = 'rgba(0,0,0,.20)';
-  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 10, 4.6, 0, 0, 7); ctx.fill();
-  prism(u-au, v-av, u+au, v+av, 5, '#39404c');
-  prism(u-au*0.72, v-av*0.72, u+au*0.72, v+av*0.72, 7, vt.color, 5);
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 10, 4.6, shadowAngle, 0, Math.PI*2); ctx.fill();
+  trainPrism(u, v, du, dv, 0.23, 0.13, 5, '#39404c');
+  trainPrism(u, v, du, dv, 0.23*0.72, 0.13*0.72, 7, vt.color, 5);
   if(!drawFast && veh.cargo > 0){
     const label = vt.icone + ' ' + veh.cargo;
     ctx.font = 'bold 10px sans-serif';
