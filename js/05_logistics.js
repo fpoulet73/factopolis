@@ -1622,9 +1622,11 @@ function updateVehicles(dt){
         if(v.vtype === 'bus'){
           // Déposer les passagers aller à la destination
           if(v.cargo > 0){
-            if(isTrainStationPiece(v.dest)){
-              // Destination = gare : passagers arrivent à la gare pour prendre un train
-              const destMain = trainStationGroupRepresentative(v.dest.stationGroupId) || v.dest;
+            const destMain = isTrainStationPiece(v.dest)
+              ? (trainStationGroupRepresentative(v.dest.stationGroupId) || v.dest)
+              : trainStationLinkedRepresentative(v.dest);
+            if(destMain){
+              // Destination = gare ou arrêt fusionné : passagers en correspondance train
               destMain.passengersEntrantPending = (destMain.passengersEntrantPending || 0) + v.cargo;
             } else {
               // Destination = arrêt de bus : les voyageurs deviennent passagers entrants

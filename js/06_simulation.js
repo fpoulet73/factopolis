@@ -160,6 +160,22 @@ function update(dt){
   updateVehicles(dt);
   updateWalkers(dt);
 
+  // Rapatrier sur la gare les compteurs éventuellement accumulés sur un arrêt
+  // de bus fusionné (notamment dans les sauvegardes créées avant cette règle).
+  for(const b of buildings){
+    if(b.dead || b.type !== 'bus_stop') continue;
+    const station = trainStationLinkedRepresentative(b);
+    if(!station) continue;
+    if((b.passengersEntrant || 0) > 0){
+      station.passengersEntrantPending = (station.passengersEntrantPending || 0) + b.passengersEntrant;
+      b.passengersEntrant = 0;
+    }
+    if((b.passagersSortant || 0) > 0){
+      station.passagersSortant = (station.passagersSortant || 0) + b.passagersSortant;
+      b.passagersSortant = 0;
+    }
+  }
+
   // Les arrivées bus -> gare sont appliquées après les mouvements du tick,
   // pour éviter qu'un train à quai les embarque immédiatement.
   for(const b of buildings){
