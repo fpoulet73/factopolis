@@ -762,11 +762,77 @@ function trainTileIndex(v){
   return v.pathTiles[Math.max(0, Math.min(v.pathTiles.length - 1, v.seg))] ?? -1;
 }
 
+// Tuiles physiquement occupées par la "boîte englobante" d'un train, pour la
+// signalisation de cantons. Limité à wagons.length + 1 tuiles uniques (loco
+// + wagons réels) — on ne compte pas la queue interpolée du railTrail qui
+// n'est là que pour le lissage visuel des wagons.
+function trainOccupiedBlockTiles(v){
+  const set = new Set();
+  if(v?.vtype !== 'train') return set;
+  const wagonCount = v.wagons?.length || 0;
+  const maxTiles = wagonCount + 1;
+  if(Array.isArray(v.railTrail)){
+    const seen = new Set();
+    let collected = 0;
+    for(let i = v.railTrail.length - 1; i >= 0 && collected < maxTiles; i--){
+      const p = v.railTrail[i];
+      if(!Number.isFinite(p?.x) || !Number.isFinite(p?.y)) continue;
+      const tx = Math.floor(p.x / TILE);
+      const ty = Math.floor(p.y / TILE);
+      if(tx < 0 || ty < 0 || tx >= N || ty >= N) continue;
+      const tileIdx = ty * N + tx;
+      if(seen.has(tileIdx)) continue;
+      seen.add(tileIdx);
+      set.add(tileIdx);
+      collected++;
+    }
+  }
+  // Toujours inclure la tuile loco (au cas où railTrail est vide/stale).
+  const locoTile = trainTileIndex(v);
+  if(locoTile >= 0) set.add(locoTile);
+  return set;
+}
+
+// Renvoie l'ensemble des tuiles occupées physiquement par un train (loco + wagons
+// + queue du railTrail). Utilisé pour interdire la démolition de rail sous un
+// train en mouvement — couvre tout le trail, y compris l'interpolation visuelle.
+function trainOccupiedTileIndices(v){
+  const set = trainOccupiedBlockTiles(v);
+  if(!v || v.vtype !== 'train' || !Array.isArray(v.railTrail)) return set;
+  for(const p of v.railTrail){
+    if(!Number.isFinite(p?.x) || !Number.isFinite(p?.y)) continue;
+    const tx = Math.floor(p.x / TILE);
+    const ty = Math.floor(p.y / TILE);
+    if(tx < 0 || ty < 0 || tx >= N || ty >= N) continue;
+    set.add(ty * N + tx);
+  }
+  return set;
+}
+
+// Renvoie le premier train non-idle occupant la tuile (x, y), sinon null.
+// Utilisé pour interdire la démolition de rail sous un train en mouvement.
+function tileOccupiedByTrain(x, y){
+  if(!Number.isInteger(x) || !Number.isInteger(y)) return null;
+  const i = y * N + x;
+  for(const v of vehicles){
+    if(v.vtype !== 'train' || v.state === 'idle') continue;
+    if(trainOccupiedTileIndices(v).has(i)) return v;
+  }
+  return null;
+}
+
 function rebuildRailBlockOccupancy(){
   if(!railBlocks?.count){
     railBlockOccupancy = null;
     return;
   }
+  // OCCUPATION "LOCO SEULE" : chaque train est compté une fois dans le canton
+  // où se trouve sa loco. Le check de queue (wagons arrière qui libèrent un
+  // canton avec un délai) est géré séparément dans railSignalAspect en lisant
+  // v.pathTiles (fiable), pas le railTrail (qui peut être stale).
+  //
+  // On garde trainOccupiedBlockTiles / trainOccupiedTileIndices basés sur le
+  // trail uniquement pour le veto de démolition de rail sous un train.
   const occ = new Int16Array(railBlocks.count);
   for(const v of vehicles){
     if(v.vtype !== 'train' || v.state === 'idle') continue;
@@ -783,15 +849,18 @@ function railSignalAspect(sig){
   if(!def) return false;
   const nx = sig.x + def.dx, ny = sig.y + def.dy;
   if(!inMap(nx, ny)) return false;
-  // This is the same tile-side block checked when a train approaches the lamp.
   const guardedBlock = railBlocks?.blockByTile?.[sig.y * N + sig.x] ?? -1;
   if(guardedBlock < 0) return false;
   if((railBlockOccupancy?.[guardedBlock] ?? 0) > 0) return false;
-  // Vérifier si des wagons d'un train occupent encore ce bloc
-  // (la loco a déjà libéré le bloc mais la queue n'est pas encore passée)
+  // Vérifier si des wagons arrière d'un train occupent encore ce canton
+  // (la loco a déjà libéré le canton mais la queue n'est pas encore passée).
+  // On utilise v.pathTiles (chemin courant, fiable) plutôt que le railTrail
+  // qui peut être stale en cas de train bloqué.
   for(const v of (vehicles ?? [])){
-    if(v.vtype !== 'train' || !v.wagons?.length || !v.pathTiles || v.seg <= 0) continue;
-    const numBack = Math.ceil(v.wagons.length * 0.80) + 1;
+    if(v.vtype !== 'train' || !v.wagons?.length || !v.pathTiles?.length || v.seg <= 0) continue;
+    // numBack = nombre de tuiles que la queue du train peut occuler derrière
+    // la loco. wagons.length + 1 = loco + wagons (conservateur).
+    const numBack = v.wagons.length + 1;
     const tailSeg = Math.max(0, v.seg - numBack);
     for(let i = tailSeg; i < v.seg; i++){
       const tile = v.pathTiles[i] ?? -1;
@@ -1109,10 +1178,13 @@ function trainProcessStop(v, stopB, nextStop){
 function trainNextMoveState(v){
   if(!v?.pathTiles || v.seg >= v.pathTiles.length - 1) return { blocked:false };
   const cur = v.pathTiles[v.seg], next = v.pathTiles[v.seg + 1];
+  // Garde-fou : si le rail a disparu sous la tuile suivante (sauvegarde ancienne,
+  // edit de save, ou tout autre cas), on bloque et on signale le problème.
+  if(!rail[next]) return { blocked:true, missingRail:true };
   const cx = cur % N, cy = (cur / N) | 0;
   const nx = next % N, ny = (next / N) | 0;
   const def = railDirDef(nx - cx, ny - cy);
-  if(!def) return { blocked:true };
+  if(!def) return { blocked:true, missingRail:true };
   const curBlock = railBlocks?.blockByTile?.[cur] ?? -1;
   if(curBlock >= 0 && (railBlockOccupancy?.[curBlock] ?? 0) > 1){
     // Récupération d'une ancienne sauvegarde où plusieurs trains sont déjà
@@ -1258,13 +1330,56 @@ function updateTrainVehicle(v, dt){
     v.waitTimer = 5;
     return;
   }
+  // Garde-fou rail manquant : si le prochain segment n'a plus de rail
+  // (rail détruit par un moyen détournant le veto), on temporise avant
+  // de renvoyer le train au dépôt pour éviter qu'il ne reste figé.
+  const pre = trainNextMoveState(v);
+  if(pre.missingRail){
+    v.missingRailTimer = (v.missingRailTimer || 0) + dt;
+    if(v.missingRailTimer >= 10 && v.state !== 'returning'){
+      toast('🚂 '+v.name+' : voie interrompue, retour au dépôt','err');
+      v.missingRailTimer = 0;
+      returnToGarage(v);
+    }
+    return;
+  }
+  v.missingRailTimer = 0;
+  // Watchdog anti-deadlock : on suit la progression continue (seg + t).
+  // Si elle n'a pas bougé depuis trop longtemps, on renvoie au dépôt.
+  const progressBefore = v.seg + v.t;
   advanceRailVehicle(v, VEHICLE_TYPES[v.vtype].speed * TILE * dt);
+  const progressAfter = v.seg + v.t;
+  if(Math.abs(progressAfter - progressBefore) > 1e-6){
+    v.signalWaitTime = 0;
+  } else if(v.state !== 'returning'){
+    v.signalWaitTime = (v.signalWaitTime || 0) + dt;
+    const sw = v.signalWaitTime;
+    if(sw >= 60){
+      toast('🚂 '+v.name+' bloqué trop longtemps, mis en attente','err');
+      v.state = 'idle';
+      v.pts = [];
+      v.pathTiles = [];
+      v.currentBuilding = v.garageRef;
+      v.signalWaitTime = 0;
+      resetTrainDepotDeparture(v);
+      return;
+    }
+    if(sw >= 30 && v.state !== 'returning'){
+      toast('🚂 '+v.name+' bloqué, tentative de retour au dépôt','err');
+      v.signalWaitTime = 30.001; // éviter de re-déclencher returnToGarage chaque frame
+      returnToGarage(v);
+      return;
+    }
+  }
   if(v.seg < v.pts.length - 1) return;
   if(v.state === 'returning'){
     v.state = 'idle';
     v.pts = [];
     v.pathTiles = [];
     v.currentBuilding = v.garageRef;
+    v.atDepot = true; // arrivé physiquement au dépôt
+    v.signalWaitTime = 0;
+    v.missingRailTimer = 0;
     resetTrainDepotDeparture(v);
     return;
   }
@@ -1319,6 +1434,7 @@ function createPersistentVehicle(vtype, garage, id=null){
     orders: vtype === 'train' ? [] : null,
     orderIndex: 0,
     depotDepartureArmed: false,
+    atDepot: true, // vrai uniquement quand le train est physiquement au dépôt
     maintenanceDaysPaid: 0,
     boughtAtGtime: gtime,
   };
@@ -1512,8 +1628,11 @@ function startVehicleRoute(v){
     v.state = 'to_source';
     v.waitTimer = 0;
     v.currentBuilding = null;
+    v.atDepot = false; // quitte physiquement le dépôt
     v.cargo = 0;
     v.res = null;
+    v.signalWaitTime = 0;
+    v.missingRailTimer = 0;
     resetTrainDepotDeparture(v);
     return true;
   }
@@ -1544,12 +1663,18 @@ function returnToGarage(v){
     if(ok){
       v.state = 'returning';
       v.currentBuilding = null;
+      v.atDepot = false;
+      v.signalWaitTime = 0;
+      v.missingRailTimer = 0;
       resetTrainDepotDeparture(v);
     } else {
       v.state = 'idle';
       v.pts = [];
       v.pathTiles = [];
       v.currentBuilding = v.garageRef;
+      // Pas de chemin vers le dépôt : on garde atDepot = false car le train
+      // est physiquement encore sur le réseau. Le watchdog ou une action du
+      // joueur (réparation du rail) pourra le débloquer.
       resetTrainDepotDeparture(v);
     }
     return;
@@ -1580,8 +1705,16 @@ function updateVehicles(dt){
             if(dep.ok) startVehicleRoute(v);
           }
         } else {
+          // Train idle mais physiquement hors dépôt (retour interrompu, gare
+          // destination détruite en transit, etc.). On tente un retour propre
+          // vers le dépôt depuis la position courante — on n'appelle surtout
+          // pas startVehicleRoute qui planifierait depuis le dépôt et
+          // téléporterait visuellement le train.
           v.waitTimer = Math.max(0, (v.waitTimer || 0) - dt);
-          if(v.waitTimer <= 0 && !startVehicleRoute(v)) v.waitTimer = 2;
+          if(v.waitTimer <= 0){
+            v.waitTimer = 5;
+            returnToGarage(v);
+          }
         }
       }
       if(v.state === 'idle') continue;

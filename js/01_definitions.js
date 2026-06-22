@@ -260,7 +260,7 @@ function trainPassengerCapacity(v){
 }
 
 function trainPresentAtDepot(v){
-  return !!(v && v.vtype === 'train' && v.state === 'idle' && v.currentBuilding === v.garageRef);
+  return !!(v && v.vtype === 'train' && v.state === 'idle' && v.atDepot);
 }
 
 function trainDepotDepartureArmed(v){
@@ -1018,6 +1018,27 @@ const depotStoredVehicles = b => isVehicleDepot(b)
   ? (b.vehicles || []).filter(v => !v.garageRef?.dead && v.currentBuilding === b && v.state === 'idle')
   : [];
 const depotHasStoredVehicles = b => depotStoredVehicles(b).length > 0;
+
+// Valeur de remboursement unitaire utilisée quand un dépôt est détruit avec
+// véhicules en transit. N'affecte pas le prix d'achat (joueurs remboursés à 50%).
+const TRAIN_WAGON_REFUND_VALUE = 200;
+
+// Tous les véhicules rattachés au dépôt (à quai OU en transit).
+function depotAllVehicles(b){
+  return isVehicleDepot(b)
+    ? vehicles.filter(v => v.garageRef === b && !v.garageRef?.dead)
+    : [];
+}
+
+// Valeur totale (coût d'achat) de tous les véhicules rattachés au dépôt.
+function depotVehicleValue(b){
+  let total = 0;
+  for(const v of depotAllVehicles(b)){
+    total += VEHICLE_TYPES[v.vtype]?.cost || 0;
+    if(Array.isArray(v.wagons)) total += v.wagons.length * TRAIN_WAGON_REFUND_VALUE;
+  }
+  return total;
+}
 
 BUILD.depot.stockPerCell = DEPOT_STOCK_PER_CELL;
 BUILD.market.stockPerCell = DEPOT_STOCK_PER_CELL;

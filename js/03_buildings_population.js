@@ -378,10 +378,21 @@ function demolishBuilding(b, refundOwner){
   buildings.splice(buildings.indexOf(b),1);
   setGrid(b,null);
   if(selected===b) selected = null;
-  // retirer les véhicules du dépôt démoli
+  // retirer les véhicules du dépôt démoli et rembourser 50% de leur valeur
   if((b.type === 'garage' || BUILD[b.type]?.transportDepot) && b.vehicles){
+    const transitVehicles = vehicles.filter(v => v.garageRef === b);
+    const lostValue = depotVehicleValue(b);
     vehicles = vehicles.filter(v => v.garageRef !== b);
-    if(vehicleRouteMode && vehicleRouteMode.vehicle.garageRef === b) vehicleRouteMode = null;
+    if(vehicleRouteMode && vehicleRouteMode.vehicle && vehicleRouteMode.vehicle.garageRef === b) vehicleRouteMode = null;
+    if(lostValue > 0){
+      const vehRefund = Math.floor(lostValue * 0.5);
+      const target = walletOf(refundOwner ?? owner);
+      earnMoney(vehRefund, 'rembours', target);
+      if(transitVehicles.length > 0){
+        const center = centerOfBuilding(b);
+        addFloat(center.x, center.y, '+'+vehRefund+' $ ('+transitVehicles.length+' véhicule(s))', '#ffb04d');
+      }
+    }
   }
   // supprimer la ville si tous ses bâtiments résidentiels sont détruits
   if(BUILD[b.type]?.resid && townId != null){

@@ -1146,20 +1146,38 @@ function drawRailSignal(sig){
   const along = 0.34, side = 0.18;
   const sx = c[0] + (du - dv) * TW2 * along + (dv + du) * TW2 * side;
   const sy = c[1] + (du + dv) * TH2 * along + (dv - du) * TH2 * side;
-  const color = railSignalAspect(sig) ? '#35ff64' : '#ff3030';
+  const isGreen = railSignalAspect(sig);
+  const color = isGreen ? '#35ff64' : '#ff3030';
   ctx.save();
-  ctx.fillStyle = 'rgba(18,24,32,.9)';
+  // Poteau vertical court pour ancrer le signal au sol
+  ctx.strokeStyle = '#0b1017';
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  if(ctx.roundRect) ctx.roundRect(sx - 4, sy - 7, 8, 12, 2);
-  else ctx.rect(sx - 4, sy - 7, 8, 12);
-  ctx.fill();
-  ctx.fillStyle = color;
+  ctx.moveTo(sx, sy + 2);
+  ctx.lineTo(sx, sy + 8);
+  ctx.stroke();
+  // Corps du signal (boîte un peu plus grande qu'avant)
+  ctx.fillStyle = 'rgba(18,24,32,.95)';
   ctx.beginPath();
-  ctx.arc(sx, sy - 1.5, 2.5, 0, Math.PI * 2);
+  if(ctx.roundRect) ctx.roundRect(sx - 5, sy - 9, 10, 14, 2);
+  else ctx.rect(sx - 5, sy - 9, 10, 14);
   ctx.fill();
   ctx.strokeStyle = '#0b1017';
   ctx.lineWidth = 0.8;
   ctx.stroke();
+  // Lampe avec halo lumineux pour la lisibilité à petite échelle
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(sx, sy - 2.5, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // Petit point central blanc pour suggérer le reflet
+  ctx.fillStyle = 'rgba(255,255,255,.7)';
+  ctx.beginPath();
+  ctx.arc(sx - 1, sy - 3.5, 1, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 

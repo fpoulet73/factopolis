@@ -58,6 +58,7 @@ function serializeState(){
       railPreviousTile: v.railPreviousTile ?? null,
       railTrail: Array.isArray(v.railTrail) ? v.railTrail.map(p => ({ x:p.x, y:p.y })) : null,
       depotDepartureArmed: !!v.depotDepartureArmed,
+      atDepot: !!v.atDepot,
       pinnedRes: v.pinnedRes || null,
       wagons: Array.isArray(v.wagons) ? v.wagons.map(w => typeof w === 'string' ? w : ({ type:w.type, resource:w.resource || null })) : null,
       orderIndex: v.orderIndex || 0,
@@ -299,6 +300,11 @@ function applySnapshot(d){
       v.pinnedRes = sv.pinnedRes || null;
       v.waitTimer = sv.waitTimer || 0;
       v.depotDepartureArmed = !!sv.depotDepartureArmed;
+      // Migration : les anciennes sauvegardes n'ont pas atDepot. On l'infère
+      // depuis l'état : idle sans path ni trail = train réellement au dépôt.
+      v.atDepot = sv.atDepot != null
+        ? !!sv.atDepot
+        : (sv.state === 'idle' && (!Array.isArray(sv.pathTiles) || sv.pathTiles.length === 0) && (!Array.isArray(sv.railTrail) || sv.railTrail.length === 0));
       if(Array.isArray(sv.wagons)) v.wagons = sv.wagons
         .map(w => typeof w === 'string'
           ? trainCreateWagon(w)
@@ -404,6 +410,14 @@ function applyAction(msg){
       break;
     case 'rail_update':
       if(!validXY(act.x, act.y) || !Number.isInteger(act.mask) || act.mask < 0 || act.mask > 255) break;
+      // Refuser toute modification de rail sous un train en mouvement (anti train fantôme)
+      if(tileOccupiedByTrain(act.x, act.y)){
+        if(act.costDelta > 0){
+          // Rembourser l'expéditeur puisqu'on annule son action
+          earnMoney(act.costDelta, 'rembours', walletOf(msg.from));
+        }
+        break;
+      }
       if(msg.fromUsername) walletOf(msg.from).username = msg.fromUsername;
       rail[act.y*N+act.x] = act.mask;
       rebuildRailBlocks();
@@ -1045,6 +1059,8 @@ clickFn = function(x,y){
     } else if(road[i]){
       netSend({ type:'bulldoze_road', i });
     } else if(rail[i]){
+      const occ = tileOccupiedByTrain(x, y);
+      if(occ){ toast('⛔ Un train occupe cette voie','err'); return; }
       const { updates, refund } = collectRailRemovalUpdates(x, y);
       if(updates.length){
         let first = true;

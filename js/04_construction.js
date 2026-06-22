@@ -685,6 +685,8 @@ function clickAt(x,y){
     } else if(road[i]){
       road[i] = 0; earnMoney(3, 'rembours');
     } else if(rail[i]){
+      const occ = tileOccupiedByTrain(x, y);
+      if(occ){ toast('⛔ Un train occupe cette voie','err'); return; }
       const { updates, refund } = collectRailRemovalUpdates(x, y);
       railApplyMaskUpdates(updates, -refund);
     } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON){
