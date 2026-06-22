@@ -22,7 +22,7 @@ let selectedExpansion = null;
 let gtime = 0, eff = 1; // eff = snapshot du wallet courant, gardé pour statusOf
 let selected = null, tool = 'select';
 let speed = 1, paused = false;
-let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0;
+let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0, passengerCycleTimer = 0;
 let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
 const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0, expansion:0 });
 const START_HOMELESS = 0;
@@ -224,7 +224,7 @@ function genWorld(config){
   vehicles = []; vehicleRouteMode = null; selectedVehicle = null; nextVehicleId = 0; nextTrainStationId = 1;
   towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = []; trainDepotFlagHits = [];
   WALLETS = {}; gtime = 0;
-  selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0; busStopTimer = 0;
+  selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0; busStopTimer = 0; passengerCycleTimer = 0;
   mapBounds = { x0: EXP_MARGIN, y0: EXP_MARGIN, x1: EXP_MARGIN + N_PLAY, y1: EXP_MARGIN + N_PLAY };
   expansions = []; expansionLevels = { left:0, right:0, top:0, bottom:0 };
   purchasedPieces = new Set();
@@ -576,6 +576,87 @@ function townReachableJobs(townId){
 
 function townAllocatedWorkers(townId){
   return townReachableJobBuildings(townId).reduce((s,b)=>s+workersAllocatedOf(b), 0);
+}
+
+function refreshTransitPassengerCaps(){
+  const busStops = buildings.filter(b => !b.dead && b.type === 'bus_stop');
+  const trainStations = buildings.filter(b => !b.dead && b.type === 'train_station');
+
+  for(const stop of busStops) stop.passengersMax = 0;
+  for(const station of trainStations) station.passengersEntrantMax = 0;
+
+  const homesByTown = new Map();
+  for(const home of buildings){
+    if(home.dead || !BUILD[home.type]?.resid || (home.pop || 0) <= 0 || home.townId == null) continue;
+    if(!homesByTown.has(home.townId)) homesByTown.set(home.townId, []);
+    homesByTown.get(home.townId).push(home);
+  }
+
+  function apportion(entries, total, assign){
+    if(!entries.length || total <= 0) return;
+    let weightSum = entries.reduce((s, entry) => s + Math.max(0, entry.weight || 0), 0);
+    if(weightSum <= 0){
+      for(const entry of entries) entry.weight = 1;
+      weightSum = entries.length;
+    }
+    let assigned = 0;
+    const ranked = entries.map((entry, idx) => {
+      const exact = (total * entry.weight) / weightSum;
+      const base = Math.floor(exact);
+      assign(entry, base);
+      assigned += base;
+      return { entry, idx, frac: exact - base };
+    });
+    ranked.sort((a,b) => (b.frac - a.frac) || (a.idx - b.idx));
+    let remaining = total - assigned;
+    for(let i = 0; i < remaining; i++){
+      const target = ranked[i % ranked.length].entry;
+      assign(target, (target.building._tmpTransitCap || 0) + 1);
+    }
+  }
+
+  for(const [townId, homes] of homesByTown){
+    let idleTotal = 0;
+    const entries = [];
+    const byKey = new Map();
+    const addEntry = (key, building) => {
+      let entry = byKey.get(key);
+      if(!entry){
+        entry = { key, building, weight: 0 };
+        byKey.set(key, entry);
+        entries.push(entry);
+      }
+      return entry;
+    };
+
+    for(const home of homes){
+      const idle = Math.max(0, Math.floor(home.workersIdle || 0));
+      idleTotal += idle;
+      if(idle <= 0) continue;
+
+      for(const stop of busStops){
+        if(stop.townId !== townId) continue;
+        if(buildingDistance(home, stop) > BUS_STOP_RADIUS) continue;
+        addEntry('bus:' + stop.x + ',' + stop.y, stop).weight += idle;
+      }
+      for(const station of trainStations){
+        if(station.townId !== townId) continue;
+        if(buildingDistance(home, station) > TRAIN_STATION_RADIUS) continue;
+        addEntry('train:' + station.stationGroupId + ':' + station.x + ',' + station.y, station).weight += idle;
+      }
+    }
+
+    if(idleTotal <= 0 || !entries.length) continue;
+
+    for(const entry of entries) entry.building._tmpTransitCap = 0;
+    apportion(entries, idleTotal, (entry, value) => { entry.building._tmpTransitCap = value; });
+
+    for(const entry of entries){
+      if(entry.building.type === 'bus_stop') entry.building.passengersMax = entry.building._tmpTransitCap || 0;
+      else if(entry.building.type === 'train_station') entry.building.passengersEntrantMax = entry.building._tmpTransitCap || 0;
+      delete entry.building._tmpTransitCap;
+    }
+  }
 }
 
 function refreshWorkerAllocation(){

@@ -4,8 +4,8 @@ function newBuilding(type,x,y,w,h){
               storage:{}, inc:{}, prog:0, trucksOut:0, dead:false, owner:null };
   if(type==='mine')  b.ore = terrain[y*N+x]===T.IRON ? 'iron' : 'coal';
   if(d?.storageHub && type !== 'tank'){
-    b.allow = {}; b.sellTo = {}; b.sellMin = {};
-    for(const k in RES){ b.allow[k] = k !== 'water'; b.sellTo[k] = false; b.sellMin[k] = 0; }
+    b.allow = {}; b.sellTo = {}; b.sellMin = {}; b.trainAllow = {};
+    for(const k in RES){ b.allow[k] = false; b.sellTo[k] = false; b.sellMin[k] = 0; b.trainAllow[k] = false; }
   }
   if(type==='tank'){
     b.allow = { water:true };
@@ -15,12 +15,14 @@ function newBuilding(type,x,y,w,h){
   if(type==='bus_stop'){
     b.passengers = 0;
     b.passengersMax = 0;
+    b.passengersQuota = 0;
     b.passengersEntrant = 0;
     b.passagersSortant = 0;
   }
   if(type==='train_station'){
     b.passengersEntrant = 0;
     b.passengersEntrantMax = 0;
+    b.passengersEntrantQuota = 0;
     b.passagersSortant = 0;
     b.passengersEntrantPending = 0;
   }

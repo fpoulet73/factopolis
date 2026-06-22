@@ -566,12 +566,14 @@ function clickAt(x,y){
           return;
         }
         veh.orders = veh.orders || [];
+        veh.orderModes = veh.orderModes || [];
         const last = veh.orders[veh.orders.length - 1] || null;
         if(last && typeof trainOrderStopKey === 'function' && trainOrderStopKey(last) === trainOrderStopKey(b)){
           toast('⛔ Cet arrêt est déjà le dernier ordre.','err');
           return;
         }
         veh.orders.push(b);
+        veh.orderModes.push('load_unload');
         syncTrainOrders(veh);
         if(typeof renderTrainPanel === 'function') renderTrainPanel();
         toast('🚂 Arrêt ajouté : '+trainStopLabel(b));

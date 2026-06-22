@@ -1015,18 +1015,25 @@ function trainProcessStop(v, stopB, nextStop){
     }
   }
 
+  // Déterminer le mode pour cet arrêt (load/unload/load_unload)
+  const stopIdx = v.orders ? v.orders.indexOf(stopB) : -1;
+  const mode = (stopIdx >= 0 && v.orderModes?.[stopIdx]) || 'load_unload';
+  const canUnload = mode === 'unload' || mode === 'load_unload';
+  const canLoad = mode === 'load' || mode === 'load_unload';
+
   // --- fret ---
-  if(v.cargo > 0 && v.res){
+  if(canUnload && v.cargo > 0 && v.res){
     const room = accepts(stopB, v.res) ? Math.max(0, capOf(stopB, v.res) - (stopB.storage[v.res]||0)) : 0;
     const deposit = Math.min(v.cargo, room);
     if(deposit > 0) stopB.storage[v.res] = (stopB.storage[v.res]||0) + deposit;
     v.cargo -= deposit;
     if(v.cargo <= 0){ v.cargo = 0; v.res = null; }
   }
-  if(v.cargo > 0 || !nextStop || !isStorageHub(stopB)) return;
+  if(v.cargo > 0 || !nextStop || !isStorageHub(stopB) || !canLoad) return;
   let bestRes = null, bestAmt = 0;
   for(const r of trainAllowedResources(v)){
     if(!accepts(nextStop, r)) continue;
+    if(stopB.trainAllow?.[r] === false) continue;
     const cap = trainWagonCapacityForRes(v, r);
     if(cap <= 0) continue;
     const amt = Math.min(cap, stopB.storage?.[r] || 0);
@@ -1262,6 +1269,10 @@ function syncTrainOrders(v){
   while(orders.length > 1 && trainOrderStopKey(orders[0]) === trainOrderStopKey(orders[orders.length - 1]))
     orders.pop();
   v.orders = orders;
+  // Nettoyer les modes pour que le nombre correspond au nombre d'ordres
+  if(v.orderModes && v.orderModes.length > orders.length){
+    v.orderModes.splice(orders.length);
+  }
   if(orders.length < 2){
     v.source = orders[0] || null;
     v.dest = null;

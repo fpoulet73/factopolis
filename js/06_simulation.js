@@ -282,30 +282,29 @@ function update(dt){
     if(floats[i].life <= 0) floats.splice(i,1);
   }
 
-  // Arrêts de bus : mise à jour du max (pop proche) toutes les 3s, remplissage progressif chaque frame
+  // Arrêts de bus / gares : mise à jour des max toutes les 3s
+  // Somme par ville = habitants sans travail, répartis sur les arrêts/gares proches des habitations.
   busStopTimer += dt;
   const updateBusMax = busStopTimer >= 3;
   if(updateBusMax) busStopTimer = 0;
+  if(updateBusMax) refreshTransitPassengerCaps();
   // Remplissage continu sur 3 jours (72 heures de jeu)
   const BUS_FILL_RATE_SECS = 3 * 24 / GAME_HOURS_PER_SEC; // gtime-secondes pour remplir à 100%
+  // Quota par cycle de 3 jours : le total généré ne dépasse pas passengersMax sur la période
+  passengerCycleTimer += dt;
+  const resetPassengerCycle = passengerCycleTimer >= BUS_FILL_RATE_SECS;
+  if(resetPassengerCycle) passengerCycleTimer = 0;
   for(const b of buildings){
     if(b.dead || b.type !== 'bus_stop') continue;
-    if(updateBusMax){
-      const cx = b.x + 0.5, cy = b.y + 0.5;
-      let pop = 0;
-      for(const o of buildings){
-        if(o.dead || !BUILD[o.type]?.resid) continue;
-        const dx = Math.abs((o.x + o.w/2) - cx);
-        const dy = Math.abs((o.y + o.h/2) - cy);
-        if(Math.max(dx, dy) <= BUS_STOP_RADIUS) pop += o.pop || 0;
-      }
-      b.passengersMax = pop;
-      if((b.passengers || 0) > pop) b.passengers = pop; // cap si pop a baissé
-    }
+    if(updateBusMax && (b.passengers || 0) > (b.passengersMax || 0))
+      b.passengers = b.passengersMax || 0; // cap si le nombre d'inactifs a baissé
     const max = b.passengersMax || 0;
-    if(max > 0 && (b.passengers || 0) < max){
+    if(resetPassengerCycle || b.passengersQuota == null) b.passengersQuota = max;
+    if(max > 0 && (b.passengersQuota || 0) > 0 && (b.passengers || 0) < max){
       const rate = max / BUS_FILL_RATE_SECS;
-      b.passengers = Math.min(max, (b.passengers || 0) + rate * Math.min(dt, 0.5));
+      const fillAmount = Math.min(b.passengersQuota, rate * Math.min(dt, 0.5), max - (b.passengers || 0));
+      b.passengers = (b.passengers || 0) + fillAmount;
+      b.passengersQuota -= fillAmount;
     }
     // Travailleurs navetteurs : quittent leur poste et retournent à l'arrêt bus après 1 jour de jeu
     if(b.passengersEntrant == null) b.passengersEntrant = 0;
@@ -318,25 +317,17 @@ function update(dt){
     }
   }
 
-  // Gares : génération de passagers entrants depuis la population locale (continu, 3 jours)
+  // Gares : génération de passagers entrants depuis les habitants sans travail de la ville (continu, 3 jours)
   for(const b of buildings){
     if(b.dead || b.type !== 'train_station') continue;
     if(b.passengersEntrant == null){ b.passengersEntrant = 0; b.passengersEntrantMax = 0; b.passagersSortant = 0; }
-    if(updateBusMax){
-      const cx = b.x + 0.5, cy = b.y + 0.5;
-      let pop = 0;
-      for(const o of buildings){
-        if(o.dead || !BUILD[o.type]?.resid) continue;
-        const dx = Math.abs((o.x + o.w/2) - cx);
-        const dy = Math.abs((o.y + o.h/2) - cy);
-        if(Math.max(dx, dy) <= TRAIN_STATION_RADIUS) pop += o.pop || 0;
-      }
-      b.passengersEntrantMax = pop;
-    }
     const maxE = b.passengersEntrantMax || 0;
-    if(maxE > 0 && (b.passengersEntrant || 0) < maxE){
+    if(resetPassengerCycle || b.passengersEntrantQuota == null) b.passengersEntrantQuota = maxE;
+    if(maxE > 0 && (b.passengersEntrantQuota || 0) > 0 && (b.passengersEntrant || 0) < maxE){
       const rate = maxE / BUS_FILL_RATE_SECS;
-      b.passengersEntrant = Math.min(maxE, (b.passengersEntrant || 0) + rate * Math.min(dt, 0.5));
+      const fillAmount = Math.min(b.passengersEntrantQuota, rate * Math.min(dt, 0.5), maxE - (b.passengersEntrant || 0));
+      b.passengersEntrant = (b.passengersEntrant || 0) + fillAmount;
+      b.passengersEntrantQuota -= fillAmount;
     }
     // Passagers qui attendent depuis trop longtemps : deviennent sortants après 3 jours
     if((b.passengersEntrant || 0) > 0){

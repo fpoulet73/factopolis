@@ -338,8 +338,16 @@ function renderTrainPanel(){
   h += '<div class="tp-section"><div class="tp-section-title">Ordres</div>';
   if(orders.length){
     orders.forEach((b, idx) => {
-      h += '<div class="tp-order"><div><b>'+(idx + 1)+'.</b> '+escHtml(trainStopLabel(b))+'</div>'
-        + '<button class="tbtn" data-train-order-del="'+idx+'" style="width:auto;margin:0;color:#ff9a8a">Supprimer</button></div>';
+      const mode = v.orderModes?.[idx] || 'load_unload';
+      const modeLabel = mode === 'load' ? '📥 Load' :
+                        mode === 'unload' ? '📤 Unload' :
+                        '🔄 Load&Unload';
+      h += '<div class="tp-order"><div><b>'+(idx + 1)+'.</b> '+escHtml(trainStopLabel(b))
+         + ' <span style="font-size:10px;color:#8fa3bf;margin-left:8px">'+modeLabel+'</span></div>'
+         + '<div style="display:flex;gap:4px">'
+         + '<button class="tbtn" data-train-order-mode="'+idx+'" style="width:auto;margin:0;font-size:10px;padding:2px 6px">Changer</button>'
+         + '<button class="tbtn" data-train-order-del="'+idx+'" style="width:auto;margin:0;color:#ff9a8a;font-size:10px;padding:2px 6px">Supprimer</button>'
+         + '</div></div>';
     });
   } else {
     h += '<div style="color:#8fa3bf;font-style:italic">Aucun arrêt défini.</div>';
@@ -403,10 +411,20 @@ function renderTrainPanel(){
   p.querySelectorAll('[data-train-order-del]').forEach(btn => btn.onclick = ()=>{
     const idx = +btn.dataset.trainOrderDel;
     v.orders.splice(idx, 1);
+    if(v.orderModes) v.orderModes.splice(idx, 1);
     syncTrainOrders(v);
     resetTrainDepotDeparture(v);
     renderTrainPanel();
     renderInfo();
+  });
+  p.querySelectorAll('[data-train-order-mode]').forEach(btn => btn.onclick = ()=>{
+    const idx = +btn.dataset.trainOrderMode;
+    v.orderModes = v.orderModes || [];
+    const modes = ['load', 'unload', 'load_unload'];
+    const current = v.orderModes[idx] || 'load_unload';
+    const currentIdx = modes.indexOf(current);
+    v.orderModes[idx] = modes[(currentIdx + 1) % modes.length];
+    renderTrainPanel();
   });
   $('tpAddStop').onclick = ()=>{
     vehicleRouteMode = { vehicle:v, step:'train_order_append' };
@@ -415,6 +433,7 @@ function renderTrainPanel(){
   };
   $('tpClearStops').onclick = ()=>{
     v.orders = [];
+    v.orderModes = [];
     v.source = null;
     v.dest = null;
     v.orderIndex = 0;
@@ -766,19 +785,30 @@ function renderInfo(){
       h += '<div style="margin-top:10px;color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">📦 Entrepôt fusionné</div>';
       h += '<div style="color:#8fa3bf;font-size:10px;margin-bottom:6px">Rayon d\'action : <b style="color:#ffd700">'+depotRadius+' cases</b></div>';
       if(isOwner){
+        h += '<div style="margin-bottom:8px;padding:8px;background:rgba(91,147,232,.06);border-radius:6px;border-left:3px solid #5b93e8;font-size:11px;color:#8fa3bf">'
+           + '<div style="margin-bottom:4px;font-weight:600;color:#e8eef7">Modes d\'acceptation :</div>'
+           + '<div style="margin:4px 0">🔴 <span style="color:#999">Désactivé</span> — aucune livraison, pas de train</div>'
+           + '<div style="margin:4px 0">🔵 <span style="color:#5b93e8">Accepte uniquement</span> — camions livrent, trains n\'en chargent pas</div>'
+           + '<div style="margin:4px 0">🟢 <span style="color:#4db86a">Accepte & distribue</span> — camions livrent, trains chargent</div>'
+           + '</div>';
         h += '<div class="depot-cols-3">';
         for(const k in RES){
           if(k === 'water') continue;
-          const on = linkedDepot.allow?.[k] !== false;
+          const disabled = linkedDepot.allow?.[k] === false;
+          const trainOn  = !disabled && linkedDepot.trainAllow?.[k] !== false;
+          const stateClass = disabled ? '' : (trainOn ? ' train' : ' on');
           const val = linkedDepot.storage[k]||0, cap = capOf(linkedDepot,k);
           const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
-          h += '<div class="depot-res-item'+(on?' on':'')+'" style="cursor:pointer;flex-direction:column;align-items:stretch;padding:5px 7px" data-station-depot-toggle-res="'+k+'">'
+          const stateLabel = disabled ? '<span style="font-size:11px;color:#999">🔴</span>'
+            : trainOn ? '<span style="font-size:11px;color:#4db86a">🟢</span>'
+            : '<span style="font-size:11px;color:#5b93e8">🔵</span>';
+          h += '<div class="depot-res-item'+stateClass+'" style="cursor:pointer;flex-direction:column;align-items:stretch;padding:5px 7px" data-station-depot-toggle-res="'+k+'">'
              + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
              + '<span class="dot" style="background:'+RES[k].c+'"></span>'
-             + '<span style="flex:1;font-size:11px;'+(on?'':'opacity:.4')+'">'+RES[k].n+'</span>'
-             + (on ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '<span style="font-size:10px;color:#555">off</span>')
+             + '<span style="flex:1;font-size:11px;'+(disabled?'opacity:.4':'')+'">' + RES[k].n + '</span>'
+             + (cap>0 ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '')
              + '</div>'
-             + (on && cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px"></i></div>' : '')
+             + (cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px;opacity:'+(disabled?'0.3':'1')+'"></i></div>' : '')
              + '</div>';
         }
         h += '</div>';
@@ -1141,7 +1171,18 @@ function renderInfo(){
     el.onclick = ()=>{
       const depot = isTrainStationPiece(b) ? trainStationLinkedDepot(b) : null;
       if(!depot || !depot.allow) return;
-      depot.allow[el.dataset.stationDepotToggleRes] = depot.allow[el.dataset.stationDepotToggleRes] === false ? undefined : false;
+      if(!depot.trainAllow) depot.trainAllow = {};
+      const k = el.dataset.stationDepotToggleRes;
+      const disabled = depot.allow[k] === false;
+      const trainOn  = !disabled && depot.trainAllow[k] !== false;
+      if(disabled){           // état 1 → état 2 (activé, pas de train)
+        depot.allow[k] = undefined;
+        depot.trainAllow[k] = false;
+      } else if(!trainOn){    // état 2 → état 3 (activé + train)
+        depot.trainAllow[k] = undefined;
+      } else {                // état 3 → état 1 (désactivé)
+        depot.allow[k] = false;
+      }
       p._html = null;
     };
   });
