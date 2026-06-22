@@ -705,7 +705,7 @@ function renderInfo(){
       h += '<div class="row"><span>Vitesse</span><b>'+vt.speed+' cases/s</b></div>';
       // Section État des wagons pour les trains
       if(veh.vtype === 'train'){
-        const wagons = veh.wagons || [];
+        const wagons = trainNormalizeWagons(veh);
         const _totalFreightCap = wagons.reduce((s, w) => {
           const d = trainWagonDef(w);
           return s + ((!d?.passenger && veh.res && trainWagonAcceptedResources(w).includes(veh.res)) ? d.capacite : 0);
