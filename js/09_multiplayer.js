@@ -25,7 +25,7 @@ function serializeState(){
       prog:b.prog||0, trucksOut:b.trucksOut||0,
       pop:b.pop||0, protectedPop:b.protectedPop||0,
       ct:b.ct||0, pending:0, pendingProtected:0, starve:b.starve||0,
-      ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, sellMin:b.sellMin||null, paused:b.paused||false, blockedOut:b.blockedOut||null, owner:b.owner||null,
+      ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, sellMin:b.sellMin||null, trainAllow:b.trainAllow||null, paused:b.paused||false, blockedOut:b.blockedOut||null, owner:b.owner||null,
       starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
       mergeBlockedMissing:Array.isArray(b.mergeBlockedMissing) ? b.mergeBlockedMissing.slice() : null,
       passengers:b.passengers||0,
@@ -234,6 +234,7 @@ function applySnapshot(d){
     if(o.allow) b.allow = o.allow;
     if(o.sellTo) b.sellTo = o.sellTo;
     if(o.sellMin) b.sellMin = o.sellMin;
+    if(o.trainAllow) b.trainAllow = o.trainAllow;
     if(o.paused != null) b.paused = o.paused;
     if(o.blockedOut) b.blockedOut = o.blockedOut;
     if(o.owner  != null) b.owner  = o.owner;

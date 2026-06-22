@@ -774,15 +774,15 @@ function railSignalAspect(sig){
   return true;
 }
 
-function prepareRailTrip(v, fromB, toB, startTile=null, previousTile=null){
-  let path = findRailPath(fromB, toB, startTile, v, previousTile);
+function prepareRailTrip(v, fromB, toB, startTile=null, previousTile=null, skipFirstSignalCheck=false){
+  let path = findRailPath(fromB, toB, startTile, v, previousTile, null, skipFirstSignalCheck);
   let decisionPreviousTile = previousTile;
   // Après un arrêt en gare, interdire systématiquement la tuile précédente
   // peut bloquer certains quais en cul-de-sac ou certaines géométries de sortie.
   // On préfère d'abord éviter le demi-tour, puis on autorise ce repli si aucun
   // trajet valide n'existe autrement.
   if(!path && startTile != null && previousTile != null){
-    path = findRailPath(fromB, toB, startTile, v, null);
+    path = findRailPath(fromB, toB, startTile, v, null, null, skipFirstSignalCheck);
     decisionPreviousTile = null;
   }
   if(!path) return false;
@@ -1167,6 +1167,7 @@ function updateTrainVehicle(v, dt){
     v.state = 'idle';
     v.pts = [];
     v.pathTiles = [];
+    v.currentBuilding = v.garageRef;
     resetTrainDepotDeparture(v);
     return;
   }
@@ -1465,20 +1466,11 @@ function returnToGarage(v){
   if(v.vtype === 'train'){
     const startTile = trainTileIndex(v);
     const from = v.currentBuilding || v.garageRef;
-    v.source = null; v.dest = null; v.orders = []; v.orderIndex = 0;
-    v.vizRoute = null;
     v.cargo = 0; v.res = null;
 
-    // Trouver le dépôt ferroviaire le plus proche
-    let closestDepot = v.garageRef;
-    let closestDist = Infinity;
-    for(const b of buildings){
-      if(b.dead || b.type !== 'train_depot') continue;
-      const d = buildingDistance(from, b);
-      if(d < closestDist){ closestDist = d; closestDepot = b; }
-    }
-
-    const ok = startTile >= 0 ? prepareRailTrip(v, from, closestDepot, startTile) : prepareRailTrip(v, from, closestDepot);
+    // skipFirstSignalCheck=true : le train est en plein milieu du réseau, pas à
+    // un point de décision signal ; les signaux sont respectés lors du mouvement réel.
+    const ok = startTile >= 0 ? prepareRailTrip(v, from, v.garageRef, startTile, null, true) : prepareRailTrip(v, from, v.garageRef);
     if(ok){
       v.state = 'returning';
       v.currentBuilding = null;
@@ -1487,6 +1479,7 @@ function returnToGarage(v){
       v.state = 'idle';
       v.pts = [];
       v.pathTiles = [];
+      v.currentBuilding = v.garageRef;
       resetTrainDepotDeparture(v);
     }
     return;
