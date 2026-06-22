@@ -493,6 +493,7 @@ function renderTrainPanel(){
       id:v.id,
       orderIndex:v.orderIndex || 0,
       orders:(v.orders || []).map(b => ({ x:b.x, y:b.y })),
+      orderModes:(v.orderModes || []).slice(),
     });
     toast('Route du train enregistrée. Appuie sur le drapeau pour autoriser le départ.','win');
     renderTrainPanel();

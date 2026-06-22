@@ -122,6 +122,7 @@ const VEHICLE_MAINTENANCE_RATE = CFG.logistique?.tauxHausseMensuelle ?? CFG.logi
 const TRAIN_STATION_RADIUS    = CFG.logistique?.gare?.rayon               ?? 12;
 const TRAIN_STATION_FILL_TIME = CFG.logistique?.gare?.tempsRemplissage    ?? 8;
 const TRAIN_FARE_FACTOR       = CFG.logistique?.gare?.tarif               ?? 2;
+const TRAIN_FREIGHT_FACTOR    = CFG.logistique?.gare?.tarifFret            ?? 0.5;
 
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};

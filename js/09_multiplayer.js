@@ -62,6 +62,9 @@ function serializeState(){
       wagons: Array.isArray(v.wagons) ? v.wagons.map(w => typeof w === 'string' ? w : ({ type:w.type, resource:w.resource || null })) : null,
       orderIndex: v.orderIndex || 0,
       orders: Array.isArray(v.orders) ? v.orders.filter(b => b && !b.dead).map(b => ({ x:b.x, y:b.y })) : null,
+      orderModes: Array.isArray(v.orderModes) ? v.orderModes.slice() : null,
+      cargoLoadStopX: v.cargoLoadStop && !v.cargoLoadStop.dead ? v.cargoLoadStop.x : null,
+      cargoLoadStopY: v.cargoLoadStop && !v.cargoLoadStop.dead ? v.cargoLoadStop.y : null,
     })),
   };
 }
@@ -308,6 +311,9 @@ function applySnapshot(d){
           .filter(Boolean);
       }
       if(Number.isInteger(sv.orderIndex)) v.orderIndex = sv.orderIndex;
+      if(Array.isArray(sv.orderModes)) v.orderModes = sv.orderModes.slice();
+      if(sv.cargoLoadStopX != null)
+        v.cargoLoadStop = buildings.find(b => b.x === sv.cargoLoadStopX && b.y === sv.cargoLoadStopY) || null;
       if(v.vtype === 'train') syncTrainOrders(v);
       if(sv.busRouteDistance != null) v.busRouteDistance = sv.busRouteDistance;
       if(sv.passengersOnBoard != null) v.passengersOnBoard = sv.passengersOnBoard;
@@ -546,6 +552,7 @@ function applyAction(msg){
           .map(o => validXY(o.x, o.y) ? buildings.find(b => b.x===o.x && b.y===o.y) : null)
           .filter(Boolean);
         v.orderIndex = Number.isInteger(act.orderIndex) ? act.orderIndex : 0;
+        if(Array.isArray(act.orderModes)) v.orderModes = act.orderModes.slice();
         if(!syncTrainOrders(v) || !vehicleCanServeRoute(v)){ v.orders = []; v.source = null; v.dest = null; break; }
         v.state = 'idle';
         v.currentBuilding = v.garageRef;

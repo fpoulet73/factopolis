@@ -61,6 +61,22 @@ function segmentKey(pts, seg){
   return Math.round(a.x)+','+Math.round(a.y)+'>'+Math.round(b.x)+','+Math.round(b.y);
 }
 
+function reverseSegmentKey(pts, seg){
+  if(!pts || seg < 0 || seg >= pts.length-1) return null;
+  const a = pts[seg], b = pts[seg+1];
+  return Math.round(b.x)+','+Math.round(b.y)+'>'+Math.round(a.x)+','+Math.round(a.y);
+}
+
+// Vrai s'il n'y a aucun véhicule venant en sens inverse sur le segment seg (et seg+1)
+function noOncoming(unit, seg){
+  const rKey = reverseSegmentKey(unit.pts, seg);
+  if(!rKey) return true;
+  for(const other of movingRoadUnits(unit)){
+    if(segmentKey(other.pts, other.seg) === rKey) return false;
+  }
+  return true;
+}
+
 function movingRoadUnits(except){
   const out = [];
   for(const tk of trucks) if(tk !== except && tk.pts && tk.seg < tk.pts.length-1) out.push(tk);
@@ -74,12 +90,20 @@ function limitByTrafficAhead(unit, desiredT){
   const a = unit.pts[unit.seg], b = unit.pts[unit.seg+1];
   const len = Math.hypot(b.x-a.x, b.y-a.y) || 1;
   let maxT = desiredT;
+  let wouldBlock = false;
   for(const other of movingRoadUnits(unit)){
     if(segmentKey(other.pts, other.seg) !== key) continue;
     if(other.t <= unit.t) continue;
     const allowed = other.t - VEHICLE_FOLLOW_GAP / len;
+    if(allowed < desiredT - 1e-6) wouldBlock = true;
     maxT = Math.min(maxT, allowed);
   }
+  // Dépassement par la droite : pas de véhicule en sens inverse sur ce segment ni le suivant
+  if(wouldBlock && noOncoming(unit, unit.seg) && noOncoming(unit, unit.seg + 1)){
+    unit.overtaking = true;
+    return desiredT;
+  }
+  if(!wouldBlock) unit.overtaking = false;
   return Math.max(unit.t, maxT);
 }
 
@@ -94,6 +118,8 @@ function nextSegmentIsBlocked(unit){
     if(segmentKey(other.pts, other.seg) !== key) continue;
     if(other.t * len < VEHICLE_FOLLOW_GAP) return true;
   }
+  // Si en cours de dépassement, bloquer si trafic en sens inverse sur le segment suivant
+  if(unit.overtaking && !noOncoming(unit, nextSeg)) return true;
   return false;
 }
 
@@ -124,6 +150,7 @@ function advanceRoadUnit(unit, move){
     if(unit.t < 1 - 1e-6) break;
     unit.seg++;
     unit.t = 0;
+    unit.overtaking = false; // réévaluer sur chaque nouveau segment
   }
 }
 
@@ -1016,32 +1043,50 @@ function trainProcessStop(v, stopB, nextStop){
   }
 
   // Déterminer le mode pour cet arrêt (load/unload/load_unload)
-  const stopIdx = v.orders ? v.orders.indexOf(stopB) : -1;
+  // v.orderIndex pointe toujours vers l'arrêt courant après syncTrainOrders — plus fiable que indexOf
+  // (indexOf retourne toujours la 1re occurrence si un arrêt apparaît 2× dans le circuit)
+  const stopIdx = (v.orderIndex != null && v.orderIndex >= 0) ? v.orderIndex : -1;
   const mode = (stopIdx >= 0 && v.orderModes?.[stopIdx]) || 'load_unload';
   const canUnload = mode === 'unload' || mode === 'load_unload';
   const canLoad = mode === 'load' || mode === 'load_unload';
 
   // --- fret ---
-  // Pour les gares, utiliser le dépôt fusionné (collé à la gare) comme hub de fret
+  // Pour les gares, utiliser le dépôt fusionné (collé à la gare) comme hub de fret.
+  // trainStationLinkedDepot parcourt TOUTES les pièces du groupe → fonctionne quel que soit le quai.
+  // Fallback pour quai isolé (stationGroupId == null) : chercher un dépôt directement adjacent.
   const linkedDepot = isTrainStationPiece(stopB) ? trainStationLinkedDepot(stopB) : null;
-  const freightHub = linkedDepot || (isStorageHub(stopB) ? stopB : null);
+  const directDepot = (!linkedDepot && isTrainStationPiece(stopB))
+    ? buildings.find(b => !b.dead && isStorageDepot(b) && buildingEdgeGap(stopB, b) === 0)
+    : null;
+  const freightHub = linkedDepot || directDepot || (isStorageHub(stopB) ? stopB : null);
 
-  let unloadedRes = null; // Mémoriser quelle ressource a été déchargée
+  let unloadedRes = null;
   if(canUnload && v.cargo > 0 && v.res && freightHub){
     const room = Math.max(0, capOf(freightHub, v.res) - (freightHub.storage[v.res]||0));
     const deposit = Math.min(v.cargo, room);
     if(deposit > 0){
       freightHub.storage[v.res] = (freightHub.storage[v.res]||0) + deposit;
-      unloadedRes = v.res; // Mémoriser la ressource déchargée
+      unloadedRes = v.res;
+      // Revenu de fret : différé à mi-temps d'arrêt (voir updateTrainVehicle)
+      const loadB = v.cargoLoadStop;
+      if(loadB && loadB !== stopB){
+        const cx = stopB.x + (stopB.w||1)/2, cy = stopB.y + (stopB.h||1)/2;
+        const lx = loadB.x + (loadB.w||1)/2,  ly = loadB.y + (loadB.h||1)/2;
+        const dist = Math.max(1, Math.round(Math.abs(cx - lx) + Math.abs(cy - ly)));
+        const revenue = Math.round(deposit * (TRADE_PRICES[v.res] || 1) * dist * TRAIN_FREIGHT_FACTOR);
+        if(revenue > 0)
+          v.pendingFreightRevenue = (v.pendingFreightRevenue || 0) + revenue;
+      }
     }
     v.cargo -= deposit;
-    if(v.cargo <= 0){ v.cargo = 0; v.res = null; }
+    if(v.cargo <= 0){ v.cargo = 0; v.res = null; v.cargoLoadStop = null; }
+    else if(deposit > 0){ v.cargoLoadStop = stopB; } // déchargement partiel : le reste repart de cette gare
   }
   if(!nextStop || !canLoad || !freightHub) return;
   let bestRes = null, bestAmt = 0;
   for(const r of trainAllowedResources(v)){
-    if(r === unloadedRes) continue; // Ne pas recharger la ressource qu'on vient de décharger
-    if(v.cargo > 0 && v.res !== r) continue; // Un seul type de ressource à la fois
+    if(r === unloadedRes) continue;
+    if(v.cargo > 0 && v.res !== r) continue;
     if(freightHub.trainAllow?.[r] === false) continue;
     const totalCap = trainWagonCapacityForRes(v, r);
     if(totalCap <= 0) continue;
@@ -1054,6 +1099,8 @@ function trainProcessStop(v, stopB, nextStop){
   }
   if(bestRes && bestAmt > 0){
     freightHub.storage[bestRes] -= bestAmt;
+    // Mémoriser l'origine du chargement (seulement si le train était vide avant)
+    if(v.cargo === 0 || v.res !== bestRes) v.cargoLoadStop = stopB;
     v.cargo = (v.res === bestRes ? v.cargo : 0) + bestAmt;
     v.res = bestRes;
   }
@@ -1181,7 +1228,20 @@ function updateTrainVehicle(v, dt){
   }
   if(v.waitTimer > 0){
     v.waitTimer -= dt;
+    // Afficher le gain fret à mi-temps d'arrêt
+    if(v.pendingFreightRevenue > 0 && v.freightRevenueFireAt != null && v.waitTimer <= v.freightRevenueFireAt){
+      earnMoney(v.pendingFreightRevenue, 'ventes', walletOf(v.garageRef?.owner ?? null));
+      const lp = v.pts?.[v.pts.length - 1];
+      const fx = lp ? lp.x / TILE - 0.5 : (v.currentBuilding?.x ?? 0);
+      const fy = lp ? lp.y / TILE - 1.5 : (v.currentBuilding?.y ?? 0);
+      addFloat(fx, fy, '+'+v.pendingFreightRevenue+' $', '#35ff64');
+      v.pendingFreightRevenue = 0;
+      v.freightRevenueFireAt = null;
+    }
     if(v.waitTimer > 0) return;
+    // Le train repart : annuler tout gain en attente non encore affiché
+    v.pendingFreightRevenue = 0;
+    v.freightRevenueFireAt = null;
     const fromB = v.currentBuilding || v.garageRef;
     const toB = v.state === 'returning' ? v.garageRef : (v.state === 'to_source' ? v.source : v.dest);
     const continueTile = v.railContinueTile ?? null;
@@ -1214,6 +1274,7 @@ function updateTrainVehicle(v, dt){
     trainProcessStop(v, v.source, v.dest);
     v.state = 'to_dest';
     v.waitTimer = trainStopDurationFor(v.source);
+    v.freightRevenueFireAt = v.waitTimer / 2;
     holdTrainAtArrival(v);
     return;
   }
@@ -1228,6 +1289,7 @@ function updateTrainVehicle(v, dt){
     v.state = 'to_source';
   }
   v.waitTimer = trainStopDurationFor(v.currentBuilding);
+  v.freightRevenueFireAt = v.waitTimer / 2;
   holdTrainAtArrival(v);
 }
 

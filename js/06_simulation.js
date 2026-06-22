@@ -219,7 +219,7 @@ function update(dt){
       if(u <= 0) continue;
       const w = walletOf(b.owner);
       w.money -= u; w.fin.entretien += u;
-      addFloat(b.x+(b.w-1)/2, b.y, '−'+(Math.round(u*10)/10)+' $', '#ff9a8a');
+      addFloat(b.x+(b.w-1)/2, b.y, '−'+(Math.round(u*10)/10)+' $', '#ff3030');
     }
   }
 
@@ -249,7 +249,7 @@ function update(dt){
       fx = garage.x + (garage.w - 1) / 2;
       fy = garage.y;
     }
-    addFloat(fx, fy, '−'+cost+' $ '+VEHICLE_TYPES[v.vtype].icone, '#ff9a8a');
+    addFloat(fx, fy, '−'+cost+' $ '+VEHICLE_TYPES[v.vtype].icone, '#ff3030');
   }
 
   // historique financier par wallet

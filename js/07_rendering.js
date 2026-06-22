@@ -1053,7 +1053,7 @@ function trainPose(veh){
 }
 
 function drawTruck(tk){
-  const {u, v, du, dv} = lanePose(tk.pts, tk.seg, tk.t, 0.15);
+  const {u, v, du, dv} = lanePose(tk.pts, tk.seg, tk.t, tk.overtaking ? -0.15 : 0.15);
   const alongU = Math.abs(du) >= Math.abs(dv);
   const au = alongU ? 0.21 : 0.11, av = alongU ? 0.11 : 0.21;
   const c = iso(u,v);
@@ -1289,7 +1289,7 @@ function drawVehicle(veh){
     }
     return;
   }
-  const {u, v, du, dv} = lanePose(veh.pts, veh.seg, veh.t, 0.17);
+  const {u, v, du, dv} = lanePose(veh.pts, veh.seg, veh.t, veh.overtaking ? -0.17 : 0.17);
   const alongU = Math.abs(du) >= Math.abs(dv);
   const au = alongU ? 0.23 : 0.13, av = alongU ? 0.13 : 0.23;
   const vt = VEHICLE_TYPES[veh.vtype];
@@ -1883,7 +1883,7 @@ function draw(){
     }
 
     for(const tk of trucks){
-      const {u, v} = lanePose(tk.pts, tk.seg, tk.t, 0.15);
+      const {u, v} = lanePose(tk.pts, tk.seg, tk.t, tk.overtaking ? -0.15 : 0.15);
       sprites.push({ k:spriteDepthKey(u, v, 0.5), f:()=>drawTruck(tk) });
     }
 
@@ -1897,7 +1897,7 @@ function draw(){
       }
       const {u, v} = veh.vtype === 'train'
         ? trainPose(veh)
-        : lanePose(veh.pts, veh.seg, veh.t, 0.17);
+        : lanePose(veh.pts, veh.seg, veh.t, veh.overtaking ? -0.17 : 0.17);
       sprites.push({ k:spriteDepthKey(u, v, 0.52), f:()=>drawVehicle(veh) });
     }
 
