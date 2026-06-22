@@ -1022,31 +1022,39 @@ function trainProcessStop(v, stopB, nextStop){
   const canLoad = mode === 'load' || mode === 'load_unload';
 
   // --- fret ---
+  // Pour les gares, utiliser le dépôt fusionné (collé à la gare) comme hub de fret
+  const linkedDepot = isTrainStationPiece(stopB) ? trainStationLinkedDepot(stopB) : null;
+  const freightHub = linkedDepot || (isStorageHub(stopB) ? stopB : null);
+
   let unloadedRes = null; // Mémoriser quelle ressource a été déchargée
-  if(canUnload && v.cargo > 0 && v.res){
-    const room = accepts(stopB, v.res) ? Math.max(0, capOf(stopB, v.res) - (stopB.storage[v.res]||0)) : 0;
+  if(canUnload && v.cargo > 0 && v.res && freightHub){
+    const room = Math.max(0, capOf(freightHub, v.res) - (freightHub.storage[v.res]||0));
     const deposit = Math.min(v.cargo, room);
     if(deposit > 0){
-      stopB.storage[v.res] = (stopB.storage[v.res]||0) + deposit;
+      freightHub.storage[v.res] = (freightHub.storage[v.res]||0) + deposit;
       unloadedRes = v.res; // Mémoriser la ressource déchargée
     }
     v.cargo -= deposit;
     if(v.cargo <= 0){ v.cargo = 0; v.res = null; }
   }
-  if(v.cargo > 0 || !nextStop || !isStorageHub(stopB) || !canLoad) return;
+  if(!nextStop || !canLoad || !freightHub) return;
   let bestRes = null, bestAmt = 0;
   for(const r of trainAllowedResources(v)){
     if(r === unloadedRes) continue; // Ne pas recharger la ressource qu'on vient de décharger
-    if(!accepts(nextStop, r)) continue;
-    if(stopB.trainAllow?.[r] === false) continue;
-    const cap = trainWagonCapacityForRes(v, r);
-    if(cap <= 0) continue;
-    const amt = Math.min(cap, stopB.storage?.[r] || 0);
+    if(v.cargo > 0 && v.res !== r) continue; // Un seul type de ressource à la fois
+    if(freightHub.trainAllow?.[r] === false) continue;
+    const totalCap = trainWagonCapacityForRes(v, r);
+    if(totalCap <= 0) continue;
+    const alreadyLoaded = v.res === r ? v.cargo : 0;
+    const available = totalCap - alreadyLoaded;
+    if(available <= 0) continue;
+    const inStock = freightHub.storage?.[r] || 0;
+    const amt = Math.min(available, inStock);
     if(amt > bestAmt){ bestAmt = amt; bestRes = r; }
   }
   if(bestRes && bestAmt > 0){
-    stopB.storage[bestRes] -= bestAmt;
-    v.cargo = bestAmt;
+    freightHub.storage[bestRes] -= bestAmt;
+    v.cargo = (v.res === bestRes ? v.cargo : 0) + bestAmt;
     v.res = bestRes;
   }
 }
