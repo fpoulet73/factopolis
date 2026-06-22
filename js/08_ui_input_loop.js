@@ -703,6 +703,56 @@ function renderInfo(){
         h += '<div class="row"><span>Prochain paiement</span><b style="color:#8fa3bf">'+_nextDue+'</b></div>';
       }
       h += '<div class="row"><span>Vitesse</span><b>'+vt.speed+' cases/s</b></div>';
+      // Section État des wagons pour les trains
+      if(veh.vtype === 'train'){
+        const wagons = veh.wagons || [];
+        const _totalFreightCap = wagons.reduce((s, w) => {
+          const d = trainWagonDef(w);
+          return s + ((!d?.passenger && veh.res && trainWagonAcceptedResources(w).includes(veh.res)) ? d.capacite : 0);
+        }, 0);
+        const _totalPassCap2 = wagons.reduce((s, w) => {
+          const d = trainWagonDef(w); return s + (d?.passenger ? d.capacite : 0);
+        }, 0);
+        let _freightRemainder = veh.cargo || 0;
+        let _passRemainder = veh.passengersOnBoard || 0;
+        const _wagonLoad = wagons.map((wagon, idx) => {
+          const d = trainWagonDef(wagon);
+          if(d?.passenger && _totalPassCap2 > 0){
+            const share = idx === wagons.length - 1
+              ? _passRemainder
+              : Math.round((veh.passengersOnBoard || 0) * d.capacite / _totalPassCap2);
+            _passRemainder -= share;
+            return { amt: share, res: null, passenger: true, cap: d.capacite };
+          }
+          if(!d?.passenger && veh.res && _totalFreightCap > 0 && trainWagonAcceptedResources(wagon).includes(veh.res)){
+            const share = idx === wagons.length - 1
+              ? Math.max(0, _freightRemainder)
+              : Math.round((veh.cargo || 0) * d.capacite / _totalFreightCap);
+            _freightRemainder -= share;
+            return { amt: share, res: veh.res, passenger: false, cap: d.capacite };
+          }
+          return { amt: 0, res: null, passenger: d?.passenger || false, cap: d?.capacite || 0 };
+        });
+        h += '<div style="margin-top:8px;padding:6px;background:#0a0f18;border-radius:6px;border:1px solid #36465e">';
+        h += '<div style="font-size:12px;font-weight:bold;color:#8fa3bf;margin-bottom:4px">État des wagons</div>';
+        h += '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">';
+        h += '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #36465e;border-radius:3px;background:#16202f;font-size:16px;padding:2px">🚂<div style="font-size:8px;color:#8fa3bf">loco</div></div>';
+        for(let idx=0; idx<wagons.length; idx++){
+          const wagon = wagons[idx];
+          const def = trainWagonDef(wagon);
+          const load = _wagonLoad[idx];
+          const selectedRes = trainWagonSelectedResource(wagon);
+          if(def){
+            const icon = selectedRes ? (RES[selectedRes]?.ic || '📦') : def.icone;
+            h += '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #36465e;border-radius:3px;background:#16202f;padding:2px;font-size:14px;line-height:1.2">'
+               + '<div>'+icon+'</div>'
+               + '<div style="font-size:8px;color:#8fa3bf">'+load.amt+'/'+load.cap+'</div>'
+               + '</div>';
+          }
+        }
+        h += '</div>';
+        h += '</div>';
+      }
       const trainConfigDisabled = veh.vtype === 'train' && !trainPresentAtDepot(veh);
       h += '<div style="margin-top:8px;display:flex;gap:4px">'
          + '<button class="tbtn" style="flex:1'
@@ -1141,9 +1191,11 @@ function renderInfo(){
             const wagon = wagons[idx];
             const def = trainWagonDef(wagon);
             const load = _wagonLoad[idx];
+            const selectedRes = trainWagonSelectedResource(wagon);
             if(def){
+              const icon = selectedRes ? (RES[selectedRes]?.ic || '📦') : def.icone;
               h += '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #36465e;border-radius:3px;background:#16202f;padding:2px;font-size:14px;line-height:1.2">'
-                 + '<div>'+def.icone+'</div>'
+                 + '<div>'+icon+'</div>'
                  + '<div style="font-size:8px;color:#8fa3bf">'+load.amt+'/'+load.cap+'</div>'
                  + '</div>';
             }
