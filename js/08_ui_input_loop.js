@@ -328,6 +328,32 @@ function renderTrainPanel(){
     h += '</div></div>';
   }
   h += '</div>';
+  // Section Contenu - afficher le contenu de chaque wagon
+  h += '<div class="tp-section"><div class="tp-section-title">Contenu des wagons</div>';
+  let hasContent = false;
+  wagons.forEach((wagon, idx) => {
+    const def = trainWagonDef(wagon);
+    const load = _wagonLoad[idx];
+    if(load.amt > 0){
+      hasContent = true;
+      const resIcon = load.passenger ? '👤' : (load.res ? RES[load.res]?.ic || '📦' : '📦');
+      const resName = load.passenger ? 'Passagers' : (load.res ? RES[load.res]?.n || load.res : 'Vide');
+      h += '<div style="font-size:11px;margin:4px 0;padding:6px;background:#16202f;border-radius:4px;border-left:3px solid '+(load.passenger ? '#c8e040' : (load.res ? RES[load.res]?.c || '#ffe082' : '#8fa3bf'))+';">'
+         + '<div style="display:flex;justify-content:space-between;margin-bottom:2px">'
+         + '<span><b>'+def.icone+' '+escHtml(def.nom.replace(/^Wagon\s+/,''))+'</b></span>'
+         + '<span style="color:#8fa3bf;font-size:10px">'+load.amt+' / '+load.cap+'</span>'
+         + '</div>'
+         + '<div style="height:3px;border-radius:2px;background:#0a0f18;overflow:hidden">'
+         + '<i style="display:block;height:100%;width:'+(load.cap > 0 ? Math.round(load.amt / load.cap * 100) : 0)+'%;background:'+(load.passenger ? '#c8e040' : (load.res ? RES[load.res]?.c || '#ffe082' : '#8fa3bf'))+';border-radius:2px"></i>'
+         + '</div>'
+         + '<div style="font-size:10px;color:#8fa3bf;margin-top:3px">'+resIcon+' '+escHtml(resName)+'</div>'
+         + '</div>';
+    }
+  });
+  if(!hasContent){
+    h += '<div style="color:#8fa3bf;font-style:italic;font-size:11px">Tous les wagons sont vides.</div>';
+  }
+  h += '</div>';
   h += '<div class="tp-section"><div class="tp-section-title">Wagons</div><div class="tp-wagon-grid">';
   for(const [key, def] of Object.entries(TRAIN_WAGON_TYPES)){
     const count = wagons.filter(w => trainWagonTypeKey(w) === key).length;
@@ -1067,34 +1093,71 @@ function renderInfo(){
     }
     if(shownVehicles.length){
       h += '<div style="margin-top:8px;color:#8fa3bf">Véhicules assignés</div>';
+      h += '<div style="max-height:600px;overflow-y:auto;border:1px solid #36465e;border-radius:6px;padding:3px;background:#0a0f18">';
       for(const v of shownVehicles){
         const vt = VEHICLE_TYPES[v.vtype];
         if(!vt) continue;
         if(v.vtype === 'train' && !v.name) assignTrainVehicleName(v);
         const srcName = v.source && !v.source.dead ? trainStopLabel(v.source) : '—';
         const dstName = v.dest   && !v.dest.dead   ? trainStopLabel(v.dest)  : '—';
-        let resSel = '';
-        if(vt.resources.length > 1){
-          resSel = '<select style="display:block;width:100%;margin-top:4px;background:#16202f;border:1px solid #36465e;color:#e8eef7;border-radius:7px;padding:4px 6px;font-size:12px;box-sizing:border-box" data-pin-v="'+v.id+'">'
-            + '<option value="">— Toutes les ressources —</option>';
-          for(const r of vt.resources)
-            resSel += '<option value="'+r+'"'+(v.pinnedRes===r?' selected':'')+'>'+( RES[r]?.ic||'')+' '+(RES[r]?.n||r)+'</option>';
-          resSel += '</select>';
-        }
         const canStart = v.vtype === 'train' && (v.orders?.length || 0) >= 2;
         const trainFlag = canStart ? trainDepotFlagButtonHtml(v) : '';
         const vehName = v.vtype === 'train' ? (v.name || 'Train') : vt.nom;
-        h += '<div style="padding:5px 0;border-bottom:1px solid #2a3a50">'
-           + '<div>'+vt.icone+' <b>'+escHtml(vehName)+'</b></div>'
-           + '<div style="font-size:11px;color:#8fa3bf" data-v-state="'+v.id+'"></div>'
-           + '<div style="font-size:11px;color:#8fa3bf">'+srcName+' → '+dstName+'</div>'
-           + resSel
-           + '<div style="display:flex;gap:4px;margin-top:3px">'
-           + '<button class="tbtn" style="flex:1;font-size:11px" data-route-v="'+v.id+'">'+(v.vtype === 'train' ? '🧭 Configurer' : '🔁 Route')+'</button>'
-           + trainFlag
-           + '<button class="tbtn" style="font-size:11px;color:#ff9a8a" data-sell-v="'+v.id+'">🗑️ Vendre</button>'
-           + '</div></div>';
+
+        h += '<div style="padding:4px 5px;margin-bottom:3px;border:1px solid #2a3a50;border-radius:3px;background:#0f1820;font-size:11px">'
+           // Ligne 1: Icône, nom, état, trajet
+           + '<div style="display:flex;gap:5px;align-items:center;margin-bottom:3px">'
+           + '<span style="font-size:16px">'+vt.icone+'</span>'
+           + '<span style="font-weight:bold;flex:0 0 auto">'+escHtml(vehName.substring(0,14))+'</span>'
+           + '<span style="color:#8fa3bf;flex:1;text-align:right;font-size:10px">'+srcName.substring(0,7)+' → '+dstName.substring(0,7)+'</span>'
+           + '<button class="tbtn" style="padding:2px 3px;margin:0;font-size:11px;width:auto;border:none;background:transparent;color:#8fa3bf;cursor:pointer" data-route-v="'+v.id+'" title="Configurer">'+(v.vtype === 'train' ? '🧭' : '🔁')+'</button>'
+           + '<button class="tbtn" style="padding:2px 3px;margin:0;font-size:11px;width:auto;border:none;background:transparent;color:#ff9a8a;cursor:pointer" data-sell-v="'+v.id+'" title="Vendre">🗑️</button>'
+           + '</div>';
+
+        // Ligne 2: Wagons (trains) ou drapeau
+        if(v.vtype === 'train'){
+          const wagons = trainNormalizeWagons(v);
+          // Calculer la distribution du cargo par wagon
+          const _totalFreightCap = wagons.reduce((s, w) => {
+            const d = trainWagonDef(w);
+            return s + ((!d?.passenger && v.res && trainWagonAcceptedResources(w).includes(v.res)) ? d.capacite : 0);
+          }, 0);
+          let _freightRemainder = v.cargo || 0;
+          const _wagonLoad = wagons.map((wagon, idx) => {
+            const d = trainWagonDef(wagon);
+            if(!d?.passenger && v.res && _totalFreightCap > 0 && trainWagonAcceptedResources(wagon).includes(v.res)){
+              const share = idx === wagons.length - 1
+                ? Math.max(0, _freightRemainder)
+                : Math.round((v.cargo || 0) * d.capacite / _totalFreightCap);
+              _freightRemainder -= share;
+              return { amt: share, res: v.res, cap: d.capacite };
+            }
+            return { amt: 0, res: null, cap: d?.capacite || 0 };
+          });
+
+          h += '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">';
+          h += '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #36465e;border-radius:3px;background:#16202f;font-size:16px;padding:2px">🚂<div style="font-size:8px;color:#8fa3bf">loco</div></div>';
+          for(let idx=0; idx<wagons.length; idx++){
+            const wagon = wagons[idx];
+            const def = trainWagonDef(wagon);
+            const load = _wagonLoad[idx];
+            if(def){
+              h += '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #36465e;border-radius:3px;background:#16202f;padding:2px;font-size:14px;line-height:1.2">'
+                 + '<div>'+def.icone+'</div>'
+                 + '<div style="font-size:8px;color:#8fa3bf">'+load.amt+'/'+load.cap+'</div>'
+                 + '</div>';
+            }
+          }
+          if(trainFlag){
+            h += '<div style="flex:1"></div>';
+            h += trainFlag.replace(/style="/g,'style="font-size:11px;padding:2px 3px;margin:0;');
+          }
+          h += '</div>';
+        }
+
+        h += '</div>';
       }
+      h += '</div>';
     }
     if(buyCatalog.length){
       h += '<div style="margin-top:8px;color:#8fa3bf">Acheter un véhicule</div>';

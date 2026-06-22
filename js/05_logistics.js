@@ -1022,16 +1022,21 @@ function trainProcessStop(v, stopB, nextStop){
   const canLoad = mode === 'load' || mode === 'load_unload';
 
   // --- fret ---
+  let unloadedRes = null; // Mémoriser quelle ressource a été déchargée
   if(canUnload && v.cargo > 0 && v.res){
     const room = accepts(stopB, v.res) ? Math.max(0, capOf(stopB, v.res) - (stopB.storage[v.res]||0)) : 0;
     const deposit = Math.min(v.cargo, room);
-    if(deposit > 0) stopB.storage[v.res] = (stopB.storage[v.res]||0) + deposit;
+    if(deposit > 0){
+      stopB.storage[v.res] = (stopB.storage[v.res]||0) + deposit;
+      unloadedRes = v.res; // Mémoriser la ressource déchargée
+    }
     v.cargo -= deposit;
     if(v.cargo <= 0){ v.cargo = 0; v.res = null; }
   }
   if(v.cargo > 0 || !nextStop || !isStorageHub(stopB) || !canLoad) return;
   let bestRes = null, bestAmt = 0;
   for(const r of trainAllowedResources(v)){
+    if(r === unloadedRes) continue; // Ne pas recharger la ressource qu'on vient de décharger
     if(!accepts(nextStop, r)) continue;
     if(stopB.trainAllow?.[r] === false) continue;
     const cap = trainWagonCapacityForRes(v, r);
@@ -1463,7 +1468,17 @@ function returnToGarage(v){
     v.source = null; v.dest = null; v.orders = []; v.orderIndex = 0;
     v.vizRoute = null;
     v.cargo = 0; v.res = null;
-    const ok = startTile >= 0 ? prepareRailTrip(v, from, v.garageRef, startTile) : prepareRailTrip(v, from, v.garageRef);
+
+    // Trouver le dépôt ferroviaire le plus proche
+    let closestDepot = v.garageRef;
+    let closestDist = Infinity;
+    for(const b of buildings){
+      if(b.dead || b.type !== 'train_depot') continue;
+      const d = buildingDistance(from, b);
+      if(d < closestDist){ closestDist = d; closestDepot = b; }
+    }
+
+    const ok = startTile >= 0 ? prepareRailTrip(v, from, closestDepot, startTile) : prepareRailTrip(v, from, closestDepot);
     if(ok){
       v.state = 'returning';
       v.currentBuilding = null;
