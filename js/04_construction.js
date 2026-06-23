@@ -155,7 +155,6 @@ function collectRailUpdates(path){
   if(!Array.isArray(path) || !path.length) return { updates:[], cost:0, msg:'' };
   const draft = Uint8Array.from(rail);
   const touched = new Set();
-  const pathSet = new Set();
   const validTile = ({ x, y }) => inMap(x, y) && !road[y*N+x] && !bgrid[y*N+x] && terrain[y*N+x] === T.GRASS;
   const sanitized = [];
   for(const tile of path){
@@ -163,12 +162,8 @@ function collectRailUpdates(path){
     const prev = sanitized[sanitized.length - 1];
     if(prev && prev.x === tile.x && prev.y === tile.y) continue;
     sanitized.push({ x:tile.x, y:tile.y });
-    pathSet.add(tile.x + ',' + tile.y);
   }
   if(!sanitized.length) return { updates:[], cost:0, msg:'' };
-  const endpointKeys = new Set();
-  endpointKeys.add(sanitized[0].x + ',' + sanitized[0].y);
-  endpointKeys.add(sanitized[sanitized.length - 1].x + ',' + sanitized[sanitized.length - 1].y);
   const connect = (ax, ay, bx, by)=>{
     const def = railDirDef(bx - ax, by - ay);
     if(!def) return;
@@ -179,63 +174,12 @@ function collectRailUpdates(path){
     touched.add(ai);
     touched.add(bi);
   };
-  const connectEndpointToExisting = (tile, prefDx, prefDy)=>{
-    const oi = tile.y * N + tile.x;
-    let best = null;
-    let bestScore = -Infinity;
-    for(const def of RAIL_DIRS){
-      const nx = tile.x + def.dx, ny = tile.y + def.dy;
-      if(!inMap(nx, ny)) continue;
-      const ni = ny * N + nx;
-      const other = RAIL_DIRS[def.opposite];
-      if(pathSet.has(nx + ',' + ny) || !draft[ni]) continue;
-      const score = prefDx * def.dx + prefDy * def.dy;
-      if(score <= 0 || score < bestScore) continue;
-      bestScore = score;
-      best = def;
-    }
-    if(!best) return;
-    const nx = tile.x + best.dx, ny = tile.y + best.dy;
-    const ni = ny * N + nx;
-    const other = RAIL_DIRS[best.opposite];
-    draft[oi] |= best.bit;
-    draft[ni] |= other.bit;
-    touched.add(ni);
-  };
   for(let i = 1; i < sanitized.length; i++){
     const a = sanitized[i - 1], b = sanitized[i];
     if(Math.abs(a.x - b.x) > 1 || Math.abs(a.y - b.y) > 1) continue;
     connect(a.x, a.y, b.x, b.y);
   }
-  for(let si = 0; si < sanitized.length; si++){
-    const tile = sanitized[si];
-    const oi = tile.y * N + tile.x;
-    const hadRailBefore = !!rail[oi];
-    touched.add(oi);
-    const isEndpoint = sanitized.length === 1 || endpointKeys.has(tile.x + ',' + tile.y);
-    if(!isEndpoint) continue;
-    if(sanitized.length === 1){
-      for(const def of RAIL_DIRS){
-        const nx = tile.x + def.dx, ny = tile.y + def.dy;
-        if(!inMap(nx, ny)) continue;
-        const ni = ny * N + nx;
-        const other = RAIL_DIRS[def.opposite];
-        if(!draft[ni]) continue;
-        draft[oi] |= def.bit;
-        draft[ni] |= other.bit;
-        touched.add(ni);
-      }
-      continue;
-    }
-    if(hadRailBefore) continue;
-    if(si === 0){
-      const next = sanitized[1];
-      connectEndpointToExisting(tile, tile.x - next.x, tile.y - next.y);
-    } else if(si === sanitized.length - 1){
-      const prev = sanitized[sanitized.length - 2];
-      connectEndpointToExisting(tile, tile.x - prev.x, tile.y - prev.y);
-    }
-  }
+  for(const tile of sanitized) touched.add(tile.y * N + tile.x);
   for(const i of touched){
     if(railMaskIsRightAngle(draft[i])) return { updates:[], cost:0, msg:'Les rails ne peuvent pas former un angle droit.' };
   }

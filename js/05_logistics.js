@@ -793,9 +793,10 @@ function trainOccupiedBlockTiles(v){
   return set;
 }
 
-// Renvoie l'ensemble des tuiles occupées physiquement par un train (loco + wagons
-// + queue du railTrail). Utilisé pour interdire la démolition de rail sous un
-// train en mouvement — couvre tout le trail, y compris l'interpolation visuelle.
+// Renvoie l'ensemble des tuiles couvertes par le railTrail complet. Sert
+// uniquement au rendu / debug éventuel, pas au veto de démolition, car le
+// trail inclut une queue visuelle interpolée qui peut dépasser les tuiles
+// réellement occupées par la loco et les wagons.
 function trainOccupiedTileIndices(v){
   const set = trainOccupiedBlockTiles(v);
   if(!v || v.vtype !== 'train' || !Array.isArray(v.railTrail)) return set;
@@ -811,12 +812,14 @@ function trainOccupiedTileIndices(v){
 
 // Renvoie le premier train non-idle occupant la tuile (x, y), sinon null.
 // Utilisé pour interdire la démolition de rail sous un train en mouvement.
+// On se limite aux tuiles physiquement occupées (loco + wagons réels), sans
+// compter toute la queue de lissage du railTrail.
 function tileOccupiedByTrain(x, y){
   if(!Number.isInteger(x) || !Number.isInteger(y)) return null;
   const i = y * N + x;
   for(const v of vehicles){
     if(v.vtype !== 'train' || v.state === 'idle') continue;
-    if(trainOccupiedTileIndices(v).has(i)) return v;
+    if(trainOccupiedBlockTiles(v).has(i)) return v;
   }
   return null;
 }

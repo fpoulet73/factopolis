@@ -1148,6 +1148,19 @@ function drawRailSignal(sig){
   const sy = c[1] + (du + dv) * TH2 * along + (dv - du) * TH2 * side;
   const isGreen = railSignalAspect(sig);
   const color = isGreen ? '#35ff64' : '#ff3030';
+
+  // Direction écran vers laquelle pointe la lampe : le feu « regarde » dans le
+  // sens du rail (def), c.-à-d. vers le mécanicien qui l'aborde. On projette ce
+  // vecteur monde -> écran. fy > 0 => la face éclairée est tournée vers la
+  // caméra (couleur visible) ; fy < 0 => on voit le dos du signal et la couleur
+  // reste cachée pour le joueur (mais le mécanicien, lui, la voit toujours).
+  let fx = (du - dv) * TW2, fy = (du + dv) * TH2;
+  const flen = Math.hypot(fx, fy) || 1;
+  fx /= flen; fy /= flen;
+  const facing = fy > 0.001;           // lampe tournée vers la caméra
+  const depth = 4;                     // décalage de la lentille hors du boîtier
+  const lx = sx + fx * depth, ly = sy - 2.5 + fy * depth;
+
   ctx.save();
   // Poteau vertical court pour ancrer le signal au sol
   ctx.strokeStyle = '#0b1017';
@@ -1156,28 +1169,42 @@ function drawRailSignal(sig){
   ctx.moveTo(sx, sy + 2);
   ctx.lineTo(sx, sy + 8);
   ctx.stroke();
-  // Corps du signal (boîte un peu plus grande qu'avant)
-  ctx.fillStyle = 'rgba(18,24,32,.95)';
-  ctx.beginPath();
-  if(ctx.roundRect) ctx.roundRect(sx - 5, sy - 9, 10, 14, 2);
-  else ctx.rect(sx - 5, sy - 9, 10, 14);
-  ctx.fill();
-  ctx.strokeStyle = '#0b1017';
-  ctx.lineWidth = 0.8;
-  ctx.stroke();
-  // Lampe avec halo lumineux pour la lisibilité à petite échelle
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 8;
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(sx, sy - 2.5, 3.5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  // Petit point central blanc pour suggérer le reflet
-  ctx.fillStyle = 'rgba(255,255,255,.7)';
-  ctx.beginPath();
-  ctx.arc(sx - 1, sy - 3.5, 1, 0, Math.PI * 2);
-  ctx.fill();
+
+  const drawCasing = () => {
+    ctx.fillStyle = 'rgba(18,24,32,.95)';
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(sx - 5, sy - 9, 10, 14, 2);
+    else ctx.rect(sx - 5, sy - 9, 10, 14);
+    ctx.fill();
+    ctx.strokeStyle = '#0b1017';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+  };
+
+  if(facing){
+    // Face éclairée vers le joueur : boîtier puis lentille allumée par-dessus.
+    drawCasing();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(lx, ly, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // Petit point central blanc pour suggérer le reflet
+    ctx.fillStyle = 'rgba(255,255,255,.7)';
+    ctx.beginPath();
+    ctx.arc(lx - 1, ly - 1, 1, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // On voit le dos du signal : lentille éteinte dessinée derrière le boîtier,
+    // qui la masque -> la couleur n'est pas lisible depuis cet angle.
+    ctx.fillStyle = '#11161d';
+    ctx.beginPath();
+    ctx.arc(lx, ly, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+    drawCasing();
+  }
   ctx.restore();
 }
 
