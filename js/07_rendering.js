@@ -1113,14 +1113,38 @@ function drawVehicleRoute(veh){
   highlightBld(veh.dest,   '#ffaa44');
 }
 
+// Déplace `c` de `alongPx` pixels dans la direction iso normalisée de (du,dv)
+// et de `rightPx` pixels sur la perpendiculaire DROITE (vue du conducteur arrivant).
+// En espace écran Y-down, rotation 90° CW de (ax,ay) = (ay,-ax).
+// Valeurs en pixels écran — indépendantes de la magnitude du vecteur tuile
+// (cardinal ~37px, diagonal ~64px sans normalisation → bug positions diagonales).
+function isoOffset(c, du, dv, alongPx, rightPx){
+  let ax = (du - dv) * TW2, ay = (du + dv) * TH2;
+  const al = Math.hypot(ax, ay) || 1; ax /= al; ay /= al;
+  // rotation 90° CW en écran Y-down : (ax,ay) → (-ay, ax)
+  return [c[0] + ax * alongPx - ay * rightPx, c[1] + ay * alongPx + ax * rightPx];
+}
+
+// Position des signaux ferroviaires par direction (du,dv) après rotation caméra.
+// [alongPx, rightPx] : le long du rail, puis à droite (vue du conducteur arrivant).
+// rightPx positif = côté droit conducteur ; négatif = côté gauche.
+// Valeurs en pixels écran, indépendantes de la direction.
+const SIGNAL_POS = {
+  '1,0':   [12, 20],
+  '-1,0':  [12, 20],
+  '0,1':   [12, 20],
+  '0,-1':  [12, 20],
+  '1,-1':  [12, 20],
+  '-1,1':  [12, 20],
+  '1,1':   [12, 20],
+  '-1,-1': [12, 20],
+};
+
 function drawTrafficLight(c, approaches){
   ctx.save();
   for(const { du, dv, green } of approaches){
-    // Position: 0.62 tiles before intersection center (= stop line), 0.22 tiles right of lane
-    // right direction in rotated space = (dv, -du)
-    const along = 0.82, lane = 0.40;
-    const lx = c[0] + (du - dv) * TW2 * along + (dv + du) * TW2 * lane;
-    const ly = c[1] + (du + dv) * TH2 * along + (dv - du) * TH2 * lane;
+    // 30px le long de la voie, 15px à droite (équivalent de l'ancien 0.82/0.40 tuile)
+    const [lx, ly] = isoOffset(c, du, dv, 30, 15);
     ctx.fillStyle = 'rgba(0,0,0,.75)';
     ctx.beginPath();
     if(ctx.roundRect) ctx.roundRect(lx - 4, ly - 6, 8, 11, 2);
@@ -1143,9 +1167,8 @@ function drawRailSignal(sig){
   const [rx, ry] = rotIdx(sig.x, sig.y);
   const c = iso(rx + 0.5, ry + 0.5);
   const [du, dv] = rotDir(def.dx, def.dy);
-  const along = 0.34, side = 0.18;
-  const sx = c[0] + (du - dv) * TW2 * along + (dv + du) * TW2 * side;
-  const sy = c[1] + (du + dv) * TH2 * along + (dv - du) * TH2 * side;
+  const [alongPx, rightPx] = SIGNAL_POS[`${du},${dv}`] ?? [13, 7];
+  const [sx, sy] = isoOffset(c, du, dv, alongPx, rightPx);
   const isGreen = railSignalAspect(sig);
   const color = isGreen ? '#35ff64' : '#ff3030';
 
