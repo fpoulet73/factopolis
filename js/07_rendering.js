@@ -1181,6 +1181,10 @@ function drawRailSignal(sig){
   const flen = Math.hypot(fx, fy) || 1;
   fx /= flen; fy /= flen;
   const facing = fy > 0.001;           // lampe tournée vers la caméra
+  // Rails qui apparaissent ~horizontaux à l'écran (sens 1,-1 / -1,1) : la lampe
+  // est vue de profil (fy≈0). Ni « face » ni « dos » exploitables -> rendu
+  // dédié avec un cadre étroit et la couleur sur un demi-cercle qui dépasse.
+  const sideOn = Math.abs(fy) < 0.3;
   const depth = 4;                     // décalage de la lentille hors du boîtier
   const lx = sx + fx * depth, ly = sy - 2.5 + fy * depth;
 
@@ -1204,7 +1208,35 @@ function drawRailSignal(sig){
     ctx.stroke();
   };
 
-  if(facing){
+  if(sideOn){
+    // Cadre étroit vu de profil. La couleur est visible sur un demi-cercle qui
+    // dépasse du côté où pointe la lampe -> lisible pour les deux sens du rail.
+    const dir = fx >= 0 ? 1 : -1;
+    const half = 2;                    // demi-largeur du cadre (étroit)
+    ctx.fillStyle = 'rgba(18,24,32,.95)';
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(sx - half, sy - 9, half * 2, 14, 1.5);
+    else ctx.rect(sx - half, sy - 9, half * 2, 14);
+    ctx.fill();
+    ctx.strokeStyle = '#0b1017';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+
+    const cx = sx + dir * half, cy = sy - 2.5, r = 3.5;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI / 2, dir < 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // Reflet
+    ctx.fillStyle = 'rgba(255,255,255,.7)';
+    ctx.beginPath();
+    ctx.arc(cx + dir, cy - 1, 1, 0, Math.PI * 2);
+    ctx.fill();
+  } else if(facing){
     // Face éclairée vers le joueur : boîtier puis lentille allumée par-dessus.
     drawCasing();
     ctx.shadowColor = color;
