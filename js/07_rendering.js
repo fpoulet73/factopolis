@@ -1151,17 +1151,24 @@ function isoWorldOffset(c, alongWorld, rightWorld, magAlong, magRight){
            c[1] + sa[1] / la * magAlong + sr[1] / lr * magRight ];
 }
 
-function drawRailSignal(sig){
-  const def = RAIL_DIRS.find(d => d.bit === sig.bit);
-  if(!def) return;
-  const [rx, ry] = rotIdx(sig.x, sig.y);
+// Position écran (espace iso, avant transform caméra) du feu pour l'arête
+// dirigée `def` de la tuile (x,y). Centralisée pour que le rendu ET la sélection
+// au clic (chooseRailSignalDef) utilisent exactement le même point.
+function railSignalScreenPos(x, y, def){
+  const [rx, ry] = rotIdx(x, y);
   const c = iso(rx + 0.5, ry + 0.5);
-  const [du, dv] = rotDir(def.dx, def.dy);
   // Clé = direction de MARCHE du train protégé (= -def) en monde.
   // along monde = def (vers le train qui arrive) ; droite monde = (def.dy,-def.dx)
   // = droite du mécanicien (et non plus sa gauche comme avec l'ancien (dv,-du)).
   const sigCfg = (CFG.rails?.signaux?.deplacement || {})[`${-def.dx},${-def.dy}`] || { along:13, right:7 };
-  const [sx, sy] = isoWorldOffset(c, [def.dx, def.dy], [def.dy, -def.dx], sigCfg.along, sigCfg.right);
+  return isoWorldOffset(c, [def.dx, def.dy], [def.dy, -def.dx], sigCfg.along, sigCfg.right);
+}
+
+function drawRailSignal(sig){
+  const def = RAIL_DIRS.find(d => d.bit === sig.bit);
+  if(!def) return;
+  const [du, dv] = rotDir(def.dx, def.dy);
+  const [sx, sy] = railSignalScreenPos(sig.x, sig.y, def);
   const isGreen = railSignalAspect(sig);
   const color = isGreen ? '#35ff64' : '#ff3030';
 

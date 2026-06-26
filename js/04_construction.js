@@ -57,18 +57,19 @@ function chooseRailSignalDef(x, y){
   const defs = railConnectedDefsAt(x, y);
   if(!defs.length) return null;
   if(defs.length === 1) return defs[0];
-  const [rx, ry] = rotIdx(x, y);
-  const center = iso(rx + 0.5, ry + 0.5);
+  // On choisit l'arête dont le feu sera RENDU le plus près du clic. On réutilise
+  // la position de rendu exacte (railSignalScreenPos) plutôt que la seule
+  // direction de la voie : pour les diagonales alignées à l'écran (axes monde
+  // 1,-1/-1,1 et 1,1/-1,-1) la direction de marche est perpendiculaire au côté
+  // où le feu s'affiche, ce qui inversait gauche/droite avec l'ancien calcul.
   const mx = cam.x + mouse.x / cam.z;
   const my = cam.y + mouse.y / cam.z;
-  const vx = mx - center[0], vy = my - center[1];
-  let best = defs[0], bestScore = -Infinity;
+  let best = defs[0], bestDist = Infinity;
   for(const def of defs){
-    const [du, dv] = rotDir(def.dx, def.dy);
-    const target = iso(du, dv);
-    const score = vx * target[0] + vy * target[1];
-    if(score > bestScore){
-      bestScore = score;
+    const [sx, sy] = railSignalScreenPos(x, y, def);
+    const dist = (mx - sx) ** 2 + (my - sy) ** 2;
+    if(dist < bestDist){
+      bestDist = dist;
       best = def;
     }
   }
