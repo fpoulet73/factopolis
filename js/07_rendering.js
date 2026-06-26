@@ -1137,15 +1137,31 @@ function drawTrafficLight(c, approaches){
   ctx.restore();
 }
 
+// Décalage px écran d'un point iso `c` selon deux vecteurs MONDE unitaires.
+// alongWorld : vecteur monde du décalage longitudinal ; rightWorld : latéral.
+// magAlong/magRight en px écran, normalisés via la projection iso → identiques
+// que le vecteur soit cardinal ou diagonal (compense le squash TW≠TH).
+// Rotation-invariant : le feu reste du même côté du rail à toute rotation caméra.
+function isoWorldOffset(c, alongWorld, rightWorld, magAlong, magRight){
+  const [au, av] = rotDir(alongWorld[0], alongWorld[1]);
+  const [ru, rv] = rotDir(rightWorld[0], rightWorld[1]);
+  const sa = iso(au, av), la = Math.hypot(sa[0], sa[1]) || 1;
+  const sr = iso(ru, rv), lr = Math.hypot(sr[0], sr[1]) || 1;
+  return [ c[0] + sa[0] / la * magAlong + sr[0] / lr * magRight,
+           c[1] + sa[1] / la * magAlong + sr[1] / lr * magRight ];
+}
+
 function drawRailSignal(sig){
   const def = RAIL_DIRS.find(d => d.bit === sig.bit);
   if(!def) return;
   const [rx, ry] = rotIdx(sig.x, sig.y);
   const c = iso(rx + 0.5, ry + 0.5);
   const [du, dv] = rotDir(def.dx, def.dy);
-  const along = 0.34, side = 0.18;
-  const sx = c[0] + (du - dv) * TW2 * along + (dv + du) * TW2 * side;
-  const sy = c[1] + (du + dv) * TH2 * along + (dv - du) * TH2 * side;
+  // Clé = direction de MARCHE du train protégé (= -def) en monde.
+  // along monde = def (vers le train qui arrive) ; droite monde = (def.dy,-def.dx)
+  // = droite du mécanicien (et non plus sa gauche comme avec l'ancien (dv,-du)).
+  const sigCfg = (CFG.rails?.signaux?.deplacement || {})[`${-def.dx},${-def.dy}`] || { along:13, right:7 };
+  const [sx, sy] = isoWorldOffset(c, [def.dx, def.dy], [def.dy, -def.dx], sigCfg.along, sigCfg.right);
   const isGreen = railSignalAspect(sig);
   const color = isGreen ? '#35ff64' : '#ff3030';
 

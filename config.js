@@ -219,6 +219,28 @@ const CONFIG = {
     rayonBoulangerie: 8,
   },
 
+  /* ---------- SIGNAUX FERROVIAIRES ----------
+     Clé = direction de MARCHE du train protégé (coordonnées MONDE).
+       '1,0' = train vers l'est, '-1,0' = ouest, '0,1' = sud, '0,-1' = nord,
+       '1,1' = SE, '1,-1' = NE, '-1,1' = SO, '-1,-1' = NO.
+     along : px écran vers le train qui arrive (le long du rail, depuis le centre de la tuile).
+     right  : px écran à la DROITE du mécanicien (vue du conducteur).
+     Le feu reste physiquement du même côté du rail à toutes les rotations caméra. */
+  rails: {
+    signaux: {
+      deplacement: {
+        '1,0':   { along: 7, right: 7 }, //diagonale 1  N -> S
+        '-1,0':  { along: -7, right: 20 }, //diagonale 1  S -> N
+        '0,1':   { along: 7, right: 20 }, // diagonale 1
+        '0,-1':  { along: -7, right: 7 }, // diagonale 1
+        '1,1':   { along: 7, right: 20 }, // vertical N -> S
+        '-1,-1': { along: -7, right: 20 },// vertical S -> N
+        '1,-1':  { along: 0, right: 7 },  //horitontales G -> D
+        '-1,1':  { along: 0, right: 20 }, //horizontales D -> G
+      },
+    },
+  },
+
   /* ---------- LOGISTIQUE ---------- */
   logistique: {
     tauxHausseMensuelle: 0.03,   // hausse mensuelle du coût d'entretien pour tous les véhicules (+3 % par défaut)
