@@ -1189,7 +1189,10 @@ function drawRailSignal(sig){
   // panneau est tourné dans l'axe du rail (~45° iso) pour simuler la perspective.
   const cardinal = !sideOn && Math.abs(fx) > 0.3 && Math.abs(fy) > 0.3;
   const depth = 4;                     // décalage de la lentille hors du boîtier
-  const lx = sx + fx * depth, ly = sy - 2.5 + fy * depth;
+  // On atténue la composante VERTICALE de ce décalage : sur les rails quasi
+  // verticaux (ex. sens -1,-1, fy≈1) la lentille « sortait » trop vers le bas et
+  // se retrouvait dans le bas du panneau. Le décalage horizontal reste entier.
+  const lx = sx + fx * depth, ly = sy - 3.5 + fy * depth * 0.4;
 
   ctx.save();
   // Poteau vertical court pour ancrer le signal au sol
@@ -1290,7 +1293,7 @@ function drawRailSignal(sig){
     ctx.shadowBlur = 8;
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(lx, ly, 3.5, 0, Math.PI * 2);
+    ctx.arc(lx, ly, 3, 0, Math.PI * 2);
     ctx.fill();
     ctx.shadowBlur = 0;
     // Petit point central blanc pour suggérer le reflet
@@ -1299,23 +1302,19 @@ function drawRailSignal(sig){
     ctx.arc(lx - 1, ly - 1, 1, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    // On voit le dos du signal : le boîtier masque la lentille. On laisse
-    // néanmoins échapper un léger halo de couleur autour du boîtier pour que le
-    // joueur puisse lire l'aspect (rouge/vert) même vu de dos.
+    // On voit le dos du signal : la lampe est sur la face avant, donc cachée par
+    // le boîtier. On dessine d'ABORD la lueur colorée, puis le boîtier PAR-DESSUS
+    // (il occulte la partie qui le recouvre) : seul le halo qui déborde autour du
+    // panneau reste visible, comme le reflet du feu rayonnant derrière la caisse.
     ctx.save();
     ctx.shadowColor = color;
-    ctx.shadowBlur = 10;
-    ctx.globalAlpha = 0.55;
+    ctx.shadowBlur = 9;
+    ctx.globalAlpha = 0.75;
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(lx, ly, 2.4, 0, Math.PI * 2);
+    ctx.ellipse(sx, sy - 9, 4, 2.4, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-    // Lentille éteinte (dos) puis boîtier par-dessus : seul le halo dépasse.
-    ctx.fillStyle = '#11161d';
-    ctx.beginPath();
-    ctx.arc(lx, ly, 3.2, 0, Math.PI * 2);
-    ctx.fill();
     drawCasing();
   }
   ctx.restore();
