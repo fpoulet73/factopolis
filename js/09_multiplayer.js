@@ -199,7 +199,7 @@ function applySnapshot(d){
     railSignals = Object.create(null);
     for(const sig of d.railSignals){
       if(!sig || !Number.isInteger(sig.x) || !Number.isInteger(sig.y) || !Number.isInteger(sig.bit)) continue;
-      railSignals[railSignalKey(sig.x, sig.y, sig.bit)] = { x:sig.x, y:sig.y, bit:sig.bit };
+      railSignals[railSignalKey(sig.x, sig.y, sig.bit)] = { x:sig.x, y:sig.y, bit:sig.bit, forcedRed:!!sig.forcedRed };
     }
   } else railSignals = Object.create(null);
   rebuildRailBlocks();
@@ -430,7 +430,7 @@ function applyAction(msg){
       break;
     case 'rail_signal_update':
       if(!validXY(act.x, act.y) || !Number.isInteger(act.bit)) break;
-      if(act.present) setRailSignal(act.x, act.y, act.bit, true);
+      if(act.present) setRailSignal(act.x, act.y, act.bit, true, !!act.forcedRed);
       else setRailSignal(act.x, act.y, act.bit, false);
       if(act.costDelta > 0){
         walletOf(msg.from).money -= act.costDelta;
@@ -1112,11 +1112,20 @@ clickFn = function(x,y){
   if(tool==='rail_signal'){
     const def = chooseRailSignalDef(x, y);
     if(!def){ clickAt(x,y); return; }
-    const exists = !!railSignalDefAt(x, y, def.bit);
-    const delta = exists ? -Math.floor((BUILD.rail_signal?.cost||0) * 0.3) : (BUILD.rail_signal?.cost||0);
+    // Cycle au clic : (aucun) -> feu vert -> feu rouge forcé -> retiré.
+    const sig = railSignalDefAt(x, y, def.bit);
+    let present = true, forcedRed = false, delta = 0;
+    if(!sig){
+      delta = BUILD.rail_signal?.cost || 0;
+    } else if(!sig.forcedRed){
+      forcedRed = true;
+    } else {
+      present = false;
+      delta = -Math.floor((BUILD.rail_signal?.cost||0) * 0.3);
+    }
     if(delta > 0 && delta > myWallet().money){ toast('Fonds insuffisants ('+delta+' $)','err'); return; }
-    netSend({ type:'rail_signal_update', x, y, bit:def.bit, present:!exists, costDelta:delta });
-    setRailSignal(x, y, def.bit, !exists);
+    netSend({ type:'rail_signal_update', x, y, bit:def.bit, present, forcedRed, costDelta:delta });
+    setRailSignal(x, y, def.bit, present, forcedRed);
     if(delta > 0) spendMoney(delta, 'construction');
     else if(delta < 0) earnMoney(-delta, 'rembours');
     return;

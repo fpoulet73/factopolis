@@ -122,10 +122,10 @@ function rebuildRailBlocks(){
   railBlocks = { blockByTile, count:nextBlockId };
 }
 
-function setRailSignal(x, y, bit, present){
+function setRailSignal(x, y, bit, present, forcedRed = false){
   if(!railSignals) railSignals = Object.create(null);
   const key = railSignalKey(x, y, bit);
-  if(present) railSignals[key] = { x, y, bit };
+  if(present) railSignals[key] = { x, y, bit, forcedRed:!!forcedRed };
   else delete railSignals[key];
   rebuildRailBlocks();
 }
@@ -676,12 +676,19 @@ function clickAt(x,y){
   if(tool === 'rail_signal'){
     const def = chooseRailSignalDef(x, y);
     if(!def) return;
-    const exists = !!railSignalDefAt(x, y, def.bit);
-    const delta = exists ? -Math.floor((BUILD.rail_signal?.cost||0) * 0.3) : (BUILD.rail_signal?.cost||0);
-    if(delta > 0 && myWallet().money < delta){ toast('Fonds insuffisants ('+delta+' $)','err'); return; }
-    setRailSignal(x, y, def.bit, !exists);
-    if(delta > 0) spendMoney(delta, 'construction');
-    else if(delta < 0) earnMoney(-delta, 'rembours');
+    // Cycle au clic : (aucun) -> feu vert -> feu rouge forcé -> retiré.
+    const sig = railSignalDefAt(x, y, def.bit);
+    if(!sig){
+      const cost = BUILD.rail_signal?.cost || 0;
+      if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
+      setRailSignal(x, y, def.bit, true, false);
+      if(cost > 0) spendMoney(cost, 'construction');
+    } else if(!sig.forcedRed){
+      setRailSignal(x, y, def.bit, true, true);
+    } else {
+      setRailSignal(x, y, def.bit, false);
+      earnMoney(Math.floor((BUILD.rail_signal?.cost||0) * 0.3), 'rembours');
+    }
     return;
   }
   if(tool === 'train_station'){

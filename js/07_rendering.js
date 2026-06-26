@@ -1185,6 +1185,9 @@ function drawRailSignal(sig){
   // est vue de profil (fy≈0). Ni « face » ni « dos » exploitables -> rendu
   // dédié avec un cadre étroit et la couleur sur un demi-cercle qui dépasse.
   const sideOn = Math.abs(fy) < 0.3;
+  // Rails cardinaux (1,0 / -1,0 / 0,1 / 0,-1) : projetés en diagonale écran. Le
+  // panneau est tourné dans l'axe du rail (~45° iso) pour simuler la perspective.
+  const cardinal = !sideOn && Math.abs(fx) > 0.3 && Math.abs(fy) > 0.3;
   const depth = 4;                     // décalage de la lentille hors du boîtier
   const lx = sx + fx * depth, ly = sy - 2.5 + fy * depth;
 
@@ -1236,6 +1239,50 @@ function drawRailSignal(sig){
     ctx.beginPath();
     ctx.arc(cx + dir, cy - 1, 1, 0, Math.PI * 2);
     ctx.fill();
+  } else if(cardinal){
+    // Cadre droit (non incliné). La lentille est un demi-cercle orienté DANS l'axe
+    // du rail (fx,fy) -> elle « regarde » la locomotive qui arrive. Face avant
+    // (fy>0) : couleur vive vers la caméra ; dos : mince croissant deviné.
+    const ang = Math.atan2(fy, fx);    // direction écran du rail, vers le train
+    const half = 2.5, r = 3.2, bx = sx, by = sy - 2;
+    const upCasing = () => {
+      ctx.fillStyle = 'rgba(18,24,32,.95)';
+      ctx.beginPath();
+      if(ctx.roundRect) ctx.roundRect(sx - half, sy - 9, half * 2, 14, 1.5);
+      else ctx.rect(sx - half, sy - 9, half * 2, 14);
+      ctx.fill();
+      ctx.strokeStyle = '#0b1017';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    };
+    if(facing){
+      upCasing();
+      const cx = bx + fx * 2.6, cy = by + fy * 2.6;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 8;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, ang - Math.PI / 2, ang + Math.PI / 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,.7)';
+      ctx.beginPath();
+      ctx.arc(cx + fx, cy + fy, 1, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Dos : lentille derrière le boîtier, il n'en dépasse qu'un mince croissant.
+      const cx = bx + fx * 1.4, cy = by + fy * 1.4;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 3;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, ang - Math.PI / 2, ang + Math.PI / 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      upCasing();
+    }
   } else if(facing){
     // Face éclairée vers le joueur : boîtier puis lentille allumée par-dessus.
     drawCasing();
@@ -1252,8 +1299,19 @@ function drawRailSignal(sig){
     ctx.arc(lx - 1, ly - 1, 1, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    // On voit le dos du signal : lentille éteinte dessinée derrière le boîtier,
-    // qui la masque -> la couleur n'est pas lisible depuis cet angle.
+    // On voit le dos du signal : le boîtier masque la lentille. On laisse
+    // néanmoins échapper un léger halo de couleur autour du boîtier pour que le
+    // joueur puisse lire l'aspect (rouge/vert) même vu de dos.
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(lx, ly, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    // Lentille éteinte (dos) puis boîtier par-dessus : seul le halo dépasse.
     ctx.fillStyle = '#11161d';
     ctx.beginPath();
     ctx.arc(lx, ly, 3.2, 0, Math.PI * 2);

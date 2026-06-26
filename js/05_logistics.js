@@ -508,6 +508,9 @@ function railEdgePassableForPath(x, y, def, vehicle=null){
     if(signals.own) return false;
     return true;
   }
+  // Feu forcé au rouge par le joueur => sens interdit : aucun itinéraire ne peut
+  // emprunter cette arête dans ce sens.
+  if(signals.opposite.forcedRed) return false;
   const nx = x + def.dx, ny = y + def.dy;
   if(!inMap(nx, ny)) return false;
   const curBlock = railBlocks?.blockByTile?.[y * N + x] ?? -1;
@@ -529,6 +532,8 @@ function railEdgeDirectionAllowedForPath(x, y, def){
     if(signals.own) return false;
     return true;
   }
+  // Feu forcé au rouge par le joueur => sens interdit même au niveau statique.
+  if(signals.opposite.forcedRed) return false;
   const nx = x + def.dx, ny = y + def.dy;
   if(!inMap(nx, ny)) return false;
   return true;
@@ -707,13 +712,19 @@ function railPathNextSignalAllows(tiles){
   return true;
 }
 
-function railPathIsPassable(tiles, vehicle=null){
+// Signalisation par cantons : un train n'a besoin que du PREMIER feu vert (canton
+// immédiatement devant lui libre). Les feux plus éloignés sont gérés au fil de
+// l'avance, feu par feu. On contrôle donc la passabilité uniquement jusqu'au
+// premier feu franchi, sans exiger que tout l'itinéraire soit dégagé.
+function railPathFirstBlockPassable(tiles, vehicle=null){
   for(let i = 0; i < tiles.length - 1; i++){
     const cx = tiles[i] % N, cy = (tiles[i] / N) | 0;
     const nx = tiles[i + 1] % N, ny = (tiles[i + 1] / N) | 0;
     const def = railDirDef(nx - cx, ny - cy);
     if(!def) return false;
     if(!railEdgePassableForPath(cx, cy, def, vehicle)) return false;
+    // Premier feu franchi => les cantons suivants ne nous concernent plus ici.
+    if(railEdgeSignalState(cx, cy, def).opposite) break;
   }
   return true;
 }
@@ -743,10 +754,10 @@ function findRailPathFromDecision(v, targetB, curTile, previousTile=null){
     );
     if(!tail?.tiles?.length) continue;
     const tiles = [curTile, ...tail.tiles];
-    // Vérifie que TOUS les feux sur le trajet sont verts (pas seulement le premier).
-    // Sans ça, un train peut s'engager dans un canton intermédiaire et se retrouver
-    // bloqué immédiatement face au feu suivant qui est rouge.
-    if(!railPathIsPassable(tiles, v)) continue;
+    // Il suffit que le PREMIER feu (canton immédiat) soit vert : le train s'engage
+    // dès que la voie devant lui est libre et s'arrêtera au prochain feu rouge plus
+    // loin. On ne refuse plus la branche parce qu'un feu lointain est rouge.
+    if(!railPathFirstBlockPassable(tiles, v)) continue;
     if(!best || tiles.length < best.tiles.length){
       best = {
         tiles,
@@ -848,6 +859,8 @@ function rebuildRailBlockOccupancy(){
 }
 
 function railSignalAspect(sig){
+  // Feu rouge forcé manuellement par le joueur : toujours rouge (arrêt).
+  if(sig.forcedRed) return false;
   const def = RAIL_DIRS.find(d => d.bit === sig.bit);
   if(!def) return false;
   const nx = sig.x + def.dx, ny = sig.y + def.dy;
