@@ -823,14 +823,22 @@ function findRailPathFromDecision(v, targetB, curTile, previousTile=null){
     );
     if(!tail?.tiles?.length) continue;
     const tiles = [curTile, ...tail.tiles];
-    // Il suffit que le PREMIER feu (canton immédiat) soit vert : le train s'engage
-    // dès que la voie devant lui est libre et s'arrêtera au prochain feu rouge plus
-    // loin. On ne refuse plus la branche parce qu'un feu lointain est rouge.
-    if(!railPathFirstBlockPassable(tiles, v)) continue;
-    if(!best || tiles.length < best.tiles.length){
+    // Priorité absolue : la branche qui mène le plus DIRECTEMENT à la destination,
+    // même si son premier canton est occupé (feu rouge). Le train s'engage vers
+    // cette branche et patiente au feu jusqu'au dégagement — il ne se détourne PAS
+    // vers une branche plus longue uniquement parce qu'elle est verte. L'arrêt
+    // physique au feu rouge est assuré ensuite par trainNextMoveState.
+    // À distance ÉGALE seulement, on préfère la branche dont le premier feu est
+    // déjà vert (« si le premier feu vert amène à sa destination, il le prend »).
+    const passable = railPathFirstBlockPassable(tiles, v);
+    const better = !best
+      || tiles.length < best.tiles.length
+      || (tiles.length === best.tiles.length && passable && !best.passable);
+    if(better){
       best = {
         tiles,
-        pts:tiles.map(idx => ({ x:(idx % N) * TILE + TILE / 2, y:((idx / N) | 0) * TILE + TILE / 2 }))
+        pts:tiles.map(idx => ({ x:(idx % N) * TILE + TILE / 2, y:((idx / N) | 0) * TILE + TILE / 2 })),
+        passable,
       };
     }
   }
@@ -1448,6 +1456,12 @@ function updateTrainVehicle(v, dt){
   advanceRailVehicle(v, VEHICLE_TYPES[v.vtype].speed * TILE * dt);
   const progressAfter = v.seg + v.t;
   if(Math.abs(progressAfter - progressBefore) > 1e-6){
+    v.signalWaitTime = 0;
+  } else if(v.state !== 'returning' && trainEdgeHasFacingSignal(v)){
+    // Arrêt normal derrière un feu rouge : le canton suivant (p.ex. une gare de
+    // destination surchargée) est occupé. Comportement ferroviaire attendu : le
+    // train patiente au feu jusqu'au dégagement, il ne rebrousse PAS chemin vers
+    // le dépôt (= sa gare de départ). On n'arme donc pas le watchdog ici.
     v.signalWaitTime = 0;
   } else if(v.state !== 'returning'){
     v.signalWaitTime = (v.signalWaitTime || 0) + dt;
