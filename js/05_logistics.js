@@ -564,8 +564,10 @@ function railNextSignalAllowsDirection(x, y, def){
   for(let qi = 0; qi < q.length; qi++){
     const cur = q[qi];
     if(cur.distance > signalDistance) break;
+    const inDx = -RAIL_DIRS[cur.incoming].dx, inDy = -RAIL_DIRS[cur.incoming].dy;
     for(const forward of railConnectedDefsAt(cur.x, cur.y)){
       if(forward.bit === RAIL_DIRS[cur.incoming]?.bit) continue;
+      if(!railTurnAllowed(inDx, inDy, forward.dx, forward.dy)) continue;
       const nx = cur.x + forward.dx, ny = cur.y + forward.dy;
       if(!inMap(nx, ny)) continue;
       const ni = ny * N + nx;
@@ -595,10 +597,13 @@ function railNextSignalAllowsDirection(x, y, def){
 function railTileIsJunction(tile, previousTile){
   if(tile == null || tile < 0 || !rail[tile]) return false;
   const x = tile % N, y = (tile / N) | 0;
+  const inDx = previousTile != null && previousTile >= 0 ? x - (previousTile % N) : 0;
+  const inDy = previousTile != null && previousTile >= 0 ? y - ((previousTile / N) | 0) : 0;
   let exits = 0;
   for(const def of railConnectedDefsAt(x, y)){
     const nx = x + def.dx, ny = y + def.dy;
     if(!inMap(nx, ny) || ny * N + nx === previousTile) continue;
+    if(!railTurnAllowed(inDx, inDy, def.dx, def.dy)) continue;
     const ni = ny * N + nx;
     if(!rail[ni] || !(rail[ni] & RAIL_DIRS[def.opposite].bit)) continue;
     if(!railEdgeDirectionAllowedForPath(x, y, def)) continue;
@@ -726,8 +731,17 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=nul
     const cx = cur % N, cy = (cur / N) | 0;
     const mask = rail[cur] || 0;
     const firstHop = prevRail[cur] === -1;
+    // Sens d'arrivée sur `cur` pour interdire les virages > 45°. Connu via le
+    // parent BFS, ou via `previousTile` pour la toute première tuile.
+    let inDx = 0, inDy = 0;
+    if(prevRail[cur] >= 0){
+      inDx = cx - (prevRail[cur] % N); inDy = cy - ((prevRail[cur] / N) | 0);
+    } else if(startTile != null && cur === startTile && previousTile != null){
+      inDx = cx - (previousTile % N); inDy = cy - ((previousTile / N) | 0);
+    }
     for(const def of RAIL_DIRS){
       if(!(mask & def.bit)) continue;
+      if(!railTurnAllowed(inDx, inDy, def.dx, def.dy)) continue;
       if(!railEdgeDirectionAllowedForPath(cx, cy, def)) continue;
       if(firstHop && !skipFirstSignalCheck && !railNextSignalAllowsDirection(cx, cy, def)) continue;
       const nx = cx + def.dx, ny = cy + def.dy;
@@ -783,9 +797,12 @@ function railPathFirstBlockPassable(tiles, vehicle=null){
 
 function findRailPathFromDecision(v, targetB, curTile, previousTile=null){
   const cx = curTile % N, cy = (curTile / N) | 0;
+  const inDx = previousTile != null ? cx - (previousTile % N) : 0;
+  const inDy = previousTile != null ? cy - ((previousTile / N) | 0) : 0;
   let best = null;
   for(const def of RAIL_DIRS){
     if(!((rail[curTile] || 0) & def.bit)) continue;
+    if(!railTurnAllowed(inDx, inDy, def.dx, def.dy)) continue;
     if(!railEdgeDirectionAllowedForPath(cx, cy, def)) continue;
     const nx = cx + def.dx, ny = cy + def.dy;
     if(!inMap(nx, ny)) continue;

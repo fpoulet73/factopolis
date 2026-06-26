@@ -58,6 +58,16 @@ const RAIL_DIRS = [
 function railDirDef(dx, dy){
   return RAIL_DIRS.find(d => d.dx === dx && d.dy === dy) || null;
 }
+// Un train ne peut pas tourner plus qu'à 45° : la voie suivante doit aller tout
+// droit, ou à 45° à gauche/droite par rapport à son sens d'arrivée. Les virages
+// à 90°, 135° ou demi-tour sont physiquement impossibles. (inDx,inDy) est le sens
+// d'arrivée ; (0,0) signifie « entrée libre » (pas de sens connu), donc autorisé.
+function railTurnAllowed(inDx, inDy, outDx, outDy){
+  if(!inDx && !inDy) return true;
+  let d = Math.abs(Math.atan2(inDy, inDx) - Math.atan2(outDy, outDx));
+  if(d > Math.PI) d = 2 * Math.PI - d;
+  return d <= Math.PI / 4 + 1e-6; // ≤ 45°
+}
 function railHas(mask, def){
   return !!(mask && def && (mask & def.bit));
 }
