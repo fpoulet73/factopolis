@@ -516,10 +516,14 @@ function railEdgePassableForPath(x, y, def, vehicle=null){
   const curBlock = railBlocks?.blockByTile?.[y * N + x] ?? -1;
   const nextBlock = railBlocks?.blockByTile?.[ny * N + nx] ?? -1;
   if(nextBlock < 0 || nextBlock === curBlock) return true;
-  const occupied = railBlockOccupancy?.[nextBlock] ?? 0;
   const ownBlock = vehicle?.currentRailBlock ?? -1;
   if(nextBlock === ownBlock) return true;
-  return occupied <= 0;
+  // La barrière physique doit refléter EXACTEMENT le feu affiché : un train ne
+  // franchit l'arête que si son feu est vert. railSignalAspect tient compte de
+  // l'occupation par les locos ET par la queue de wagons d'un autre train, ce
+  // que la simple lecture de railBlockOccupancy ratait (le train passait alors
+  // un feu visuellement rouge tant que seule une queue occupait le canton).
+  return railSignalAspect(signals.opposite, vehicle);
 }
 
 function railEdgeDirectionAllowedForPath(x, y, def){
@@ -861,7 +865,10 @@ function rebuildRailBlockOccupancy(){
   railBlockOccupancy = occ;
 }
 
-function railSignalAspect(sig){
+// Aspect d'un feu (vert = true, rouge = false). `ignoreVehicle` permet à un
+// train d'interroger le feu qui le concerne sans se compter lui-même comme
+// occupant du canton qu'il va franchir (loco déjà entrée ou queue de wagons).
+function railSignalAspect(sig, ignoreVehicle=null){
   // Feu rouge forcé manuellement par le joueur : toujours rouge (arrêt).
   if(sig.forcedRed) return false;
   const def = RAIL_DIRS.find(d => d.bit === sig.bit);
@@ -870,12 +877,17 @@ function railSignalAspect(sig){
   if(!inMap(nx, ny)) return false;
   const guardedBlock = railBlocks?.blockByTile?.[sig.y * N + sig.x] ?? -1;
   if(guardedBlock < 0) return false;
-  if((railBlockOccupancy?.[guardedBlock] ?? 0) > 0) return false;
+  let occ = railBlockOccupancy?.[guardedBlock] ?? 0;
+  // Ne pas se compter soi-même : un train dont la loco occupe déjà ce canton
+  // ne doit pas voir son propre feu rouge et se bloquer.
+  if(ignoreVehicle && (ignoreVehicle.currentRailBlock ?? -1) === guardedBlock) occ--;
+  if(occ > 0) return false;
   // Vérifier si des wagons arrière d'un train occupent encore ce canton
   // (la loco a déjà libéré le canton mais la queue n'est pas encore passée).
   // On utilise v.pathTiles (chemin courant, fiable) plutôt que le railTrail
   // qui peut être stale en cas de train bloqué.
   for(const v of (vehicles ?? [])){
+    if(v === ignoreVehicle) continue;
     if(v.vtype !== 'train' || !v.wagons?.length || !v.pathTiles?.length || v.seg <= 0) continue;
     // numBack = nombre de tuiles que la queue du train peut occuler derrière
     // la loco. wagons.length + 1 = loco + wagons (conservateur).
