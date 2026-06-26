@@ -891,25 +891,29 @@ function lanePose(pts, seg, t, lane=0.16){
   return { u, v, du, dv };
 }
 
-// Direction lissée pour les trains : blend entre le segment courant et le précédent/suivant
-// sur la moitié de chaque segment, pour que l'orientation suive les courbes progressivement.
+// Direction lissée pour les trains : blend symétrique autour de chaque sommet du
+// tracé. La transition s'étale sur la moitié de chaque segment adjacent et atteint
+// la direction MOYENNE des deux segments pile au sommet, identique des deux côtés.
+// On évite ainsi le saut de direction (≈45°) qui se produisait quand la seconde
+// moitié d'un segment atteignait déjà la direction suivante avant que le segment
+// suivant ne reparte de la direction précédente.
 function trainBlendedDir(pts, seg, t){
-  const a = pts[seg], b = pts[Math.min(seg+1, pts.length-1)];
-  const cdx = b.x - a.x, cdy = b.y - a.y;
-  if(t > 0.5 && seg + 2 < pts.length){
-    const c = pts[seg+2];
-    const ndx = c.x - b.x, ndy = c.y - b.y;
-    if(cdx !== ndx || cdy !== ndy){
-      const alpha = (t - 0.5) * 2;
-      return [cdx*(1-alpha) + ndx*alpha, cdy*(1-alpha) + ndy*alpha];
-    }
-  } else if(t < 0.5 && seg > 0){
-    const prev = pts[seg-1];
-    const pdx = a.x - prev.x, pdy = a.y - prev.y;
-    if(cdx !== pdx || cdy !== pdy){
-      const alpha = t * 2;
-      return [pdx*(1-alpha) + cdx*alpha, pdy*(1-alpha) + cdy*alpha];
-    }
+  const dirAt = (i) => {
+    const a = pts[Math.max(0, i)], b = pts[Math.min(i+1, pts.length-1)];
+    return [b.x - a.x, b.y - a.y];
+  };
+  const [cdx, cdy] = dirAt(seg);
+  if(t >= 0.5 && seg + 1 <= pts.length - 2){
+    // Vers le sommet suivant : w va de 0 (milieu du segment) à 0.5 (au sommet).
+    const [ndx, ndy] = dirAt(seg + 1);
+    const w = t - 0.5;
+    return [cdx*(1-w) + ndx*w, cdy*(1-w) + ndy*w];
+  }
+  if(t < 0.5 && seg > 0){
+    // Depuis le sommet précédent : w va de 0.5 (au sommet) à 0 (milieu du segment).
+    const [pdx, pdy] = dirAt(seg - 1);
+    const w = 0.5 - t;
+    return [cdx*(1-w) + pdx*w, cdy*(1-w) + pdy*w];
   }
   return [cdx, cdy];
 }
