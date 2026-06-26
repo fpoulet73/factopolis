@@ -589,22 +589,67 @@ function railNextSignalAllowsDirection(x, y, def){
   return !foundSignal;
 }
 
-function trainAtRailJunction(v){
-  if(!v?.pathTiles?.length || v.t > 1e-6) return false;
-  const cur = v.pathTiles[v.seg] ?? -1;
-  if(cur < 0) return false;
-  const previous = v.seg > 0 ? (v.pathTiles[v.seg - 1] ?? -1) : -1;
-  const x = cur % N, y = (cur / N) | 0;
+// Une tuile est un aiguillage si, en excluant le retour vers `previousTile`,
+// elle offre plus d'une sortie franchissable. Utilisé aussi bien pour la tuile
+// courante du train que pour une tuile en aval (pré-décision d'itinéraire).
+function railTileIsJunction(tile, previousTile){
+  if(tile == null || tile < 0 || !rail[tile]) return false;
+  const x = tile % N, y = (tile / N) | 0;
   let exits = 0;
   for(const def of railConnectedDefsAt(x, y)){
     const nx = x + def.dx, ny = y + def.dy;
-    if(!inMap(nx, ny) || ny * N + nx === previous) continue;
+    if(!inMap(nx, ny) || ny * N + nx === previousTile) continue;
     const ni = ny * N + nx;
     if(!rail[ni] || !(rail[ni] & RAIL_DIRS[def.opposite].bit)) continue;
     if(!railEdgeDirectionAllowedForPath(x, y, def)) continue;
     exits++;
   }
   return exits > 1;
+}
+
+function trainAtRailJunction(v){
+  if(!v?.pathTiles?.length || v.t > 1e-6) return false;
+  const cur = v.pathTiles[v.seg] ?? -1;
+  if(cur < 0) return false;
+  const previous = v.seg > 0 ? (v.pathTiles[v.seg - 1] ?? -1) : -1;
+  return railTileIsJunction(cur, previous);
+}
+
+// Pré-décision d'aiguillage : lorsque la tuile juste devant la locomotive est un
+// aiguillage et que la branche actuellement planifiée est fermée (canton occupé
+// ou feu rouge), on choisit dès maintenant la bonne branche et on réécrit la
+// queue de l'itinéraire — SANS toucher à v.seg/v.t. Ainsi la locomotive amorce
+// directement la courbe vers la voie qu'elle empruntera réellement, sans montrer
+// un engagement sur une voie puis une correction visible vers l'autre.
+function predecideTrainJunction(v){
+  if(!v?.pathTiles?.length || v.t > 1e-6) return false;
+  const seg = v.seg;
+  if(seg + 2 >= v.pathTiles.length) return false; // il faut aiguillage + une branche au-delà
+  const curTile = v.pathTiles[seg];
+  const junctionTile = v.pathTiles[seg + 1];
+  if(curTile < 0 || junctionTile < 0) return false;
+  if(!railTileIsJunction(junctionTile, curTile)) return false;
+  // Déjà tranché pour cet aiguillage : ne pas recalculer à chaque frame.
+  if(v.railPredecidedJunctionTile === junctionTile) return false;
+  const plannedBranch = v.pathTiles[seg + 2];
+  const jx = junctionTile % N, jy = (junctionTile / N) | 0;
+  const bx = plannedBranch % N, by = (plannedBranch / N) | 0;
+  const branchDef = railDirDef(bx - jx, by - jy);
+  const plannedBranchOpen = branchDef
+    && railEdgePassableForPath(jx, jy, branchDef, v)
+    && railNextSignalAllowsDirection(jx, jy, branchDef);
+  if(plannedBranchOpen){ v.railPredecidedJunctionTile = junctionTile; return false; }
+  // Branche planifiée fermée : choisir une autre sortie depuis l'aiguillage.
+  const targetB = v.state === 'returning' ? v.garageRef : (v.state === 'to_source' ? v.source : v.dest);
+  if(!targetB || targetB.dead) return false;
+  const decision = findRailPathFromDecision(v, targetB, junctionTile, curTile);
+  if(!decision || decision.tiles.length < 2) return false;
+  // Conserver le préfixe jusqu'à l'aiguillage (inclus via decision.tiles[0]) et
+  // remplacer toute la queue par la branche retenue.
+  v.pathTiles = v.pathTiles.slice(0, seg + 1).concat(decision.tiles);
+  v.pts = v.pts.slice(0, seg + 1).concat(decision.pts);
+  v.railPredecidedJunctionTile = junctionTile;
+  return true;
 }
 
 function trainTargetTileAvailable(tile, vehicle=null, startTiles=null){
@@ -1263,6 +1308,7 @@ function replanTrainAtSignal(v){
   v.railPlannedJunctionTile = curTile;
   v.railDecisionPreviousTile = previousTile;
   v.railPathEntryFromTile = previousTile;
+  v.railPredecidedJunctionTile = -1;
   seedTrainTrail(v, path.tiles, previousTile);
   return true;
 }
@@ -1271,6 +1317,9 @@ function advanceRailVehicle(v, move){
   ensureTrainTrail(v);
   while(move > 0 && v.seg < v.pts.length - 1){
     const decisionTile = v.pathTiles[v.seg] ?? -1;
+    // Trancher l'aiguillage en aval AVANT d'amorcer la courbe vers lui, pour que
+    // la locomotive vise directement la bonne voie (rendu fluide, sans à-coup).
+    if(v.t <= 1e-6) predecideTrainJunction(v);
     const atJunction = trainAtRailJunction(v);
     const selectedBranchGreen = !atJunction || railPathNextSignalAllows(v.pathTiles.slice(v.seg));
     if(v.t <= 1e-6 && (
@@ -1297,6 +1346,7 @@ function advanceRailVehicle(v, move){
     v.t = 0;
     v.railPlannedJunctionTile = -1;
     v.railDecisionPreviousTile = null;
+    v.railPredecidedJunctionTile = -1;
     const tile = v.pathTiles[v.seg] ?? -1;
     const previousBlock = v.currentRailBlock ?? -1;
     const nextBlock = tile >= 0 ? (railBlocks?.blockByTile?.[tile] ?? -1) : -1;
