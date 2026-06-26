@@ -532,8 +532,11 @@ function railEdgeDirectionAllowedForPath(x, y, def){
     if(signals.own) return false;
     return true;
   }
-  // Feu forcé au rouge par le joueur => sens interdit même au niveau statique.
-  if(signals.opposite.forcedRed) return false;
+  // Un feu forcé au rouge ne ferme PAS la voie au niveau de l'itinéraire : c'est
+  // un simple « stop » sur le trajet. Le train doit pouvoir planifier une route
+  // qui le traverse puis avancer jusqu'à lui ; l'arrêt physique devant le feu
+  // rouge est géré dynamiquement par railEdgePassableForPath. Sinon, un feu
+  // rouge plus loin empêcherait le train de franchir les feux verts en amont.
   const nx = x + def.dx, ny = y + def.dy;
   if(!inMap(nx, ny)) return false;
   return true;
