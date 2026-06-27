@@ -594,6 +594,39 @@ function drawTrainStationPiece(b){
       ctx.beginPath(); ctx.moveTo(x0, y0 - 1); ctx.lineTo(x1, y1 - 1); ctx.stroke();
       ctx.strokeStyle = '#f0d15f'; ctx.lineWidth = 1.4;
       ctx.beginPath(); ctx.moveTo(x0 - nx * 4, y0 - ny * 4); ctx.lineTo(x1 - nx * 4, y1 - ny * 4); ctx.stroke();
+
+      // Repère visuel des dalles manquantes : un quai incomplet (trou interne ou
+      // trop court) n'est JAMAIS desservi (cf. trainStationStopTiles, qui écarte
+      // toute voie de longueur < gare). La bande de quai étant tracée d'un bout à
+      // l'autre, un trou est invisible — on le matérialise ici en rouge. La plage
+      // requise est celle des têtes de gare, projetée sur l'axe du quai.
+      const stationPieces = buildings.filter(piece => !piece.dead
+        && piece.type === 'train_station' && piece.stationGroupId === b.stationGroupId);
+      if(stationPieces.length){
+        let minPos = Infinity, maxPos = -Infinity;
+        for(const s of stationPieces){
+          const sp = (s.x * adx) + (s.y * ady);
+          minPos = Math.min(minPos, sp); maxPos = Math.max(maxPos, sp);
+        }
+        const have = new Set(pieces.map(p => (p.x * adx) + (p.y * ady)));
+        const perp = (b.x * ady) - (b.y * adx);
+        for(let pos = minPos; pos <= maxPos; pos++){
+          if(have.has(pos)) continue;
+          const mx = pos * adx + perp * ady;
+          const my = pos * ady - perp * adx;
+          const [mrx, mry] = rotIdx(mx, my);
+          ctx.save();
+          ctx.fillStyle = 'rgba(220,40,40,0.42)';
+          diamond(mrx, mry); ctx.fill();
+          ctx.strokeStyle = '#ff5252'; ctx.lineWidth = 2; ctx.setLineDash([4,3]);
+          diamond(mrx, mry); ctx.stroke();
+          ctx.restore();
+          const c = iso(mrx + 0.5, mry + 0.5);
+          ctx.font = '13px "Segoe UI Emoji",sans-serif';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('⚠️', c[0], c[1]);
+        }
+      }
     }
   } else {
     const bounds = trainStationGroupBounds(b.stationGroupId, 'train_station');
