@@ -160,7 +160,8 @@ function collectRailUpdates(path){
   if(!Array.isArray(path) || !path.length) return { updates:[], cost:0, msg:'' };
   const draft = Uint8Array.from(rail);
   const touched = new Set();
-  const validTile = ({ x, y }) => inMap(x, y) && !road[y*N+x] && !bgrid[y*N+x] && terrain[y*N+x] === T.GRASS;
+  // Un rail peut traverser une route (passage à niveau) : on n'exclut donc pas road[].
+  const validTile = ({ x, y }) => inMap(x, y) && !bgrid[y*N+x] && terrain[y*N+x] === T.GRASS;
   const sanitized = [];
   for(const tile of path){
     if(!tile || !validTile(tile)) continue;
@@ -440,13 +441,15 @@ function canPlace(t,x,y){
     return { ok:true };
   }
   if(t==='road'){
-    if(road[i] || rail[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
+    if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
+    if(rail[i]) return { ok:true }; // passage à niveau : route par-dessus un rail existant
     if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
     if(ter!==T.GRASS) return { ok:false, msg:"Les routes se posent sur l'herbe (démolis les arbres ou champs)" };
     return { ok:true };
   }
   if(t==='rail'){
-    if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
+    if(bgrid[i]) return { ok:false, msg:'Case occupée' };
+    if(road[i]) return { ok:true }; // passage à niveau : rail par-dessus une route existante
     if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
     if(ter!==T.GRASS) return { ok:false, msg:"Les rails se posent sur l'herbe (démolis les arbres ou champs)" };
     return { ok:true };

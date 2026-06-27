@@ -490,7 +490,8 @@ function applyAction(msg){
         break;
       }
       if(act.btype === 'road'){
-        if(bgrid[act.y*N+act.x] || road[act.y*N+act.x] || rail[act.y*N+act.x]) break;
+        // rail[] autorisé : passage à niveau (route par-dessus un rail)
+        if(bgrid[act.y*N+act.x] || road[act.y*N+act.x]) break;
         road[act.y*N+act.x] = 1;
         wSender.money -= cost; wSender.fin.construction += cost;
         break;
