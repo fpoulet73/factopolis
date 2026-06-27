@@ -92,7 +92,8 @@ function makePanelDraggable(id){
   const panel = $(id);
   if(!panel) return;
   panel.dataset.draggable = '1';
-  panel.addEventListener('mousedown', e => {
+  panel.addEventListener('pointerdown', e => {
+    if(e.pointerType === 'mouse' && e.button !== 0) return; // clic droit/molette réservés au canvas
     const handle = e.target.closest('.panel-head, h3, h2');
     if(!handle || !panel.contains(handle)) return;
     if(e.target.closest('button, input, select, textarea, label, a')) return;
@@ -105,9 +106,11 @@ function makePanelDraggable(id){
     handle.style.cursor = 'move';
     panelDragState = {
       panel,
+      pointerId: e.pointerId,
       dx: e.clientX - rect.left,
       dy: e.clientY - rect.top,
     };
+    try { panel.setPointerCapture(e.pointerId); } catch(_){}
     e.preventDefault();
   });
 }
@@ -123,8 +126,9 @@ function ensurePanelDragHandle(id){
   h3.prepend(span);
 }
 
-addEventListener('mousemove', e => {
+addEventListener('pointermove', e => {
   if(!panelDragState) return;
+  if(e.pointerId !== panelDragState.pointerId) return;
   const panel = panelDragState.panel;
   const maxLeft = Math.max(0, innerWidth - panel.offsetWidth);
   const maxTop = Math.max(0, innerHeight - panel.offsetHeight);
@@ -134,9 +138,13 @@ addEventListener('mousemove', e => {
   panel.style.top = top + 'px';
 });
 
-addEventListener('mouseup', () => {
+function endPanelDrag(){
+  if(!panelDragState) return;
+  try { panelDragState.panel.releasePointerCapture(panelDragState.pointerId); } catch(_){}
   panelDragState = null;
-});
+}
+addEventListener('pointerup', endPanelDrag);
+addEventListener('pointercancel', endPanelDrag);
 
 makePanelDraggable('info');
 makePanelDraggable('townPanel');
@@ -824,7 +832,7 @@ function renderInfo(){
   _hdrBtns += '<button class="tbtn" id="infoCloseBtn" title="Fermer" aria-label="Fermer" style="padding:2px 8px;font-size:13px;margin:0;width:auto">✕</button>';
   _hdrBtns += '</span>';
   let h = '<h3><span style="font-size:22px">'+d.ic+'</span>';
-  if(d.ind){
+  if(d.ind || isVehicleDepot(b)){
     h += '<input id="bldNameInput" class="bld-name-edit" value="'+escHtml(b.name||'')+'" placeholder="'+escHtml(d.n)+'">';
   } else {
     h += '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
@@ -1144,7 +1152,13 @@ function renderInfo(){
     }
     if(shownVehicles.length){
       h += '<div style="margin-top:8px;color:#8fa3bf">Véhicules assignés</div>';
-      h += '<div style="max-height:600px;overflow-y:auto;border:1px solid #36465e;border-radius:6px;padding:3px;background:#0a0f18">';
+      h += '<div style="max-height:600px;overflow-y:auto;padding:1px">';
+      // Rendu d'un wagon/loco : icône + charge, sans cadre ni roues
+      const trainCarHtml = (icon, sub, isLoco) =>
+          '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:34px;flex:0 0 auto;line-height:1.1">'
+        +   '<div style="font-size:15px">'+icon+'</div>'
+        +   '<div style="font-size:8px;color:#8fa3bf">'+sub+'</div>'
+        + '</div>';
       for(const v of shownVehicles){
         const vt = VEHICLE_TYPES[v.vtype];
         if(!vt) continue;
@@ -1155,17 +1169,12 @@ function renderInfo(){
         const trainFlag = canStart ? trainDepotFlagButtonHtml(v) : '';
         const vehName = v.vtype === 'train' ? (v.name || 'Train') : vt.nom;
 
-        h += '<div style="padding:4px 5px;margin-bottom:3px;border:1px solid #2a3a50;border-radius:3px;background:#0f1820;font-size:11px">'
-           // Ligne 1: Icône, nom, état, trajet
-           + '<div style="display:flex;gap:5px;align-items:center;margin-bottom:3px">'
-           + '<span style="font-size:16px">'+vt.icone+'</span>'
-           + '<span style="font-weight:bold;flex:0 0 auto">'+escHtml(vehName.substring(0,14))+'</span>'
-           + '<span style="color:#8fa3bf;flex:1;text-align:right;font-size:10px">'+srcName.substring(0,7)+' → '+dstName.substring(0,7)+'</span>'
-           + '<button class="tbtn" style="padding:2px 3px;margin:0;font-size:11px;width:auto;border:none;background:transparent;color:#8fa3bf;cursor:pointer" data-route-v="'+v.id+'" title="Configurer">'+(v.vtype === 'train' ? '🧭' : '🔁')+'</button>'
-           + '<button class="tbtn" style="padding:2px 3px;margin:0;font-size:11px;width:auto;border:none;background:transparent;color:#ff9a8a;cursor:pointer" data-sell-v="'+v.id+'" title="Vendre">🗑️</button>'
-           + '</div>';
+        h += '<div style="padding:5px 6px;margin-bottom:4px;border:1px solid #2a3a50;border-radius:4px;background:#0f1820;font-size:11px">';
 
-        // Ligne 2: Wagons (trains) ou drapeau
+        const cfgBtns =
+            '<button class="tbtn" style="padding:2px 3px;margin:0;font-size:11px;width:auto;border:none;background:transparent;color:#8fa3bf;cursor:pointer" data-route-v="'+v.id+'" title="Configurer">'+(v.vtype === 'train' ? '🧭' : '🔁')+'</button>'
+          + '<button class="tbtn" style="padding:2px 3px;margin:0;font-size:11px;width:auto;border:none;background:transparent;color:#ff9a8a;cursor:pointer" data-sell-v="'+v.id+'" title="Vendre">🗑️</button>';
+
         if(v.vtype === 'train'){
           const wagons = trainNormalizeWagons(v);
           // Calculer la distribution du cargo par wagon
@@ -1186,26 +1195,32 @@ function renderInfo(){
             return { amt: 0, res: null, cap: d?.capacite || 0 };
           });
 
-          h += '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">';
-          h += '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #36465e;border-radius:3px;background:#16202f;font-size:16px;padding:2px">🚂<div style="font-size:8px;color:#8fa3bf">loco</div></div>';
+          // Ligne 1 : le train (loco + wagons) + nom + trajet + actions
+          h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+          h += '<div style="display:flex;gap:1px;align-items:flex-end">';
+          h += trainCarHtml('🚂', 'loco', true);
           for(let idx=0; idx<wagons.length; idx++){
-            const wagon = wagons[idx];
-            const def = trainWagonDef(wagon);
+            const def = trainWagonDef(wagons[idx]);
+            if(!def) continue;
             const load = _wagonLoad[idx];
-            const selectedRes = trainWagonSelectedResource(wagon);
-            if(def){
-              const icon = selectedRes ? (RES[selectedRes]?.ic || '📦') : def.icone;
-              h += '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #36465e;border-radius:3px;background:#16202f;padding:2px;font-size:14px;line-height:1.2">'
-                 + '<div>'+icon+'</div>'
-                 + '<div style="font-size:8px;color:#8fa3bf">'+load.amt+'/'+load.cap+'</div>'
-                 + '</div>';
-            }
-          }
-          if(trainFlag){
-            h += '<div style="flex:1"></div>';
-            h += trainFlag.replace(/style="/g,'style="font-size:11px;padding:2px 3px;margin:0;');
+            const selectedRes = trainWagonSelectedResource(wagons[idx]);
+            const icon = selectedRes ? (RES[selectedRes]?.ic || '📦') : def.icone;
+            h += trainCarHtml(icon, load.amt+'/'+load.cap, false);
           }
           h += '</div>';
+          h += '<div style="flex:1"></div>';
+          h += '<input data-vehname-v="'+v.id+'" value="'+escHtml(vehName)+'" spellcheck="false" title="Renommer le train" style="font-weight:bold;flex:0 1 auto;width:120px;text-align:right;background:transparent;border:none;border-bottom:1px solid #2a3a50;color:#e6edf5;font-size:11px;padding:2px 2px">';
+          h += cfgBtns;
+          if(trainFlag) h += trainFlag.replace(/style="/g,'style="font-size:11px;padding:2px 3px;margin:0 0 0 4px;');
+          h += '</div>';
+        } else {
+          // Véhicules routiers : icône, nom, trajet, actions sur une ligne
+          h += '<div style="display:flex;gap:5px;align-items:center">'
+             + '<span style="font-size:16px">'+vt.icone+'</span>'
+             + '<span style="font-weight:bold;flex:0 0 auto">'+escHtml(vehName.substring(0,14))+'</span>'
+             + '<span style="color:#8fa3bf;flex:1;text-align:right;font-size:10px">'+srcName.substring(0,7)+' → '+dstName.substring(0,7)+'</span>'
+             + cfgBtns
+             + '</div>';
         }
 
         h += '</div>';
@@ -1356,6 +1371,20 @@ function renderInfo(){
           toast('🔁 Clique sur l\'entrepôt source pour '+VEHICLE_TYPES[v.vtype].nom+'.');
         p._html = null;
       };
+    });
+    p.querySelectorAll('input[data-vehname-v]').forEach(inp=>{
+      const vid = +inp.dataset.vehnameV;
+      const v = vehicles.find(vv=>vv.id===vid);
+      if(!v) return;
+      const saveName = ()=>{
+        const newName = inp.value.trim();
+        if(newName === (v.name||'')) return;
+        v.name = newName || null;
+        if(!v.name && v.vtype === 'train') assignTrainVehicleName(v);
+        p._html = null;
+      };
+      inp.onkeydown = e => { if(e.key === 'Enter') inp.blur(); };
+      inp.onblur = saveName;
     });
     p.querySelectorAll('[data-sell-v]').forEach(btn=>{
       btn.onclick = ()=>{
@@ -1542,6 +1571,11 @@ function closeToolbarMenus(){
 
 function syncToolbarState(){
   document.querySelectorAll('.tool').forEach(b=> b.classList.toggle('on', b.dataset.t === tool));
+  // actions contextuelles tactiles
+  const cCancel = $('ctxCancel');
+  if(cCancel) cCancel.classList.toggle('show', tool !== 'select');
+  const cShift = $('ctxShift');
+  if(cShift) cShift.classList.toggle('show', tool === 'road');
   if(depotToolbarGroup){
     const active = (DEPOT_TOOLBAR_ITEMS || []).some(item => item.tool === tool);
     depotToolbarGroup.classList.toggle('on', active);
@@ -1676,12 +1710,16 @@ function buildToolbar(){
 function setTool(k){
   tool = k;
   roadDragStart = null; roadPreviewTiles = [];
+  shiftToggle = false;
+  const cs = $('ctxShift'); if(cs) cs.classList.remove('on');
   closeToolbarMenus();
   syncToolbarState();
 }
 
 // ---------- souris / clavier ----------
 const mouse = { x:0, y:0, tx:-1, ty:-1, lDown:false, rDown:false, rMoved:0, lastX:0, lastY:0 };
+// Bascule tactile du mode "angle droit" pour les routes (équivalent de Maj au clavier).
+let shiftToggle = false;
 
 function updateMouseTileAt(x,y){
   mouse.x = x; mouse.y = y;
@@ -1713,9 +1751,14 @@ function selectTrainDepotFlagAt(x,y){
   for(let i=trainDepotFlagHits.length-1; i>=0; i--){
     const h = trainDepotFlagHits[i];
     if(x < h.x || x > h.x + h.w || y < h.y || y > h.y + h.h) continue;
-    const train = vehicles.find(v => String(v.id) === String(h.id));
-    if(!train) return false;
-    handleTrainDepotFlagClick(train);
+    const depot = h.depot;
+    if(!depot || depot.dead) return false;
+    // Le drapeau regroupe tous les trains du dépôt : on ouvre le panneau du
+    // dépôt, qui liste chaque train avec son propre drapeau de départ.
+    selected = depot;
+    selectedVehicle = null;
+    selectedExpansion = null;
+    renderInfo();
     return true;
   }
   return false;
@@ -1982,92 +2025,195 @@ function computeRailPreview(x0, y0, x1, y1){
   return [{ x:x0, y:y0 }];
 }
 
-cv.addEventListener('mousedown', e=>{
-  updateMouseTile(e);
-  if(e.button===0){
-    mouse.lDown = true;
-    if(selectTownLabelAt(e.clientX, e.clientY)){ mouse.lDown = false; return; }
-    if(selectTrainDepotFlagAt(e.clientX, e.clientY)){ mouse.lDown = false; return; }
-    // Mode sélection de zone pour village
-    if(townZoneSelectMode){
-      townZoneDrag = { x0: mouse.tx, y0: mouse.ty, x1: mouse.tx, y1: mouse.ty };
-      return;
-    }
-    if(tool === 'road' || tool === 'rail'){
-      const anchor = { x: mouse.tx, y: mouse.ty };
-      roadDragStart = { x: anchor.x, y: anchor.y };
-      roadPreviewTiles = tool === 'rail'
-        ? computeRailPreview(anchor.x, anchor.y, anchor.x, anchor.y)
-        : computeRoadPreview(mouse.tx, mouse.ty, mouse.tx, mouse.ty, e.shiftKey);
-    } else if(tool === 'rail_signal'){
-      clickFn(mouse.tx, mouse.ty);
-    } else {
-      clickFn(mouse.tx, mouse.ty);
-    }
-  } else if(e.button===2 || e.button===1){
-    mouse.rDown = true; mouse.rMoved = 0;
-    mouse.lastX = e.clientX; mouse.lastY = e.clientY;
-  }
-});
-addEventListener('mousemove', e=>{
-  const ptx = mouse.tx, pty = mouse.ty;
-  updateMouseTile(e);
-  if(mouse.rDown){
-    const dx = e.clientX-mouse.lastX, dy = e.clientY-mouse.lastY;
-    mouse.rMoved += Math.abs(dx)+Math.abs(dy);
-    cam.x -= dx/cam.z; cam.y -= dy/cam.z;
-    clampCam();
-    syncTargetCam();
-    mouse.lastX = e.clientX; mouse.lastY = e.clientY;
-  }
-  if(mouse.lDown && townZoneDrag){
-    townZoneDrag.x1 = mouse.tx; townZoneDrag.y1 = mouse.ty;
-    updateZoneOverlay(e.clientX, e.clientY);
+// ---- logique placement/pan (factorisée : souris + tactile) ----
+function canvasLeftDown(x, y, shiftKey){
+  mouse.lDown = true;
+  if(selectTownLabelAt(x, y)){ mouse.lDown = false; return; }
+  if(selectTrainDepotFlagAt(x, y)){ mouse.lDown = false; return; }
+  if(townZoneSelectMode){
+    townZoneDrag = { x0: mouse.tx, y0: mouse.ty, x1: mouse.tx, y1: mouse.ty };
     return;
   }
-  if(mouse.lDown && (tool==='bulldoze'||tool==='terraform'||tool==='fill_water') && (mouse.tx!==ptx || mouse.ty!==pty))
+  if(tool === 'road' || tool === 'rail'){
+    const anchor = { x: mouse.tx, y: mouse.ty };
+    roadDragStart = { x: anchor.x, y: anchor.y };
+    roadPreviewTiles = tool === 'rail'
+      ? computeRailPreview(anchor.x, anchor.y, anchor.x, anchor.y)
+      : computeRoadPreview(mouse.tx, mouse.ty, mouse.tx, mouse.ty, shiftKey);
+  } else {
     clickFn(mouse.tx, mouse.ty);
-  if(mouse.lDown && (tool==='road' || tool==='rail') && roadDragStart && (mouse.tx!==ptx || mouse.ty!==pty))
+  }
+}
+function canvasLeftMove(x, y, shiftKey, oldTx, oldTy){
+  if(mouse.lDown && townZoneDrag){
+    townZoneDrag.x1 = mouse.tx; townZoneDrag.y1 = mouse.ty;
+    updateZoneOverlay(x, y);
+    return;
+  }
+  if(mouse.lDown && (tool==='bulldoze'||tool==='terraform'||tool==='fill_water') && (mouse.tx!==oldTx || mouse.ty!==oldTy))
+    clickFn(mouse.tx, mouse.ty);
+  if(mouse.lDown && (tool==='road' || tool==='rail') && roadDragStart && (mouse.tx!==oldTx || mouse.ty!==oldTy))
     roadPreviewTiles = tool === 'rail'
       ? computeRailPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty)
-      : computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, e.shiftKey);
+      : computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, shiftKey);
+}
+function canvasLeftUp(){
+  if(townZoneDrag && townZoneSelectMode && !townZonePending){
+    const { x0,y0,x1,y1 } = townZoneDrag;
+    const cx = (Math.min(x0,x1)+Math.max(x0,x1))/2;
+    const cy = (Math.min(y0,y1)+Math.max(y0,y1))/2;
+    townZonePending = { x0, y0, x1, y1, newName: generateTownName(Math.round(cx), Math.round(cy)) };
+    townZoneDrag = null;
+    const tid = townZoneSelectMode.townId;
+    $('townPanel').style.display = 'block';
+    renderTownPanel(tid);
+    mouse.lDown = false;
+    return;
+  }
+  if(tool === 'rail' && roadDragStart){
+    const { updates, cost, msg } = collectRailUpdates(roadPreviewTiles);
+    if(updates.length){
+      if(MP.connected && !MP.username) toast('👤 Connecte-toi avec un compte joueur pour construire','err');
+      else if(myWallet().money < cost) toast('Fonds insuffisants ('+cost+' $)','err');
+      else if(MP.connected && MP.username) applyRailPathWithNetwork(roadPreviewTiles);
+      else railApplyMaskUpdates(updates, cost);
+    } else if(msg) toast(msg, 'err');
+    roadDragStart = null; roadPreviewTiles = [];
+  } else if(tool === 'road' && roadDragStart){
+    for(const t of roadPreviewTiles)
+      if(canPlace(tool, t.x, t.y).ok) clickFn(t.x, t.y);
+    roadDragStart = null; roadPreviewTiles = [];
+  }
+  mouse.lDown = false;
+}
+function cancelPlacementInProgress(){
+  mouse.lDown = false;
+  roadDragStart = null;
+  roadPreviewTiles = [];
+  if(townZoneDrag){ townZoneDrag = null; const zo=$('zoneOverlay'); if(zo) zo.style.display='none'; }
+}
+function canvasPanStart(x, y){
+  mouse.rDown = true; mouse.rMoved = 0;
+  mouse.lastX = x; mouse.lastY = y;
+}
+function canvasPanMove(x, y){
+  const dx = x-mouse.lastX, dy = y-mouse.lastY;
+  mouse.rMoved += Math.abs(dx)+Math.abs(dy);
+  cam.x -= dx/cam.z; cam.y -= dy/cam.z;
+  clampCam();
+  syncTargetCam();
+  mouse.lastX = x; mouse.lastY = y;
+}
+
+// ---- handlers SOURIS (desktop) ----
+cv.addEventListener('mousedown', e=>{
+  updateMouseTile(e);
+  if(e.button===0) canvasLeftDown(e.clientX, e.clientY, e.shiftKey || shiftToggle);
+  else if(e.button===2 || e.button===1) canvasPanStart(e.clientX, e.clientY);
+});
+addEventListener('mousemove', e=>{
+  const oldTx = mouse.tx, oldTy = mouse.ty;
+  updateMouseTile(e);
+  if(mouse.rDown) canvasPanMove(e.clientX, e.clientY);
+  if(mouse.lDown) canvasLeftMove(e.clientX, e.clientY, e.shiftKey || shiftToggle, oldTx, oldTy);
 });
 addEventListener('mouseup', e=>{
-  if(e.button===0){
-    if(townZoneDrag && townZoneSelectMode && !townZonePending){
-      const { x0,y0,x1,y1 } = townZoneDrag;
-      const cx = (Math.min(x0,x1)+Math.max(x0,x1))/2;
-      const cy = (Math.min(y0,y1)+Math.max(y0,y1))/2;
-      townZonePending = { x0, y0, x1, y1, newName: generateTownName(Math.round(cx), Math.round(cy)) };
-      townZoneDrag = null;
-      // Réafficher le panel avec la confirmation
-      const tid = townZoneSelectMode.townId;
-      $('townPanel').style.display = 'block';
-      renderTownPanel(tid);
-      mouse.lDown = false;
-      return;
-    }
-    if(tool === 'rail' && roadDragStart){
-      const { updates, cost, msg } = collectRailUpdates(roadPreviewTiles);
-      if(updates.length){
-        if(MP.connected && !MP.username) toast('👤 Connecte-toi avec un compte joueur pour construire','err');
-        else if(myWallet().money < cost) toast('Fonds insuffisants ('+cost+' $)','err');
-        else if(MP.connected && MP.username) applyRailPathWithNetwork(roadPreviewTiles);
-        else railApplyMaskUpdates(updates, cost);
-      } else if(msg) toast(msg, 'err');
-      roadDragStart = null; roadPreviewTiles = [];
-    } else if(tool === 'road' && roadDragStart){
-      for(const t of roadPreviewTiles)
-        if(canPlace(tool, t.x, t.y).ok) clickFn(t.x, t.y);
-      roadDragStart = null; roadPreviewTiles = [];
-    }
-    mouse.lDown = false;
-  }
+  if(e.button===0) canvasLeftUp();
   if(e.button===2 || e.button===1){
     if(e.button===2 && mouse.rMoved < 6) setTool('select'); // clic droit simple = annuler
     mouse.rDown = false;
   }
 });
+
+// ---- handlers TACTILE (Pointer Events multi-touch) ----
+// 1 doigt = placer / sélectionner / dessiner une route ; 2 doigts = zoom (pinch) + déplacer la carte.
+const activePointers = new Map(); // pointerId -> {x,y}
+let touchMode = null;             // 'place' | 'camera' | null
+let pinchAnchor = null;           // {dist, WX, WY, tCamZ} pour pinch-zoom ancré
+let panLast = null;               // dernière position du doigt pour le pan 1-doigt en mode caméra
+function ptrDist2(a, b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+function initPinchAnchor(){
+  const pts = [...activePointers.values()];
+  const midX = (pts[0].x+pts[1].x)/2, midY = (pts[0].y+pts[1].y)/2;
+  pinchAnchor = {
+    dist: ptrDist2(pts[0], pts[1]),
+    tCamZ: targetCam.z,
+    WX: targetCam.x + midX/targetCam.z,
+    WY: targetCam.y + midY/targetCam.z
+  };
+  panLast = { x: midX, y: midY };
+}
+cv.addEventListener('pointerdown', e=>{
+  if(e.pointerType !== 'touch') return;       // la souris passe par les handlers mouse* ci-dessus
+  e.preventDefault();
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  try { cv.setPointerCapture(e.pointerId); } catch(_){}
+
+  if(activePointers.size === 1 && touchMode !== 'camera'){
+    touchMode = 'place';
+    zoomActiveUntil = performance.now() + 180;
+    updateMouseTileAt(e.clientX, e.clientY);
+    canvasLeftDown(e.clientX, e.clientY, shiftToggle);
+  } else if(activePointers.size >= 2){
+    if(touchMode === 'place') cancelPlacementInProgress();
+    touchMode = 'camera';
+    initPinchAnchor();
+    zoomActiveUntil = performance.now() + 180;
+  }
+});
+cv.addEventListener('pointermove', e=>{
+  if(e.pointerType !== 'touch') return;
+  if(!activePointers.has(e.pointerId)) return;
+  e.preventDefault();
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  if(touchMode === 'camera'){
+    zoomActiveUntil = performance.now() + 180;
+    if(activePointers.size >= 2 && pinchAnchor){
+      const pts = [...activePointers.values()];
+      const midX = (pts[0].x+pts[1].x)/2, midY = (pts[0].y+pts[1].y)/2;
+      const dist = ptrDist2(pts[0], pts[1]);
+      const factor = pinchAnchor.dist > 8 ? dist / pinchAnchor.dist : 1;
+      const z2 = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, pinchAnchor.tCamZ * factor));
+      // invariant : le point monde sous le midpoint initial reste sous le midpoint courant
+      targetCam.x = pinchAnchor.WX - midX / z2;
+      targetCam.y = pinchAnchor.WY - midY / z2;
+      targetCam.z = z2;
+      clampCamera(targetCam);
+    } else if(activePointers.size === 1 && panLast){
+      const [p] = [...activePointers.values()];
+      const dx = p.x - panLast.x, dy = p.y - panLast.y;
+      cam.x -= dx/cam.z; cam.y -= dy/cam.z;
+      clampCam(); syncTargetCam();
+      panLast = { x: p.x, y: p.y };
+    }
+  } else if(touchMode === 'place' && activePointers.size === 1){
+    const oldTx = mouse.tx, oldTy = mouse.ty;
+    updateMouseTileAt(e.clientX, e.clientY);
+    if(mouse.lDown) canvasLeftMove(e.clientX, e.clientY, shiftToggle, oldTx, oldTy);
+  }
+});
+function onPointerUpTouch(e){
+  if(e.pointerType !== 'touch') return;
+  if(!activePointers.has(e.pointerId)) return;
+  e.preventDefault();
+  activePointers.delete(e.pointerId);
+  try { cv.releasePointerCapture(e.pointerId); } catch(_){}
+
+  if(activePointers.size === 0){
+    if(touchMode === 'place') canvasLeftUp();
+    touchMode = null; pinchAnchor = null; panLast = null;
+  } else if(activePointers.size === 1 && touchMode === 'camera'){
+    const [p] = [...activePointers.values()];
+    panLast = { x: p.x, y: p.y };
+    pinchAnchor = null;
+  } else if(activePointers.size >= 2 && touchMode === 'camera'){
+    initPinchAnchor();
+  }
+}
+cv.addEventListener('pointerup', onPointerUpTouch);
+cv.addEventListener('pointercancel', onPointerUpTouch);
+
 cv.addEventListener('wheel', e=>{
   e.preventDefault();
   zoomActiveUntil = performance.now() + 180;
@@ -2188,6 +2334,15 @@ document.querySelectorAll('.spd').forEach(b=>{
 });
 $('bRotL').onclick = ()=> rotate(-1);
 $('bRotR').onclick = ()=> rotate(1);
+// ---- actions contextuelles tactiles ----
+$('ctxCancel').onclick = ()=> setTool('select');
+$('ctxShift').onclick = ()=>{
+  shiftToggle = !shiftToggle;
+  $('ctxShift').classList.toggle('on', shiftToggle);
+  // appliquer immédiatement à la preview de route en cours
+  if(roadDragStart && tool === 'road' && mouse.lDown)
+    roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, shiftToggle);
+};
 $('sMoney').onclick = toggleFinance;
 // délégation : le ✕ survit aux reconstructions du panneau (rafraîchi 5×/s)
 $('finance').onclick = e=>{ if(e.target.id==='bFinX') toggleFinance(); };

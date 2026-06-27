@@ -2,18 +2,24 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>Factopolis — extrais, produis, transporte, peuple</title>
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#10151f;color:#e8eef7;
-    font-family:"Segoe UI",system-ui,sans-serif;user-select:none}
-  #cv{display:block;width:100vw;height:100vh;cursor:crosshair}
+    font-family:"Segoe UI",system-ui,sans-serif;user-select:none;
+    -webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:none}
+  #cv{display:block;width:100vw;height:100vh;cursor:crosshair;touch-action:none}
+  /* poignées de drag des panneaux : on capture le geste (pas de scroll natif) */
+  .panel-head,.panel-head h3,.panel h2,.panel h3,.panel-drag-handle{touch-action:none}
   .panel{position:fixed;background:rgba(13,18,28,.92);border:1px solid #36465e;
     border-radius:12px;box-shadow:0 4px 18px rgba(0,0,0,.45);backdrop-filter:blur(5px)}
 
   /* ---- barre du haut ---- */
-  #topbar{top:10px;left:50%;transform:translateX(-50%);display:flex;gap:16px;
-    align-items:center;padding:8px 16px;font-size:14px;white-space:nowrap;z-index:10}
+  #topbar{top:calc(10px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:flex;gap:16px;
+    align-items:center;padding:8px 16px;font-size:14px;white-space:nowrap;z-index:10;
+    max-width:calc(100vw - 2*env(safe-area-inset-left) - 20px);overflow-x:auto;
+    -webkit-overflow-scrolling:touch;scrollbar-width:none}
+  #topbar::-webkit-scrollbar{display:none}
   /* ---- date/heure du jeu (coin haut-droite) ---- */
   #gameDate{position:fixed;top:10px;right:12px;z-index:10;background:rgba(13,18,28,.92);
     border:1px solid #36465e;border-radius:10px;padding:6px 12px;font-size:13px;
@@ -47,8 +53,9 @@
   .opt-sep{height:1px;background:#263246;margin:5px 0}
 
   /* ---- barre d'outils ---- */
-  #toolbar{bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:6px;
-    padding:8px;z-index:10;overflow:visible;align-items:flex-end}
+  #toolbar{bottom:calc(12px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);display:flex;gap:6px;
+    padding:8px;z-index:10;overflow:visible;align-items:flex-end;
+    max-width:calc(100vw - 2*env(safe-area-inset-left) - 20px)}
   .tool{width:74px;padding:7px 2px 5px;border-radius:9px;border:1px solid #36465e;
     background:#1d2939;color:#e8eef7;cursor:pointer;text-align:center;font-size:11px;
     display:flex;flex-direction:column;gap:2px;line-height:1.25}
@@ -67,6 +74,34 @@
   .tool-group-item .ic{font-size:18px}
   .tool-group-item .cost{margin-left:auto}
 
+  /* ---- actions contextuelles tactiles (annuler outil, angle droit route) ---- */
+  #ctxActions{position:fixed;bottom:calc(18px + env(safe-area-inset-bottom));left:calc(14px + env(safe-area-inset-left));
+    display:flex;gap:8px;z-index:11}
+  .ctx-btn{width:52px;height:52px;border-radius:12px;border:1px solid #36465e;background:rgba(29,41,57,.95);
+    color:#e8eef7;font-size:22px;cursor:pointer;display:none;align-items:center;justify-content:center;
+    touch-action:manipulation;-webkit-tap-highlight-color:transparent;box-shadow:0 4px 14px rgba(0,0,0,.45);
+    backdrop-filter:blur(5px);user-select:none;line-height:1}
+  .ctx-btn.show{display:flex}
+  .ctx-btn:active{background:#2a3a52}
+  .ctx-btn.on{background:#2f6fd6;border-color:#7fb0ff}
+  .ctx-btn small{font-size:9px;color:#8fa3bf;display:block;margin-top:2px}
+
+  /* ---- adaptations tablette / petit écran (tactile) ---- */
+  @media (max-width:1180px){
+    .tbtn{padding:8px 11px;font-size:14px}
+    .tool{width:56px;padding:6px 2px 4px}
+    .tool .ic{font-size:20px}
+    .tool-group-item{padding:11px 10px}
+    #topbar{gap:10px;padding:7px 12px}
+    #info{width:min(420px,calc(100vw - 24px - 2*env(safe-area-inset-right)))}
+    #finance{width:min(340px,calc(100vw - 24px))}
+  }
+  @media (hover:none){
+    /* pas de hover au tactile : feedback sur :active à la place */
+    .tbtn:hover,.tool:hover,.opt-item:hover{background:inherit}
+    .tbtn:active{background:#2a3a52}
+  }
+
   /* ---- panneau d'info ---- */
   #info{top:70px;right:12px;width:420px;padding:12px 14px;font-size:13px;display:none;z-index:10}
   #info.depot-modal{top:50%;left:50%;right:auto;transform:translate(-50%,-50%);
@@ -78,7 +113,8 @@
   .panel-drag-handle{color:#8fa3bf;font-size:14px;letter-spacing:1px;cursor:move;opacity:.9;user-select:none}
   /* tooltips pour les boutons icône du header */
   #info h3 button[title]{position:relative}
-  #info h3 button[title]:hover::after{content:attr(title);position:absolute;top:calc(100% + 5px);right:0;
+  #info h3 button[title]:hover::after,#info h3 button[title]:focus::after,
+  #info h3 button[title]:active::after{content:attr(title);position:absolute;top:calc(100% + 5px);right:0;
     background:rgba(13,18,28,.97);border:1px solid #36465e;border-radius:6px;padding:4px 8px;
     font-size:11px;white-space:nowrap;color:#e8eef7;pointer-events:none;z-index:50}
   /* nom éditable dans le h3 du panneau bâtiment */
@@ -90,7 +126,7 @@
     border-bottom-color:#5b93e8}
   /* icônes ressource dans les recettes */
   .res-ic{position:relative;cursor:help;font-size:15px;line-height:1}
-  .res-ic:hover::after{content:attr(title);position:absolute;bottom:calc(100% + 4px);left:50%;
+  .res-ic:hover::after,.res-ic:focus::after,.res-ic:active::after{content:attr(title);position:absolute;bottom:calc(100% + 4px);left:50%;
     transform:translateX(-50%);background:rgba(13,18,28,.97);border:1px solid #36465e;
     border-radius:6px;padding:3px 8px;font-size:11px;white-space:nowrap;color:#e8eef7;
     pointer-events:none;z-index:50}
@@ -313,6 +349,10 @@
 <div id="trainPanel" class="panel"></div>
 <div id="zoneOverlay"></div>
 <div id="toolbar" class="panel"></div>
+<div id="ctxActions">
+  <button class="ctx-btn" id="ctxCancel" title="Annuler l'outil en cours (Échap)">✕</button>
+  <button class="ctx-btn" id="ctxShift" title="Mode angle droit (Maj)">∟</button>
+</div>
 <div id="finance" class="panel"></div>
 <div id="info" class="panel"></div>
 <div id="toasts"></div>

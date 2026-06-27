@@ -1410,23 +1410,33 @@ function drawTrainDepotFlags(){
     const cssX = (ix - cam.x) * cam.z;
     const cssY = (iy - cam.y) * cam.z - 28;
     if(cssX < -60 || cssX > W + 60 || cssY < -80 || cssY > H + 40) continue;
-    for(let i = 0; i < trains.length; i++){
-      const train = trains[i];
-      const state = trainDepotFlagState(train);
-      if(!state) continue;
-      const bx = cssX - 12 + i * 18;
-      const by = cssY - ((i % 2) * 8);
-      trainDepotFlagHits.push({ id:train.id, x:bx - 4, y:by - 10, w:18, h:18 });
-      ctx.fillStyle = '#c8d3df';
-      ctx.fillRect(bx, by - 9, 2, 14);
-      ctx.fillStyle = state.armed ? '#7dda5a' : '#ff7474';
-      ctx.beginPath();
-      ctx.moveTo(bx + 2, by - 8);
-      ctx.lineTo(bx + 11, by - 5);
-      ctx.lineTo(bx + 2, by - 1);
-      ctx.closePath();
-      ctx.fill();
-    }
+    // Un seul drapeau par dépôt, avec le nombre de trains présents.
+    // Vert = tous prêts à partir, rouge = aucun, ambre = mixte.
+    const armedCount = trains.reduce((n, t) => {
+      const s = trainDepotFlagState(t);
+      return n + (s && s.armed ? 1 : 0);
+    }, 0);
+    const flagColor = armedCount === trains.length ? '#7dda5a'
+                    : armedCount > 0 ? '#ffce5a' : '#ff7474';
+    const bx = cssX - 12;
+    const by = cssY;
+    ctx.fillStyle = '#c8d3df';
+    ctx.fillRect(bx, by - 9, 2, 14);
+    ctx.fillStyle = flagColor;
+    ctx.beginPath();
+    ctx.moveTo(bx + 2, by - 8);
+    ctx.lineTo(bx + 11, by - 5);
+    ctx.lineTo(bx + 2, by - 1);
+    ctx.closePath();
+    ctx.fill();
+    const label = '×' + trains.length;
+    ctx.strokeStyle = 'rgba(0,0,0,.75)';
+    ctx.lineWidth = 2.5;
+    ctx.strokeText(label, bx + 14, by - 2);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, bx + 14, by - 2);
+    const labelW = ctx.measureText(label).width;
+    trainDepotFlagHits.push({ depot, x:bx - 4, y:by - 12, w:18 + labelW + 6, h:20 });
   }
   ctx.restore();
 }
