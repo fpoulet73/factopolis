@@ -1201,17 +1201,33 @@ function railSignalScreenPos(x, y, def){
   return isoWorldOffset(c, [def.dx, def.dy], [def.dy, -def.dx], sigCfg.along, sigCfg.right);
 }
 
-// Feu de jonction : tête verticale à 2 lentilles, toujours face caméra.
+// Feu de jonction : même rendu en perspective que le feu simple (profil /
+// cardinal / face / dos selon l'orientation du rail vis-à-vis de la caméra),
+// mais avec DEUX lentilles empilées et un boîtier plus haut pour les loger.
 // Lentille du HAUT = disponibilité des voies suivantes (verte si au moins une
 // voie est libre pour le tronçon suivant) ; lentille du BAS = signal normal
 // (aspect du canton : occupation / rouge forcé). Le train n'est bloqué que
 // lorsque les DEUX lentilles sont rouges.
 function drawRailJunctionSignal(sig, def){
+  const [du, dv] = rotDir(def.dx, def.dy);
   const [sx, sy] = railSignalScreenPos(sig.x, sig.y, def);
   const aheadGreen = !sig.forcedRed && railJunctionDownstreamClear(sig);
   const blockGreen = railBlockSignalClear(sig);
   const topColor = aheadGreen ? '#35ff64' : '#ff3030';
   const botColor = blockGreen ? '#35ff64' : '#ff3030';
+
+  // Même calcul de perspective que drawRailSignal : direction écran de la
+  // lampe, puis classement face / profil / cardinal / dos.
+  let fx = (du - dv) * TW2, fy = (du + dv) * TH2;
+  const flen = Math.hypot(fx, fy) || 1;
+  fx /= flen; fy /= flen;
+  const facing = fy > 0.001;
+  const sideOn = Math.abs(fy) < 0.3;
+  const cardinal = !sideOn && Math.abs(fx) > 0.3 && Math.abs(fy) > 0.3;
+  const depth = 4;
+  // Centres verticaux des deux lentilles (boîtier plus haut que le feu simple).
+  const topY = sy - 11, botY = sy - 3;
+  const casingTop = sy - 16, casingH = 22;
 
   ctx.save();
   // Poteau
@@ -1221,30 +1237,82 @@ function drawRailJunctionSignal(sig, def){
   ctx.moveTo(sx, sy + 2);
   ctx.lineTo(sx, sy + 9);
   ctx.stroke();
-  // Boîtier vertical (plus haut que le feu simple pour loger 2 lentilles)
-  ctx.fillStyle = 'rgba(18,24,32,.95)';
-  ctx.beginPath();
-  if(ctx.roundRect) ctx.roundRect(sx - 4.5, sy - 15, 9, 20, 2);
-  else ctx.rect(sx - 4.5, sy - 15, 9, 20);
-  ctx.fill();
-  ctx.strokeStyle = '#0b1017';
-  ctx.lineWidth = 0.8;
-  ctx.stroke();
-  const lens = (cy, color) => {
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 8;
-    ctx.fillStyle = color;
+
+  const drawCasing = (half) => {
+    ctx.fillStyle = 'rgba(18,24,32,.95)';
     ctx.beginPath();
-    ctx.arc(sx, cy, 3, 0, Math.PI * 2);
+    if(ctx.roundRect) ctx.roundRect(sx - half, casingTop, half * 2, casingH, 2);
+    else ctx.rect(sx - half, casingTop, half * 2, casingH);
     ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255,255,255,.7)';
-    ctx.beginPath();
-    ctx.arc(sx - 1, cy - 1, 1, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.strokeStyle = '#0b1017';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
   };
-  lens(sy - 10, topColor);
-  lens(sy - 2, botColor);
+
+  if(sideOn){
+    // Cadre étroit vu de profil : demi-cercle débordant du côté de la lampe.
+    const dir = fx >= 0 ? 1 : -1;
+    const half = 2, r = 3, cx = sx + dir * half;
+    drawCasing(half);
+    const lens = (cy, color) => {
+      ctx.shadowColor = color; ctx.shadowBlur = 8; ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI / 2, dir < 0);
+      ctx.closePath(); ctx.fill(); ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,.7)';
+      ctx.beginPath(); ctx.arc(cx + dir, cy - 1, 1, 0, Math.PI * 2); ctx.fill();
+    };
+    lens(topY, topColor); lens(botY, botColor);
+  } else if(cardinal){
+    // Rails cardinaux : demi-cercles orientés dans l'axe du rail.
+    const ang = Math.atan2(fy, fx);
+    const half = 2.5, r = 2.8;
+    const lens = (by, color, off, blur, reflect) => {
+      const cx = sx + fx * off, cy = by + fy * off;
+      ctx.shadowColor = color; ctx.shadowBlur = blur; ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, ang - Math.PI / 2, ang + Math.PI / 2);
+      ctx.closePath(); ctx.fill(); ctx.shadowBlur = 0;
+      if(reflect){
+        ctx.fillStyle = 'rgba(255,255,255,.7)';
+        ctx.beginPath(); ctx.arc(cx + fx, cy + fy, 1, 0, Math.PI * 2); ctx.fill();
+      }
+    };
+    if(facing){
+      drawCasing(half);
+      lens(topY, topColor, 2.4, 8, true);
+      lens(botY, botColor, 2.4, 8, true);
+    } else {
+      // Dos : croissants devinés derrière le boîtier dessiné par-dessus.
+      lens(topY, topColor, 1.4, 3, false);
+      lens(botY, botColor, 1.4, 3, false);
+      drawCasing(half);
+    }
+  } else if(facing){
+    // Face éclairée vers le joueur : boîtier puis lentilles pleines.
+    drawCasing(5);
+    const lx = sx + fx * depth;
+    const lens = (by, color) => {
+      const ly = by + fy * depth * 0.4;
+      ctx.shadowColor = color; ctx.shadowBlur = 8; ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,.7)';
+      ctx.beginPath(); ctx.arc(lx - 1, ly - 1, 1, 0, Math.PI * 2); ctx.fill();
+    };
+    lens(topY, topColor); lens(botY, botColor);
+  } else {
+    // Dos du signal : lueurs colorées qui débordent, puis boîtier par-dessus.
+    ctx.save();
+    ctx.shadowBlur = 9; ctx.globalAlpha = 0.75;
+    const glow = (cy, color) => {
+      ctx.shadowColor = color; ctx.fillStyle = color;
+      ctx.beginPath(); ctx.ellipse(sx, cy, 4, 2.4, 0, 0, Math.PI * 2); ctx.fill();
+    };
+    glow(topY, topColor); glow(botY, botColor);
+    ctx.restore();
+    drawCasing(5);
+  }
   ctx.restore();
 }
 
