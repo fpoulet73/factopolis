@@ -126,6 +126,12 @@ const BUS_STOP_FILL_TIME   = CFG.logistique?.arretBus?.tempsRemplissage ?? 30; /
 const BUS_OWNER_SHARE      = CFG.logistique?.arretBus?.partProprietaire     ?? 0.8;
 const TRAIN_DWELL_TIME        = (CFG.logistique?.train?.tempsArret ?? 2.5) / (CFG.jeu?.heuresParSeconde ?? 1);
 const TRAIN_STATION_STOP_TIME = CFG.logistique?.train?.tempsArretGareSecondes ?? 5;
+// Améliorations moteur du train : { facteur, cout }. Le facteur multiplie vitesse + entretien.
+const TRAIN_ENGINE_UPGRADES = Array.isArray(CFG.logistique?.train?.ameliorationsMoteur)
+  ? CFG.logistique.train.ameliorationsMoteur
+  : [ { facteur:1.5, cout:1500 }, { facteur:2, cout:3000 }, { facteur:2.5, cout:5000 }, { facteur:3, cout:8000 } ];
+// Prix d'achat d'un wagon (tous types confondus).
+const TRAIN_WAGON_COST = CFG.logistique?.train?.coutWagon ?? 10000;
 // Durée d'un jour de jeu en gtime-secondes (24h / GAME_HOURS_PER_SEC)
 const VEHICLE_MAINTENANCE_DAY  = 24 / GAME_HOURS_PER_SEC;
 const VEHICLE_MAINTENANCE_RATE = CFG.logistique?.tauxHausseMensuelle ?? CFG.logistique?.train?.tauxHausseMensuelle ?? 0.03;
@@ -152,7 +158,7 @@ const VEHICLE_TYPES = (()=>{
     frigo:       { nom:'Camion frigorifique',icone:'🚚', resources:['fish','fish_fillet'],                                         cost:750,  capacite:14, speed:3.8, maintenanceCost: cfgV.frigo?.coutEntretienJournalier        ?? 5  },
     citerne:     { nom:'Camion citerne',     icone:'🚛', resources:['water','fish_oil'],                                           cost:750,  capacite:20, speed:3.5, maintenanceCost: cfgV.citerne?.coutEntretienJournalier      ?? 5  },
     bus:         { nom:'Bus',                icone:'🚌', resources:[],                                                             cost:1500, capacite:40, speed:3.0, maintenanceCost: cfgV.bus?.coutEntretienJournalier           ?? 10 },
-    train:       { nom:'Train',              icone:'🚂', resources:[],                                                             cost:2200, capacite:0,  speed:2.9, maintenanceCost: CFG.logistique?.train?.coutEntretienJournalier ?? 80 },
+    train:       { nom:'Train',              icone:'🚂', resources:[],                                                             cost:(CFG.logistique?.train?.cout ?? 100000), capacite:0,  speed:2.9, maintenanceCost: CFG.logistique?.train?.coutEntretienJournalier ?? 80 },
     // --- legacy (sauvegardes existantes, plus achetables) ---
     bois:        { nom:'Camion bois',        icone:'🚜', resources:['wood'],                   cost:600,  capacite:15, speed:4.0, buyDisabled:true, maintenanceCost: cfgV.bois?.coutEntretienJournalier     ?? 4 },
     ble:         { nom:'Camion blé',         icone:'🚜', resources:['wheat'],                  cost:550,  capacite:15, speed:4.0, buyDisabled:true, maintenanceCost: cfgV.ble?.coutEntretienJournalier      ?? 4 },

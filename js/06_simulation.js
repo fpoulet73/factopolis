@@ -232,7 +232,7 @@ function update(dt){
     const nextDue = v.boughtAtGtime + VEHICLE_MAINTENANCE_DAY * (days + 1);
     if(gtime < nextDue) continue;
     const completedMonths = Math.floor(days / 30);
-    const cost = Math.round(baseCost * Math.pow(1 + VEHICLE_MAINTENANCE_RATE, completedMonths));
+    const cost = Math.round(baseCost * (v.engineMult || 1) * Math.pow(1 + VEHICLE_MAINTENANCE_RATE, completedMonths));
     v.maintenanceDaysPaid = days + 1;
     const garage = v.garageRef;
     if(!garage || garage.dead) continue;

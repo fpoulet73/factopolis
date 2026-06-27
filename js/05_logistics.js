@@ -1560,7 +1560,7 @@ function updateTrainVehicle(v, dt){
   // Watchdog anti-deadlock : on suit la progression continue (seg + t).
   // Si elle n'a pas bougé depuis trop longtemps, on renvoie au dépôt.
   const progressBefore = v.seg + v.t;
-  advanceRailVehicle(v, VEHICLE_TYPES[v.vtype].speed * TILE * dt);
+  advanceRailVehicle(v, VEHICLE_TYPES[v.vtype].speed * (v.engineMult || 1) * TILE * dt);
   const progressAfter = v.seg + v.t;
   if(Math.abs(progressAfter - progressBefore) > 1e-6){
     v.signalWaitTime = 0;

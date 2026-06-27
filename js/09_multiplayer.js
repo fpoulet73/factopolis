@@ -604,6 +604,7 @@ function applyAction(msg){
           ? trainCreateWagon(w)
           : (w && typeof w === 'object' ? trainCreateWagon(w.type, w.resource || null) : null))
         .filter(Boolean) : [];
+      if(typeof act.engineMult === 'number' && act.engineMult >= 1) v.engineMult = act.engineMult;
       if(v.res && trainWagonCapacityForRes(v, v.res) < v.cargo){ v.cargo = 0; v.res = null; }
       break;
     }

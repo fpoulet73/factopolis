@@ -246,9 +246,20 @@ const CONFIG = {
     tauxHausseMensuelle: 0.03,   // hausse mensuelle du coût d'entretien pour tous les véhicules (+3 % par défaut)
     garage: { cout: 1200, tempsArret: 2 },  // tempsArret : heures de jeu d'arrêt pour chargement/déchargement
     train:  {
+      cout: 100000,                // prix d'achat d'un train
+      coutWagon: 10000,            // prix d'achat d'un wagon (tous types)
       tempsArret: 2.5,             // heures de jeu d'arrêt standard du train
       tempsArretGareSecondes: 5,   // secondes réelles d'arrêt lorsqu'une gare est utilisée comme étape
       coutEntretienJournalier: 80, // $ prélevés chaque jour de jeu par train
+      /* Améliorations moteur : chaque niveau multiplie la vitesse ET le coût
+         d'entretien journalier par le facteur. Le prix démarre à 50 000 $ et
+         croît du même facteur (×1.5) à chaque niveau. cout = prix d'achat unique. */
+      ameliorationsMoteur: [
+        { facteur: 1.5, cout: 50000  },
+        { facteur: 2,   cout: 75000  },
+        { facteur: 2.5, cout: 112500 },
+        { facteur: 3,   cout: 168750 },
+      ],
     },
     /* coutEntretienJournalier par type de véhicule ($ / jour de jeu) */
     vehicules: {

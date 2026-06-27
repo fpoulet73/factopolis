@@ -165,6 +165,7 @@ function closeInfoPanel(){
 
 let trainConfigVehicle = null;
 let trainConfigSelectedWagonIndex = -1;
+let trainConfigLocoSelected = false;
 
 function closeTrainPanel(){
   const p = $('trainPanel');
@@ -176,6 +177,22 @@ function closeTrainPanel(){
   if(vehicleRouteMode?.step === 'train_order_append') vehicleRouteMode = null;
   trainConfigVehicle = null;
   trainConfigSelectedWagonIndex = -1;
+  trainConfigLocoSelected = false;
+}
+
+// Texte flottant centré dans un panneau (feedback d'achat / remboursement).
+function panelFloat(panelId, text, color){
+  const p = $(panelId);
+  if(!p) return;
+  const r = p.getBoundingClientRect();
+  const el = document.createElement('div');
+  el.className = 'panel-float';
+  el.textContent = text;
+  el.style.color = color || '#ffe9a0';
+  el.style.left = (r.left + r.width / 2) + 'px';
+  el.style.top = (r.top + r.height / 2) + 'px';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1200);
 }
 
 function trainDepotFlagButtonHtml(v, attrs=''){
@@ -269,6 +286,7 @@ function syncTrainConfig(v){
     type:'configure_train',
     id:v.id,
     wagons:(v.wagons || []).map(w => ({ type:w.type, resource:w.resource || null })),
+    engineMult:v.engineMult || 1,
   });
 }
 
@@ -293,11 +311,14 @@ function renderTrainPanel(){
     h += '<div class="row"><span>Passagers à bord</span><b style="color:#c8e040">'+(v.passengersOnBoard||0)+' / '+_passCap+' 🚃</b></div>';
   if(v.boughtAtGtime != null)
     h += '<div class="row"><span>Acheté le</span><b style="color:#8fa3bf">'+formatGameDate(v.boughtAtGtime)+'</b></div>';
+  const _engineMult = v.engineMult || 1;
+  const _baseSpeed = VEHICLE_TYPES['train']?.speed ?? 0;
+  h += '<div class="row"><span>Vitesse</span><b>'+(Math.round(_baseSpeed * _engineMult * 10) / 10)+' cases/s'+(_engineMult > 1 ? ' <span style="font-size:11px;color:#7dda5a">moteur ×'+_engineMult+'</span>' : '')+'</b></div>';
   const _trainBaseCost = VEHICLE_TYPES['train']?.maintenanceCost ?? 0;
   if(_trainBaseCost > 0){
     const _days = v.maintenanceDaysPaid || 0;
     const _completedMonths = Math.floor(_days / 30);
-    const _nextCost = Math.round(_trainBaseCost * Math.pow(1 + VEHICLE_MAINTENANCE_RATE, _completedMonths));
+    const _nextCost = Math.round(_trainBaseCost * _engineMult * Math.pow(1 + VEHICLE_MAINTENANCE_RATE, _completedMonths));
     const _nextDue = v.boughtAtGtime != null ? formatGameDate(v.boughtAtGtime + VEHICLE_MAINTENANCE_DAY * (_days + 1)) : '—';
     h += '<div class="row"><span>Entretien journalier</span><b style="color:#ff9a8a">'+_nextCost+' $'+(_completedMonths > 0 ? ' <span style="font-size:11px;color:#8fa3bf">(mois '+(_completedMonths+1)+')</span>' : '')+'</b></div>';
     h += '<div class="row"><span>Prochain paiement</span><b style="color:#8fa3bf">'+_nextDue+'</b></div>';
@@ -332,8 +353,9 @@ function renderTrainPanel(){
   });
 
   h += '<div class="tp-section"><div class="tp-section-title">Composition</div>';
-  h += '<div style="display:flex;gap:8px;align-items:flex-end;overflow-x:auto;padding:6px 2px 8px">';
-  h += '<div style="min-width:72px;text-align:center"><div style="height:32px;border-radius:8px;background:#4f5c6f;border:2px solid #2f3640;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px">🚂</div><div style="font-size:11px;color:#8fa3bf;margin-top:4px">Loco</div></div>';
+  h += '<div style="display:flex;gap:5px;align-items:stretch;overflow-x:auto;padding:6px 2px 8px">';
+  h += '<button class="tbtn" data-train-loco="1" title="Améliorations moteur" style="width:auto;margin:0;min-width:52px;padding:0;align-self:stretch;display:flex;border-radius:7px;'
+    + 'border:'+(trainConfigLocoSelected ? '2px solid #ffe082' : '1px solid #36465e')+';background:#4f5c6f;align-items:center;justify-content:center;color:#fff;font-size:18px">🚂</button>';
   wagons.forEach((wagon, idx) => {
     const def = trainWagonDef(wagon);
     const selected = idx === trainConfigSelectedWagonIndex;
@@ -345,17 +367,40 @@ function renderTrainPanel(){
     const loadLabel = load.passenger
       ? (load.amt > 0 ? load.amt+' 👤' : '—')
       : (load.res && load.amt > 0 ? (RES[load.res]?.ic||'')+' '+load.amt : '—');
-    h += '<button class="tbtn" data-train-wagon-pick="'+idx+'" style="width:auto;margin:0;min-width:88px;padding:4px 6px;'
-      + 'border:'+(selected ? '2px solid #ffe082' : '1px solid #36465e')+';background:#142031;display:flex;flex-direction:column;gap:4px">'
-      + '<div style="height:28px;border-radius:7px;background:'+def.color+';border:2px solid #2f3640;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px">'+def.icone+'</div>'
-      + '<div style="font-size:11px;font-weight:bold">'+escHtml(def.nom.replace(/^Wagon\s+/,'').replace(/^Wagon\s+/,''))+'</div>'
-      + '<div style="font-size:10px;color:'+(res ? '#ffe082' : '#8fa3bf')+'">'+escHtml(resLabel)+'</div>'
-      + '<div style="font-size:11px;font-weight:bold;color:'+loadColor+'">'+loadLabel+'</div>'
+    h += '<button class="tbtn" data-train-wagon-pick="'+idx+'" style="width:auto;margin:0;min-width:62px;padding:3px 4px;'
+      + 'border:'+(selected ? '2px solid #ffe082' : '1px solid #36465e')+';background:#142031;display:flex;flex-direction:column;gap:2px">'
+      + '<div style="flex:1;min-height:24px;border-radius:6px;background:'+def.color+';border:2px solid #2f3640;display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px">'+def.icone+'</div>'
+      + '<div style="font-size:10px;font-weight:bold;line-height:1.1">'+escHtml(def.nom.replace(/^Wagon\s+/,'').replace(/^Wagon\s+/,''))+'</div>'
+      + '<div style="font-size:9px;line-height:1.1;color:'+(res ? '#ffe082' : '#8fa3bf')+'">'+escHtml(resLabel)+'</div>'
+      + '<div style="font-size:10px;font-weight:bold;line-height:1.1;color:'+loadColor+'">'+loadLabel+'</div>'
       + (load.cap > 0 ? '<div style="height:3px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+loadColor+';border-radius:2px"></i></div>' : '')
       + '</button>';
   });
   h += '</div>';
-  if(selectedWagon && selectedWagonDef){
+  if(trainConfigLocoSelected){
+    const _curMult = v.engineMult || 1;
+    const _money = myWallet().money;
+    const _curIdx = TRAIN_ENGINE_UPGRADES.reduce((acc, up, i) => up.facteur <= _curMult ? i : acc, -1);
+    const _next = TRAIN_ENGINE_UPGRADES[_curIdx + 1] || null;
+    h += '<div style="margin-top:4px;padding:8px;border:1px solid #36465e;border-radius:8px;background:#142031">';
+    h += '<div style="font-size:12px;margin-bottom:6px"><b>🚂 Moteur</b> · niveau actuel <b style="color:#7dda5a">×'+_curMult+'</b></div>';
+    h += '<div style="font-size:11px;color:#8fa3bf;margin-bottom:8px">Chaque niveau augmente la vitesse et l’entretien journalier du même facteur.</div>';
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
+    if(_next){
+      const affordable = _money >= _next.cout;
+      h += '<button class="tbtn" data-train-engine-up="1" style="width:auto;margin:0;'+(affordable ? 'border-color:#7dda5a' : 'opacity:0.55;color:#ff9a8a')+'">'
+        + '⬆ Améliorer → ×'+_next.facteur+' · '+_next.cout.toLocaleString('fr-FR')+' $</button>';
+    } else {
+      h += '<button class="tbtn" disabled style="width:auto;margin:0;opacity:0.5">Niveau maximum atteint</button>';
+    }
+    if(_curIdx >= 0){
+      const refund = Math.floor(TRAIN_ENGINE_UPGRADES[_curIdx].cout * 0.5);
+      const prevMult = _curIdx > 0 ? TRAIN_ENGINE_UPGRADES[_curIdx - 1].facteur : 1;
+      h += '<button class="tbtn" data-train-engine-down="1" style="width:auto;margin:0;color:#ff9a8a">'
+        + '⬇ Retirer → ×'+prevMult+' · +'+refund.toLocaleString('fr-FR')+' $</button>';
+    }
+    h += '</div></div>';
+  } else if(selectedWagon && selectedWagonDef){
     h += '<div style="margin-top:4px;padding:8px;border:1px solid #36465e;border-radius:8px;background:#142031">';
     h += '<div style="font-size:12px;margin-bottom:6px"><b>'+selectedWagonDef.icone+' '+escHtml(selectedWagonDef.nom)+'</b> · capacité '+selectedWagonDef.capacite+'</div>';
     h += '<div style="font-size:11px;color:#8fa3bf;margin-bottom:6px">Ressource acceptée par ce wagon</div>';
@@ -395,7 +440,7 @@ function renderTrainPanel(){
     h += '<div style="color:#8fa3bf;font-style:italic;font-size:11px">Tous les wagons sont vides.</div>';
   }
   h += '</div>';
-  h += '<div class="tp-section"><div class="tp-section-title">Wagons</div><div class="tp-wagon-grid">';
+  h += '<div class="tp-section"><div class="tp-section-title">Wagons <span style="font-size:11px;color:#8fa3bf;font-weight:normal">('+TRAIN_WAGON_COST.toLocaleString('fr-FR')+' $ / wagon)</span></div><div class="tp-wagon-grid">';
   for(const [key, def] of Object.entries(TRAIN_WAGON_TYPES)){
     const count = wagons.filter(w => trainWagonTypeKey(w) === key).length;
     h += '<div class="tp-order"><div><div>'+def.icone+' <b>'+def.nom+'</b></div><div style="font-size:11px;color:#8fa3bf">'+def.resources.map(r => RES[r]?.ic || r).join(' ')+' · '+def.capacite+'</div></div>'
@@ -441,8 +486,41 @@ function renderTrainPanel(){
   $('tpClose').onclick = () => closeTrainPanel();
   p.querySelectorAll('[data-train-wagon-pick]').forEach(btn => btn.onclick = ()=>{
     trainConfigSelectedWagonIndex = +btn.dataset.trainWagonPick;
+    trainConfigLocoSelected = false;
     renderTrainPanel();
   });
+  const locoBtn = p.querySelector('[data-train-loco]');
+  if(locoBtn) locoBtn.onclick = ()=>{
+    trainConfigLocoSelected = !trainConfigLocoSelected;
+    renderTrainPanel();
+  };
+  const engineUpBtn = p.querySelector('[data-train-engine-up]');
+  if(engineUpBtn) engineUpBtn.onclick = ()=>{
+    const curMult = v.engineMult || 1;
+    const curIdx = TRAIN_ENGINE_UPGRADES.reduce((acc, u, i) => u.facteur <= curMult ? i : acc, -1);
+    const next = TRAIN_ENGINE_UPGRADES[curIdx + 1];
+    if(!next) return;
+    if(myWallet().money < next.cout){ toast('⛔ Fonds insuffisants ('+next.cout.toLocaleString('fr-FR')+' $).','err'); return; }
+    spendMoney(next.cout, 'construction');
+    v.engineMult = next.facteur;
+    syncTrainConfig(v);
+    panelFloat('trainPanel', '−'+next.cout.toLocaleString('fr-FR')+' $ · 🚂 ×'+next.facteur, '#ff6b6b');
+    renderTrainPanel();
+    renderInfo();
+  };
+  const engineDownBtn = p.querySelector('[data-train-engine-down]');
+  if(engineDownBtn) engineDownBtn.onclick = ()=>{
+    const curMult = v.engineMult || 1;
+    const curIdx = TRAIN_ENGINE_UPGRADES.reduce((acc, u, i) => u.facteur <= curMult ? i : acc, -1);
+    if(curIdx < 0) return;
+    const refund = Math.floor(TRAIN_ENGINE_UPGRADES[curIdx].cout * 0.5);
+    v.engineMult = curIdx > 0 ? TRAIN_ENGINE_UPGRADES[curIdx - 1].facteur : 1;
+    earnMoney(refund, 'rembours');
+    syncTrainConfig(v);
+    panelFloat('trainPanel', '+'+refund.toLocaleString('fr-FR')+' $ · 🚂 ×'+(v.engineMult), '#9fe89f');
+    renderTrainPanel();
+    renderInfo();
+  };
   p.querySelectorAll('[data-train-wagon-resource]').forEach(btn => btn.onclick = ()=>{
     const idx = trainConfigSelectedWagonIndex;
     const wagon = v.wagons?.[idx];
@@ -453,9 +531,12 @@ function renderTrainPanel(){
     renderInfo();
   });
   p.querySelectorAll('[data-train-wagon-add]').forEach(btn => btn.onclick = ()=>{
+    if(myWallet().money < TRAIN_WAGON_COST){ toast('⛔ Fonds insuffisants ('+TRAIN_WAGON_COST.toLocaleString('fr-FR')+' $).','err'); return; }
     v.wagons = trainNormalizeWagons(v);
     const wagon = trainCreateWagon(btn.dataset.trainWagonAdd);
     if(!wagon) return;
+    spendMoney(TRAIN_WAGON_COST, 'construction');
+    panelFloat('trainPanel', '−'+TRAIN_WAGON_COST.toLocaleString('fr-FR')+' $ · 🚃', '#ff6b6b');
     v.wagons.push(wagon);
     trainConfigSelectedWagonIndex = v.wagons.length - 1;
     syncTrainConfig(v);
@@ -469,7 +550,12 @@ function renderTrainPanel(){
     for(let i = v.wagons.length - 1; i >= 0; i--){
       if(trainWagonTypeKey(v.wagons[i]) === key){ idx = i; break; }
     }
-    if(idx >= 0) v.wagons.splice(idx, 1);
+    if(idx >= 0){
+      v.wagons.splice(idx, 1);
+      const refund = Math.floor(TRAIN_WAGON_COST * 0.5);
+      earnMoney(refund, 'rembours');
+      panelFloat('trainPanel', '+'+refund.toLocaleString('fr-FR')+' $ · 🚃', '#9fe89f');
+    }
     trainConfigSelectedWagonIndex = Math.min(trainConfigSelectedWagonIndex, Math.max(0, v.wagons.length - 1));
     syncTrainConfig(v);
     renderTrainPanel();

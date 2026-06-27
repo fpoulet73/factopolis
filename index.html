@@ -178,6 +178,15 @@
   #trainPanel .tp-wagon-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
   #trainPanel .tp-inline{display:flex;gap:6px;flex-wrap:wrap}
 
+  /* texte flottant au centre d'un panneau (achats, remboursements) */
+  .panel-float{position:fixed;transform:translate(-50%,-50%);z-index:90;pointer-events:none;
+    font-size:24px;font-weight:bold;white-space:nowrap;text-shadow:0 2px 8px rgba(0,0,0,.85);
+    animation:panelFloat 1.2s ease-out forwards}
+  @keyframes panelFloat{
+    0%{opacity:0;transform:translate(-50%,-25%) scale(.6)}
+    18%{opacity:1;transform:translate(-50%,-50%) scale(1.15)}
+    100%{opacity:0;transform:translate(-50%,-170%) scale(1)}}
+
   /* rectangle de sélection de zone village */
   #zoneOverlay{position:fixed;pointer-events:none;border:2px dashed #f0c060;
     background:rgba(240,192,96,.07);z-index:18;display:none}
