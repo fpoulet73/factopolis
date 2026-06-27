@@ -217,6 +217,39 @@ function handleTrainDepotFlagClick(v){
   renderInfo();
 }
 
+// Clic direct sur le drapeau du dépôt (rendu dans le monde). Le drapeau regroupe
+// tous les trains présents avec une route : on bascule l'autorisation de départ
+// pour tous d'un coup, ce qui reflète la couleur agrégée du drapeau (vert = tous
+// armés). Cela arme le départ immédiatement au lieu de seulement ouvrir un panneau.
+function handleTrainDepotFlagToggle(depot){
+  if(!depot || depot.dead) return;
+  const trains = (depot.vehicles || []).filter(v => trainPresentAtDepot(v) && (v.orders?.length || 0) >= 2);
+  if(!trains.length) return;
+  // Si tous les trains armables sont déjà verts, on les remet au rouge ; sinon on
+  // arme tous ceux qui peuvent l'être.
+  const target = !trains.every(v => trainDepotDepartureArmed(v));
+  let changed = 0, waiting = 0, failReason = null;
+  for(const v of trains){
+    if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId) continue;
+    if(trainDepotDepartureArmed(v) === target) continue;
+    const res = setTrainDepotDeparture(v, target);
+    if(!res.ok){ failReason = res.reason || 'route_missing'; continue; }
+    changed++;
+    if(res.waiting) waiting++;
+    if(MP.connected) netSend({ type:'train_depot_flag', id:v.id, armed:target });
+  }
+  if(changed){
+    if(!target) toast('🟥 Drapeau rouge. Départ annulé.','win');
+    else if(waiting) toast('🚩 Drapeau vert. Le train partira dès que la voie de sortie sera libre.','win');
+    else toast('🚩 Drapeau vert. Départ autorisé.','win');
+  } else if(failReason === 'no_path'){
+    toast('⛔ Aucun chemin ferroviaire continu depuis le dépôt.','err');
+  } else if(failReason){
+    toast('⛔ Il faut d’abord une route valide avec au moins 2 arrêts.','err');
+  }
+  if(trainConfigVehicle && trains.includes(trainConfigVehicle)) renderTrainPanel();
+}
+
 function openTrainPanel(v){
   if(!v || v.vtype !== 'train') return;
   if(!trainPresentAtDepot(v)){
@@ -1753,8 +1786,10 @@ function selectTrainDepotFlagAt(x,y){
     if(x < h.x || x > h.x + h.w || y < h.y || y > h.y + h.h) continue;
     const depot = h.depot;
     if(!depot || depot.dead) return false;
-    // Le drapeau regroupe tous les trains du dépôt : on ouvre le panneau du
-    // dépôt, qui liste chaque train avec son propre drapeau de départ.
+    // Le drapeau regroupe tous les trains du dépôt : on bascule directement leur
+    // autorisation de départ (rouge ↔ vert) et on sélectionne le dépôt, dont le
+    // panneau liste chaque train avec son propre drapeau.
+    handleTrainDepotFlagToggle(depot);
     selected = depot;
     selectedVehicle = null;
     selectedExpansion = null;

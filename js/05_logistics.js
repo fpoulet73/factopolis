@@ -918,12 +918,10 @@ function rebuildRailBlockOccupancy(){
     return;
   }
   // OCCUPATION "LOCO SEULE" : chaque train est compté une fois dans le canton
-  // où se trouve sa loco. Le check de queue (wagons arrière qui libèrent un
-  // canton avec un délai) est géré séparément dans railSignalAspect en lisant
-  // v.pathTiles (fiable), pas le railTrail (qui peut être stale).
-  //
-  // On garde trainOccupiedBlockTiles / trainOccupiedTileIndices basés sur le
-  // trail uniquement pour le veto de démolition de rail sous un train.
+  // où se trouve sa loco. Sert à la réservation de cantons / sortie de dépôt.
+  // L'aspect des feux (railSignalAspect) ne s'appuie PAS sur ce compteur : il
+  // lit l'empreinte physique complète (loco + wagons) via trainOccupiedBlockTiles
+  // pour que la queue garde le feu rouge tant qu'elle n'a pas libéré le canton.
   const occ = new Int16Array(railBlocks.count);
   for(const v of vehicles){
     if(v.vtype !== 'train' || v.state === 'idle') continue;
@@ -947,25 +945,18 @@ function railSignalAspect(sig, ignoreVehicle=null){
   if(!inMap(nx, ny)) return false;
   const guardedBlock = railBlocks?.blockByTile?.[sig.y * N + sig.x] ?? -1;
   if(guardedBlock < 0) return false;
-  let occ = railBlockOccupancy?.[guardedBlock] ?? 0;
-  // Ne pas se compter soi-même : un train dont la loco occupe déjà ce canton
-  // ne doit pas voir son propre feu rouge et se bloquer.
-  if(ignoreVehicle && (ignoreVehicle.currentRailBlock ?? -1) === guardedBlock) occ--;
-  if(occ > 0) return false;
-  // Vérifier si des wagons arrière d'un train occupent encore ce canton
-  // (la loco a déjà libéré le canton mais la queue n'est pas encore passée).
-  // On utilise v.pathTiles (chemin courant, fiable) plutôt que le railTrail
-  // qui peut être stale en cas de train bloqué.
+  // Le feu est rouge dès qu'un train occupe PHYSIQUEMENT le canton protégé, que
+  // ce soit par sa loco OU par sa queue de wagons. On lit les tuiles réellement
+  // couvertes (loco + wagons réels) via trainOccupiedBlockTiles : c'est la même
+  // source que le veto de démolition, fiable même quand un train est à l'arrêt
+  // en gare (pathTiles réduit à une tuile, seg=0) ou vient de recalculer son
+  // itinéraire (queue hors de pathTiles) — deux cas où l'ancien test sur
+  // pathTiles ratait la queue et laissait le feu vert à tort.
   for(const v of (vehicles ?? [])){
     if(v === ignoreVehicle) continue;
-    if(v.vtype !== 'train' || !v.wagons?.length || !v.pathTiles?.length || v.seg <= 0) continue;
-    // numBack = nombre de tuiles que la queue du train peut occuler derrière
-    // la loco. wagons.length + 1 = loco + wagons (conservateur).
-    const numBack = v.wagons.length + 1;
-    const tailSeg = Math.max(0, v.seg - numBack);
-    for(let i = tailSeg; i < v.seg; i++){
-      const tile = v.pathTiles[i] ?? -1;
-      if(tile >= 0 && (railBlocks?.blockByTile?.[tile] ?? -1) === guardedBlock) return false;
+    if(v.vtype !== 'train' || v.state === 'idle') continue;
+    for(const tile of trainOccupiedBlockTiles(v)){
+      if((railBlocks?.blockByTile?.[tile] ?? -1) === guardedBlock) return false;
     }
   }
   return true;
