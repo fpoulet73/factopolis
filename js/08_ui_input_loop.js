@@ -1621,7 +1621,7 @@ function syncToolbarState(){
     });
   }
   if(trainToolbarGroup){
-    const active = ['rail','rail_signal','train_station'].includes(tool);
+    const active = ['rail','rail_signal','rail_signal2','train_station'].includes(tool);
     trainToolbarGroup.classList.toggle('on', active);
     const groupBtn = trainToolbarGroup.querySelector('.tool-group-btn');
     if(groupBtn) groupBtn.classList.toggle('on', active || trainToolbarGroup.classList.contains('open'));
@@ -1659,7 +1659,7 @@ function buildToolbar(){
       btn.innerHTML = '<span class="ic">🚂</span><span>Train</span><span class="hk">▾</span>';
       const menu = document.createElement('div');
       menu.className = 'tool-group-menu';
-      for(const toolKey of ['rail','rail_signal','train_station']){
+      for(const toolKey of ['rail','rail_signal','rail_signal2','train_station']){
         const d = BUILD[toolKey];
         const choice = document.createElement('button');
         choice.className = 'tool tool-group-item';

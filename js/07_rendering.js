@@ -1201,9 +1201,57 @@ function railSignalScreenPos(x, y, def){
   return isoWorldOffset(c, [def.dx, def.dy], [def.dy, -def.dx], sigCfg.along, sigCfg.right);
 }
 
+// Feu de jonction : tête verticale à 2 lentilles, toujours face caméra.
+// Lentille du HAUT = disponibilité des voies suivantes (verte si au moins une
+// voie est libre pour le tronçon suivant) ; lentille du BAS = signal normal
+// (aspect du canton : occupation / rouge forcé). Le train n'est bloqué que
+// lorsque les DEUX lentilles sont rouges.
+function drawRailJunctionSignal(sig, def){
+  const [sx, sy] = railSignalScreenPos(sig.x, sig.y, def);
+  const aheadGreen = !sig.forcedRed && railJunctionDownstreamClear(sig);
+  const blockGreen = railBlockSignalClear(sig);
+  const topColor = aheadGreen ? '#35ff64' : '#ff3030';
+  const botColor = blockGreen ? '#35ff64' : '#ff3030';
+
+  ctx.save();
+  // Poteau
+  ctx.strokeStyle = '#0b1017';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(sx, sy + 2);
+  ctx.lineTo(sx, sy + 9);
+  ctx.stroke();
+  // Boîtier vertical (plus haut que le feu simple pour loger 2 lentilles)
+  ctx.fillStyle = 'rgba(18,24,32,.95)';
+  ctx.beginPath();
+  if(ctx.roundRect) ctx.roundRect(sx - 4.5, sy - 15, 9, 20, 2);
+  else ctx.rect(sx - 4.5, sy - 15, 9, 20);
+  ctx.fill();
+  ctx.strokeStyle = '#0b1017';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+  const lens = (cy, color) => {
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(sx, cy, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,.7)';
+    ctx.beginPath();
+    ctx.arc(sx - 1, cy - 1, 1, 0, Math.PI * 2);
+    ctx.fill();
+  };
+  lens(sy - 10, topColor);
+  lens(sy - 2, botColor);
+  ctx.restore();
+}
+
 function drawRailSignal(sig){
   const def = RAIL_DIRS.find(d => d.bit === sig.bit);
   if(!def) return;
+  if(sig.kind === 'junction'){ drawRailJunctionSignal(sig, def); return; }
   const [du, dv] = rotDir(def.dx, def.dy);
   const [sx, sy] = railSignalScreenPos(sig.x, sig.y, def);
   const isGreen = railSignalAspect(sig);
@@ -1485,8 +1533,10 @@ function drawVehicle(veh){
     const shadowAngle_l = Math.atan2((fn_l+fv_l)*TH2, (fn_l-fv_l)*TW2);
     ctx.fillStyle = 'rgba(0,0,0,.22)';
     ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 13, 5.5, shadowAngle_l, 0, Math.PI*2); ctx.fill();
+    const locoOwner = veh.garageRef?.owner ?? null;
+    const locoColor = (locoOwner != null && MP.connected) ? playerColor(locoOwner) : vt.color;
     trainPrism(u, v, du, dv, hl,      hw,      6, '#2f3640');
-    trainPrism(u, v, du, dv, hl*0.78, hw*0.78, 8, vt.color, 5);
+    trainPrism(u, v, du, dv, hl*0.78, hw*0.78, 8, locoColor, 5);
     trainPrism(u+(du/nd)*0.06, v+(dv/nd)*0.06, du, dv, hl*0.28, hw, 10, '#92a2b4', 8);
     if(veh === selectedVehicle){
       ctx.save();

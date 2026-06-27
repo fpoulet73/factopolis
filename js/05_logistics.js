@@ -980,7 +980,9 @@ function rebuildRailBlockOccupancy(){
 // Aspect d'un feu (vert = true, rouge = false). `ignoreVehicle` permet à un
 // train d'interroger le feu qui le concerne sans se compter lui-même comme
 // occupant du canton qu'il va franchir (loco déjà entrée ou queue de wagons).
-function railSignalAspect(sig, ignoreVehicle=null){
+// Aspect « canton » d'un feu : rouge si forcé manuellement ou si un train occupe
+// le canton protégé. C'est le comportement commun à TOUS les feux.
+function railBlockSignalClear(sig, ignoreVehicle=null){
   // Feu rouge forcé manuellement par le joueur : toujours rouge (arrêt).
   if(sig.forcedRed) return false;
   const def = RAIL_DIRS.find(d => d.bit === sig.bit);
@@ -1000,6 +1002,78 @@ function railSignalAspect(sig, ignoreVehicle=null){
     for(const tile of trainBlockFootprintTiles(v)){
       if((railBlocks?.blockByTile?.[tile] ?? -1) === guardedBlock) return false;
     }
+  }
+  return true;
+}
+
+// Feu de jonction (2 lentilles) : vrai si AU MOINS une voie suivante est libre,
+// c.-à-d. si le PREMIER feu d'une des branches en aval est vert (ou s'il n'y a
+// aucun feu du tout en aval). Faux uniquement si TOUTES les branches butent sur
+// un premier feu rouge.
+//
+// On évalue le premier feu de CHAQUE branche indépendamment : un feu rouge proche
+// sur une branche ne doit pas masquer un feu vert plus lointain sur une autre
+// branche (sinon une jonction qui débouche sur plusieurs quais reste rouge dès
+// que la branche la plus courte est occupée). On n'explore donc pas au-delà du
+// premier feu rencontré sur une branche, mais on poursuit toutes les autres.
+function railJunctionDownstreamClear(sig){
+  const def = RAIL_DIRS.find(d => d.bit === sig.bit);
+  if(!def) return true;
+  // Le train protégé traverse (sig.x,sig.y) puis poursuit dans le sens -def.
+  // « incoming » pointe vers la tuile d'où il vient, soit la direction def.
+  const incoming = RAIL_DIRS.indexOf(def);
+  const q = [{ x:sig.x, y:sig.y, incoming }];
+  const seen = new Set([sig.x + ',' + sig.y + ',' + incoming]);
+  let foundSignal = false;
+  for(let qi = 0; qi < q.length; qi++){
+    const cur = q[qi];
+    const inDx = -RAIL_DIRS[cur.incoming].dx, inDy = -RAIL_DIRS[cur.incoming].dy;
+    for(const forward of railConnectedDefsAt(cur.x, cur.y)){
+      if(forward.bit === RAIL_DIRS[cur.incoming]?.bit) continue;
+      if(!railTurnAllowed(inDx, inDy, forward.dx, forward.dy)) continue;
+      const nx = cur.x + forward.dx, ny = cur.y + forward.dy;
+      if(!inMap(nx, ny)) continue;
+      const ni = ny * N + nx;
+      if(!rail[ni] || !(rail[ni] & RAIL_DIRS[forward.opposite].bit)) continue;
+      const state = railEdgeSignalState(cur.x, cur.y, forward);
+      if(state.own || state.opposite){
+        // Premier feu de cette branche : on tranche ici et on n'explore pas
+        // au-delà. Vert -> une voie est libre. Rouge -> cette branche est fermée,
+        // mais les autres branches restent à examiner.
+        foundSignal = true;
+        if(state.opposite && railSignalAspect(state.opposite)) return true;
+        continue;
+      }
+      const key = nx + ',' + ny + ',' + forward.opposite;
+      if(seen.has(key)) continue;
+      seen.add(key);
+      q.push({ x:nx, y:ny, incoming:forward.opposite });
+    }
+  }
+  // Sans aucun feu en aval, la voie reste libre : un feu de jonction sans feux
+  // suivants se comporte comme un feu normal.
+  return !foundSignal;
+}
+
+// Garde anti-récursion : un feu de jonction dont une voie suivante mène (via une
+// boucle) à lui-même ne doit pas se réévaluer indéfiniment.
+const railAspectGuard = new Set();
+
+function railSignalAspect(sig, ignoreVehicle=null){
+  // Rouge forcé manuellement par le joueur : toujours rouge, quel que soit le type.
+  if(sig.forcedRed) return false;
+  // Lentille du BAS (signal normal) : rouge si le canton protégé est occupé.
+  if(!railBlockSignalClear(sig, ignoreVehicle)) return false;
+  if(sig.kind === 'junction'){
+    // Lentille du HAUT : rouge si AUCUNE voie suivante n'est disponible. Le train
+    // s'arrête dès qu'UNE des deux lentilles est rouge -> il ne franchit le feu
+    // que lorsque le canton est libre ET qu'au moins une voie suivante est libre.
+    const key = railSignalKey(sig.x, sig.y, sig.bit);
+    if(railAspectGuard.has(key)) return true;
+    railAspectGuard.add(key);
+    const downstreamClear = railJunctionDownstreamClear(sig);
+    railAspectGuard.delete(key);
+    if(!downstreamClear) return false;
   }
   return true;
 }

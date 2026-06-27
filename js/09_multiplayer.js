@@ -199,7 +199,7 @@ function applySnapshot(d){
     railSignals = Object.create(null);
     for(const sig of d.railSignals){
       if(!sig || !Number.isInteger(sig.x) || !Number.isInteger(sig.y) || !Number.isInteger(sig.bit)) continue;
-      railSignals[railSignalKey(sig.x, sig.y, sig.bit)] = { x:sig.x, y:sig.y, bit:sig.bit, forcedRed:!!sig.forcedRed };
+      railSignals[railSignalKey(sig.x, sig.y, sig.bit)] = { x:sig.x, y:sig.y, bit:sig.bit, forcedRed:!!sig.forcedRed, kind:sig.kind || 'block' };
     }
   } else railSignals = Object.create(null);
   rebuildRailBlocks();
@@ -430,7 +430,7 @@ function applyAction(msg){
       break;
     case 'rail_signal_update':
       if(!validXY(act.x, act.y) || !Number.isInteger(act.bit)) break;
-      if(act.present) setRailSignal(act.x, act.y, act.bit, true, !!act.forcedRed);
+      if(act.present) setRailSignal(act.x, act.y, act.bit, true, !!act.forcedRed, act.kind || 'block');
       else setRailSignal(act.x, act.y, act.bit, false);
       if(act.costDelta > 0){
         walletOf(msg.from).money -= act.costDelta;
@@ -1109,23 +1109,25 @@ clickFn = function(x,y){
     railApplyMaskUpdates(updates, cost);
     return;
   }
-  if(tool==='rail_signal'){
+  if(tool==='rail_signal' || tool==='rail_signal2'){
     const def = chooseRailSignalDef(x, y);
     if(!def){ clickAt(x,y); return; }
     // Cycle au clic : (aucun) -> feu vert -> feu rouge forcé -> retiré.
     const sig = railSignalDefAt(x, y, def.bit);
     let present = true, forcedRed = false, delta = 0;
+    let kind = tool === 'rail_signal2' ? 'junction' : 'block';
     if(!sig){
-      delta = BUILD.rail_signal?.cost || 0;
+      delta = BUILD[tool]?.cost || 0;
     } else if(!sig.forcedRed){
       forcedRed = true;
+      kind = sig.kind || 'block';
     } else {
       present = false;
-      delta = -Math.floor((BUILD.rail_signal?.cost||0) * 0.3);
+      delta = -Math.floor((BUILD[tool]?.cost||0) * 0.3);
     }
     if(delta > 0 && delta > myWallet().money){ toast('Fonds insuffisants ('+delta+' $)','err'); return; }
-    netSend({ type:'rail_signal_update', x, y, bit:def.bit, present, forcedRed, costDelta:delta });
-    setRailSignal(x, y, def.bit, present, forcedRed);
+    netSend({ type:'rail_signal_update', x, y, bit:def.bit, present, forcedRed, kind, costDelta:delta });
+    setRailSignal(x, y, def.bit, present, forcedRed, kind);
     if(delta > 0) spendMoney(delta, 'construction');
     else if(delta < 0) earnMoney(-delta, 'rembours');
     return;

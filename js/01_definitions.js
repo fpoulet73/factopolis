@@ -524,6 +524,8 @@ const BUILD = {
              desc:'Pose des rails en glissant, comme pour les routes.' },
   rail_signal:{ n:'Signal', ic:'🚦', hk:'',  cost: CFG.batiments?.signalRail?.cout ?? 20,
                 desc:'Place un signal ferroviaire sur un segment de rail.' },
+  rail_signal2:{ n:'Signal de jonction', ic:'🚥', hk:'', cost: CFG.batiments?.signalRail?.cout ?? 20,
+                desc:'Feu à 2 lentilles : comme un signal normal, mais il reste rouge tant que tous les feux des voies suivantes sont rouges.' },
   train_station:{ n:'Gare', ic:'🚉', hk:'', cost: CFG.batiments?.gare?.cout ?? 100,
                   col:'#b98a55', hgt:12,
                   desc:'Construit une gare près des rails ou un quai directement sur une voie.' },

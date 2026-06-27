@@ -122,10 +122,10 @@ function rebuildRailBlocks(){
   railBlocks = { blockByTile, count:nextBlockId };
 }
 
-function setRailSignal(x, y, bit, present, forcedRed = false){
+function setRailSignal(x, y, bit, present, forcedRed = false, kind = 'block'){
   if(!railSignals) railSignals = Object.create(null);
   const key = railSignalKey(x, y, bit);
-  if(present) railSignals[key] = { x, y, bit, forcedRed:!!forcedRed };
+  if(present) railSignals[key] = { x, y, bit, forcedRed:!!forcedRed, kind:kind || 'block' };
   else delete railSignals[key];
   rebuildRailBlocks();
 }
@@ -448,7 +448,7 @@ function canPlace(t,x,y){
     if(ter!==T.GRASS) return { ok:false, msg:"Les rails se posent sur l'herbe (démolis les arbres ou champs)" };
     return { ok:true };
   }
-  if(t==='rail_signal'){
+  if(t==='rail_signal' || t==='rail_signal2'){
     if(!rail[i]) return { ok:false, msg:'Place le signal sur une voie ferrée existante.' };
     if(!chooseRailSignalDef(x, y)) return { ok:false, msg:'Aucun segment de rail valide à signaler.' };
     return { ok:true };
@@ -673,21 +673,22 @@ function clickAt(x,y){
     railApplyMaskUpdates(updates, railCost);
     return;
   }
-  if(tool === 'rail_signal'){
+  if(tool === 'rail_signal' || tool === 'rail_signal2'){
+    const kind = tool === 'rail_signal2' ? 'junction' : 'block';
     const def = chooseRailSignalDef(x, y);
     if(!def) return;
     // Cycle au clic : (aucun) -> feu vert -> feu rouge forcé -> retiré.
     const sig = railSignalDefAt(x, y, def.bit);
     if(!sig){
-      const cost = BUILD.rail_signal?.cost || 0;
+      const cost = BUILD[tool]?.cost || 0;
       if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
-      setRailSignal(x, y, def.bit, true, false);
+      setRailSignal(x, y, def.bit, true, false, kind);
       if(cost > 0) spendMoney(cost, 'construction');
     } else if(!sig.forcedRed){
-      setRailSignal(x, y, def.bit, true, true);
+      setRailSignal(x, y, def.bit, true, true, sig.kind || 'block');
     } else {
       setRailSignal(x, y, def.bit, false);
-      earnMoney(Math.floor((BUILD.rail_signal?.cost||0) * 0.3), 'rembours');
+      earnMoney(Math.floor((BUILD[tool]?.cost||0) * 0.3), 'rembours');
     }
     return;
   }
