@@ -24,7 +24,7 @@ let selected = null, tool = 'select';
 let speed = 1, paused = false;
 let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0, passengerCycleTimer = 0;
 let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
-const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0, entretienVehicules:0, peageRecu:0, peagePaye:0, expansion:0 });
+const FIN_ZERO = ()=> ({ ventes:0, vehicules:0, taxes:0, rembours:0, construction:0, entretien:0, entretienVehicules:0, peageRecu:0, peagePaye:0, expansion:0 });
 const START_HOMELESS = 0;
 let rot = 0; // orientation de la vue (0..3)
 const cam = { x:0, y:0, z:1 };
@@ -66,6 +66,9 @@ const walletOf  = oid => {
   if(!WALLETS[k].fin) WALLETS[k].fin = FIN_ZERO();
   else { const z = FIN_ZERO(); for(const c in z) if(WALLETS[k].fin[c] == null) WALLETS[k].fin[c] = 0; }
   if(!WALLETS[k].peageDetail) WALLETS[k].peageDetail = { recv:{}, paid:{} };
+  if(!WALLETS[k].ventesDetail) WALLETS[k].ventesDetail = { res:{}, veh:{} };
+  else { if(!WALLETS[k].ventesDetail.res) WALLETS[k].ventesDetail.res = {};
+         if(!WALLETS[k].ventesDetail.veh) WALLETS[k].ventesDetail.veh = {}; }
   if(WALLETS[k].starterHomes == null) WALLETS[k].starterHomes = 0;
   if(WALLETS[k].starterHomesGranted == null) WALLETS[k].starterHomesGranted = WALLETS[k].starterHomes || 0;
   return WALLETS[k];
@@ -75,6 +78,13 @@ const myWallet  = () => walletOf(currentWalletOwner());
 const getMoney   = ()    => myWallet().money;
 const spendMoney = (n,cat)=>{ const w=myWallet(); w.money-=n; w.fin[cat]=(w.fin[cat]||0)+n; };
 const earnMoney  = (n,cat,w=myWallet())=>{ w.money+=n; w.fin[cat]=(w.fin[cat]||0)+n; };
+// Détail des ventes : 'res' (par ressource vendue) ou 'veh' (par type de véhicule).
+const recordVente = (w, kind, key, amt)=>{
+  if(!amt || !w) return;
+  if(!w.ventesDetail) w.ventesDetail = { res:{}, veh:{} };
+  const bucket = w.ventesDetail[kind] || (w.ventesDetail[kind] = {});
+  bucket[key] = (bucket[key]||0) + amt;
+};
 
 // BFS réutilisables
 let dist = new Int32Array(N*N);

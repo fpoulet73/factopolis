@@ -487,6 +487,28 @@ async function loadCommunityGraphicPacks(){
 }
 
 // Prix de vente inter-joueurs (par unité)
+// Prix de vente aux habitants (par ressource consommée, par habitant).
+const RESID_PRICES = (()=>{
+  const cfg = CFG.economie?.prixVente || {};
+  return {
+    goods:       cfg.marchandises ?? 5,
+    bread:       cfg.pain         ?? 6,
+    clothes:     cfg.vetement     ?? 9,
+    fish_fillet: cfg.filetPoisson ?? 8,
+    fish:        cfg.poisson      ?? 4,
+    fish_oil:    cfg.huilePoisson ?? 7,
+    flour:       cfg.farine       ?? 4,
+    water:       cfg.eau          ?? 1,
+    wheat:       cfg.ble          ?? 2,
+    cotton:      cfg.coton        ?? 3,
+    iron:        cfg.fer          ?? 4,
+    coal:        cfg.charbon      ?? 3,
+    wood:        cfg.bois         ?? 2,
+    steel:       cfg.acier        ?? 7,
+    dirt:        cfg.terre        ?? 0,
+  };
+})();
+
 const TRADE_PRICES = (()=>{
   const cfg = CFG.commerce?.prix || {};
   return {
@@ -680,7 +702,8 @@ const LEVELS = [
     const area = L.shapes[0][0]*L.shapes[0][1];
     if(L.key==='house'){
       Object.assign(BUILD.house, { resid:L.resid, area:1 });
-      BUILD.house.desc = 'Consomme '+resNames(L.resid.required)+' → +1 habitant et +'+L.resid.income
+      const reqPrice = L.resid.required.reduce((a,r)=>a+(RESID_PRICES[r]||0),0);
+      BUILD.house.desc = 'Consomme '+resNames(L.resid.required)+' → +1 habitant et +'+reqPrice
         +' $ par habitant. Fusion : '+resNames(L.resid.fusionRequired)+'.';
       continue;
     }

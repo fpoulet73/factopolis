@@ -194,6 +194,27 @@ const CONFIG = {
   economie: {
     taxeParHabitant: 2,         // $ versés par habitant…
     intervalleTaxes: 20,        // …toutes les X secondes
+    // Prix de vente aux habitants, par ressource consommée et par habitant.
+    // Le revenu d'un logement par cycle = somme des prix des ressources qu'il
+    // consomme, multipliée par son nombre d'habitants.
+    prixVente: {
+      marchandises: 3,          // goods  (outils de construction)
+      pain:         4,          // bread
+      vetement:     9,          // clothes
+      filetPoisson: 3,          // fish_fillet (bonus)
+      // ressources rarement consommées par les logements (configs personnalisées)
+      poisson:      2,          // fish
+      huilePoisson: 7,          // fish_oil
+      farine:       2,          // flour
+      eau:          1,          // water
+      ble:          2,          // wheat
+      coton:        3,          // cotton
+      fer:          3,          // iron
+      charbon:      2,          // coal
+      bois:         2,          // wood
+      acier:        6,          // steel
+      terre:        0,          // dirt
+    },
   },
 
   /* ---------- CAMIONS ---------- */
@@ -264,9 +285,9 @@ const CONFIG = {
     },
     /* coutEntretienJournalier par type de véhicule ($ / jour de jeu) */
     vehicules: {
-      minerai:      { coutEntretienJournalier: 5  },
-      plateau:      { coutEntretienJournalier: 5  },
-      cereale:      { coutEntretienJournalier: 4  },
+      minerai:      { coutEntretienJournalier: 7  },
+      plateau:      { coutEntretienJournalier: 7  },
+      cereale:      { coutEntretienJournalier: 6  },
       marchandises: { coutEntretienJournalier: 5  },
       frigo:        { coutEntretienJournalier: 5  },
       citerne:      { coutEntretienJournalier: 5  },

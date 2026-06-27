@@ -1282,7 +1282,9 @@ function trainEarnPassengerRevenue(v, numPassengers, departStop, arrivalStop){
   const dist = Math.max(1, Math.round(dx + dy));
   const revenue = Math.round(numPassengers * dist * TRAIN_FARE_FACTOR);
   const owner = v.garageRef?.owner ?? null;
-  earnMoney(revenue, 'ventes', walletOf(owner));
+  const ownerWallet = walletOf(owner);
+  earnMoney(revenue, 'vehicules', ownerWallet);
+  recordVente(ownerWallet, 'veh', 'train', revenue);
   addFloat(arrivalStop.x + (arrivalStop.w-1)/2, arrivalStop.y, '+'+revenue+' $ 🚃', '#c8e040');
 }
 
@@ -1524,7 +1526,9 @@ function updateTrainVehicle(v, dt){
     v.waitTimer -= dt;
     // Afficher le gain fret à mi-temps d'arrêt
     if(v.pendingFreightRevenue > 0 && v.freightRevenueFireAt != null && v.waitTimer <= v.freightRevenueFireAt){
-      earnMoney(v.pendingFreightRevenue, 'ventes', walletOf(v.garageRef?.owner ?? null));
+      const freightWallet = walletOf(v.garageRef?.owner ?? null);
+      earnMoney(v.pendingFreightRevenue, 'vehicules', freightWallet);
+      recordVente(freightWallet, 'veh', 'train', v.pendingFreightRevenue);
       const lp = v.pts?.[v.pts.length - 1];
       const fx = lp ? lp.x / TILE - 0.5 : (v.currentBuilding?.x ?? 0);
       const fy = lp ? lp.y / TILE - 1.5 : (v.currentBuilding?.y ?? 0);
@@ -1822,11 +1826,19 @@ function busEarnRevenue(v, numPassengers, routeLen, departStop, arrivalStop){
     const otherOwner = busOwner === dOwner ? aOwner : dOwner;
     const busShare   = Math.max(1, Math.round(revenue * BUS_OWNER_SHARE));
     const otherShare = Math.max(0, revenue - busShare);
-    earnMoney(busShare,   'ventes', walletOf(busOwner));
-    if(otherShare > 0) earnMoney(otherShare, 'ventes', walletOf(otherOwner));
+    const busWallet = walletOf(busOwner);
+    earnMoney(busShare,   'vehicules', busWallet);
+    recordVente(busWallet, 'veh', 'bus', busShare);
+    if(otherShare > 0){
+      const otherWallet = walletOf(otherOwner);
+      earnMoney(otherShare, 'vehicules', otherWallet);
+      recordVente(otherWallet, 'veh', 'bus', otherShare);
+    }
     addFloat(arrivalStop.x + 0.5, arrivalStop.y, '+'+busShare+' $ 🚌', '#4dd9ff');
   } else {
-    earnMoney(revenue, 'ventes', walletOf(dOwner));
+    const dWallet = walletOf(dOwner);
+    earnMoney(revenue, 'vehicules', dWallet);
+    recordVente(dWallet, 'veh', 'bus', revenue);
     addFloat(arrivalStop.x + 0.5, arrivalStop.y, '+'+revenue+' $ 🚌', sameCity ? '#a0c8e8' : '#ffe9a0');
   }
 }
@@ -2056,6 +2068,7 @@ function updateVehicles(dt){
             buyerWallet.fin.construction = (buyerWallet.fin.construction||0) + cost; // colonne "achats"
             sellerWallet.money += cost;
             sellerWallet.fin.ventes = (sellerWallet.fin.ventes||0) + cost;
+            recordVente(sellerWallet, 'res', res, cost);
           }
           src.storage[res] -= take;
           v.cargo = take; v.res = res;

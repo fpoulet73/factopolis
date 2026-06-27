@@ -91,13 +91,19 @@ function update(dt){
       b.ct += dt;
       if(b.ct >= rc.interval){
         b.ct = 0;
+        const pop = Math.max(1, b.pop);
+        // Revenu = somme des prix de vente des ressources consommées ce cycle × habitants.
+        const consumed = [...residRequiredOf(b)];
         residConsumeAll(b, residRequiredOf(b));
         const fusionOptional = residFusionRequiredOf(b).filter(r => !residRequiredOf(b).includes(r));
-        for(const r of fusionOptional) if((b.storage[r]||0) > 0) b.storage[r]--; // consommé si présent, pas obligatoire
+        for(const r of fusionOptional) if((b.storage[r]||0) > 0){ b.storage[r]--; consumed.push(r); } // consommé si présent, pas obligatoire
         const bonusResources = residBonusOf(b).filter(r => (b.storage[r]||0) > 0);
-        for(const r of bonusResources) b.storage[r]--;
-        const hasBonus = bonusResources.length > 0;
-        const income = Math.round(rc.income * Math.max(1, b.pop) * (hasBonus ? 1.2 : 1));
+        for(const r of bonusResources){ b.storage[r]--; consumed.push(r); }
+        let income = 0;
+        for(const r of consumed){
+          const part = Math.round((RESID_PRICES[r]||0) * pop);
+          if(part){ income += part; recordVente(w, 'res', r, part); }
+        }
         earnMoney(income, 'ventes', w);
         addFloat(b.x + (b.w-1)/2, b.y, '+'+income+' $', '#ffe9a0');
         if(b.pop + b.pending < rc.popCap) spawnWalker(b);
@@ -107,7 +113,13 @@ function update(dt){
       b.ct += dt;
       if(b.ct >= rc.interval){
         b.ct = 0;
-        const income = rc.income * Math.max(1, b.pop);
+        // Maison de départ : ne consomme rien, mais « vend » ses ressources requises.
+        const pop = Math.max(1, b.pop);
+        let income = 0;
+        for(const r of residRequiredOf(b)){
+          const part = Math.round((RESID_PRICES[r]||0) * pop);
+          if(part){ income += part; recordVente(w, 'res', r, part); }
+        }
         earnMoney(income, 'ventes', w);
         addFloat(b.x + (b.w-1)/2, b.y, '+'+income+' $', '#ffe9a0');
         if(b.pop + b.pending < rc.popCap) spawnWalker(b);
@@ -282,14 +294,22 @@ function update(dt){
   }
 
   // historique financier par wallet
+  const curDate = new Date(GAME_EPOCH_MS + (gtime||0) * GAME_HOURS_PER_SEC * 3600000);
+  const curYM = curDate.getUTCFullYear()+'-'+String(curDate.getUTCMonth()+1).padStart(2,'0');
   for(const k in WALLETS){
     const w = WALLETS[k];
-    w.finTimer = (w.finTimer||0) + dt;
-    if(w.finTimer >= 1){
-      w.finTimer = 0;
-      w.finHist = w.finHist || [];
-      w.finHist.push({ ...w.fin });
-      if(w.finHist.length > 61) w.finHist.shift();
+    // Instantané du cumul au début de chaque mois de jeu (colonnes du panneau finances).
+    if(w.finMonth !== curYM){
+      w.finMonth = curYM;
+      const vd = w.ventesDetail || { res:{}, veh:{} };
+      const pd = w.peageDetail  || { recv:{}, paid:{} };
+      (w.finMonthSnaps ||= []).push({
+        ym:    curYM,
+        fin:   { ...w.fin },
+        vres:  { ...(vd.res||{}) },  vveh:  { ...(vd.veh||{}) },
+        precv: { ...(pd.recv||{}) }, ppaid: { ...(pd.paid||{}) },
+      });
+      while(w.finMonthSnaps.length > 4) w.finMonthSnaps.shift(); // 3 mois affichés + sécurité
     }
   }
 

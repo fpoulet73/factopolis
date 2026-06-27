@@ -48,6 +48,8 @@ function updateHUD(dt){
 }
 
 // ---------- panneau finances ----------
+let financeVentesExpanded = false;
+let financeVehiculesExpanded = false;
 function toggleFinance(){
   const p = $('finance');
   p.style.display = p.style.display==='block' ? 'none' : 'block';
@@ -57,49 +59,106 @@ function renderFinance(){
   const p = $('finance');
   if(p.style.display !== 'block') return;
   const wt = myWallet();
-  const fin = wt.fin, finHist = wt.finHist || [];
-  const base = finHist[0] || fin;
-  const wl = Math.max(1, finHist.length);
-  const rate = c => ((fin[c]||0)-(base[c]||0))*60/wl;
+  const fin = wt.fin;
+  const ventesDetail = wt.ventesDetail || { res:{}, veh:{} };
+  const peageDetail  = wt.peageDetail  || { recv:{}, paid:{} };
+
+  // Découpage par mois de jeu : instantanés de cumul pris au début de chaque mois.
+  // On affiche les 3 mois précédents complets + le mois en cours (cumul live).
+  const snaps = wt.finMonthSnaps || [];
+  const months = []; // bornes terminées = toutes sauf la dernière (= début du mois en cours)
+  for(let i = Math.max(0, snaps.length - 1 - 3); i < snaps.length - 1; i++)
+    months.push({ ym: snaps[i].ym, start: snaps[i], end: snaps[i+1] });
+  // Mois en cours : commence à la dernière borne, se termine « maintenant » (cumul live).
+  const curStart = snaps[snaps.length-1] || { fin:{}, vres:{}, vveh:{}, precv:{}, ppaid:{} };
+  months.push({ ym: curStart.ym || null, start: curStart, end: null });
+
   const fmt = n => Math.round(Math.abs(n)).toLocaleString('fr-FR');
+  const sgn = n => n>=0 ? '+' : '−';
+  const monthLabel = ym => {
+    if(!ym) return '—';
+    const [y,mo] = ym.split('-').map(Number);
+    return new Date(Date.UTC(y, mo-1, 1)).toLocaleDateString('fr-FR',{ month:'short' });
+  };
+  const valCell = (v,sign)=> '<td class="r">'+(Math.round(v)===0 ? '—'
+    : (sign==='auto'?sgn(v):sign)+fmt(v)+' $')+'</td>';
+  // acc(snap) lit une valeur cumulée dans un instantané ; live = valeur cumulée actuelle.
+  // Le mois en cours (end===null) utilise le cumul live au lieu d'un instantané de fin.
+  const monthDeltas = (acc, live)=> months.map(m => (m.end ? acc(m.end) : live) - acc(m.start));
+  const cells = (deltas, sign)=> deltas.map(v => valCell(v, sign)).join('');
+
+  const catAcc = c => (s => s?.fin?.[c]||0);
+  const finDeltas = c => monthDeltas(catAcc(c), fin[c]||0);
   const row = (lbl,c,sign,cls)=>
-    '<tr class="'+cls+'"><td>'+lbl+'</td>'
-    + '<td class="r">'+sign+fmt(fin[c]||0)+' $</td>'
-    + '<td class="r">'+sign+fmt(rate(c))+' $</td></tr>';
-  // Sous-lignes détaillées par joueur (péages) : montant total uniquement.
-  const detailRows = (detail, sign, prep, cls)=>{
-    let h = '';
-    for(const id in (detail||{})){
-      const amt = detail[id];
-      if(!amt) continue;
-      h += '<tr class="'+cls+' sub"><td>↳ '+prep+' '+playerName(+id)+'</td>'
-         + '<td class="r">'+sign+fmt(amt)+' $</td><td class="r"></td></tr>';
+    '<tr class="'+cls+'"><td>'+lbl+'</td>' + cells(finDeltas(c), sign) + '</tr>';
+
+  // Sous-lignes détail par clé d'un bucket (ressources vendues / types de véhicule).
+  const bucketSubRows = (liveBucket, field, labelFn, cls)=>{
+    const keys = new Set(Object.keys(liveBucket||{}));
+    for(const m of months){ for(const k in (m.start?.[field]||{})) keys.add(k);
+                            for(const k in (m.end?.[field]||{})) keys.add(k); }
+    const rows = [];
+    for(const k of keys){
+      const deltas = monthDeltas(s=>s?.[field]?.[k]||0, liveBucket?.[k]||0);
+      if(!deltas.some(v=>v!==0)) continue;
+      rows.push({ total: deltas.reduce((a,b)=>a+b,0),
+        html:'<tr class="'+cls+' sub"><td>↳ '+labelFn(k)+'</td>'+cells(deltas,'+')+'</tr>' });
+    }
+    return rows.sort((a,b)=>b.total-a.total).map(r=>r.html).join('');
+  };
+  // Sous-lignes péages par joueur.
+  const playerSubRows = (liveBucket, field, prep, cls)=>{
+    const keys = new Set(Object.keys(liveBucket||{}));
+    for(const m of months){ for(const id in (m.start?.[field]||{})) keys.add(id);
+                            for(const id in (m.end?.[field]||{})) keys.add(id); }
+    let h='';
+    for(const id of keys){
+      const deltas = monthDeltas(s=>s?.[field]?.[id]||0, liveBucket?.[id]||0);
+      if(!deltas.some(v=>v!==0)) continue;
+      h += '<tr class="'+cls+' sub"><td>↳ '+prep+' '+playerName(+id)+'</td>'+cells(deltas,'+')+'</tr>';
     }
     return h;
   };
-  const peageDetail = wt.peageDetail || { recv:{}, paid:{} };
-  const hasRecu = (fin.peageRecu||0) > 0;
-  const hasPaye = (fin.peagePaye||0) > 0;
-  const netT = (fin.ventes||0)+(fin.taxes||0)+(fin.rembours||0)+(fin.peageRecu||0)
-             - (fin.construction||0)-(fin.entretien||0)-(fin.entretienVehicules||0)-(fin.peagePaye||0)-(fin.expansion||0);
-  const netR = rate('ventes')+rate('taxes')+rate('rembours')+rate('peageRecu')
-             - rate('construction')-rate('entretien')-rate('entretienVehicules')-rate('peagePaye')-rate('expansion');
-  const sgn = n => n>=0 ? '+' : '−';
+
+  const VEH_LABELS = { bus:'🚌 Bus', train:'🚃 Train', camion:'🚛 Camion' };
+  const resLabel = k => (RES[k]?.ic ? RES[k].ic+' ' : '') + (RES[k]?.n || k);
+  const expandRow = (toggleId, expanded, label, cat, subRows)=>{
+    const arrow = expanded ? '▾' : '▸';
+    let h = '<tr class="in"><td><span id="'+toggleId+'" style="cursor:pointer">'+arrow+' '+label+'</span></td>'
+      + cells(finDeltas(cat), '+') + '</tr>';
+    if(expanded) h += subRows();
+    return h;
+  };
+
+  const hasRow = c => finDeltas(c).some(v=>v!==0);
+  const hasRecu = hasRow('peageRecu');
+  const hasPaye = hasRow('peagePaye');
+  const hasVeh  = hasRow('vehicules') || financeVehiculesExpanded;
+  const hasExp  = hasRow('expansion');
+
+  const incCats = ['ventes','vehicules','taxes','rembours','peageRecu'];
+  const outCats = ['construction','entretien','entretienVehicules','peagePaye','expansion'];
+  const netVal = read => incCats.reduce((a,c)=>a+read(c),0) - outCats.reduce((a,c)=>a+read(c),0);
+  const netDeltas = months.map(m => netVal(c => (m.end ? (m.end.fin?.[c]||0) : (fin[c]||0)) - (m.start.fin?.[c]||0)));
+  const hdrCells = months.map(m=>'<td class="r">'+monthLabel(m.ym)+'</td>').join('');
+
   p.innerHTML =
     '<div class="panel-head"><h3>💰 Finances</h3><button class="tbtn" id="bFinX" aria-label="Fermer">✕</button></div>'
     + '<table>'
-    + '<tr class="hdr"><td></td><td class="r">Total</td><td class="r">Par minute</td></tr>'
-    + row('Ventes d\'outils','ventes','+','in')
+    + '<tr class="hdr"><td></td>'+hdrCells+'</tr>'
+    + expandRow('venteToggle', financeVentesExpanded, 'Ventes', 'ventes',
+        ()=> bucketSubRows(ventesDetail.res, 'vres', resLabel, 'in'))
+    + (hasVeh ? expandRow('vehToggle', financeVehiculesExpanded, 'Véhicules', 'vehicules',
+        ()=> bucketSubRows(ventesDetail.veh, 'vveh', k=>VEH_LABELS[k]||k, 'in')) : '')
     + row('Taxes des habitants','taxes','+','in')
     + row('Remboursements','rembours','+','in')
-    + (hasRecu ? row('Péages rails reçus','peageRecu','+','in') + detailRows(peageDetail.recv,'+','de','in') : '')
+    + (hasRecu ? row('Péages rails reçus','peageRecu','+','in') + playerSubRows(peageDetail.recv,'precv','de','in') : '')
     + row('Construction','construction','−','out')
     + row('Entretien industriel','entretien','−','out')
     + row('Entretien véhicules','entretienVehicules','−','out')
-    + (hasPaye ? row('Péages rails payés','peagePaye','−','out') + detailRows(peageDetail.paid,'−','à','out') : '')
-    + ((fin.expansion||0) > 0 ? row('Expansions carte','expansion','−','out') : '')
-    + '<tr class="net"><td>Bilan</td><td class="r">'+sgn(netT)+fmt(netT)+' $</td>'
-    + '<td class="r">'+sgn(netR)+fmt(netR)+' $</td></tr>'
+    + (hasPaye ? row('Péages rails payés','peagePaye','−','out') + playerSubRows(peageDetail.paid,'ppaid','à','out') : '')
+    + (hasExp ? row('Expansions carte','expansion','−','out') : '')
+    + '<tr class="net"><td>Bilan</td>'+cells(netDeltas,'auto')+'</tr>'
     + '</table>';
   ensurePanelDragHandle('finance');
 }
@@ -1083,12 +1142,16 @@ function renderInfo(){
       +'</b></div>';
   }
   if(d.resid && !b.starterHome){
-    const incomePerCycle = d.resid.income * Math.max(1, b.pop);
-    const ratePerMin = b.pop > 0 ? Math.round(incomePerCycle / d.resid.interval * 60) : 0;
-    h += '<div class="row"><span>Revenu / outil livré</span><b>'+incomePerCycle+' $</b></div>';
+    const pop = Math.max(1, b.pop);
+    const priceSum = list => list.reduce((a,r)=>a+(RESID_PRICES[r]||0),0);
+    const fusionExtra = residFusionRequiredOf(b).filter(r=>!residRequiredOf(b).includes(r));
+    const reqIncome = Math.round(priceSum(residRequiredOf(b)) * pop);
+    const maxIncome = Math.round((priceSum(residRequiredOf(b)) + priceSum(fusionExtra) + priceSum(residBonusOf(b))) * pop);
+    const ratePerMin = b.pop > 0 ? Math.round(reqIncome / d.resid.interval * 60) : 0;
+    h += '<div class="row"><span>Revenu / cycle</span><b>'+reqIncome+(maxIncome>reqIncome ? ' à '+maxIncome : '')+' $</b></div>';
     h += '<div class="row"><span>Besoins indispensables</span><b>'+escHtml(resNames(residRequiredOf(b)))+'</b></div>';
     h += '<div class="row"><span>Besoins de fusion</span><b>'+escHtml(resNames(residFusionRequiredOf(b)))+'</b></div>';
-    h += '<div class="row"><span>Bonus</span><b style="color:#c7e7e9">'+escHtml(resNames(residBonusOf(b)))+' (+20 % si disponible)</b></div>';
+    h += '<div class="row"><span>Bonus</span><b style="color:#c7e7e9">'+escHtml(resNames(residBonusOf(b)))+' (revenu en plus si livré)</b></div>';
     h += '<div class="row"><span>Intervalle conso.</span><b>'+d.resid.interval+' s</b></div>';
     h += '<div class="row"><span>Revenu / min</span><b style="color:#9fe8a0">~'+ratePerMin+' $</b></div>';
   }
@@ -2484,7 +2547,13 @@ $('ctxShift').onclick = ()=>{
 };
 $('sMoney').onclick = toggleFinance;
 // délégation : le ✕ survit aux reconstructions du panneau (rafraîchi 5×/s)
-$('finance').onclick = e=>{ if(e.target.id==='bFinX') toggleFinance(); };
+// Le panneau est reconstruit ~5×/s : on agit sur pointerdown (immédiat) plutôt que sur
+// click (mousedown+mouseup), qui se perd quand une reconstruction survient entre les deux.
+$('finance').addEventListener('pointerdown', e=>{
+  if(e.target.closest('#bFinX')){ toggleFinance(); return; }
+  if(e.target.closest('#venteToggle')){ financeVentesExpanded = !financeVentesExpanded; renderFinance(); return; }
+  if(e.target.closest('#vehToggle')){ financeVehiculesExpanded = !financeVehiculesExpanded; renderFinance(); }
+});
 $('info').onclick = e=>{ if(e.target.id==='infoCloseBtn') closeInfoPanel(); };
 
 let helpCurrentPage = 0;

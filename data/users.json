@@ -20,7 +20,7 @@
     "color": "#e0e0e0",
     "passwordAlgo": "scrypt",
     "passwordSalt": "276a2d330e6f3651451a62fab4045097",
-    "sessionHash": "55a4448adc36b8a2dfefb60435ae7e3d69df87764936287d7e1b3a542914cf9a",
-    "sessionIssuedAt": "2026-06-20T08:04:02.535Z"
+    "sessionHash": "105df09607bcf0bf71a45c6a5983b2b922500c4469d8887352efb2d99bd2c1db",
+    "sessionIssuedAt": "2026-06-27T17:30:30.174Z"
   }
 }
