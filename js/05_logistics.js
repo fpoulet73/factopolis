@@ -850,6 +850,50 @@ function trainTileIndex(v){
   return v.pathTiles[Math.max(0, Math.min(v.pathTiles.length - 1, v.seg))] ?? -1;
 }
 
+// Empreinte DISCRÈTE d'un train pour la signalisation de cantons : la tuile de
+// la loco (pathTiles[seg]) plus les tuiles réellement couvertes par les wagons
+// derrière elle. Contrairement à trainOccupiedBlockTiles (qui sert au veto de
+// démolition et inclut volontairement le nez flottant du railTrail), on EXCLUT
+// ce nez interpolé : à l'arrêt devant un feu rouge il déborde sur la tuile
+// suivante et ferait croire à tort que le canton AVANT est occupé (auto-rouge).
+function trainBlockFootprintTiles(v){
+  const set = new Set();
+  if(v?.vtype !== 'train') return set;
+  const locoTile = trainTileIndex(v);
+  if(locoTile < 0) return set;
+  set.add(locoTile);
+  const wagonCount = v.wagons?.length || 0;
+  if(wagonCount <= 0) return set;
+  let collected = 0;
+  let prevTile = locoTile;
+  // 1) Source fiable quand la loco a déjà progressé sur l'itinéraire courant :
+  //    les tuiles déjà franchies (pathTiles avant seg) portent les wagons.
+  if(v.seg > 0 && Array.isArray(v.pathTiles)){
+    for(let i = v.seg - 1; i >= 0 && collected < wagonCount; i--){
+      const t = v.pathTiles[i] ?? -1;
+      if(t < 0 || t === prevTile) continue;
+      set.add(t); prevTile = t; collected++;
+    }
+  }
+  // 2) Sinon (arrêt en gare seg=0, itinéraire fraîchement recalculé), la queue
+  //    n'est plus dans pathTiles : on lit le railTrail en partant de la loco et
+  //    en ignorant le nez flottant qui précède sa tuile discrète.
+  if(collected < wagonCount && Array.isArray(v.railTrail)){
+    let reachedLoco = false;
+    for(let i = v.railTrail.length - 1; i >= 0 && collected < wagonCount; i--){
+      const p = v.railTrail[i];
+      if(!Number.isFinite(p?.x) || !Number.isFinite(p?.y)) continue;
+      const tx = Math.floor(p.x / TILE), ty = Math.floor(p.y / TILE);
+      if(tx < 0 || ty < 0 || tx >= N || ty >= N) continue;
+      const t = ty * N + tx;
+      if(!reachedLoco){ if(t === locoTile) reachedLoco = true; continue; }
+      if(t === prevTile) continue;
+      set.add(t); prevTile = t; collected++;
+    }
+  }
+  return set;
+}
+
 // Tuiles physiquement occupées par la "boîte englobante" d'un train, pour la
 // signalisation de cantons. Limité à wagons.length + 1 tuiles uniques (loco
 // + wagons réels) — on ne compte pas la queue interpolée du railTrail qui
@@ -945,17 +989,15 @@ function railSignalAspect(sig, ignoreVehicle=null){
   if(!inMap(nx, ny)) return false;
   const guardedBlock = railBlocks?.blockByTile?.[sig.y * N + sig.x] ?? -1;
   if(guardedBlock < 0) return false;
-  // Le feu est rouge dès qu'un train occupe PHYSIQUEMENT le canton protégé, que
-  // ce soit par sa loco OU par sa queue de wagons. On lit les tuiles réellement
-  // couvertes (loco + wagons réels) via trainOccupiedBlockTiles : c'est la même
-  // source que le veto de démolition, fiable même quand un train est à l'arrêt
-  // en gare (pathTiles réduit à une tuile, seg=0) ou vient de recalculer son
-  // itinéraire (queue hors de pathTiles) — deux cas où l'ancien test sur
-  // pathTiles ratait la queue et laissait le feu vert à tort.
+  // Le feu est rouge dès qu'un train occupe le canton protégé, que ce soit par
+  // sa loco OU par sa queue de wagons. On lit l'empreinte DISCRÈTE (loco + tuiles
+  // des wagons), fiable même à l'arrêt en gare (pathTiles=1 tuile) ou après un
+  // recalcul d'itinéraire, et SANS le nez flottant qui déborderait sur le canton
+  // suivant et rendrait le feu rouge à tort devant un train arrêté.
   for(const v of (vehicles ?? [])){
     if(v === ignoreVehicle) continue;
     if(v.vtype !== 'train' || v.state === 'idle') continue;
-    for(const tile of trainOccupiedBlockTiles(v)){
+    for(const tile of trainBlockFootprintTiles(v)){
       if((railBlocks?.blockByTile?.[tile] ?? -1) === guardedBlock) return false;
     }
   }
