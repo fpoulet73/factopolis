@@ -1056,7 +1056,7 @@ clickFn = function(x,y){
     return;
   }
 
-  if(tool==='bulldoze'){
+  if(tool==='terraform'){
     const railSigDef = rail[i] ? chooseRailSignalDef(x, y) : null;
     if(bgrid[i]){
       // ne pas envoyer l'action si le bâtiment appartient à quelqu'un d'autre
@@ -1083,16 +1083,10 @@ clickFn = function(x,y){
       }
     } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON){
       netSend({ type:'bulldoze_tree', i });
+    } else if(terrain[i]===T.IRON || terrain[i]===T.COAL){
+      netSend({ type:'terraform', i });
     }
     clickAt(x,y);
-    return;
-  }
-  if(tool==='terraform'){
-    const ter = terrain[i];
-    if(!bgrid[i] && (ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL)){
-      netSend({ type:'terraform', i });
-      clickAt(x,y);
-    }
     return;
   }
   if(tool==='fill_water'){

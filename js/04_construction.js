@@ -433,8 +433,7 @@ function placeTrainStationTile(x, y, owner = MP.myId){
 function canPlace(t,x,y){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
-  if(t==='bulldoze') return { ok: !!(road[i] || rail[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT || ter===T.COTTON) };
-  if(t==='terraform') return { ok: !bgrid[i] && (ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL) };
+  if(t==='terraform') return { ok: !!(road[i] || rail[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL) };
   if(t==='fill_water'){
     if(ter !== T.WATER) return { ok:false, msg:'L\'outil Remblai ne s\'applique que sur l\'eau' };
     if(!terrassementNear(x, y, MP.myId ?? 1)) return { ok:false, msg:'Aucune usine de terrassement à portée avec assez de terre ('+FILL_WATER_COST+' terres requises)' };
@@ -615,7 +614,7 @@ function clickAt(x,y){
     selected = trainStationSelectionRepresentative(bgrid[i]);
     return;
   }
-  if(tool==='bulldoze'){
+  if(tool==='terraform'){
     const railSigDef = rail[i] ? chooseRailSignalDef(x, y) : null;
     if(bgrid[i]){
       const b = bgrid[i];
@@ -638,17 +637,8 @@ function clickAt(x,y){
       if(occ){ toast('⛔ Un train occupe cette voie','err'); return; }
       const { updates, refund } = collectRailRemovalUpdates(x, y);
       railApplyMaskUpdates(updates, -refund);
-    } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON){
-      terrain[i] = T.GRASS;
-    }
-    return;
-  }
-  if(tool==='terraform'){
-    const ter = terrain[i];
-    if(bgrid[i]){ toast('⛔ Démolissez d\'abord le bâtiment','err'); return; }
-    if(ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL){
-      terrain[i] = T.GRASS;
-      if(MP.connected) netSend({ type:'terraform', i });
+    } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON || terrain[i]===T.IRON || terrain[i]===T.COAL){
+      terrain[i] = T.GRASS; // l'envoi réseau est géré par clickFn (09_multiplayer.js)
     }
     return;
   }

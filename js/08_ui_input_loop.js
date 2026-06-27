@@ -2252,7 +2252,7 @@ function canvasLeftMove(x, y, shiftKey, oldTx, oldTy){
     updateZoneOverlay(x, y);
     return;
   }
-  if(mouse.lDown && (tool==='bulldoze'||tool==='terraform'||tool==='fill_water') && (mouse.tx!==oldTx || mouse.ty!==oldTy))
+  if(mouse.lDown && (tool==='terraform'||tool==='fill_water') && (mouse.tx!==oldTx || mouse.ty!==oldTy))
     clickFn(mouse.tx, mouse.ty);
   if(mouse.lDown && (tool==='road' || tool==='rail') && roadDragStart && (mouse.tx!==oldTx || mouse.ty!==oldTy))
     roadPreviewTiles = tool === 'rail'
@@ -2491,7 +2491,7 @@ addEventListener('keydown', e=>{
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, true);
   if(e.code==='KeyH') toggleHelp();
   if(e.code==='KeyR') rotate(e.shiftKey ? -1 : 1);
-  if(e.code==='KeyB') setTool('bulldoze');
+  if(e.code==='KeyB') setTool('terraform');
   if(e.code.startsWith('Digit')){
     const d = +e.code.slice(5);
     const key = String(d);

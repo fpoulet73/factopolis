@@ -448,6 +448,11 @@ const ALLOWED_VEHICLE_TYPES = new Set([
   'poisson', 'acier', 'marchandises', 'bus', 'train',
 ]);
 const intInRange = (v, min = 0, max = 4096) => Number.isInteger(v) && v >= min && v <= max;
+// Index de tuile = y*N+x : la grille vaut taille jouable (≤128) + marge d'expansion
+// (48 par côté côté client), donc l'index peut largement dépasser 4096. On valide donc
+// les indices de tuile avec une borne généreuse (le client revérifie i < N*N de toute façon).
+const MAX_TILE_INDEX = 1 << 20; // 1 048 576, couvre toute grille plausible
+const validTileIndex = i => Number.isInteger(i) && i >= 0 && i <= MAX_TILE_INDEX;
 const numInRange = (v, min, max) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
 function validName(value, max = 64) {
   return value == null || (typeof value === 'string' && value.length <= max);
@@ -461,7 +466,7 @@ function sanitizeAction(client, msg) {
     case 'bulldoze_road':
     case 'bulldoze_tree':
     case 'terraform':
-      if (!intInRange(act.i)) return null;
+      if (!validTileIndex(act.i)) return null;
       out.i = act.i; break;
     case 'rail_update':
       if (!intInRange(act.x) || !intInRange(act.y) || !intInRange(act.mask, 0, 255)) return null;
@@ -473,7 +478,7 @@ function sanitizeAction(client, msg) {
       if (act.costDelta != null && !numInRange(act.costDelta, -100000, 100000)) return null;
       Object.assign(out, { x:act.x, y:act.y, bit:act.bit, present:act.present, costDelta: act.costDelta || 0 }); break;
     case 'fill_water':
-      if (!intInRange(act.i) || !intInRange(act.depotX) || !intInRange(act.depotY)) return null;
+      if (!validTileIndex(act.i) || !intInRange(act.depotX) || !intInRange(act.depotY)) return null;
       Object.assign(out, { i: act.i, depotX: act.depotX, depotY: act.depotY }); break;
     case 'bulldoze_bld':
       if (!intInRange(act.bx) || !intInRange(act.by)) return null;

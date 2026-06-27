@@ -643,8 +643,7 @@ const BUILD = {
                  desc:'Dépôt ferroviaire. Réservé à l’achat et à la gestion des trains.' },
   bus_stop:{ n:'Arrêt de bus',   ic:'🚏', hk:'', cost: BUS_STOP_COST, col:'#1e4a8a', hgt:12,
              desc:'Accueille les passagers du quartier (rayon '+BUS_STOP_RADIUS+' cases). Les bus transportent les habitants entre arrêts.' },
-  bulldoze: { n:'Démolir',    ic:'🧨', hk:'B', desc:'Détruit routes, bâtiments (30 % remboursés) et arbres.' },
-  terraform:{ n:'Bulldozer',  ic:'🚜', hk:'-', desc:'Rase les gisements (fer/charbon), les champs et les sapins en herbe.' },
+  terraform:{ n:'Bulldozer',  ic:'🚜', hk:'B', desc:'Détruit routes, rails, bâtiments (30 % remboursés), arbres et champs, et rase les gisements (fer/charbon).' },
   fill_water:{ n:'Remblai',   ic:'🪣', hk:'', desc:'Comble une tuile d\'eau en terre (10 terres requises). Nécessite une usine de terrassement à portée.' },
   terrassement: { n:'Usine de terrassement', ic:'🏗️', hk:'', cost: CFG.production?.terrassement?.cout ?? 700,
                   workers:3, time:1, col:'#7a6a52', hgt:20, ind:true,
@@ -1176,5 +1175,5 @@ function tryMergeDepot(){
   if(bats.citerne?.cout        != null) BUILD.tank.cost   = bats.citerne.cout;
 })();
 
-const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','bulldoze','terraform','fill_water'];
+const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','terraform','fill_water'];
 const MILESTONES = [25, 50, 100, 200, 400];
