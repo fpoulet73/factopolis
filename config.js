@@ -251,6 +251,7 @@ const CONFIG = {
       tempsArret: 2.5,             // heures de jeu d'arrêt standard du train
       tempsArretGareSecondes: 5,   // secondes réelles d'arrêt lorsqu'une gare est utilisée comme étape
       coutEntretienJournalier: 80, // $ prélevés chaque jour de jeu par train
+      peageRailParTuile: 1,        // $ payés au propriétaire des rails par tuile empruntée qui ne lui appartient pas (péréqué au moment de l'entretien)
       /* Améliorations moteur : chaque niveau multiplie la vitesse ET le coût
          d'entretien journalier par le facteur. Le prix démarre à 50 000 $ et
          croît du même facteur (×1.5) à chaque niveau. cout = prix d'achat unique. */

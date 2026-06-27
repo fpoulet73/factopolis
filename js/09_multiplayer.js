@@ -14,6 +14,7 @@ function serializeState(){
     terrain: Array.from(terrain),
     road:    Array.from(road),
     rail:    Array.from(rail),
+    railOwner: railOwner ? Array.from(railOwner) : null,
     railSignals: Object.values(railSignals || {}),
     wallets: WALLETS,
     homeless: [],
@@ -114,6 +115,7 @@ function inferSavedOwnerIdForUsername(registryId){
 
 function applyOwnerRemap(oldId, newId){
   for(const b of buildings) if(b.owner === oldId) b.owner = newId;
+  if(railOwner) for(let i=0;i<railOwner.length;i++) if(railOwner[i] === oldId) railOwner[i] = newId;
   for(const h of homeless)  if(h.owner === oldId){ h.owner = newId; h.col = playerColor(newId); }
   if(WALLETS[oldId]){
     if(!WALLETS[newId] || (WALLETS[oldId].money||0) >= (WALLETS[newId]?.money||0)){
@@ -135,6 +137,7 @@ function applySnapshot(d){
     terrain = Uint8Array.from(d.terrain);
     road    = Uint8Array.from(d.road);
     rail    = d.rail ? normalizeLegacyRailGrid(d.rail) : new Uint8Array((d.size || N) * (d.size || N));
+    railOwner = (d.railOwner && d.railOwner.length === N*N) ? Int16Array.from(d.railOwner) : new Int16Array(N*N).fill(-1);
     railSignals = Object.create(null);
     mapBounds = { ...d.mapBounds };
     expansionLevels = d.expansionLevels || { left:0, right:0, top:0, bottom:0 };
@@ -165,6 +168,7 @@ function applySnapshot(d){
     terrain = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     road    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     rail    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
+    railOwner = new Int16Array(N_FULL_MAP * N_FULL_MAP).fill(-1);
     railSignals = Object.create(null);
     for(let y=0; y<N_PLAY; y++) for(let x=0; x<N_PLAY; x++){
       terrain[(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldTerrain[y*N_PLAY+x];
@@ -419,7 +423,13 @@ function applyAction(msg){
         break;
       }
       if(msg.fromUsername) walletOf(msg.from).username = msg.fromUsername;
-      rail[act.y*N+act.x] = act.mask;
+      {
+        const ri = act.y*N+act.x;
+        const wasEmpty = !rail[ri];
+        rail[ri] = act.mask;
+        if(!act.mask) railOwner[ri] = -1;
+        else if(wasEmpty) railOwner[ri] = (msg.from == null ? -1 : msg.from);
+      }
       rebuildRailBlocks();
       if(act.costDelta > 0){
         walletOf(msg.from).money -= act.costDelta;

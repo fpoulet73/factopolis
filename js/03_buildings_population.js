@@ -244,6 +244,14 @@ function playerColor(owner){
   return (MP.players.find(p=>p.id===owner)||{}).color || COLORS[(owner - 1) % COLORS.length] || '#e0e0e0';
 }
 
+function playerName(owner){
+  if(owner == null) return 'Joueur';
+  const p = MP.players.find(p=>p.id===owner);
+  if(p && (p.name || p.username)) return p.name || p.username;
+  if(WALLETS[owner]?.username) return WALLETS[owner].username;
+  return 'Joueur #'+owner;
+}
+
 function findEmptySpawnTiles(owner, count){
   const seed = owner == null ? 17 : owner * 97 + 13;
   const cx = Math.max(4, Math.min(N-5, ((seed * 37) % Math.max(1, N-8)) + 4));

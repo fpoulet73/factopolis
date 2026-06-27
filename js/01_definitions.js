@@ -135,6 +135,9 @@ const TRAIN_WAGON_COST = CFG.logistique?.train?.coutWagon ?? 10000;
 // Durée d'un jour de jeu en gtime-secondes (24h / GAME_HOURS_PER_SEC)
 const VEHICLE_MAINTENANCE_DAY  = 24 / GAME_HOURS_PER_SEC;
 const VEHICLE_MAINTENANCE_RATE = CFG.logistique?.tauxHausseMensuelle ?? CFG.logistique?.train?.tauxHausseMensuelle ?? 0.03;
+// Péage d'utilisation des rails : $ payés au propriétaire des rails par tuile
+// empruntée qui ne lui appartient pas (réglé au moment de l'entretien du train).
+const RAIL_USAGE_TAX = CFG.logistique?.train?.peageRailParTuile ?? 1;
 const TRAIN_STATION_RADIUS    = CFG.logistique?.gare?.rayon               ?? 12;
 const TRAIN_STATION_FILL_TIME = CFG.logistique?.gare?.tempsRemplissage    ?? 8;
 const TRAIN_FARE_FACTOR       = CFG.logistique?.gare?.tarif               ?? 2;

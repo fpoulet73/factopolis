@@ -20,6 +20,33 @@ function fisherFishBonus(b){
   return count;
 }
 
+// Règle le péage d'utilisation des rails accumulé par un train : le propriétaire
+// du train (payerId) paie RAIL_USAGE_TAX par tuile empruntée à chaque propriétaire
+// de rails concerné. Détaillé par joueur pour l'affichage des finances.
+function settleRailToll(v, payerId, fx, fy){
+  if(!v || !v.railTollOwed) return;
+  const payer = walletOf(payerId);
+  let totalPaid = 0;
+  for(const k in v.railTollOwed){
+    const tiles = v.railTollOwed[k];
+    const ownerId = +k;
+    if(tiles <= 0 || ownerId === payerId) continue;
+    const amount = tiles * RAIL_USAGE_TAX;
+    if(amount <= 0) continue;
+    payer.money -= amount;
+    payer.fin.peagePaye += amount;
+    payer.peageDetail.paid[ownerId] = (payer.peageDetail.paid[ownerId] || 0) + amount;
+    const receiver = walletOf(ownerId);
+    receiver.money += amount;
+    receiver.fin.peageRecu += amount;
+    receiver.peageDetail.recv[payerId] = (receiver.peageDetail.recv[payerId] || 0) + amount;
+    totalPaid += amount;
+  }
+  v.railTollOwed = {};
+  if(totalPaid > 0 && fx != null)
+    addFloat(fx, fy - 0.7, '−'+(Math.round(totalPaid*10)/10)+' $ 🛤️', '#ff8c42');
+}
+
 function update(dt){
   gtime += dt;
   let starved = null;
@@ -237,7 +264,7 @@ function update(dt){
     const garage = v.garageRef;
     if(!garage || garage.dead) continue;
     const w = walletOf(garage.owner);
-    w.money -= cost; w.fin.entretien += cost;
+    w.money -= cost; w.fin.entretienVehicules += cost;
     let fx, fy;
     if(v.pts?.length > 0 && v.state !== 'idle'){
       const seg = Math.min(v.seg || 0, v.pts.length - 1);
@@ -250,6 +277,8 @@ function update(dt){
       fy = garage.y;
     }
     addFloat(fx, fy, '−'+cost+' $ '+VEHICLE_TYPES[v.vtype].icone, '#ff3030');
+    // Régler le péage d'utilisation des rails accumulé depuis le dernier entretien.
+    settleRailToll(v, garage.owner, fx, fy);
   }
 
   // historique financier par wallet

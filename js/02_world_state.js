@@ -1,7 +1,7 @@
 const COLORS = ['#e25e4c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#f0a040','#40d0c0','#e0e0e0'];
 
 // ---------- état ----------
-let terrain, road, rail, railSignals, railBlocks, railBlockOccupancy, bgrid, buildings, trucks, walkers, homeless, floats;
+let terrain, road, rail, railOwner, railSignals, railBlocks, railBlockOccupancy, bgrid, buildings, trucks, walkers, homeless, floats;
 let vehicles = [];        // véhicules persistants
 let vehicleRouteMode = null; // { vehicle, step:'source'|'dest' } ou null
 let selectedVehicle = null;  // véhicule sélectionné
@@ -24,7 +24,7 @@ let selected = null, tool = 'select';
 let speed = 1, paused = false;
 let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0, passengerCycleTimer = 0;
 let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
-const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0, expansion:0 });
+const FIN_ZERO = ()=> ({ ventes:0, taxes:0, rembours:0, construction:0, entretien:0, entretienVehicules:0, peageRecu:0, peagePaye:0, expansion:0 });
 const START_HOMELESS = 0;
 let rot = 0; // orientation de la vue (0..3)
 const cam = { x:0, y:0, z:1 };
@@ -62,6 +62,10 @@ function currentWalletOwner(){
 const walletOf  = oid => {
   const k = oid ?? currentWalletOwner();
   if(!WALLETS[k]) WALLETS[k] = { money:2500, fin:FIN_ZERO(), finHist:[], finTimer:0, mi:0, eff:1, homelessSeeded:false, starterHomes:0 };
+  // Rétro-compat : compléter les catégories financières absentes des anciennes sauvegardes.
+  if(!WALLETS[k].fin) WALLETS[k].fin = FIN_ZERO();
+  else { const z = FIN_ZERO(); for(const c in z) if(WALLETS[k].fin[c] == null) WALLETS[k].fin[c] = 0; }
+  if(!WALLETS[k].peageDetail) WALLETS[k].peageDetail = { recv:{}, paid:{} };
   if(WALLETS[k].starterHomes == null) WALLETS[k].starterHomes = 0;
   if(WALLETS[k].starterHomesGranted == null) WALLETS[k].starterHomesGranted = WALLETS[k].starterHomes || 0;
   return WALLETS[k];
@@ -216,6 +220,7 @@ function genWorld(config){
   terrain = new Uint8Array(N*N);
   road = new Uint8Array(N*N);
   rail = new Uint8Array(N*N);
+  railOwner = new Int16Array(N*N).fill(-1);
   railSignals = Object.create(null);
   railBlocks = null;
   railBlockOccupancy = null;

@@ -60,15 +60,30 @@ function renderFinance(){
   const fin = wt.fin, finHist = wt.finHist || [];
   const base = finHist[0] || fin;
   const wl = Math.max(1, finHist.length);
-  const rate = c => (fin[c]-base[c])*60/wl;
+  const rate = c => ((fin[c]||0)-(base[c]||0))*60/wl;
   const fmt = n => Math.round(Math.abs(n)).toLocaleString('fr-FR');
   const row = (lbl,c,sign,cls)=>
     '<tr class="'+cls+'"><td>'+lbl+'</td>'
-    + '<td class="r">'+sign+fmt(fin[c])+' $</td>'
+    + '<td class="r">'+sign+fmt(fin[c]||0)+' $</td>'
     + '<td class="r">'+sign+fmt(rate(c))+' $</td></tr>';
-  const netT = fin.ventes+fin.taxes+fin.rembours-fin.construction-fin.entretien-(fin.expansion||0);
-  const netR = rate('ventes')+rate('taxes')+rate('rembours')
-             - rate('construction')-rate('entretien')-rate('expansion');
+  // Sous-lignes détaillées par joueur (péages) : montant total uniquement.
+  const detailRows = (detail, sign, prep, cls)=>{
+    let h = '';
+    for(const id in (detail||{})){
+      const amt = detail[id];
+      if(!amt) continue;
+      h += '<tr class="'+cls+' sub"><td>↳ '+prep+' '+playerName(+id)+'</td>'
+         + '<td class="r">'+sign+fmt(amt)+' $</td><td class="r"></td></tr>';
+    }
+    return h;
+  };
+  const peageDetail = wt.peageDetail || { recv:{}, paid:{} };
+  const hasRecu = (fin.peageRecu||0) > 0;
+  const hasPaye = (fin.peagePaye||0) > 0;
+  const netT = (fin.ventes||0)+(fin.taxes||0)+(fin.rembours||0)+(fin.peageRecu||0)
+             - (fin.construction||0)-(fin.entretien||0)-(fin.entretienVehicules||0)-(fin.peagePaye||0)-(fin.expansion||0);
+  const netR = rate('ventes')+rate('taxes')+rate('rembours')+rate('peageRecu')
+             - rate('construction')-rate('entretien')-rate('entretienVehicules')-rate('peagePaye')-rate('expansion');
   const sgn = n => n>=0 ? '+' : '−';
   p.innerHTML =
     '<div class="panel-head"><h3>💰 Finances</h3><button class="tbtn" id="bFinX" aria-label="Fermer">✕</button></div>'
@@ -77,8 +92,11 @@ function renderFinance(){
     + row('Ventes d\'outils','ventes','+','in')
     + row('Taxes des habitants','taxes','+','in')
     + row('Remboursements','rembours','+','in')
+    + (hasRecu ? row('Péages rails reçus','peageRecu','+','in') + detailRows(peageDetail.recv,'+','de','in') : '')
     + row('Construction','construction','−','out')
     + row('Entretien industriel','entretien','−','out')
+    + row('Entretien véhicules','entretienVehicules','−','out')
+    + (hasPaye ? row('Péages rails payés','peagePaye','−','out') + detailRows(peageDetail.paid,'−','à','out') : '')
     + ((fin.expansion||0) > 0 ? row('Expansions carte','expansion','−','out') : '')
     + '<tr class="net"><td>Bilan</td><td class="r">'+sgn(netT)+fmt(netT)+' $</td>'
     + '<td class="r">'+sgn(netR)+fmt(netR)+' $</td></tr>'

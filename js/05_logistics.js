@@ -1480,6 +1480,15 @@ function advanceRailVehicle(v, move){
     v.railDecisionPreviousTile = null;
     v.railPredecidedJunctionTile = -1;
     const tile = v.pathTiles[v.seg] ?? -1;
+    // Péage rails : compter chaque tuile empruntée appartenant à un autre joueur.
+    if(tile >= 0 && railOwner){
+      const ro = railOwner[tile];
+      const mine = v.garageRef?.owner ?? null;
+      if(ro >= 0 && ro !== mine){
+        if(!v.railTollOwed) v.railTollOwed = {};
+        v.railTollOwed[ro] = (v.railTollOwed[ro] || 0) + 1;
+      }
+    }
     const previousBlock = v.currentRailBlock ?? -1;
     const nextBlock = tile >= 0 ? (railBlocks?.blockByTile?.[tile] ?? -1) : -1;
     if(nextBlock !== previousBlock && railBlockOccupancy){

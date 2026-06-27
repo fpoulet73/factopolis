@@ -130,14 +130,18 @@ function setRailSignal(x, y, bit, present, forcedRed = false, kind = 'block'){
   rebuildRailBlocks();
 }
 
-function railApplyMaskUpdates(updates, walletDelta = 0, walletTarget = myWallet()){
+function railApplyMaskUpdates(updates, walletDelta = 0, walletTarget = myWallet(), owner = myOwner()){
   let changed = false;
+  const oid = owner == null ? -1 : owner;
   for(const update of updates){
     const { x, y, mask } = update;
     if(!inMap(x, y)) continue;
     const i = y * N + x;
     if(rail[i] === mask) continue;
+    const wasEmpty = !rail[i];
     rail[i] = mask;
+    if(!mask) railOwner[i] = -1;
+    else if(wasEmpty) railOwner[i] = oid;
     changed = true;
   }
   if(changed) rebuildRailBlocks();

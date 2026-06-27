@@ -1982,6 +1982,7 @@ function draw(){
     if(rail[i]){
       railNodes.push(c);
       const mask = rail[i];
+      const owner = railOwner ? railOwner[i] : -1;
       let links = 0;
       const railDirs = [];
       for(const def of RAIL_DIRS){
@@ -1994,9 +1995,9 @@ function draw(){
         if(ny < y || (ny === y && nx < x)) continue;
         // Rail masks describe explicit edges. Do not hide a diagonal edge at a
         // junction merely because the tile also has an orthogonal connection.
-        railSegments.push({ a:c, b:iso(rx+du+0.5, ry+dv+0.5), dir:[du, dv] });
+        railSegments.push({ a:c, b:iso(rx+du+0.5, ry+dv+0.5), dir:[du, dv], owner });
       }
-      if(!links) railSingles.push(c);
+      if(!links) railSingles.push({ c, owner });
       else if(links <= 2) railNodeSleepers.push({ center:c, dirs:railDirs });
     }
   }
@@ -2127,15 +2128,28 @@ function draw(){
     for(const tl of trafficLights) drawTrafficLight(tl.c, tl.approaches);
   }
 
+  const railSingleCoords = railSingles.map(s=>s.c);
   strokeRailBed(railSegments, 11, '#4f3925');
   drawRailSleepers(railSegments, 4, 0.06, 16, 3.2, '#6a4a2b');
   drawRailNodeSleepers(railNodeSleepers, 13, 3, '#6a4a2b');
-  fillNodes(railSingles, railSleeperWidth*0.24, '#6a4a2b');
-  strokeRailPairs(railSegments, 4.2, 2.8, railColor);
-  fillNodes(railSingles, 3.2, railColor);
+  fillNodes(railSingleCoords, railSleeperWidth*0.24, '#6a4a2b');
+  // Rails métalliques : couleur du joueur en multijoueur, gris sinon.
+  const railColorFor = owner => (MP.connected && owner != null && owner >= 0) ? playerColor(owner) : railColor;
+  const groupByColor = (items, get) => {
+    const map = new Map();
+    for(const it of items){
+      const col = railColorFor(it.owner);
+      let arr = map.get(col);
+      if(!arr){ arr = []; map.set(col, arr); }
+      arr.push(get(it));
+    }
+    return map;
+  };
+  for(const [col, segs] of groupByColor(railSegments, it=>it)) strokeRailPairs(segs, 4.2, 2.8, col);
+  for(const [col, coords] of groupByColor(railSingles, it=>it.c)) fillNodes(coords, 3.2, col);
   if(!drawFast){
     strokeRailPairs(railSegments, 4.2, 1.1, railLineColor);
-    fillNodes(railSingles, 1.2, railLineColor);
+    fillNodes(railSingleCoords, 1.2, railLineColor);
   }
   if(railSignals){
     for(const sig of Object.values(railSignals)) drawRailSignal(sig);
