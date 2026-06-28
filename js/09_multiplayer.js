@@ -19,11 +19,13 @@ function refreshOwnerColorsFromRegistry(){
 }
 
 const MP_STATE_SYNC_INTERVAL = 0.2;
-const MP_RENDER_SMOOTH_MS = 180;
+const MP_RENDER_DELAY = 0.3;
+const MP_SNAPSHOT_BUFFER_MAX = 16;
 let mpStateSyncTimer = 0;
 
 function serializeTruckState(tk){
   return {
+    id: tk.id ?? null,
     pts: Array.isArray(tk.pts) ? tk.pts.map(p => ({ x:p.x, y:p.y })) : [],
     seg: tk.seg || 0,
     t: tk.t || 0,
@@ -141,6 +143,14 @@ function vehicleAuthoritativeStateSnapshot(v){
   };
 }
 
+function truckRenderStateSnapshot(tk){
+  return {
+    pts: copyPointList(tk.renderPts || tk.pts),
+    seg: tk.renderSeg ?? tk.seg ?? 0,
+    t: tk.renderT ?? tk.t ?? 0,
+  };
+}
+
 function vehiclePathSignature(state, vtype){
   if(vtype === 'train'){
     return Array.isArray(state.pathTiles) && state.pathTiles.length
@@ -176,30 +186,7 @@ function setVehicleRenderImmediate(v, state){
   v.renderCurrentBuilding = state.currentBuilding || null;
   v.renderRailContinueTile = state.railContinueTile ?? null;
   v.renderRailPreviousTile = state.railPreviousTile ?? null;
-  v.renderWaitTimer = state.waitTimer ?? 0;
   setVehicleRenderProgress(v, (state.seg ?? 0) + (state.t ?? 0));
-}
-
-function prepareVehicleRenderBlend(v, fromState){
-  const toState = vehicleRenderStateSnapshot(v);
-  if(!fromState){
-    setVehicleRenderImmediate(v, toState);
-    v.mpRenderBlend = null;
-    return;
-  }
-  const fromSig = vehiclePathSignature(fromState, v.vtype);
-  const toSig = vehiclePathSignature(toState, v.vtype);
-  if(fromSig !== toSig){
-    setVehicleRenderImmediate(v, toState);
-    v.mpRenderBlend = null;
-    return;
-  }
-  v.mpRenderBlend = {
-    startedAt: performance.now(),
-    durationMs: MP_RENDER_SMOOTH_MS,
-    from: fromState,
-    to: toState,
-  };
 }
 
 function mpVehicleRenderState(veh){
@@ -214,6 +201,21 @@ function mpVehicleRenderState(veh){
     railContinueTile: veh.renderRailContinueTile ?? veh.railContinueTile ?? null,
     railPreviousTile: veh.renderRailPreviousTile ?? veh.railPreviousTile ?? null,
   };
+}
+
+function mpTruckRenderState(tk){
+  if(!tk) return null;
+  return {
+    pts: tk.renderPts || tk.pts || [],
+    seg: tk.renderSeg ?? tk.seg ?? 0,
+    t: tk.renderT ?? tk.t ?? 0,
+  };
+}
+
+function setTruckRenderImmediate(tk, state){
+  tk.renderPts = copyPointList(state.pts);
+  tk.renderSeg = state.seg ?? 0;
+  tk.renderT = state.t ?? 0;
 }
 
 function setVehicleRenderProgress(v, progress){
@@ -240,31 +242,6 @@ function setVehicleRenderProgress(v, progress){
   v.renderT = clamped - seg;
 }
 
-function advanceVehicleRenderProgress(v, move){
-  const pts = v.renderPts || [];
-  while(move > 0 && pts.length >= 2){
-    const seg = Math.max(0, Math.min(v.renderSeg || 0, pts.length - 2));
-    const a = pts[seg], b = pts[seg + 1];
-    const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-    const currentT = Math.max(0, Math.min(1, v.renderT || 0));
-    const remain = (1 - currentT) * d;
-    if(move >= remain){
-      move -= remain;
-      if(seg + 1 >= pts.length - 1){
-        v.renderSeg = pts.length - 2;
-        v.renderT = 1;
-        break;
-      }
-      v.renderSeg = seg + 1;
-      v.renderT = 0;
-    } else {
-      v.renderSeg = seg;
-      v.renderT = currentT + move / d;
-      break;
-    }
-  }
-}
-
 function wrappedProgressDiff(current, target, total){
   if(!(total > 0)) return target - current;
   let diff = target - current;
@@ -277,10 +254,143 @@ function buildingRenderProg(b){
   return b?.renderProg ?? b?.prog ?? 0;
 }
 
+function mpResetGuestSnapshotBuffer(){
+  MP.renderSnapshots = [];
+  MP.renderClockGtime = null;
+}
+
+function serializeGuestRenderVehicleSnapshot(sv){
+  return {
+    id: String(sv.id),
+    vtype: sv.vtype,
+    state: sv.state || 'idle',
+    pts: copyPointList(sv.pts),
+    pathTiles: Array.isArray(sv.pathTiles) ? sv.pathTiles.slice() : [],
+    railTrail: copyPointList(sv.railTrail),
+    seg: sv.seg || 0,
+    t: sv.t || 0,
+    currentBuildingX: sv.currentBuildingX ?? null,
+    currentBuildingY: sv.currentBuildingY ?? null,
+    railContinueTile: sv.railContinueTile ?? null,
+    railPreviousTile: sv.railPreviousTile ?? null,
+  };
+}
+
+function serializeGuestRenderTruckSnapshot(st){
+  return {
+    id: String(st.id ?? `${st.fromX},${st.fromY}:${st.targetX},${st.targetY}:${st.res}:${st.amt}`),
+    pts: copyPointList(st.pts),
+    seg: st.seg || 0,
+    t: st.t || 0,
+  };
+}
+
+function mpBuildGuestRenderSnapshot(d){
+  const buildings = Object.create(null);
+  for(const b of d.buildings || []) buildings[syncBuildingKey(b)] = { prog:b.prog || 0 };
+  return {
+    gtime: d.gtime || 0,
+    buildings,
+    vehicles: new Map((d.vehicles || []).map(sv => [String(sv.id), serializeGuestRenderVehicleSnapshot(sv)])),
+    trucks: new Map((d.trucks || []).map(st => [String(st.id ?? `${st.fromX},${st.fromY}:${st.targetX},${st.targetY}:${st.res}:${st.amt}`), serializeGuestRenderTruckSnapshot(st)])),
+  };
+}
+
+function mpPushGuestRenderSnapshot(d){
+  if(!MP.connected || MP.role !== 'guest' || !d) return;
+  const snap = mpBuildGuestRenderSnapshot(d);
+  const buf = MP.renderSnapshots || (MP.renderSnapshots = []);
+  const last = buf[buf.length - 1];
+  if(last && snap.gtime < last.gtime - 1e-6) return;
+  if(last && Math.abs(snap.gtime - last.gtime) <= 1e-6) buf[buf.length - 1] = snap;
+  else buf.push(snap);
+  while(buf.length > MP_SNAPSHOT_BUFFER_MAX) buf.shift();
+  const latest = buf[buf.length - 1];
+  const oldest = buf[0];
+  const target = Math.max(oldest?.gtime || 0, (latest?.gtime || 0) - MP_RENDER_DELAY);
+  if(!Number.isFinite(MP.renderClockGtime)) MP.renderClockGtime = target;
+  else if(MP.renderClockGtime < (oldest?.gtime || 0)) MP.renderClockGtime = oldest.gtime;
+}
+
+function mpAdvanceGuestRenderClock(gameDt){
+  const buf = MP.renderSnapshots || [];
+  if(!buf.length){
+    MP.renderClockGtime = null;
+    return;
+  }
+  const oldest = buf[0];
+  const latest = buf[buf.length - 1];
+  const target = Math.max(oldest.gtime, latest.gtime - MP_RENDER_DELAY);
+  if(!Number.isFinite(MP.renderClockGtime)) MP.renderClockGtime = target;
+  if(!paused && gameDt > 0) MP.renderClockGtime += gameDt;
+  if(MP.renderClockGtime > target) MP.renderClockGtime = target;
+  if(MP.renderClockGtime < oldest.gtime) MP.renderClockGtime = oldest.gtime;
+}
+
+function mpFindGuestRenderBracket(){
+  const buf = MP.renderSnapshots || [];
+  if(!buf.length) return null;
+  const latest = buf[buf.length - 1];
+  const target = Math.max(buf[0].gtime, latest.gtime - MP_RENDER_DELAY);
+  const renderTime = Number.isFinite(MP.renderClockGtime) ? MP.renderClockGtime : target;
+  if(renderTime <= buf[0].gtime) return { a:buf[0], b:buf[0], alpha:0 };
+  for(let i=1; i<buf.length; i++){
+    const b = buf[i];
+    if(renderTime <= b.gtime){
+      const a = buf[i - 1];
+      const span = Math.max(1e-6, b.gtime - a.gtime);
+      return { a, b, alpha:Math.max(0, Math.min(1, (renderTime - a.gtime) / span)) };
+    }
+  }
+  return { a:latest, b:latest, alpha:0 };
+}
+
+function snapshotProgressValue(s){
+  return (s?.seg || 0) + (s?.t || 0);
+}
+
+function interpolateVehicleSnapshotState(a, b, alpha){
+  if(!a && !b) return null;
+  if(!a) return b;
+  if(!b) return a;
+  const samePath = vehiclePathSignature(a, a.vtype) === vehiclePathSignature(b, b.vtype);
+  if(!samePath || a.state !== b.state){
+    return alpha < 0.5 ? a : b;
+  }
+  const aProgress = snapshotProgressValue(a);
+  const bProgress = snapshotProgressValue(b);
+  if(bProgress + 1e-6 < aProgress) return alpha < 0.5 ? a : b;
+  const progress = aProgress + (bProgress - aProgress) * alpha;
+  return {
+    ...b,
+    railTrail: interpolatePointLists(a.railTrail, b.railTrail, alpha),
+    currentBuildingX: alpha < 0.5 ? a.currentBuildingX : b.currentBuildingX,
+    currentBuildingY: alpha < 0.5 ? a.currentBuildingY : b.currentBuildingY,
+    railContinueTile: alpha < 0.5 ? a.railContinueTile : b.railContinueTile,
+    railPreviousTile: alpha < 0.5 ? a.railPreviousTile : b.railPreviousTile,
+    interpProgress: progress,
+  };
+}
+
+function interpolateTruckSnapshotState(a, b, alpha){
+  if(!a && !b) return null;
+  if(!a) return b;
+  if(!b) return a;
+  const samePath = vehiclePathSignature(a, 'road') === vehiclePathSignature(b, 'road');
+  if(!samePath) return alpha < 0.5 ? a : b;
+  const aProgress = snapshotProgressValue(a);
+  const bProgress = snapshotProgressValue(b);
+  if(bProgress + 1e-6 < aProgress) return alpha < 0.5 ? a : b;
+  return {
+    ...b,
+    interpProgress: aProgress + (bProgress - aProgress) * alpha,
+  };
+}
+
 function mpUpdateGuestVisuals(realDt=0, gameDt=0){
   if(!MP.connected || MP.role !== 'guest'){
+    mpResetGuestSnapshotBuffer();
     for(const v of vehicles){
-      v.mpRenderBlend = null;
       v.renderPts = null;
       v.renderPathTiles = null;
       v.renderRailTrail = null;
@@ -289,64 +399,81 @@ function mpUpdateGuestVisuals(realDt=0, gameDt=0){
       v.renderCurrentBuilding = null;
       v.renderRailContinueTile = null;
       v.renderRailPreviousTile = null;
-      v.renderWaitTimer = null;
+    }
+    for(const tk of trucks){
+      tk.renderPts = null;
+      tk.renderSeg = null;
+      tk.renderT = null;
     }
     return;
   }
-  for(const b of buildings){
-    const r = recipeOf(b);
-    if(!r || b.paused){
-      b.renderProg = b.prog || 0;
+  mpAdvanceGuestRenderClock(gameDt);
+  const bracket = mpFindGuestRenderBracket();
+  if(!bracket){
+    for(const b of buildings) b.renderProg = b.prog || 0;
+    for(const v of vehicles) setVehicleRenderImmediate(v, vehicleAuthoritativeStateSnapshot(v));
+    for(const tk of trucks) setTruckRenderImmediate(tk, truckRenderStateSnapshot(tk));
+    return;
+  }
+  const { a, b, alpha } = bracket;
+
+  for(const bld of buildings){
+    const r = recipeOf(bld);
+    const pa = a.buildings[syncBuildingKey(bld)]?.prog;
+    const pb = b.buildings[syncBuildingKey(bld)]?.prog;
+    if(!r || pa == null || pb == null){
+      bld.renderProg = bld.prog || 0;
       continue;
     }
-    if(b.renderProg == null) b.renderProg = b.prog || 0;
-    if(!paused && gameDt > 0 && Number.isFinite(b.mpProgRate)) b.renderProg += (b.mpProgRate || 0) * gameDt;
-    while(b.renderProg >= r.time) b.renderProg -= r.time;
-    while(b.renderProg < 0) b.renderProg += r.time;
-    const diff = wrappedProgressDiff(b.renderProg, b.prog || 0, r.time);
-    b.renderProg += diff * Math.min(1, realDt * 8);
-    while(b.renderProg >= r.time) b.renderProg -= r.time;
-    while(b.renderProg < 0) b.renderProg += r.time;
+    bld.renderProg = pa + wrappedProgressDiff(pa, pb, r.time) * alpha;
+    while(bld.renderProg >= r.time) bld.renderProg -= r.time;
+    while(bld.renderProg < 0) bld.renderProg += r.time;
   }
 
   for(const v of vehicles){
-    const auth = vehicleAuthoritativeStateSnapshot(v);
-    if(!v.renderPts){
-      setVehicleRenderImmediate(v, auth);
+    const va = a.vehicles.get(String(v.id));
+    const vb = b.vehicles.get(String(v.id));
+    const interp = interpolateVehicleSnapshotState(va, vb, alpha);
+    if(!interp){
+      setVehicleRenderImmediate(v, vehicleAuthoritativeStateSnapshot(v));
       continue;
     }
-    const renderSig = vehiclePathSignature(mpVehicleRenderState(v), v.vtype);
-    const authSig = vehiclePathSignature(auth, v.vtype);
-    if(renderSig !== authSig){
-      setVehicleRenderImmediate(v, auth);
-      v.mpRenderBlend = null;
+    const currentBuilding = syncBuildingByCoords(interp.currentBuildingX, interp.currentBuildingY) || null;
+    v.renderPts = copyPointList(interp.pts);
+    v.renderPathTiles = Array.isArray(interp.pathTiles) ? interp.pathTiles.slice() : [];
+    v.renderRailTrail = copyPointList(interp.railTrail);
+    v.renderCurrentBuilding = currentBuilding;
+    v.renderRailContinueTile = interp.railContinueTile ?? null;
+    v.renderRailPreviousTile = interp.railPreviousTile ?? null;
+    const progress = interp.interpProgress ?? snapshotProgressValue(interp);
+    setVehicleRenderProgress(v, progress);
+  }
+
+  for(const tk of trucks){
+    const ta = a.trucks.get(String(tk.id));
+    const tb = b.trucks.get(String(tk.id));
+    const interp = interpolateTruckSnapshotState(ta, tb, alpha);
+    if(!interp){
+      setTruckRenderImmediate(tk, truckRenderStateSnapshot(tk));
       continue;
     }
-    v.renderPts = copyPointList(auth.pts);
-    v.renderPathTiles = Array.isArray(auth.pathTiles) ? auth.pathTiles.slice() : [];
-    v.renderRailTrail = interpolatePointLists(v.renderRailTrail || auth.railTrail, auth.railTrail, Math.min(1, realDt * 10));
-    v.renderCurrentBuilding = auth.currentBuilding || null;
-    v.renderRailContinueTile = auth.railContinueTile ?? null;
-    v.renderRailPreviousTile = auth.railPreviousTile ?? null;
-    if(v.state === 'idle' || !auth.pts?.length){
-      setVehicleRenderImmediate(v, auth);
-      continue;
+    tk.renderPts = copyPointList(interp.pts);
+    const progress = interp.interpProgress ?? snapshotProgressValue(interp);
+    const pts = tk.renderPts || [];
+    if(pts.length >= 2){
+      const maxProgress = pts.length - 1;
+      const clamped = Math.max(0, Math.min(maxProgress, progress || 0));
+      if(clamped >= maxProgress){
+        tk.renderSeg = Math.max(0, pts.length - 2);
+        tk.renderT = 1;
+      } else {
+        tk.renderSeg = Math.max(0, Math.min(Math.floor(clamped), pts.length - 2));
+        tk.renderT = clamped - Math.floor(clamped);
+      }
+    } else {
+      tk.renderSeg = 0;
+      tk.renderT = 0;
     }
-    const authWait = Math.max(0, auth.waitTimer || 0);
-    v.renderWaitTimer = v.renderWaitTimer == null ? authWait : Math.min(v.renderWaitTimer, authWait);
-    if(authWait > 0 && v.renderWaitTimer <= 0) v.renderWaitTimer = authWait;
-    if(v.renderWaitTimer > 0){
-      v.renderWaitTimer = Math.max(0, v.renderWaitTimer - gameDt);
-    } else if(!paused && gameDt > 0){
-      const vt = VEHICLE_TYPES[v.vtype];
-      if(vt?.speed) advanceVehicleRenderProgress(v, vt.speed * (v.engineMult || 1) * TILE * gameDt);
-    }
-    const maxProgress = Math.max(0, (auth.pts?.length || 0) - 1);
-    const authProgress = Math.max(0, Math.min(maxProgress, (auth.seg || 0) + (auth.t || 0)));
-    const renderProgress = Math.max(0, Math.min(maxProgress, (v.renderSeg || 0) + (v.renderT || 0)));
-    const corrected = renderProgress + (authProgress - renderProgress) * Math.min(1, realDt * 6);
-    setVehicleRenderProgress(v, corrected);
-    if(Math.abs(authProgress - renderProgress) > 2.5) setVehicleRenderImmediate(v, auth);
   }
 }
 
@@ -419,7 +546,6 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
 }
 
 function applyVehicleDynamicState(v, sv){
-  const prevRender = vehicleRenderStateSnapshot(v);
   const source = syncBuildingByCoords(sv.sourceX, sv.sourceY);
   const dest = syncBuildingByCoords(sv.destX, sv.destY);
   const currentBuilding = syncBuildingByCoords(sv.currentBuildingX, sv.currentBuildingY);
@@ -477,7 +603,6 @@ function applyVehicleDynamicState(v, sv){
   }
   v.seg = Math.max(0, Math.min((sv.seg || 0), Math.max(0, v.pts.length - 1)));
   v.t = Math.max(0, Math.min(1, sv.t || 0));
-  prepareVehicleRenderBlend(v, prevRender);
 }
 
 function applyStateSync(d){
@@ -551,7 +676,6 @@ function applyStateSync(d){
       vehiclesById.set(String(v.id), v);
     }
     applyVehicleDynamicState(v, sv);
-    if(!v.mpRenderBlend) setVehicleRenderImmediate(v, vehicleRenderStateSnapshot(v));
   }
 
   trucks = [];
@@ -559,7 +683,10 @@ function applyStateSync(d){
     const from = syncBuildingByCoords(st.fromX, st.fromY);
     const target = syncBuildingByCoords(st.targetX, st.targetY);
     if(!from || !target || !Array.isArray(st.pts) || st.pts.length < 2) continue;
+    const truckId = st.id ?? nextTruckId++;
+    if(Number.isFinite(Number(truckId))) nextTruckId = Math.max(nextTruckId, Number(truckId) + 1);
     trucks.push({
+      id: truckId,
       pts: st.pts.map(p => ({ x:p.x, y:p.y })),
       seg: Math.max(0, Math.min((st.seg || 0), Math.max(0, st.pts.length - 1))),
       t: Math.max(0, Math.min(1, st.t || 0)),
@@ -867,7 +994,7 @@ function applySnapshot(d){
   document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===speed));
 
   buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
-  vehicles = []; vehicleRouteMode = null; selectedVehicle = null; focusVehicle = null; camTracking = false; vehicleListMode = null; nextVehicleId = 0; nextTrainStationId = d.nextTrainStationId || 1;
+  vehicles = []; vehicleRouteMode = null; selectedVehicle = null; focusVehicle = null; camTracking = false; vehicleListMode = null; nextTruckId = 0; nextVehicleId = 0; nextTrainStationId = d.nextTrainStationId || 1;
   towns = []; nextTownId = 0; selectedTownId = prevSelectedTownId ?? null; townLabelHits = [];
   bgrid = new Array(N*N).fill(null);
   selected = null;
@@ -1072,7 +1199,10 @@ function applySnapshot(d){
       const from = st.fromX != null ? buildings.find(b => b.x === st.fromX && b.y === st.fromY) : null;
       const target = st.targetX != null ? buildings.find(b => b.x === st.targetX && b.y === st.targetY) : null;
       if(!from || !target || !Array.isArray(st.pts) || st.pts.length < 2) continue;
+      const truckId = st.id ?? nextTruckId++;
+      if(Number.isFinite(Number(truckId))) nextTruckId = Math.max(nextTruckId, Number(truckId) + 1);
       trucks.push({
+        id: truckId,
         pts: st.pts.map(p => ({ x:p.x, y:p.y })),
         seg: Math.max(0, Math.min((st.seg || 0), Math.max(0, st.pts.length - 1))),
         t: Math.max(0, Math.min(1, st.t || 0)),
@@ -1438,6 +1568,7 @@ function mpConnect(url){
     MP.shutdownNotice = false;
     MP.shutdownMessage = '';
     MP.awaitingSnapshot = false;
+    mpResetGuestSnapshotBuffer();
     mpStateSyncTimer = 0;
     toast('🌐 Connecté au serveur multijoueur');
     mpUpdateUI();
@@ -1459,6 +1590,7 @@ function mpConnect(url){
     MP.rooms = [];
     MP.shutdownNotice = false;
     MP.awaitingSnapshot = false;
+    mpResetGuestSnapshotBuffer();
     mpStateSyncTimer = 0;
     const closeMsg = MP.shutdownMessage || 'Serveur arrêté';
     MP.shutdownMessage = '';
@@ -1493,6 +1625,7 @@ function mpConnect(url){
         MP.ownerColors = {};
         MP.cursors = {};
         MP.awaitingSnapshot = false;
+        mpResetGuestSnapshotBuffer();
         mpStateSyncTimer = 0;
         document.title = 'Factopolis';
         genWorld(WORLD_DEFAULTS);
@@ -1514,6 +1647,7 @@ function mpConnect(url){
         MP.roomName     = msg.roomName     ?? null;
         MP.roomSaveName = msg.saveName     ?? msg.roomName ?? null;
         MP.awaitingSnapshot = msg.role === 'guest';
+        mpResetGuestSnapshotBuffer();
         mpStateSyncTimer = 0;
         document.title = MP.roomName ? 'Factopolis — ' + MP.roomName : 'Factopolis';
         if(msg.worldConfig) WORLD = normalizeWorldConfig(msg.worldConfig);
@@ -1568,6 +1702,8 @@ function mpConnect(url){
 
       case 'snapshot':
         // l'invité reçoit l'état initial
+        mpResetGuestSnapshotBuffer();
+        mpPushGuestRenderSnapshot(msg.state);
         applySnapshot(msg.state);
         MP.awaitingSnapshot = false;
         resetSelectedTown();
@@ -1575,7 +1711,10 @@ function mpConnect(url){
         break;
 
       case 'state_sync':
-        if(MP.role === 'guest' && !MP.awaitingSnapshot && msg.state) applyStateSync(msg.state);
+        if(MP.role === 'guest' && !MP.awaitingSnapshot && msg.state){
+          mpPushGuestRenderSnapshot(msg.state);
+          applyStateSync(msg.state);
+        }
         break;
 
       case 'action':
@@ -1713,6 +1852,10 @@ function mpConnect(url){
         break;
 
       case 'game_loaded':
+        if(MP.role === 'guest'){
+          mpResetGuestSnapshotBuffer();
+          mpPushGuestRenderSnapshot(msg.state);
+        }
         applySnapshot(msg.state);
         MP.awaitingSnapshot = false;
         resetSelectedTown();
@@ -1724,6 +1867,10 @@ function mpConnect(url){
         break;
 
       case 'game_new_world':
+        if(MP.role === 'guest'){
+          mpResetGuestSnapshotBuffer();
+          mpPushGuestRenderSnapshot(msg.state);
+        }
         applySnapshot(msg.state);
         MP.awaitingSnapshot = false;
         if(msg.config) WORLD = normalizeWorldConfig(msg.config);
@@ -1771,6 +1918,7 @@ function mpDisconnect(){
   MP.saves = [];
   MP.rooms = [];
   MP.awaitingSnapshot = false;
+  mpResetGuestSnapshotBuffer();
   mpStateSyncTimer = 0;
   mpUpdateUI();
 }

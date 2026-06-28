@@ -1098,8 +1098,10 @@ function trainPose(veh){
 }
 
 function drawTruck(tk){
-  const {u, v} = lanePose(tk.pts, tk.seg, tk.t, tk.overtaking ? -0.15 : 0.15);
-  const [bDx, bDy] = trainBlendedDir(tk.pts, tk.seg, tk.t);
+  const rs = typeof mpTruckRenderState === 'function' ? mpTruckRenderState(tk) : tk;
+  if(!rs.pts || !rs.pts.length) return;
+  const {u, v} = lanePose(rs.pts, rs.seg, rs.t, tk.overtaking ? -0.15 : 0.15);
+  const [bDx, bDy] = trainBlendedDir(rs.pts, rs.seg, rs.t);
   const [du, dv] = rotDir(bDx, bDy);
   const nd = Math.hypot(du, dv) || 1;
   const fn = du/nd, fv = dv/nd;
@@ -2252,7 +2254,9 @@ function draw(){
     }
 
     for(const tk of trucks){
-      const {u, v} = lanePose(tk.pts, tk.seg, tk.t, tk.overtaking ? -0.15 : 0.15);
+      const rs = typeof mpTruckRenderState === 'function' ? mpTruckRenderState(tk) : tk;
+      if(!rs.pts || !rs.pts.length) continue;
+      const {u, v} = lanePose(rs.pts, rs.seg, rs.t, tk.overtaking ? -0.15 : 0.15);
       sprites.push({ k:spriteDepthKey(u, v, 0.5), f:()=>drawTruck(tk) });
     }
 

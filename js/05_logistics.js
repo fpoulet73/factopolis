@@ -285,7 +285,7 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
       { x: tx - dx/len*stop, y: ty - dy/len*stop },
     ];
   }
-  trucks.push({ pts, seg:0, t:0, res, amt, target, from:b });
+  trucks.push({ id: nextTruckId++, pts, seg:0, t:0, res, amt, target, from:b });
   return true;
 }
 
