@@ -1072,22 +1072,26 @@ function renderInfo(){
         h += '</div>';
         h += '</div>';
       }
+      const ownsVeh = isMyVehicle(veh);
       const trainConfigDisabled = veh.vtype === 'train' && !trainPresentAtDepot(veh);
-      h += '<div style="margin-top:8px;display:flex;gap:4px">'
-         + '<button class="tbtn" style="flex:1'
-         + (trainConfigDisabled ? ';opacity:.5;cursor:not-allowed' : '')
-         + '" id="bVehRoute">'+(veh.vtype === 'train' ? '🧭 Configurer' : '🔁 Nouvelle route')+'</button>'
-         + (trainFlagState ? trainDepotFlagButtonHtml(veh, ' id="bVehTrainFlag"') : '')
-         + '</div>';
-      if(veh.state !== 'idle' && veh.state !== 'returning')
-        h += '<button class="tbtn" style="width:100%;margin-top:4px" id="bVehReturn">🏪 Retour au dépôt</button>';
-      h += '<button class="tbtn" style="width:100%;margin-top:4px;color:#ff9a8a" id="bVehSell">🗑️ Vendre (+'
-         + Math.floor(vt.cost*0.5)+' $)</button>';
+      if(ownsVeh){
+        h += '<div style="margin-top:8px;display:flex;gap:4px">'
+           + '<button class="tbtn" style="flex:1'
+           + (trainConfigDisabled ? ';opacity:.5;cursor:not-allowed' : '')
+           + '" id="bVehRoute">'+(veh.vtype === 'train' ? '🧭 Configurer' : '🔁 Nouvelle route')+'</button>'
+           + (trainFlagState ? trainDepotFlagButtonHtml(veh, ' id="bVehTrainFlag"') : '')
+           + '</div>';
+        if(veh.state !== 'idle' && veh.state !== 'returning')
+          h += '<button class="tbtn" style="width:100%;margin-top:4px" id="bVehReturn">🏪 Retour au dépôt</button>';
+        h += '<button class="tbtn" style="width:100%;margin-top:4px;color:#ff9a8a" id="bVehSell">🗑️ Vendre (+'
+           + Math.floor(vt.cost*0.5)+' $)</button>';
+      }
       p.style.display = 'block';
       if(p._html === h) return;
       p._html = h; p._b = null;
       p.innerHTML = h;
       ensurePanelDragHandle('info');
+      if(!ownsVeh) return;
       $('bVehRoute').onclick = ()=>{
         if(veh.vtype === 'train'){
           if(!trainPresentAtDepot(veh)){

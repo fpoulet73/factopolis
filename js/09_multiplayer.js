@@ -865,6 +865,10 @@ function applyStateSync(d){
       overtaking: !!st.overtaking,
     });
   }
+  // trucksOut reconstruit depuis les camions réellement présents (cf. applySnapshot) :
+  // évite tout compteur résiduel qui bloquerait le dispatch des sorties.
+  for(const b of buildings) b.trucksOut = 0;
+  for(const tk of trucks) if(tk.from) tk.from.trucksOut++;
 
   walkers = [];
   for(const sw of d.walkers || []){
@@ -951,7 +955,7 @@ function serializeState(opts = {}){
     buildings: buildings.map(b => ({
       type:b.type, x:b.x, y:b.y, w:b.w, h:b.h,
       storage:{...b.storage}, inc:{},
-      prog:b.prog||0, trucksOut:b.trucksOut||0,
+      prog:b.prog||0, trucksOut:includeTransient ? (b.trucksOut||0) : 0,
       pop:b.pop||0, protectedPop:b.protectedPop||0,
       ct:b.ct||0,
       pending:includeTransient ? (b.pending||0) : 0,
@@ -1433,6 +1437,12 @@ function applySnapshot(d){
       });
     }
   }
+  // Le compteur trucksOut doit refléter exactement les camions réellement présents.
+  // Une sauvegarde non transitoire écrit trucks:[] mais a pu conserver un trucksOut > 0 ;
+  // recharger cela bloquerait définitivement le dispatch (sortie saturée → toutes les
+  // usines à l'arrêt). On le reconstruit depuis les camions effectivement chargés.
+  for(const b of buildings) b.trucksOut = 0;
+  for(const tk of trucks) if(tk.from) tk.from.trucksOut++;
   if(Array.isArray(d.walkers)){
     for(const sw of d.walkers){
       if(!Array.isArray(sw.pts) || sw.pts.length < 2) continue;

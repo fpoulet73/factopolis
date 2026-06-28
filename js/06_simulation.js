@@ -83,8 +83,18 @@ function update(dt){
       }
     }
     const rc = BUILD[b.type].resid;
-    if(rc && b.mergeBlockedMissing && residHasAll(b, b.mergeBlockedMissing)){
-      delete b.mergeBlockedMissing;
+    if(rc && b.mergeBlockedMissing){
+      // ne conserver que les ressources que ce logement peut réellement recevoir :
+      // une maison ne se fait jamais livrer de pain/vêtements, donc un drapeau
+      // portant ces ressources ne se lèverait jamais et bloquerait la fusion à vie.
+      const reachable = b.mergeBlockedMissing.filter(r => residDeliveryResourcesOf(b).includes(r));
+      if(reachable.length !== b.mergeBlockedMissing.length){
+        if(reachable.length) b.mergeBlockedMissing = reachable;
+        else delete b.mergeBlockedMissing;
+      }
+      if(b.mergeBlockedMissing && residHasAll(b, b.mergeBlockedMissing)){
+        delete b.mergeBlockedMissing;
+      }
     }
     if(rc && !b.starterHome && residHasAll(b, residRequiredOf(b))){
       b.starve = 0;

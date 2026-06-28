@@ -11,40 +11,95 @@ function autoSaveServerPattern(){
   return new RegExp('^\\[Auto\\] ' + room.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' \\d+$', 'i');
 }
 
+// Une room est rattachée au serveur : ses sauvegardes auto vivent côté serveur
+// (partagées, par-room) et non dans le localStorage du navigateur de l'hôte
+// courant — celui-ci pouvant changer de joueur/appareil d'une session à l'autre.
+function autoSaveIsRoom(){
+  return MP.roomId != null;
+}
+
 function loadAutoSaves(){
   try { return JSON.parse(localStorage.getItem(autoSaveStorageKey()) || '[]'); } catch(e){ return []; }
 }
 
 function performAutoSave(){
   if(!buildings.length) return; // monde non initialisé
+  const state = serializeState();
+
+  // --- En room : sauvegarde serveur uniquement (par-room, partagée) ---
+  if(autoSaveIsRoom()){
+    if(MP.connected && mpHasAdminRights() && MP.token){
+      const saves = (MP.saves || []).filter(s => autoSaveServerPattern().test(s.name))
+        .sort((a,b) => new Date(a.date) - new Date(b.date)); // ancienne → récente
+      const slotOf = s => +(/ (\d+)$/.exec(s.name)||[])[1] || 0;
+      const lastSlot = saves.length > 0 ? slotOf(saves[saves.length - 1]) : 0;
+      const nextSlot = (lastSlot % AUTO_SAVE_MAX) + 1;
+      const name = autoSaveServerName(nextSlot);
+      MP.ws.send(JSON.stringify({ type: 'save_game', token: MP.token, name, state }));
+      // MAJ optimiste : MP.saves n'est rafraîchi qu'à l'auth, sinon la rotation
+      // se figerait sur une liste périmée et réécrirait toujours le même slot.
+      MP.saves = (MP.saves || []).filter(s => s.name !== name);
+      MP.saves.push({ name, date: new Date().toISOString() });
+      // resynchronisation depuis le serveur (source de vérité)
+      MP.ws.send(JSON.stringify({ type: 'list_saves', token: MP.token }));
+      renderAutoSaves();
+      toast('💾 Sauvegarde auto serveur — emplacement '+nextSlot+'/'+AUTO_SAVE_MAX);
+    }
+    // Si pas hôte/déconnecté : rien à faire, un autre client hôte s'en charge.
+    return;
+  }
+
+  // --- En solo : sauvegarde dans le localStorage du navigateur ---
   const saves = loadAutoSaves();
   const lastSlot = saves.length > 0 ? saves[saves.length - 1].slot : 0;
   const nextSlot = (lastSlot % AUTO_SAVE_MAX) + 1;
-  const entry = { slot: nextSlot, date: new Date().toISOString(), state: serializeState() };
+  const entry = { slot: nextSlot, date: new Date().toISOString(), state };
   const updated = saves.filter(s => s.slot !== nextSlot);
   updated.push(entry);
-  const trimmed = updated.slice(-AUTO_SAVE_MAX);
-  try {
-    localStorage.setItem(autoSaveStorageKey(), JSON.stringify(trimmed));
-  } catch(e){
-    toast('⚠️ Sauvegarde auto impossible (stockage plein)', 'err');
-    return;
+
+  // En cas de quota plein, on supprime les emplacements les plus anciens
+  // et on réessaie jusqu'à ce que ça tienne.
+  let trimmed = updated.slice(-AUTO_SAVE_MAX);
+  const wanted = trimmed.length;
+  let stored = false;
+  while(trimmed.length){
+    try {
+      localStorage.setItem(autoSaveStorageKey(), JSON.stringify(trimmed));
+      stored = true;
+      break;
+    } catch(e){
+      if(!isQuotaExceeded(e)) break;
+      trimmed = trimmed.slice(1); // abandonne la plus ancienne et réessaie
+    }
   }
+
   renderAutoSaves();
-  toast('💾 Sauvegarde auto — emplacement '+nextSlot+'/'+AUTO_SAVE_MAX);
-  if(MP.connected && mpHasAdminRights() && MP.token){
-    MP.ws.send(JSON.stringify({
-      type: 'save_game', token: MP.token,
-      name: autoSaveServerName(nextSlot),
-      state: serializeState(),
-    }));
+  if(stored){
+    if(trimmed.length < wanted){
+      toast('💾 Sauvegarde auto '+nextSlot+'/'+AUTO_SAVE_MAX+' (anciennes purgées, stockage limité)', 'win');
+    } else {
+      toast('💾 Sauvegarde auto — emplacement '+nextSlot+'/'+AUTO_SAVE_MAX);
+    }
+  } else {
+    toast('⚠️ Sauvegarde auto impossible (stockage plein)', 'err');
   }
+}
+
+function isQuotaExceeded(e){
+  return e && (
+    e.name === 'QuotaExceededError' ||
+    e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    e.code === 22 || e.code === 1014
+  );
 }
 
 function renderAutoSaves(){
   const el = $('autoSaveList');
   if(!el) return;
-  const localSaves = loadAutoSaves().sort((a,b)=> new Date(b.date) - new Date(a.date));
+  // En room : uniquement les sauvegardes serveur (par-room, partagées). Les
+  // sauvegardes locales sont liées au navigateur et inutiles si l'hôte change.
+  const localSaves = autoSaveIsRoom() ? []
+    : loadAutoSaves().sort((a,b)=> new Date(b.date) - new Date(a.date));
   // sauvegardes auto côté serveur (noms correspondant au pattern _Auto_*)
   const serverAutoSaves = (MP.saves || []).filter(s => autoSaveServerPattern().test(s.name))
     .sort((a,b) => new Date(b.date) - new Date(a.date));
