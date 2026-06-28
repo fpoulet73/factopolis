@@ -1837,6 +1837,46 @@ let depotToolbarGroup = null;
 let depotToolbarMenu = null;
 let trainToolbarGroup = null;
 let trainToolbarMenu = null;
+let resourceToolbarGroup = null;
+let resourceToolbarMenu = null;
+const RESOURCE_TOOLBAR_TOOLS = ['mine','lumber','fisher','pump'];
+let storageToolbarGroup = null;
+let storageToolbarMenu = null;
+const STORAGE_TOOLBAR_TOOLS = ['depot','tank'];
+let buildingToolbarGroup = null;
+let buildingToolbarMenu = null;
+const BUILDING_TOOLBAR_TOOLS = ['house','plant','market'];
+let vehicleToolbarGroup = null;
+let vehicleToolbarMenu = null;
+const VEHICLE_TOOLBAR_TOOLS = ['road','bus_stop'];
+
+function closeResourceToolbarMenu(){
+  if(!resourceToolbarGroup || !resourceToolbarMenu) return;
+  resourceToolbarGroup.classList.remove('open');
+  resourceToolbarMenu.classList.remove('open');
+  syncToolbarState();
+}
+
+function closeStorageToolbarMenu(){
+  if(!storageToolbarGroup || !storageToolbarMenu) return;
+  storageToolbarGroup.classList.remove('open');
+  storageToolbarMenu.classList.remove('open');
+  syncToolbarState();
+}
+
+function closeBuildingToolbarMenu(){
+  if(!buildingToolbarGroup || !buildingToolbarMenu) return;
+  buildingToolbarGroup.classList.remove('open');
+  buildingToolbarMenu.classList.remove('open');
+  syncToolbarState();
+}
+
+function closeVehicleToolbarMenu(){
+  if(!vehicleToolbarGroup || !vehicleToolbarMenu) return;
+  vehicleToolbarGroup.classList.remove('open');
+  vehicleToolbarMenu.classList.remove('open');
+  syncToolbarState();
+}
 
 function closeDepotToolbarMenu(){
   if(!depotToolbarGroup || !depotToolbarMenu) return;
@@ -1855,6 +1895,10 @@ function closeTrainToolbarMenu(){
 function closeToolbarMenus(){
   closeDepotToolbarMenu();
   closeTrainToolbarMenu();
+  closeResourceToolbarMenu();
+  closeStorageToolbarMenu();
+  closeBuildingToolbarMenu();
+  closeVehicleToolbarMenu();
 }
 
 function syncToolbarState(){
@@ -1886,6 +1930,50 @@ function syncToolbarState(){
       b.classList.toggle('on', b.dataset.trainTool === tool);
     });
   }
+  if(resourceToolbarGroup){
+    const active = RESOURCE_TOOLBAR_TOOLS.includes(tool);
+    resourceToolbarGroup.classList.toggle('on', active);
+    const groupBtn = resourceToolbarGroup.querySelector('.tool-group-btn');
+    if(groupBtn) groupBtn.classList.toggle('on', active || resourceToolbarGroup.classList.contains('open'));
+  }
+  if(resourceToolbarMenu){
+    resourceToolbarMenu.querySelectorAll('[data-resource-tool]').forEach(b=>{
+      b.classList.toggle('on', b.dataset.resourceTool === tool);
+    });
+  }
+  if(storageToolbarGroup){
+    const active = STORAGE_TOOLBAR_TOOLS.includes(tool);
+    storageToolbarGroup.classList.toggle('on', active);
+    const groupBtn = storageToolbarGroup.querySelector('.tool-group-btn');
+    if(groupBtn) groupBtn.classList.toggle('on', active || storageToolbarGroup.classList.contains('open'));
+  }
+  if(storageToolbarMenu){
+    storageToolbarMenu.querySelectorAll('[data-storage-tool]').forEach(b=>{
+      b.classList.toggle('on', b.dataset.storageTool === tool);
+    });
+  }
+  if(buildingToolbarGroup){
+    const active = BUILDING_TOOLBAR_TOOLS.includes(tool);
+    buildingToolbarGroup.classList.toggle('on', active);
+    const groupBtn = buildingToolbarGroup.querySelector('.tool-group-btn');
+    if(groupBtn) groupBtn.classList.toggle('on', active || buildingToolbarGroup.classList.contains('open'));
+  }
+  if(buildingToolbarMenu){
+    buildingToolbarMenu.querySelectorAll('[data-building-tool]').forEach(b=>{
+      b.classList.toggle('on', b.dataset.buildingTool === tool);
+    });
+  }
+  if(vehicleToolbarGroup){
+    const active = VEHICLE_TOOLBAR_TOOLS.includes(tool);
+    vehicleToolbarGroup.classList.toggle('on', active);
+    const groupBtn = vehicleToolbarGroup.querySelector('.tool-group-btn');
+    if(groupBtn) groupBtn.classList.toggle('on', active || vehicleToolbarGroup.classList.contains('open'));
+  }
+  if(vehicleToolbarMenu){
+    vehicleToolbarMenu.querySelectorAll('[data-vehicle-tool]').forEach(b=>{
+      b.classList.toggle('on', b.dataset.vehicleTool === tool);
+    });
+  }
 }
 
 function buildToolbar(){
@@ -1895,6 +1983,14 @@ function buildToolbar(){
   depotToolbarMenu = null;
   trainToolbarGroup = null;
   trainToolbarMenu = null;
+  resourceToolbarGroup = null;
+  resourceToolbarMenu = null;
+  storageToolbarGroup = null;
+  storageToolbarMenu = null;
+  buildingToolbarGroup = null;
+  buildingToolbarMenu = null;
+  vehicleToolbarGroup = null;
+  vehicleToolbarMenu = null;
   const depotItems = (DEPOT_TOOLBAR_ITEMS && DEPOT_TOOLBAR_ITEMS.length)
     ? DEPOT_TOOLBAR_ITEMS
     : [
@@ -1904,6 +2000,158 @@ function buildToolbar(){
         { key:'avion', tool:'plane_depot', label:'Avion', icon:'✈️' },
       ];
   for(const k of TOOL_ORDER){
+    if(k === 'bus_stop') continue; // regroupé sous "Véhicules"
+    if(k === 'road'){
+      const group = document.createElement('div');
+      group.className = 'tool-group';
+      const btn = document.createElement('button');
+      btn.className = 'tool tool-group-btn';
+      btn.dataset.t = 'road';
+      btn.title = 'Véhicules';
+      btn.innerHTML = '<span class="ic">🛣️</span><span>Véhicules</span><span class="hk">▾</span>';
+      const menu = document.createElement('div');
+      menu.className = 'tool-group-menu';
+      for(const toolKey of VEHICLE_TOOLBAR_TOOLS){
+        const d = BUILD[toolKey];
+        if(!d) continue;
+        const choice = document.createElement('button');
+        choice.className = 'tool tool-group-item';
+        choice.dataset.vehicleTool = toolKey;
+        choice.title = d.desc || '';
+        choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
+          + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
+        choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
+        menu.appendChild(choice);
+      }
+      btn.onclick = e => {
+        e.stopPropagation();
+        const open = !group.classList.contains('open');
+        closeToolbarMenus();
+        group.classList.toggle('open', open);
+        menu.classList.toggle('open', open);
+        syncToolbarState();
+      };
+      group.appendChild(btn);
+      group.appendChild(menu);
+      bar.appendChild(group);
+      vehicleToolbarGroup = group;
+      vehicleToolbarMenu = menu;
+      continue;
+    }
+    if(k === 'lumber' || k === 'fisher' || k === 'pump') continue; // regroupés sous "Ressources"
+    if(k === 'tank') continue; // regroupé sous "Stockage"
+    if(k === 'house' || k === 'market') continue; // regroupés sous "Bâtiments"
+    if(k === 'plant'){
+      const group = document.createElement('div');
+      group.className = 'tool-group';
+      const btn = document.createElement('button');
+      btn.className = 'tool tool-group-btn';
+      btn.dataset.t = 'plant';
+      btn.title = 'Bâtiments';
+      btn.innerHTML = '<span class="ic">🏠</span><span>Bâtiments</span><span class="hk">▾</span>';
+      const menu = document.createElement('div');
+      menu.className = 'tool-group-menu';
+      for(const toolKey of BUILDING_TOOLBAR_TOOLS){
+        const d = BUILD[toolKey];
+        if(!d) continue;
+        const choice = document.createElement('button');
+        choice.className = 'tool tool-group-item';
+        choice.dataset.buildingTool = toolKey;
+        choice.title = d.desc || '';
+        choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
+          + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
+        choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
+        menu.appendChild(choice);
+      }
+      btn.onclick = e => {
+        e.stopPropagation();
+        const open = !group.classList.contains('open');
+        closeToolbarMenus();
+        group.classList.toggle('open', open);
+        menu.classList.toggle('open', open);
+        syncToolbarState();
+      };
+      group.appendChild(btn);
+      group.appendChild(menu);
+      bar.appendChild(group);
+      buildingToolbarGroup = group;
+      buildingToolbarMenu = menu;
+      continue;
+    }
+    if(k === 'depot'){
+      const group = document.createElement('div');
+      group.className = 'tool-group';
+      const btn = document.createElement('button');
+      btn.className = 'tool tool-group-btn';
+      btn.dataset.t = 'depot';
+      btn.title = 'Bâtiments de stockage';
+      btn.innerHTML = '<span class="ic">📦</span><span>Stockage</span><span class="hk">▾</span>';
+      const menu = document.createElement('div');
+      menu.className = 'tool-group-menu';
+      for(const toolKey of STORAGE_TOOLBAR_TOOLS){
+        const d = BUILD[toolKey];
+        if(!d) continue;
+        const choice = document.createElement('button');
+        choice.className = 'tool tool-group-item';
+        choice.dataset.storageTool = toolKey;
+        choice.title = d.desc || '';
+        choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
+          + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
+        choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
+        menu.appendChild(choice);
+      }
+      btn.onclick = e => {
+        e.stopPropagation();
+        const open = !group.classList.contains('open');
+        closeToolbarMenus();
+        group.classList.toggle('open', open);
+        menu.classList.toggle('open', open);
+        syncToolbarState();
+      };
+      group.appendChild(btn);
+      group.appendChild(menu);
+      bar.appendChild(group);
+      storageToolbarGroup = group;
+      storageToolbarMenu = menu;
+      continue;
+    }
+    if(k === 'mine'){
+      const group = document.createElement('div');
+      group.className = 'tool-group';
+      const btn = document.createElement('button');
+      btn.className = 'tool tool-group-btn';
+      btn.dataset.t = 'mine';
+      btn.title = 'Bâtiments de ressources';
+      btn.innerHTML = '<span class="ic">⛏️</span><span>Ressources</span><span class="hk">▾</span>';
+      const menu = document.createElement('div');
+      menu.className = 'tool-group-menu';
+      for(const toolKey of RESOURCE_TOOLBAR_TOOLS){
+        const d = BUILD[toolKey];
+        if(!d) continue;
+        const choice = document.createElement('button');
+        choice.className = 'tool tool-group-item';
+        choice.dataset.resourceTool = toolKey;
+        choice.title = d.desc || '';
+        choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
+          + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
+        choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
+        menu.appendChild(choice);
+      }
+      btn.onclick = e => {
+        e.stopPropagation();
+        const open = !group.classList.contains('open');
+        closeToolbarMenus();
+        group.classList.toggle('open', open);
+        menu.classList.toggle('open', open);
+        syncToolbarState();
+      };
+      group.appendChild(btn);
+      group.appendChild(menu);
+      bar.appendChild(group);
+      resourceToolbarGroup = group;
+      resourceToolbarMenu = menu;
+      continue;
+    }
     if(k === 'rail'){
       const group = document.createElement('div');
       group.className = 'tool-group';
@@ -1987,8 +2235,7 @@ function buildToolbar(){
     btn.dataset.t = k;
     btn.title = d.desc || '';
     btn.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
-      + (d.cost ? '<span class="cost">'+d.cost+' $</span>' : '<span class="cost">&nbsp;</span>')
-      + '<span class="hk">'+(d.hk ? '['+d.hk+']' : '&nbsp;')+'</span>';
+      + (d.cost ? '<span class="cost">'+d.cost+' $</span>' : '<span class="cost">&nbsp;</span>');
     btn.onclick = ()=> setTool(k);
     bar.appendChild(btn);
   }
@@ -2572,6 +2819,26 @@ addEventListener('keydown', e=>{
     closeTrainToolbarMenu();
     return;
   }
+  if(e.code==='Escape' && resourceToolbarMenu?.classList.contains('open')){
+    e.preventDefault();
+    closeResourceToolbarMenu();
+    return;
+  }
+  if(e.code==='Escape' && storageToolbarMenu?.classList.contains('open')){
+    e.preventDefault();
+    closeStorageToolbarMenu();
+    return;
+  }
+  if(e.code==='Escape' && buildingToolbarMenu?.classList.contains('open')){
+    e.preventDefault();
+    closeBuildingToolbarMenu();
+    return;
+  }
+  if(e.code==='Escape' && vehicleToolbarMenu?.classList.contains('open')){
+    e.preventDefault();
+    closeVehicleToolbarMenu();
+    return;
+  }
   keys.add(e.code);
   if(e.code==='Space'){ e.preventDefault(); togglePause(); }
   if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; closeTownPanel(); closeTrainPanel(); }
@@ -2590,6 +2857,10 @@ addEventListener('keydown', e=>{
 addEventListener('click', e=>{
   if(depotToolbarGroup && !depotToolbarGroup.contains(e.target)) closeDepotToolbarMenu();
   if(trainToolbarGroup && !trainToolbarGroup.contains(e.target)) closeTrainToolbarMenu();
+  if(resourceToolbarGroup && !resourceToolbarGroup.contains(e.target)) closeResourceToolbarMenu();
+  if(storageToolbarGroup && !storageToolbarGroup.contains(e.target)) closeStorageToolbarMenu();
+  if(buildingToolbarGroup && !buildingToolbarGroup.contains(e.target)) closeBuildingToolbarMenu();
+  if(vehicleToolbarGroup && !vehicleToolbarGroup.contains(e.target)) closeVehicleToolbarMenu();
 });
 addEventListener('keyup', e=>{
   keys.delete(e.code);
