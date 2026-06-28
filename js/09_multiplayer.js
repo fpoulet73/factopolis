@@ -2,8 +2,27 @@
 // MULTIJOUEUR — couche réseau WebSocket
 // ======================================================================
 
+function refreshOwnerColorsFromRegistry(){
+  const reg = MP.savedRegistry;
+  if(!reg || typeof reg !== 'object' || !crypto?.subtle) return;
+  for(const [username, ownerId] of Object.entries(reg)){
+    const n = Number(ownerId);
+    if(!username || !Number.isFinite(n) || MP.ownerColors?.[n]) continue;
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(username))
+      .then(buf => {
+        const firstByte = new Uint8Array(buf)[0];
+        MP.ownerColors[n] = COLORS[firstByte % COLORS.length];
+        for(const h of homeless) if(h.owner === n) h.col = MP.ownerColors[n];
+      })
+      .catch(()=>{});
+  }
+}
+
 // ---- sérialisation de l'état complet (hôte → invité) ----
 function serializeState(){
+  const ownerColors = { ...(MP.ownerColors || {}) };
+  for(const p of MP.players || []) if(p?.id != null && p.color) ownerColors[p.id] = p.color;
+  if(MP.myId != null && MP.myColor) ownerColors[MP.myId] = MP.myColor;
   return {
     world: WORLD,
     size: N,
@@ -16,6 +35,7 @@ function serializeState(){
     rail:    Array.from(rail),
     railOwner: railOwner ? Array.from(railOwner) : null,
     railSignals: Object.values(railSignals || {}),
+    ownerColors,
     wallets: WALLETS,
     homeless: [],
     gtime,
@@ -117,6 +137,10 @@ function applyOwnerRemap(oldId, newId){
   for(const b of buildings) if(b.owner === oldId) b.owner = newId;
   if(railOwner) for(let i=0;i<railOwner.length;i++) if(railOwner[i] === oldId) railOwner[i] = newId;
   for(const h of homeless)  if(h.owner === oldId){ h.owner = newId; h.col = playerColor(newId); }
+  if(MP.ownerColors?.[oldId]){
+    MP.ownerColors[newId] = MP.ownerColors[oldId];
+    delete MP.ownerColors[oldId];
+  }
   if(WALLETS[oldId]){
     if(!WALLETS[newId] || (WALLETS[oldId].money||0) >= (WALLETS[newId]?.money||0)){
       WALLETS[newId] = WALLETS[oldId];
@@ -209,6 +233,14 @@ function applySnapshot(d){
   rebuildRailBlocks();
   // Sauvegarder le registre des joueurs (pour récupération après redémarrage serveur)
   if(d.playerRegistry && typeof d.playerRegistry === 'object') MP.savedRegistry = d.playerRegistry;
+  MP.ownerColors = {};
+  if(d.ownerColors && typeof d.ownerColors === 'object'){
+    for(const [ownerId, color] of Object.entries(d.ownerColors)){
+      const n = Number(ownerId);
+      if(Number.isFinite(n) && typeof color === 'string' && color) MP.ownerColors[n] = color;
+    }
+  }
+  refreshOwnerColorsFromRegistry();
   gtime    = d.gtime || 0;
   WALLETS  = {};
   if(d.wallets){ for(const k in d.wallets) WALLETS[k] = d.wallets[k]; }
@@ -743,6 +775,7 @@ function mpConnect(url){
         MP.roomName = null;
         MP.roomSaveName = null;
         MP.players = [];
+        MP.ownerColors = {};
         MP.cursors = {};
         document.title = 'Factopolis';
         genWorld(WORLD_DEFAULTS);
@@ -837,6 +870,9 @@ function mpConnect(url){
 
       case 'player_list': {
         MP.players = msg.players;
+        for(const p of MP.players){
+          if(p?.id != null && p.color) MP.ownerColors[p.id] = p.color;
+        }
         MP.isAdmin = !!(MP.players.find(p=>p.id===MP.myId)||{}).isAdmin;
         for(const p of MP.players) ensureHomelessForOwner(p.id);
         // Synchroniser la couleur du joueur local si elle a changé (après auth)
@@ -873,6 +909,7 @@ function mpConnect(url){
         MP.token    = msg.token;
         MP.myColor  = msg.color;
         MP.myName   = msg.username;
+        if(MP.myId != null && msg.color) MP.ownerColors[MP.myId] = msg.color;
         MP.prevOwnerId = null;
         // Stocker l'ancien id de connexion fourni par le serveur pour le remappage
         if(msg.prevOwnerId != null && msg.prevOwnerId !== MP.myId) MP.prevOwnerId = msg.prevOwnerId;

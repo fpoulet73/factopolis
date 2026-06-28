@@ -559,6 +559,7 @@ function drawTrainStationPiece(b){
   const [rx, ry] = rotIdx(b.x, b.y);
   if(b.type === 'train_platform'){
     if(trainPlatformTrackAnchor(b) === b){
+      const ownerColor = b.owner ? playerColor(b.owner) : '#b07b49';
       const pieces = trainPlatformTrackPieces(b);
       const [adx, ady] = String(b.stationAxis || '1,0').split(',').map(Number);
       const [du, dv] = rotDir(adx, ady);
@@ -588,9 +589,9 @@ function drawTrainStationPiece(b){
       const x0 = c0[0] - tx * half + nx * offset, y0 = c0[1] - ty * half + ny * offset;
       const x1 = c1[0] + tx * half + nx * offset, y1 = c1[1] + ty * half + ny * offset;
       ctx.lineCap = 'butt';
-      ctx.strokeStyle = '#8b6745'; ctx.lineWidth = 10;
+      ctx.strokeStyle = shade(ownerColor, -0.42); ctx.lineWidth = 10;
       ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-      ctx.strokeStyle = '#d8c39a'; ctx.lineWidth = 6;
+      ctx.strokeStyle = shade(ownerColor, 0.20); ctx.lineWidth = 6;
       ctx.beginPath(); ctx.moveTo(x0, y0 - 1); ctx.lineTo(x1, y1 - 1); ctx.stroke();
       ctx.strokeStyle = '#f0d15f'; ctx.lineWidth = 1.4;
       ctx.beginPath(); ctx.moveTo(x0 - nx * 4, y0 - ny * 4); ctx.lineTo(x1 - nx * 4, y1 - ny * 4); ctx.stroke();
@@ -631,7 +632,7 @@ function drawTrainStationPiece(b){
   } else {
     const bounds = trainStationGroupBounds(b.stationGroupId, 'train_station');
     if(bounds && bounds.pieces[0] === b){
-      const col = b.owner && MP.connected ? playerColor(b.owner) : '#b07b49';
+      const col = b.owner ? playerColor(b.owner) : '#b07b49';
       prism(bounds.rx0 + 0.08, bounds.ry0 + 0.08, bounds.rx0 + bounds.rw - 0.08, bounds.ry0 + bounds.rh - 0.08, 10, col);
       const c = iso(bounds.rx0 + bounds.rw * 0.5, bounds.ry0 + bounds.rh * 0.5);
       ctx.fillStyle = '#f5e7c8';
@@ -778,8 +779,8 @@ function drawBuilding(b){
     ctx.fillText('⚠️', tc[0], tc[1]-TH*0.95);
   }
   // contour couleur propriétaire (multijoueur)
-  if(!drawFast && !UI_OPTIONS.hideColorMarkers && b.owner && MP.connected){
-    const ownerColor = (MP.players.find(p=>p.id===b.owner)||{}).color || '#aaa';
+  if(!drawFast && !UI_OPTIONS.hideColorMarkers && b.owner){
+    const ownerColor = playerColor(b.owner);
     ctx.strokeStyle = ownerColor; ctx.lineWidth = (b===selected || trainStationSelectionMatches(selected, b)) ? 3 : 1.5;
     diamond(rx0, ry0, rw, rh); ctx.stroke();
     // petit drapeau couleur en haut à gauche du toit
@@ -1602,7 +1603,7 @@ function drawVehicle(veh){
     ctx.fillStyle = 'rgba(0,0,0,.22)';
     ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 13, 5.5, shadowAngle_l, 0, Math.PI*2); ctx.fill();
     const locoOwner = veh.garageRef?.owner ?? null;
-    const locoColor = (locoOwner != null && MP.connected) ? playerColor(locoOwner) : vt.color;
+    const locoColor = locoOwner != null ? playerColor(locoOwner) : vt.color;
     trainPrism(u, v, du, dv, hl,      hw,      6, '#2f3640');
     trainPrism(u, v, du, dv, hl*0.78, hw*0.78, 8, locoColor, 5);
     trainPrism(u+(du/nd)*0.06, v+(dv/nd)*0.06, du, dv, hl*0.28, hw, 10, '#92a2b4', 8);
@@ -2134,7 +2135,7 @@ function draw(){
   drawRailNodeSleepers(railNodeSleepers, 13, 3, '#6a4a2b');
   fillNodes(railSingleCoords, railSleeperWidth*0.24, '#6a4a2b');
   // Rails métalliques : couleur du joueur en multijoueur, gris sinon.
-  const railColorFor = owner => (MP.connected && owner != null && owner >= 0) ? playerColor(owner) : railColor;
+  const railColorFor = owner => (owner != null && owner >= 0) ? playerColor(owner) : railColor;
   const groupByColor = (items, get) => {
     const map = new Map();
     for(const it of items){

@@ -8,6 +8,7 @@ const MP = {
   roomId: null, roomName: null, roomSaveName: null,
   prevOwnerId: null,   // ancien id de connexion, reçu du serveur lors de l'auth
   savedRegistry: null, // playerRegistry issu de la dernière sauvegarde chargée
+  ownerColors: {},     // ownerId -> couleur persistée pour afficher les propriétaires hors ligne
   shutdownNotice: false,
   shutdownMessage: '',
 };

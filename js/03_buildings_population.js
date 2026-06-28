@@ -241,7 +241,10 @@ function terrassementNear(x, y, owner, minDirt = FILL_WATER_COST){
 
 function playerColor(owner){
   if(owner == null) return '#e0e0e0';
-  return (MP.players.find(p=>p.id===owner)||{}).color || COLORS[(owner - 1) % COLORS.length] || '#e0e0e0';
+  return (MP.players.find(p=>p.id===owner)||{}).color
+    || MP.ownerColors?.[owner]
+    || COLORS[(owner - 1) % COLORS.length]
+    || '#e0e0e0';
 }
 
 function playerName(owner){
