@@ -2485,12 +2485,14 @@ function mpInjectUI(){
 </div>
 
 <!-- sauvegardes auto -->
-<div style="border-top:1px solid #36465e;margin:8px 0"></div>
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-  <div style="color:#8fa3bf;font-size:11px">🔄 Sauvegardes auto</div>
-  <span id="autoSaveCountdown" style="color:#6e8aa0;font-size:10px"></span>
+<div id="mpAutoSaveBlock" style="display:none">
+  <div style="border-top:1px solid #36465e;margin:8px 0"></div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+    <div style="color:#8fa3bf;font-size:11px">🔄 Sauvegardes auto</div>
+    <span id="autoSaveCountdown" style="color:#6e8aa0;font-size:10px"></span>
+  </div>
+  <div id="autoSaveList" style="max-height:130px;overflow-y:auto;margin-bottom:4px"></div>
 </div>
-<div id="autoSaveList" style="max-height:130px;overflow-y:auto;margin-bottom:4px"></div>
 
 <!-- joueurs connectés -->
 <div style="border-top:1px solid #36465e;margin:8px 0"></div>
@@ -2609,11 +2611,15 @@ function mpUpdateUI(){
     $('mpGameBlock').style.display = inGame ? '' : 'none';
 
     if(inGame){
-      $('mpSaveBlock').style.display = MP.username ? '' : 'none';
+      // Sauvegardes (manuelles + auto) : réservées à l'hôte/admin, qui seul
+      // peut sauvegarder ou charger la partie pour tous les joueurs. Les invités
+      // ne voient pas du tout ces sections.
       const hasRights = mpHasAdminRights() && !!MP.username;
+      $('mpSaveBlock').style.display = hasRights ? '' : 'none';
       $('mpNewBlock').style.display = hasRights ? '' : 'none';
+      $('mpAutoSaveBlock').style.display = hasRights ? '' : 'none';
       $('mpBtnSave').disabled = !hasRights;
-      $('mpSaveLock').textContent = hasRights ? '' : '(hôte/admin)';
+      $('mpSaveLock').textContent = '';
     }
 
     // boutons vitesse/pause : réservés à l'hôte/admin en multijoueur
