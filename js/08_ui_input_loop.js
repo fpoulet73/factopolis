@@ -3215,12 +3215,14 @@ let drawFn = draw;
 let last = performance.now();
 function frame(now){
   const rdt = Math.min(0.05, (now-last)/1000);
+  const gdt = paused ? 0 : rdt * speed;
   last = now;
   panKeys(rdt);
   trackCamera();
   smoothCamera(rdt);
-  if(!paused && mpRunsAuthoritativeSimulation()) update(rdt*speed);
+  if(!paused && mpRunsAuthoritativeSimulation()) update(gdt);
   if(typeof mpMaybeBroadcastState === 'function') mpMaybeBroadcastState(rdt);
+  if(typeof mpUpdateGuestVisuals === 'function') mpUpdateGuestVisuals(rdt, gdt);
   drawFn();
   updateHUD(rdt);
   // Décompte sauvegarde auto (temps réel, pas affecté par speed/pause)

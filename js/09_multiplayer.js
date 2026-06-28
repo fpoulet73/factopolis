@@ -19,6 +19,7 @@ function refreshOwnerColorsFromRegistry(){
 }
 
 const MP_STATE_SYNC_INTERVAL = 0.2;
+const MP_RENDER_SMOOTH_MS = 180;
 let mpStateSyncTimer = 0;
 
 function serializeTruckState(tk){
@@ -109,6 +110,246 @@ function findSnapshotVehicleRef(id){
   return vehicles.find(v => String(v.id) === String(id)) || null;
 }
 
+function copyPointList(list){
+  return Array.isArray(list) ? list.map(p => ({ x:p.x, y:p.y })) : [];
+}
+
+function vehicleRenderStateSnapshot(v){
+  return {
+    pts: copyPointList(v.renderPts || v.pts),
+    pathTiles: Array.isArray(v.renderPathTiles) ? v.renderPathTiles.slice() : (Array.isArray(v.pathTiles) ? v.pathTiles.slice() : []),
+    railTrail: copyPointList(v.renderRailTrail || v.railTrail),
+    seg: v.renderSeg ?? v.seg ?? 0,
+    t: v.renderT ?? v.t ?? 0,
+    currentBuilding: v.renderCurrentBuilding || v.currentBuilding || null,
+    railContinueTile: v.renderRailContinueTile ?? v.railContinueTile ?? null,
+    railPreviousTile: v.renderRailPreviousTile ?? v.railPreviousTile ?? null,
+  };
+}
+
+function vehicleAuthoritativeStateSnapshot(v){
+  return {
+    pts: copyPointList(v.pts),
+    pathTiles: Array.isArray(v.pathTiles) ? v.pathTiles.slice() : [],
+    railTrail: copyPointList(v.railTrail),
+    seg: v.seg ?? 0,
+    t: v.t ?? 0,
+    waitTimer: v.waitTimer ?? 0,
+    currentBuilding: v.currentBuilding || null,
+    railContinueTile: v.railContinueTile ?? null,
+    railPreviousTile: v.railPreviousTile ?? null,
+  };
+}
+
+function vehiclePathSignature(state, vtype){
+  if(vtype === 'train'){
+    return Array.isArray(state.pathTiles) && state.pathTiles.length
+      ? 'rail:' + state.pathTiles.join(',')
+      : 'railpts:' + (state.pts || []).map(p => `${Math.round(p.x)},${Math.round(p.y)}`).join('|');
+  }
+  return 'road:' + (state.pts || []).map(p => `${Math.round(p.x)},${Math.round(p.y)}`).join('|');
+}
+
+function interpolatePointLists(from, to, alpha){
+  if(!Array.isArray(from) || !from.length) return copyPointList(to);
+  if(!Array.isArray(to) || !to.length) return copyPointList(from);
+  const n = Math.min(from.length, to.length);
+  const out = [];
+  for(let i=0; i<n; i++){
+    out.push({
+      x: from[i].x + (to[i].x - from[i].x) * alpha,
+      y: from[i].y + (to[i].y - from[i].y) * alpha,
+    });
+  }
+  if(to.length > n){
+    for(let i=n; i<to.length; i++) out.push({ x:to[i].x, y:to[i].y });
+  }
+  return out;
+}
+
+function setVehicleRenderImmediate(v, state){
+  v.renderPts = copyPointList(state.pts);
+  v.renderPathTiles = Array.isArray(state.pathTiles) ? state.pathTiles.slice() : [];
+  v.renderRailTrail = copyPointList(state.railTrail);
+  v.renderSeg = 0;
+  v.renderT = 0;
+  v.renderCurrentBuilding = state.currentBuilding || null;
+  v.renderRailContinueTile = state.railContinueTile ?? null;
+  v.renderRailPreviousTile = state.railPreviousTile ?? null;
+  v.renderWaitTimer = state.waitTimer ?? 0;
+  setVehicleRenderProgress(v, (state.seg ?? 0) + (state.t ?? 0));
+}
+
+function prepareVehicleRenderBlend(v, fromState){
+  const toState = vehicleRenderStateSnapshot(v);
+  if(!fromState){
+    setVehicleRenderImmediate(v, toState);
+    v.mpRenderBlend = null;
+    return;
+  }
+  const fromSig = vehiclePathSignature(fromState, v.vtype);
+  const toSig = vehiclePathSignature(toState, v.vtype);
+  if(fromSig !== toSig){
+    setVehicleRenderImmediate(v, toState);
+    v.mpRenderBlend = null;
+    return;
+  }
+  v.mpRenderBlend = {
+    startedAt: performance.now(),
+    durationMs: MP_RENDER_SMOOTH_MS,
+    from: fromState,
+    to: toState,
+  };
+}
+
+function mpVehicleRenderState(veh){
+  if(!veh) return null;
+  return {
+    pts: veh.renderPts || veh.pts || [],
+    pathTiles: veh.renderPathTiles || veh.pathTiles || [],
+    railTrail: veh.renderRailTrail || veh.railTrail || [],
+    seg: veh.renderSeg ?? veh.seg ?? 0,
+    t: veh.renderT ?? veh.t ?? 0,
+    currentBuilding: veh.renderCurrentBuilding || veh.currentBuilding || null,
+    railContinueTile: veh.renderRailContinueTile ?? veh.railContinueTile ?? null,
+    railPreviousTile: veh.renderRailPreviousTile ?? veh.railPreviousTile ?? null,
+  };
+}
+
+function setVehicleRenderProgress(v, progress){
+  const pts = v.renderPts || [];
+  if(!pts.length){
+    v.renderSeg = 0;
+    v.renderT = 0;
+    return;
+  }
+  if(pts.length === 1){
+    v.renderSeg = 0;
+    v.renderT = 0;
+    return;
+  }
+  const maxProgress = pts.length - 1;
+  const clamped = Math.max(0, Math.min(maxProgress, progress || 0));
+  if(clamped >= maxProgress){
+    v.renderSeg = Math.max(0, pts.length - 2);
+    v.renderT = 1;
+    return;
+  }
+  const seg = Math.floor(clamped);
+  v.renderSeg = Math.max(0, Math.min(seg, pts.length - 2));
+  v.renderT = clamped - seg;
+}
+
+function advanceVehicleRenderProgress(v, move){
+  const pts = v.renderPts || [];
+  while(move > 0 && pts.length >= 2){
+    const seg = Math.max(0, Math.min(v.renderSeg || 0, pts.length - 2));
+    const a = pts[seg], b = pts[seg + 1];
+    const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const currentT = Math.max(0, Math.min(1, v.renderT || 0));
+    const remain = (1 - currentT) * d;
+    if(move >= remain){
+      move -= remain;
+      if(seg + 1 >= pts.length - 1){
+        v.renderSeg = pts.length - 2;
+        v.renderT = 1;
+        break;
+      }
+      v.renderSeg = seg + 1;
+      v.renderT = 0;
+    } else {
+      v.renderSeg = seg;
+      v.renderT = currentT + move / d;
+      break;
+    }
+  }
+}
+
+function wrappedProgressDiff(current, target, total){
+  if(!(total > 0)) return target - current;
+  let diff = target - current;
+  if(diff > total / 2) diff -= total;
+  else if(diff < -total / 2) diff += total;
+  return diff;
+}
+
+function buildingRenderProg(b){
+  return b?.renderProg ?? b?.prog ?? 0;
+}
+
+function mpUpdateGuestVisuals(realDt=0, gameDt=0){
+  if(!MP.connected || MP.role !== 'guest'){
+    for(const v of vehicles){
+      v.mpRenderBlend = null;
+      v.renderPts = null;
+      v.renderPathTiles = null;
+      v.renderRailTrail = null;
+      v.renderSeg = null;
+      v.renderT = null;
+      v.renderCurrentBuilding = null;
+      v.renderRailContinueTile = null;
+      v.renderRailPreviousTile = null;
+      v.renderWaitTimer = null;
+    }
+    return;
+  }
+  for(const b of buildings){
+    const r = recipeOf(b);
+    if(!r || b.paused){
+      b.renderProg = b.prog || 0;
+      continue;
+    }
+    if(b.renderProg == null) b.renderProg = b.prog || 0;
+    if(!paused && gameDt > 0 && Number.isFinite(b.mpProgRate)) b.renderProg += (b.mpProgRate || 0) * gameDt;
+    while(b.renderProg >= r.time) b.renderProg -= r.time;
+    while(b.renderProg < 0) b.renderProg += r.time;
+    const diff = wrappedProgressDiff(b.renderProg, b.prog || 0, r.time);
+    b.renderProg += diff * Math.min(1, realDt * 8);
+    while(b.renderProg >= r.time) b.renderProg -= r.time;
+    while(b.renderProg < 0) b.renderProg += r.time;
+  }
+
+  for(const v of vehicles){
+    const auth = vehicleAuthoritativeStateSnapshot(v);
+    if(!v.renderPts){
+      setVehicleRenderImmediate(v, auth);
+      continue;
+    }
+    const renderSig = vehiclePathSignature(mpVehicleRenderState(v), v.vtype);
+    const authSig = vehiclePathSignature(auth, v.vtype);
+    if(renderSig !== authSig){
+      setVehicleRenderImmediate(v, auth);
+      v.mpRenderBlend = null;
+      continue;
+    }
+    v.renderPts = copyPointList(auth.pts);
+    v.renderPathTiles = Array.isArray(auth.pathTiles) ? auth.pathTiles.slice() : [];
+    v.renderRailTrail = interpolatePointLists(v.renderRailTrail || auth.railTrail, auth.railTrail, Math.min(1, realDt * 10));
+    v.renderCurrentBuilding = auth.currentBuilding || null;
+    v.renderRailContinueTile = auth.railContinueTile ?? null;
+    v.renderRailPreviousTile = auth.railPreviousTile ?? null;
+    if(v.state === 'idle' || !auth.pts?.length){
+      setVehicleRenderImmediate(v, auth);
+      continue;
+    }
+    const authWait = Math.max(0, auth.waitTimer || 0);
+    v.renderWaitTimer = v.renderWaitTimer == null ? authWait : Math.min(v.renderWaitTimer, authWait);
+    if(authWait > 0 && v.renderWaitTimer <= 0) v.renderWaitTimer = authWait;
+    if(v.renderWaitTimer > 0){
+      v.renderWaitTimer = Math.max(0, v.renderWaitTimer - gameDt);
+    } else if(!paused && gameDt > 0){
+      const vt = VEHICLE_TYPES[v.vtype];
+      if(vt?.speed) advanceVehicleRenderProgress(v, vt.speed * (v.engineMult || 1) * TILE * gameDt);
+    }
+    const maxProgress = Math.max(0, (auth.pts?.length || 0) - 1);
+    const authProgress = Math.max(0, Math.min(maxProgress, (auth.seg || 0) + (auth.t || 0)));
+    const renderProgress = Math.max(0, Math.min(maxProgress, (v.renderSeg || 0) + (v.renderT || 0)));
+    const corrected = renderProgress + (authProgress - renderProgress) * Math.min(1, realDt * 6);
+    setVehicleRenderProgress(v, corrected);
+    if(Math.abs(authProgress - renderProgress) > 2.5) setVehicleRenderImmediate(v, auth);
+  }
+}
+
 function syncBuildingKey(o){
   return `${o.type}:${o.x}:${o.y}:${o.w}:${o.h}`;
 }
@@ -129,7 +370,9 @@ function applyPauseSpeedFromSync(d){
   document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===speed));
 }
 
-function applyBuildingDynamicState(b, o, includeTransient){
+function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
+  const prevProg = b.prog || 0;
+  const prevSyncGtime = b.mpProgSyncGtime ?? null;
   b.storage = o.storage || {};
   b.inc = o.inc || {};
   b.prog = o.prog || 0;
@@ -162,9 +405,21 @@ function applyBuildingDynamicState(b, o, includeTransient){
   }
   b.stationGroupId = o.stationGroupId ?? null;
   b.stationAxis = o.stationAxis || null;
+  const r = recipeOf(b);
+  if(r && syncGtime != null && prevSyncGtime != null && syncGtime > prevSyncGtime){
+    const deltaG = syncGtime - prevSyncGtime;
+    let deltaProg = b.prog - prevProg;
+    if(deltaProg < -1e-6) deltaProg += r.time;
+    b.mpProgRate = deltaProg / deltaG;
+  } else if(!r){
+    b.mpProgRate = 0;
+  }
+  b.mpProgSyncGtime = syncGtime;
+  if(b.renderProg == null || !r) b.renderProg = b.prog || 0;
 }
 
 function applyVehicleDynamicState(v, sv){
+  const prevRender = vehicleRenderStateSnapshot(v);
   const source = syncBuildingByCoords(sv.sourceX, sv.sourceY);
   const dest = syncBuildingByCoords(sv.destX, sv.destY);
   const currentBuilding = syncBuildingByCoords(sv.currentBuildingX, sv.currentBuildingY);
@@ -222,6 +477,7 @@ function applyVehicleDynamicState(v, sv){
   }
   v.seg = Math.max(0, Math.min((sv.seg || 0), Math.max(0, v.pts.length - 1)));
   v.t = Math.max(0, Math.min(1, sv.t || 0));
+  prepareVehicleRenderBlend(v, prevRender);
 }
 
 function applyStateSync(d){
@@ -266,7 +522,7 @@ function applyStateSync(d){
   for(const b of buildings){
     const o = bState.get(syncBuildingKey(b));
     if(!o) continue;
-    applyBuildingDynamicState(b, o, includeTransient);
+    applyBuildingDynamicState(b, o, includeTransient, d.gtime || 0);
   }
 
   homeless = Array.isArray(d.homeless)
@@ -295,6 +551,7 @@ function applyStateSync(d){
       vehiclesById.set(String(v.id), v);
     }
     applyVehicleDynamicState(v, sv);
+    if(!v.mpRenderBlend) setVehicleRenderImmediate(v, vehicleRenderStateSnapshot(v));
   }
 
   trucks = [];
@@ -634,6 +891,9 @@ function applySnapshot(d){
       pendingProtected:hadTransient ? (o.pendingProtected||0) : 0,
       starve:o.starve||0,
     });
+    b.renderProg = b.prog || 0;
+    b.mpProgRate = 0;
+    b.mpProgSyncGtime = gtime || 0;
     if(o.ore)   b.ore   = o.ore;
     if(o.allow) b.allow = o.allow;
     if(o.sellTo) b.sellTo = o.sellTo;

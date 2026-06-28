@@ -753,12 +753,13 @@ function drawBuilding(b){
 
   // barre de progression
   const r = recipeOf(b);
-  if(!drawFast && r && b.prog>0){
+  const prog = typeof buildingRenderProg === 'function' ? buildingRenderProg(b) : (b.prog || 0);
+  if(!drawFast && r && prog > 0){
     const bw = TW*0.42*b.w;
     ctx.fillStyle = 'rgba(0,0,0,.45)';
     ctx.fillRect(tc[0]-bw/2, tc[1]+TH*0.36, bw, 4);
     ctx.fillStyle = '#7fd96a';
-    ctx.fillRect(tc[0]-bw/2, tc[1]+TH*0.36, bw*Math.min(1,b.prog/r.time), 4);
+    ctx.fillRect(tc[0]-bw/2, tc[1]+TH*0.36, bw*Math.min(1, prog / r.time), 4);
   }
   // habitants
   if(!drawFast && d.resid && b.pop>0){
@@ -959,13 +960,14 @@ function trainBlendedDir(pts, seg, t){
 // Retourne la pose iso du wagon wagonIndex (0 = premier wagon derrière la loco).
 // Trace en arrière le long de la polyline réelle, avec longueurs de segments variables.
 function trainWagonPose(veh, wagonIndex){
-  const pts = veh.pts;
+  const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
+  const pts = rs.pts;
   const SPACING = TILE * 0.80;
   const backDist = (wagonIndex + 1) * SPACING;
 
   // Source principale : historique continu de la locomotive. Il survit aux
   // arrêts en gare et aux changements de chemin aux aiguillages.
-  const trail = veh.railTrail;
+  const trail = rs.railTrail;
   if(Array.isArray(trail) && trail.length >= 2){
     let rem = backDist;
     for(let i = trail.length - 1; i > 0; i--){
@@ -986,7 +988,7 @@ function trainWagonPose(veh, wagonIndex){
   }
 
   if(pts && pts.length >= 2){
-    let ws = veh.seg, wt = veh.t, rem = backDist;
+    let ws = rs.seg, wt = rs.t, rem = backDist;
     while(rem > 1e-3){
       const a = pts[Math.max(0, ws)];
       const b = pts[Math.min(ws + 1, pts.length - 1)];
@@ -1011,7 +1013,7 @@ function trainWagonPose(veh, wagonIndex){
     }
 
     // Tracé insuffisant (train au début de son path) : extrapoler depuis la tuile d'entrée.
-    const startTile = veh.pathTiles?.[0] ?? -1;
+    const startTile = rs.pathTiles?.[0] ?? -1;
     const entryTile = veh.railPathEntryFromTile ?? null;
     if(startTile >= 0 && entryTile !== null && entryTile !== startTile){
       const sx = startTile % N, sy = (startTile / N) | 0;
@@ -1025,8 +1027,8 @@ function trainWagonPose(veh, wagonIndex){
   }
 
   // Train arrêté en gare (pts.length <= 1) : extrapoler en arrière depuis la direction d'arrivée.
-  const curTile = veh.railContinueTile ?? null;
-  const prevTile = veh.railPreviousTile ?? null;
+  const curTile = rs.railContinueTile ?? null;
+  const prevTile = rs.railPreviousTile ?? null;
   if(curTile == null || prevTile == null || curTile === prevTile) return null;
   const cx = curTile % N, cy = (curTile / N) | 0;
   const px = prevTile % N, py = (prevTile / N) | 0;
@@ -1073,17 +1075,18 @@ function drawTrainWagon(veh, wagonIndex){
 }
 
 function trainPose(veh){
-  const pts = veh.pts;
+  const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
+  const pts = rs.pts;
   if(pts && pts.length >= 2){
-    const pose = lanePose(pts, veh.seg, veh.t, 0);
-    const [dx, dy] = trainBlendedDir(pts, veh.seg, veh.t);
+    const pose = lanePose(pts, rs.seg, rs.t, 0);
+    const [dx, dy] = trainBlendedDir(pts, rs.seg, rs.t);
     const [du, dv] = rotDir(dx, dy);
     return { u: pose.u, v: pose.v, du, dv };
   }
   const pose = lanePose(pts || [{x:0,y:0}], 0, 0, 0);
   if(Math.abs(pose.du) > 1e-6 || Math.abs(pose.dv) > 1e-6) return pose;
-  const curTile = veh?.railContinueTile ?? veh?.pathTiles?.[veh?.seg ?? 0] ?? null;
-  const prevTile = veh?.railPreviousTile ?? null;
+  const curTile = rs?.railContinueTile ?? rs?.pathTiles?.[rs?.seg ?? 0] ?? null;
+  const prevTile = rs?.railPreviousTile ?? null;
   if(curTile != null && prevTile != null && curTile !== prevTile){
     const cx = curTile % N, cy = (curTile / N) | 0;
     const px = prevTile % N, py = (prevTile / N) | 0;
@@ -1600,7 +1603,8 @@ function drawTrainDepotFlags(){
 }
 
 function drawVehicle(veh){
-  if(!veh.pts || !veh.pts.length) return;
+  const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
+  if(!rs.pts || !rs.pts.length) return;
   if(veh.vtype === 'train'){
     const {u, v, du, dv} = trainPose(veh);
     const vt = VEHICLE_TYPES[veh.vtype];
@@ -1630,8 +1634,8 @@ function drawVehicle(veh){
     }
     return;
   }
-  const {u, v} = lanePose(veh.pts, veh.seg, veh.t, veh.overtaking ? -0.17 : 0.17);
-  const [bDx, bDy] = trainBlendedDir(veh.pts, veh.seg, veh.t);
+  const {u, v} = lanePose(rs.pts, rs.seg, rs.t, veh.overtaking ? -0.17 : 0.17);
+  const [bDx, bDy] = trainBlendedDir(rs.pts, rs.seg, rs.t);
   const [du, dv] = rotDir(bDx, bDy);
   const nd = Math.hypot(du, dv) || 1;
   const fn = du/nd, fv = dv/nd;
@@ -2253,7 +2257,8 @@ function draw(){
     }
 
     for(const veh of vehicles){
-      if(veh.state === 'idle' || !veh.pts || !veh.pts.length) continue;
+      const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
+      if(veh.state === 'idle' || !rs.pts || !rs.pts.length) continue;
       if(veh.vtype === 'train'){
         for(let i = 0; i < (veh.wagons?.length || 0); i++){
           const wp = trainWagonPose(veh, i);
@@ -2262,7 +2267,7 @@ function draw(){
       }
       const {u, v} = veh.vtype === 'train'
         ? trainPose(veh)
-        : lanePose(veh.pts, veh.seg, veh.t, veh.overtaking ? -0.17 : 0.17);
+        : lanePose(rs.pts, rs.seg, rs.t, veh.overtaking ? -0.17 : 0.17);
       sprites.push({ k:spriteDepthKey(u, v, 0.52), f:()=>drawVehicle(veh) });
     }
 

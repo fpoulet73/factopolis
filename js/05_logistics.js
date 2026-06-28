@@ -1809,14 +1809,15 @@ function isMyVehicle(v){
 // Position monde (px) d'un véhicule pour le focus caméra.
 function vehicleWorldPos(v){
   if(!v) return null;
-  const pts = v.pts;
+  const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(v) : v;
+  const pts = rs.pts;
   if(pts && pts.length >= 2){
-    const seg = Math.min(v.seg||0, pts.length-1);
+    const seg = Math.min(rs.seg||0, pts.length-1);
     const a = pts[seg], b = pts[Math.min(seg+1, pts.length-1)];
-    return { x: a.x + (b.x-a.x)*(v.t||0), y: a.y + (b.y-a.y)*(v.t||0) };
+    return { x: a.x + (b.x-a.x)*(rs.t||0), y: a.y + (b.y-a.y)*(rs.t||0) };
   }
   if(pts && pts.length === 1) return { x: pts[0].x, y: pts[0].y };
-  const b = v.currentBuilding || v.garageRef;
+  const b = rs.currentBuilding || v.garageRef;
   if(b && !b.dead) return { x: (b.x + (b.w||1)/2)*TILE, y: (b.y + (b.h||1)/2)*TILE };
   return null;
 }
