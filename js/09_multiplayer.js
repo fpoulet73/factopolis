@@ -23,6 +23,16 @@ const MP_RENDER_DELAY = 0.3;
 const MP_SNAPSHOT_BUFFER_MAX = 16;
 let mpStateSyncTimer = 0;
 
+// L'hôte diffuse toutes les MP_STATE_SYNC_INTERVAL secondes RÉELLES ; l'écart de
+// gtime entre deux snapshots vaut donc MP_STATE_SYNC_INTERVAL * speed. Si la
+// profondeur du tampon de rendu (le retard) est inférieure à ~2 intervalles,
+// l'horloge de rendu rattrape la cible, se fige, puis saute à l'arrivée du
+// snapshot suivant : c'est la saccade. On dimensionne le retard sur l'écart réel
+// des snapshots (qui dépend de la vitesse) avec une marge de 2,5 intervalles.
+function mpRenderDelay(){
+  return Math.max(MP_RENDER_DELAY, MP_STATE_SYNC_INTERVAL * (speed || 1) * 2.5);
+}
+
 function serializeTruckState(tk){
   return {
     id: tk.id ?? null,
@@ -160,41 +170,61 @@ function vehiclePathSignature(state, vtype){
   return 'road:' + (state.pts || []).map(p => `${Math.round(p.x)},${Math.round(p.y)}`).join('|');
 }
 
-function interpolatePointLists(from, to, alpha){
-  if(!Array.isArray(from) || !from.length) return copyPointList(to);
-  if(!Array.isArray(to) || !to.length) return copyPointList(from);
-  const n = Math.min(from.length, to.length);
-  const out = [];
-  for(let i=0; i<n; i++){
-    out.push({
-      x: from[i].x + (to[i].x - from[i].x) * alpha,
-      y: from[i].y + (to[i].y - from[i].y) * alpha,
-    });
-  }
-  if(to.length > n){
-    for(let i=n; i<to.length; i++) out.push({ x:to[i].x, y:to[i].y });
-  }
-  return out;
+// Position monde (pixels) de la locomotive lissée, à partir de l'état de rendu
+// interpolé (renderPts/renderSeg/renderT). Même repère que railTrail.
+function mpGuestLocoWorld(v){
+  const pts = v.renderPts;
+  if(!Array.isArray(pts) || !pts.length) return null;
+  const seg = Math.max(0, Math.min(v.renderSeg | 0, pts.length - 1));
+  const a = pts[seg], b = pts[Math.min(seg + 1, pts.length - 1)];
+  if(!a || !b) return null;
+  const t = Math.max(0, Math.min(1, v.renderT || 0));
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
-// railTrail est une file circulaire : on empile les nouveaux points côté
-// locomotive (fin du tableau) et on rogne les plus anciens en tête. Aligner
-// l'interpolation par l'index 0 mélangerait donc des points décalés d'un cran
-// dès qu'un point est rogné, ce qui fait sauter les wagons. On aligne par la fin
-// (côté loco, stable) et on conserve la queue ancienne du tampon le plus récent.
-function interpolateRailTrail(from, to, alpha){
-  if(!Array.isArray(from) || !from.length) return copyPointList(to);
-  if(!Array.isArray(to) || !to.length) return copyPointList(from);
-  const n = Math.min(from.length, to.length);
-  const fOff = from.length - n, tOff = to.length - n;
-  const out = [];
-  const lead = to.length >= from.length ? to.slice(0, tOff) : from.slice(0, fOff);
-  for(const p of lead) out.push({ x:p.x, y:p.y });
-  for(let i=0; i<n; i++){
-    const f = from[fOff + i], t = to[tOff + i];
-    out.push({ x: f.x + (t.x - f.x) * alpha, y: f.y + (t.y - f.y) * alpha });
+// Rogne renderRailTrail comme l'hôte rogne railTrail : on conserve juste assez de
+// longueur derrière la loco pour porter tous les wagons (+ marge).
+function mpTrimGuestTrail(v){
+  const trail = v.renderRailTrail;
+  if(!Array.isArray(trail) || trail.length < 3) return;
+  const keepDistance = ((v.wagons?.length || 0) + 2) * TILE * 0.80 + TILE * 2;
+  let distance = 0, first = trail.length - 1;
+  for(let i = trail.length - 1; i > 0; i--){
+    distance += Math.hypot(trail[i].x - trail[i - 1].x, trail[i].y - trail[i - 1].y);
+    first = i - 1;
+    if(distance >= keepDistance) break;
   }
-  return out;
+  if(first > 0) trail.splice(0, first);
+}
+
+// Reconstruit la traînée des wagons côté invité à partir de la position LISSÉE de
+// la locomotive interpolée, exactement comme l'hôte enregistre sa traînée image
+// par image. On n'interpole plus élément par élément le railTrail du snapshot —
+// un tampon glissant dont les index ne coïncident pas d'un snapshot à l'autre, ce
+// qui faisait vibrer les wagons même quand la loco glissait correctement.
+function mpUpdateGuestTrainTrail(v, seedTrail){
+  const loco = mpGuestLocoWorld(v);
+  if(!loco) return; // loco arrêtée sans tracé exploitable : on garde la traînée
+  let trail = v.renderRailTrail;
+  const last = Array.isArray(trail) && trail.length ? trail[trail.length - 1] : null;
+  // (Re)amorçage si la traînée est vide ou après une discontinuité (nouveau
+  // trajet/téléportation) : on part de la traînée autoritaire du snapshot pour
+  // que les wagons soient présents immédiatement.
+  const jumped = last && Math.hypot(loco.x - last.x, loco.y - last.y) > TILE * 3;
+  if(!last || jumped){
+    trail = (Array.isArray(seedTrail) && seedTrail.length)
+      ? seedTrail.map(p => ({ x: p.x, y: p.y }))
+      : [{ x: loco.x, y: loco.y }];
+    v.renderRailTrail = trail;
+  }
+  // Comme l'hôte (recordTrainTrailPoint) : on n'empile un point que lorsque la
+  // loco a parcouru le seuil depuis le dernier point. Pas d'ajustement continu de
+  // la pointe (sinon le dernier segment s'allongerait sans fin).
+  const tip = trail[trail.length - 1];
+  if(!tip || Math.hypot(loco.x - tip.x, loco.y - tip.y) >= 2){
+    trail.push({ x: loco.x, y: loco.y });
+  }
+  mpTrimGuestTrail(v);
 }
 
 function setVehicleRenderImmediate(v, state){
@@ -331,7 +361,7 @@ function mpPushGuestRenderSnapshot(d){
   while(buf.length > MP_SNAPSHOT_BUFFER_MAX) buf.shift();
   const latest = buf[buf.length - 1];
   const oldest = buf[0];
-  const target = Math.max(oldest?.gtime || 0, (latest?.gtime || 0) - MP_RENDER_DELAY);
+  const target = Math.max(oldest?.gtime || 0, (latest?.gtime || 0) - mpRenderDelay());
   if(!Number.isFinite(MP.renderClockGtime)) MP.renderClockGtime = target;
   else if(MP.renderClockGtime < (oldest?.gtime || 0)) MP.renderClockGtime = oldest.gtime;
 }
@@ -344,7 +374,7 @@ function mpAdvanceGuestRenderClock(gameDt){
   }
   const oldest = buf[0];
   const latest = buf[buf.length - 1];
-  const target = Math.max(oldest.gtime, latest.gtime - MP_RENDER_DELAY);
+  const target = Math.max(oldest.gtime, latest.gtime - mpRenderDelay());
   if(!Number.isFinite(MP.renderClockGtime)) MP.renderClockGtime = target;
   if(!paused && gameDt > 0) MP.renderClockGtime += gameDt;
   if(MP.renderClockGtime > target) MP.renderClockGtime = target;
@@ -355,7 +385,7 @@ function mpFindGuestRenderBracket(){
   const buf = MP.renderSnapshots || [];
   if(!buf.length) return null;
   const latest = buf[buf.length - 1];
-  const target = Math.max(buf[0].gtime, latest.gtime - MP_RENDER_DELAY);
+  const target = Math.max(buf[0].gtime, latest.gtime - mpRenderDelay());
   const renderTime = Number.isFinite(MP.renderClockGtime) ? MP.renderClockGtime : target;
   if(renderTime <= buf[0].gtime) return { a:buf[0], b:buf[0], alpha:0 };
   for(let i=1; i<buf.length; i++){
@@ -373,31 +403,81 @@ function snapshotProgressValue(s){
   return (s?.seg || 0) + (s?.t || 0);
 }
 
-// Un train réécrit la queue de son itinéraire à chaque aiguillage
-// (pathTiles.slice(0, seg+1).concat(...)), donc la signature complète change en
-// permanence alors que le train suit la même trajectoire. Comparer la totalité
-// ferait échouer l'interpolation et saccader la loco à chaque snapshot. On
-// vérifie plutôt que le préfixe déjà parcouru (jusqu'à la position la plus en
-// arrière des deux snapshots) coïncide : c'est la portion réellement stable.
-function trainSnapshotsCompatible(a, b){
-  const ta = a.pathTiles, tb = b.pathTiles;
-  if(!Array.isArray(ta) || !ta.length || !Array.isArray(tb) || !tb.length){
-    return vehiclePathSignature(a, 'train') === vehiclePathSignature(b, 'train');
-  }
-  const lo = Math.min(Math.floor(snapshotProgressValue(a)), Math.floor(snapshotProgressValue(b)));
-  const need = Math.max(0, Math.min(lo, ta.length - 1, tb.length - 1));
-  for(let i=0; i<=need; i++) if(ta[i] !== tb[i]) return false;
-  return true;
+// Position monde (pixels) d'un snapshot le long de sa polyline pts.
+function snapshotWorldPos(s){
+  const pts = s?.pts;
+  if(!Array.isArray(pts) || !pts.length) return null;
+  const seg = Math.max(0, Math.min(s.seg | 0, pts.length - 1));
+  const a = pts[seg], b = pts[Math.min(seg + 1, pts.length - 1)];
+  if(!a || !b) return null;
+  const t = Math.max(0, Math.min(1, s.t || 0));
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
+// Projette un point monde sur la polyline pts et renvoie la progression (seg+t)
+// du point le plus proche. Sert à reconvertir une position interpolée en monde
+// vers le repère (seg+t) du chemin de rendu. La recherche est limitée à une
+// fenêtre autour de hintSeg (segment courant du snapshot) : c'est plus rapide et
+// ça évite qu'une voie repassant près d'elle-même ne capte une mauvaise section.
+function projectWorldOnPts(pts, world, hintSeg = 0){
+  if(!Array.isArray(pts) || pts.length < 2 || !world) return 0;
+  const last = pts.length - 2;
+  const lo = Math.max(0, Math.min(last, (hintSeg | 0) - 8));
+  const hi = Math.max(0, Math.min(last, (hintSeg | 0) + 3));
+  let bestProg = lo, bestD2 = Infinity;
+  for(let i = lo; i <= hi; i++){
+    const a = pts[i], b = pts[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy || 1;
+    let t = ((world.x - a.x) * dx + (world.y - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const px = a.x + dx * t, py = a.y + dy * t;
+    const d2 = (world.x - px) ** 2 + (world.y - py) ** 2;
+    if(d2 < bestD2){ bestD2 = d2; bestProg = i + t; }
+  }
+  return bestProg;
+}
+
+// Interpolation des trains EN ESPACE MONDE. Un train réinitialise son repère
+// (seg=0, pts/pathTiles reconstruits à partir de la tuile courante) à chaque
+// replanification de signal/aiguillage : la progression (seg+t) chute alors à ~0
+// alors que le train n'a pas bougé. Interpoler cette progression faisait sauter
+// tout le train à chaque snapshot (et le bloquait près du dépôt, dense en
+// signaux). On interpole donc la POSITION MONDE de la loco (continue malgré le
+// changement de repère), puis on la reprojette sur le chemin de rendu b.pts pour
+// retrouver un (seg+t) exploitable par le rendu existant.
 function interpolateVehicleSnapshotState(a, b, alpha){
   if(!a && !b) return null;
   if(!a) return b;
   if(!b) return a;
   const isTrain = a.vtype === 'train' && b.vtype === 'train';
-  const samePath = isTrain
-    ? trainSnapshotsCompatible(a, b)
-    : vehiclePathSignature(a, a.vtype) === vehiclePathSignature(b, b.vtype);
+
+  if(isTrain){
+    // Changement d'état (idle↔roulant, source↔dest) : bascule franche. Ces
+    // transitions se produisent à l'arrêt (dépôt/gare), donc invisibles.
+    if(a.state !== b.state) return alpha < 0.5 ? a : b;
+    const wa = snapshotWorldPos(a), wb = snapshotWorldPos(b);
+    if(!wa || !wb || !Array.isArray(b.pts) || b.pts.length < 2){
+      return alpha < 0.5 ? a : b;
+    }
+    // Saut trop grand pour un intervalle de snapshot : vraie téléportation
+    // (nouveau trajet lointain) → bascule franche plutôt qu'un glissement.
+    if(Math.hypot(wa.x - wb.x, wa.y - wb.y) > TILE * 6){
+      return alpha < 0.5 ? a : b;
+    }
+    const pa = projectWorldOnPts(b.pts, wa, b.seg | 0);
+    const pb = projectWorldOnPts(b.pts, wb, b.seg | 0);
+    return {
+      ...b,
+      currentBuildingX: alpha < 0.5 ? a.currentBuildingX : b.currentBuildingX,
+      currentBuildingY: alpha < 0.5 ? a.currentBuildingY : b.currentBuildingY,
+      railContinueTile: alpha < 0.5 ? a.railContinueTile : b.railContinueTile,
+      railPreviousTile: alpha < 0.5 ? a.railPreviousTile : b.railPreviousTile,
+      interpProgress: pa + (pb - pa) * alpha,
+    };
+  }
+
+  const samePath = vehiclePathSignature(a, a.vtype) === vehiclePathSignature(b, b.vtype);
   if(!samePath || a.state !== b.state){
     return alpha < 0.5 ? a : b;
   }
@@ -407,7 +487,6 @@ function interpolateVehicleSnapshotState(a, b, alpha){
   const progress = aProgress + (bProgress - aProgress) * alpha;
   return {
     ...b,
-    railTrail: interpolateRailTrail(a.railTrail, b.railTrail, alpha),
     currentBuildingX: alpha < 0.5 ? a.currentBuildingX : b.currentBuildingX,
     currentBuildingY: alpha < 0.5 ? a.currentBuildingY : b.currentBuildingY,
     railContinueTile: alpha < 0.5 ? a.railContinueTile : b.railContinueTile,
@@ -485,12 +564,15 @@ function mpUpdateGuestVisuals(realDt=0, gameDt=0){
     const currentBuilding = syncBuildingByCoords(interp.currentBuildingX, interp.currentBuildingY) || null;
     v.renderPts = copyPointList(interp.pts);
     v.renderPathTiles = Array.isArray(interp.pathTiles) ? interp.pathTiles.slice() : [];
-    v.renderRailTrail = copyPointList(interp.railTrail);
     v.renderCurrentBuilding = currentBuilding;
     v.renderRailContinueTile = interp.railContinueTile ?? null;
     v.renderRailPreviousTile = interp.railPreviousTile ?? null;
     const progress = interp.interpProgress ?? snapshotProgressValue(interp);
     setVehicleRenderProgress(v, progress);
+    // La traînée (et donc les wagons) est reconstruite à partir de la loco lissée
+    // plutôt qu'interpolée depuis le snapshot ; sinon les wagons vibrent.
+    if(v.vtype === 'train') mpUpdateGuestTrainTrail(v, interp.railTrail);
+    else v.renderRailTrail = copyPointList(interp.railTrail);
   }
 
   for(const tk of trucks){
@@ -567,7 +649,10 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   b.townId = o.townId ?? null;
   b.name = o.name || null;
   b.mergeBlockedMissing = Array.isArray(o.mergeBlockedMissing) ? o.mergeBlockedMissing.filter(r => RES[r]) : null;
-  if(b.type === 'bus_stop') b.passengers = o.passengers || 0;
+  if(b.type === 'bus_stop'){
+    b.passengers = o.passengers || 0;
+    b.passengersEntrant = o.passengersEntrant ?? 0;
+  }
   if(b.type === 'train_station'){
     b.passengersEntrant = o.passengersEntrant ?? 0;
     b.passengersEntrantMax = o.passengersEntrantMax ?? 0;
@@ -652,6 +737,9 @@ function applyVehicleDynamicState(v, sv){
 function applyStateSync(d){
   if(!d?.dynamicOnly){
     applySnapshot(d);
+    // workersAssigned/Idle ne sont pas transmis : l'invité les reconstruit
+    // depuis les données synchronisées (pop, townId, owner, navetteurs).
+    refreshWorkerAllocation();
     return;
   }
   const includeTransient = Array.isArray(d.trucks) || Array.isArray(d.walkers) || Array.isArray(d.homeless);
@@ -775,6 +863,11 @@ function applyStateSync(d){
     trainConfigSelectedWagonIndex = -1;
     trainConfigLocoSelected = false;
   }
+
+  // workersAssigned/Idle ne sont pas transmis dans le sync dynamique : l'invité
+  // les reconstruit localement à partir des bâtiments synchronisés, sinon les
+  // usines affichent 0 ouvrier alors que l'hôte les a bien alloués.
+  refreshWorkerAllocation();
 }
 
 function mpRunsAuthoritativeSimulation(){
