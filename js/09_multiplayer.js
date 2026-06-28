@@ -794,10 +794,69 @@ function applyStateSync(d){
   if(selectedTownId != null && !townById.has(selectedTownId)) selectedTownId = null;
 
   const bState = new Map((d.buildings || []).map(o => [syncBuildingKey(o), o]));
+  const bSyncNow = performance.now();
+  // Délai de grâce pour les placements optimistes d'un invité (action 'build'
+  // envoyée mais pas encore allée-retour via le snapshot hôte). Au-delà, un
+  // bâtiment jamais confirmé est considéré comme rejeté par l'hôte et élagué.
+  const MP_BLD_ACK_GRACE_MS = 3000;
+
+  // 1) Mettre à jour les bâtiments existants et retirer ceux que l'hôte ne
+  //    simule plus. Les fusions/défusions ne s'exécutent que sur l'hôte
+  //    autoritatif (tryMerge/splitBuilding) : leurs changements de structure
+  //    n'arrivent à l'invité QUE via ce snapshot, il faut donc élaguer ici les
+  //    bâtiments disparus (anciens logements/usines absorbés par une fusion).
+  const removedSelTile = (selected && !bState.has(syncBuildingKey(selected)))
+    ? { x: selected.x, y: selected.y } : null;
+  const keptKeys = new Set();
+  const survivors = [];
   for(const b of buildings){
-    const o = bState.get(syncBuildingKey(b));
-    if(!o) continue;
+    const key = syncBuildingKey(b);
+    const o = bState.get(key);
+    if(o){
+      b.mpConfirmedAt = bSyncNow;
+      keptKeys.add(key);
+      applyBuildingDynamicState(b, o, includeTransient, d.gtime || 0);
+      survivors.push(b);
+      continue;
+    }
+    // Placement optimiste récent jamais confirmé : on le conserve en attendant
+    // l'allée-retour de l'action 'build' (sinon le bâtiment clignoterait).
+    const tooYoung = b.mpCreatedAt != null && (bSyncNow - b.mpCreatedAt) < MP_BLD_ACK_GRACE_MS;
+    if(b.mpConfirmedAt == null && tooYoung){
+      keptKeys.add(key);
+      survivors.push(b);
+      continue;
+    }
+    // L'hôte ne simule plus ce bâtiment : le retirer localement (grille + sélection).
+    setGrid(b, null);
+    if(selected === b) selected = null;
+  }
+  buildings = survivors;
+
+  // 2) Instancier les bâtiments nouveaux côté hôte mais absents localement :
+  //    c'est le résultat des fusions (logements ET usines) et des défusions.
+  for(const o of d.buildings || []){
+    if(!BUILD[o.type]) continue;
+    const key = syncBuildingKey(o);
+    if(keptKeys.has(key)) continue;
+    const b = newBuilding(o.type, o.x, o.y, o.w, o.h);
+    b.renderProg = o.prog || 0;
+    b.mpProgRate = 0;
+    b.mpProgSyncGtime = null;
     applyBuildingDynamicState(b, o, includeTransient, d.gtime || 0);
+    b.mpConfirmedAt = bSyncNow; // issu d'un snapshot hôte → déjà confirmé
+    buildings.push(b);
+    setGrid(b, b);
+    keptKeys.add(key);
+    if(o.stationGroupId != null) nextTrainStationId = Math.max(nextTrainStationId, o.stationGroupId + 1);
+  }
+
+  // Si le bâtiment sélectionné a été absorbé par une fusion, re-sélectionner
+  // le bâtiment fusionné qui couvre sa tuile d'origine (comportement miroir
+  // de tryMerge côté hôte qui fait `selected = t`).
+  if(removedSelTile && !selected){
+    const repl = bgrid[removedSelTile.y*N + removedSelTile.x];
+    if(repl) selected = repl;
   }
 
   homeless = Array.isArray(d.homeless)
@@ -1256,6 +1315,7 @@ function applySnapshot(d){
     b.renderProg = b.prog || 0;
     b.mpProgRate = 0;
     b.mpProgSyncGtime = gtime || 0;
+    b.mpConfirmedAt = performance.now(); // snapshot complet autoritatif
     if(o.ore)   b.ore   = o.ore;
     if(o.allow) b.allow = o.allow;
     if(o.sellTo) b.sellTo = o.sellTo;

@@ -494,9 +494,17 @@ function canPlace(t,x,y){
       }
     }
   }
-  // zone d'exclusion multijoueur
-  if(MP.connected && nearbyEnemyOwner(MP.myId, x, y))
-    return { ok:false, msg:"Trop proche d'un autre joueur (−"+MP_ZONE+' cases)' };
+  // zone d'exclusion multijoueur : un bâtiment ne peut créer un nouveau
+  // village à proximité d'un autre joueur. En revanche, s'il rejoint un
+  // village existant (le sien ou celui d'un autre) ou s'il n'est pas
+  // résidentiel (donc ne fonde jamais de village), la construction est libre.
+  if(MP.connected && BUILD[t]?.resid){
+    const bx = x + 0.5, by = y + 0.5;
+    const nearest = nearestTownToPoint(bx, by);
+    const wouldCreateTown = !nearest || Math.hypot(bx - nearest.cx, by - nearest.cy) > TOWN_RADIUS;
+    if(wouldCreateTown && nearbyEnemyOwner(MP.myId, x, y))
+      return { ok:false, msg:"Trop proche d'un autre joueur pour fonder un village (−"+MP_ZONE+' cases)' };
+  }
   return { ok:true };
 }
 
