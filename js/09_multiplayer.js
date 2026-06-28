@@ -607,6 +607,14 @@ function applyAction(msg){
       setTrainDepotDeparture(v, !!act.armed);
       break;
     }
+    case 'pin_vehicle_res': {
+      const v = vehicles.find(v=>String(v.id) === String(act.id));
+      if(!v || v.garageRef?.owner !== msg.from) break;
+      const vt = VEHICLE_TYPES[v.vtype];
+      v.pinnedRes = (act.res && vt?.resources.includes(act.res)) ? act.res : null;
+      if(v.pinnedRes && v.res && v.res !== v.pinnedRes){ v.cargo = 0; v.res = null; }
+      break;
+    }
     case 'configure_train': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
       if(!v || v.garageRef?.owner !== msg.from || v.vtype !== 'train') break;

@@ -435,7 +435,7 @@ function sanitizeWorldConfig(config = {}) {
 const ALLOWED_ACTIONS = new Set([
   'road', 'bulldoze_road', 'rail_update', 'rail_signal_update', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
   'build', 'toggle_bld_pause', 'toggle_out_block', 'clear_bld_stock', 'upgrade_plant',
-  'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'merge_towns',
+  'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'pin_vehicle_res', 'merge_towns',
   'zone_reassign', 'rename_bus_stop', 'owner_remap', 'pause', 'speed',
 ]);
 const ALLOWED_BUILD_TYPES = new Set([
@@ -505,6 +505,11 @@ function sanitizeAction(client, msg) {
     case 'return_vehicle':
       if (!validName(act.id, 64)) return null;
       out.id = String(act.id); break;
+    case 'pin_vehicle_res':
+      if (!validName(act.id, 64)) return null;
+      out.id = String(act.id);
+      out.res = act.res == null ? null : String(act.res).slice(0, 32);
+      break;
     case 'route_vehicle':
       if (!validName(act.id, 64) || !intInRange(act.sourceX) || !intInRange(act.sourceY) || !intInRange(act.destX) || !intInRange(act.destY)) return null;
       Object.assign(out, { id: String(act.id), sourceX: act.sourceX, sourceY: act.sourceY, destX: act.destX, destY: act.destY }); break;

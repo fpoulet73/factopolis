@@ -1421,6 +1421,18 @@ function renderInfo(){
              + '<span style="color:#8fa3bf;flex:1;text-align:right;font-size:10px">'+srcName.substring(0,7)+' → '+dstName.substring(0,7)+'</span>'
              + cfgBtns
              + '</div>';
+          // Choix de la ressource transportée (camions pouvant en porter plusieurs)
+          if(vt.resources.length > 1){
+            const opts = '<option value=""'+(!v.pinnedRes?' selected':'')+'>Auto (toutes)</option>'
+              + vt.resources.map(r=>'<option value="'+r+'"'+(v.pinnedRes===r?' selected':'')+'>'
+                  +(RES[r]?.ic ? RES[r].ic+' ' : '')+(RES[r]?.n||r)+'</option>').join('');
+            h += '<div style="display:flex;align-items:center;gap:5px;margin-top:3px">'
+               + '<span style="color:#8fa3bf;font-size:10px;flex:0 0 auto">Ressource</span>'
+               + '<select data-pin-v="'+v.id+'" title="Choisir la ressource transportée par ce camion" '
+               + 'style="flex:1;background:#0f1820;color:#e6edf5;border:1px solid #2a3a50;border-radius:3px;font-size:10px;padding:2px">'
+               + opts + '</select>'
+               + '</div>';
+          }
         }
 
         h += '</div>';
@@ -1614,6 +1626,9 @@ function renderInfo(){
         const v = vehicles.find(vv=>vv.id===vid);
         if(!v) return;
         v.pinnedRes = sel.value || null;
+        // changer la ressource en cours de transport : déposer/oublier le chargement non conforme
+        if(v.pinnedRes && v.res && v.res !== v.pinnedRes){ v.cargo = 0; v.res = null; }
+        if(MP.connected) netSend({ type:'pin_vehicle_res', id:v.id, res:v.pinnedRes });
         p._html = null;
       };
     });
