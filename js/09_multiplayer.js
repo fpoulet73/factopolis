@@ -109,6 +109,246 @@ function findSnapshotVehicleRef(id){
   return vehicles.find(v => String(v.id) === String(id)) || null;
 }
 
+function syncBuildingKey(o){
+  return `${o.type}:${o.x}:${o.y}:${o.w}:${o.h}`;
+}
+
+function syncBuildingByCoords(x, y, type=null){
+  if(x == null || y == null) return null;
+  const b = buildings.find(bb => !bb.dead && bb.x === x && bb.y === y);
+  if(!b) return null;
+  if(type && b.type !== type) return null;
+  return b;
+}
+
+function applyPauseSpeedFromSync(d){
+  paused = !!d.paused;
+  speed = d.speed || 1;
+  $('bPause').textContent = paused ? '▶' : '⏸';
+  $('bPause').classList.toggle('on', paused);
+  document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===speed));
+}
+
+function applyBuildingDynamicState(b, o, includeTransient){
+  b.storage = o.storage || {};
+  b.inc = o.inc || {};
+  b.prog = o.prog || 0;
+  b.trucksOut = includeTransient ? (o.trucksOut || 0) : b.trucksOut || 0;
+  b.pop = o.pop || 0;
+  b.protectedPop = o.protectedPop || 0;
+  b.ct = o.ct || 0;
+  b.pending = includeTransient ? (o.pending || 0) : 0;
+  b.pendingProtected = includeTransient ? (o.pendingProtected || 0) : 0;
+  b.starve = o.starve || 0;
+  b.ore = o.ore || null;
+  b.allow = o.allow || null;
+  b.sellTo = o.sellTo || null;
+  b.sellMin = o.sellMin || null;
+  b.trainAllow = o.trainAllow || null;
+  b.paused = !!o.paused;
+  b.blockedOut = o.blockedOut || null;
+  b.owner = o.owner ?? null;
+  b.starterHome = !!o.starterHome;
+  b.starterSlots = o.starterSlots || 0;
+  b.townId = o.townId ?? null;
+  b.name = o.name || null;
+  b.mergeBlockedMissing = Array.isArray(o.mergeBlockedMissing) ? o.mergeBlockedMissing.filter(r => RES[r]) : null;
+  if(b.type === 'bus_stop') b.passengers = o.passengers || 0;
+  if(b.type === 'train_station'){
+    b.passengersEntrant = o.passengersEntrant ?? 0;
+    b.passengersEntrantMax = o.passengersEntrantMax ?? 0;
+    b.passagersSortant = o.passagersSortant ?? 0;
+    b.passengersEntrantPending = o.passengersEntrantPending ?? 0;
+  }
+  b.stationGroupId = o.stationGroupId ?? null;
+  b.stationAxis = o.stationAxis || null;
+}
+
+function applyVehicleDynamicState(v, sv){
+  const source = syncBuildingByCoords(sv.sourceX, sv.sourceY);
+  const dest = syncBuildingByCoords(sv.destX, sv.destY);
+  const currentBuilding = syncBuildingByCoords(sv.currentBuildingX, sv.currentBuildingY);
+  v.name = sv.name ?? v.name;
+  v.source = source || null;
+  v.dest = dest || null;
+  v.currentBuilding = currentBuilding || (sv.state === 'idle' ? v.garageRef : null);
+  v.state = sv.state || 'idle';
+  v.cargo = sv.cargo || 0;
+  v.res = sv.res || null;
+  v.pinnedRes = sv.pinnedRes || null;
+  v.busRouteDistance = sv.busRouteDistance ?? null;
+  v.passengersOnBoard = sv.passengersOnBoard ?? null;
+  v.passengersFromStation = syncBuildingByCoords(sv.passengersFromStationX, sv.passengersFromStationY, 'train_station') || null;
+  v.waitTimer = sv.waitTimer || 0;
+  v.depotDepartureArmed = !!sv.depotDepartureArmed;
+  v.atDepot = !!sv.atDepot;
+  v.engineMult = sv.engineMult ?? v.engineMult;
+  v.boughtAtGtime = sv.boughtAtGtime ?? v.boughtAtGtime;
+  v.maintenanceDaysPaid = sv.maintenanceDaysPaid ?? v.maintenanceDaysPaid;
+  v.signalWaitTime = sv.signalWaitTime || 0;
+  v.missingRailTimer = sv.missingRailTimer || 0;
+  v.currentRailBlock = sv.currentRailBlock ?? -1;
+  v.pendingFreightRevenue = sv.pendingFreightRevenue || 0;
+  v.freightRevenueFireAt = sv.freightRevenueFireAt ?? null;
+  v.railTollOwed = sv.railTollOwed ? { ...sv.railTollOwed } : {};
+  v.railContinueTile = sv.railContinueTile ?? null;
+  v.railPreviousTile = sv.railPreviousTile ?? null;
+  v.cargoLoadStop = syncBuildingByCoords(sv.cargoLoadStopX, sv.cargoLoadStopY) || null;
+  if(Array.isArray(sv.orders)){
+    v.orders = sv.orders.map(o => syncBuildingByCoords(o.x, o.y)).filter(Boolean);
+  }
+  if(Number.isInteger(sv.orderIndex)) v.orderIndex = sv.orderIndex;
+  if(Array.isArray(sv.orderModes)) v.orderModes = sv.orderModes.slice();
+  if(Array.isArray(sv.wagons)){
+    v.wagons = sv.wagons
+      .map(w => typeof w === 'string'
+        ? trainCreateWagon(w)
+        : (w && typeof w === 'object' ? trainCreateWagon(w.type, w.resource || null) : null))
+      .filter(Boolean);
+  }
+  if(v.vtype === 'train'){
+    v.pathTiles = Array.isArray(sv.pathTiles) ? sv.pathTiles.slice() : [];
+    v.pts = Array.isArray(sv.pathTiles) && sv.pathTiles.length
+      ? sv.pathTiles.map(idx => ({ x:(idx % N) * TILE + TILE / 2, y:((idx / N) | 0) * TILE + TILE / 2 }))
+      : (Array.isArray(sv.pts) ? sv.pts.map(p => ({ x:p.x, y:p.y })) : []);
+    v.railTrail = Array.isArray(sv.railTrail)
+      ? sv.railTrail.filter(p => Number.isFinite(p?.x) && Number.isFinite(p?.y)).map(p => ({ x:p.x, y:p.y }))
+      : [];
+    if(v.wagons?.length) trainNormalizeWagons(v);
+    if(v.orders?.length) syncTrainOrders(v);
+  } else {
+    v.pathTiles = [];
+    v.pts = Array.isArray(sv.pts) ? sv.pts.map(p => ({ x:p.x, y:p.y })) : [];
+  }
+  v.seg = Math.max(0, Math.min((sv.seg || 0), Math.max(0, v.pts.length - 1)));
+  v.t = Math.max(0, Math.min(1, sv.t || 0));
+}
+
+function applyStateSync(d){
+  if(!d?.dynamicOnly){
+    applySnapshot(d);
+    return;
+  }
+  const includeTransient = Array.isArray(d.trucks) || Array.isArray(d.walkers) || Array.isArray(d.homeless);
+  if(d.playerRegistry && typeof d.playerRegistry === 'object') MP.savedRegistry = d.playerRegistry;
+  MP.ownerColors = {};
+  if(d.ownerColors && typeof d.ownerColors === 'object'){
+    for(const [ownerId, color] of Object.entries(d.ownerColors)){
+      const n = Number(ownerId);
+      if(Number.isFinite(n) && typeof color === 'string' && color) MP.ownerColors[n] = color;
+    }
+  }
+  refreshOwnerColorsFromRegistry();
+  gtime = d.gtime || 0;
+  dispatchTimer = d.dispatchTimer || 0;
+  taxTimer = d.taxTimer || 0;
+  mergeTimer = d.mergeTimer || 0;
+  upkeepTimer = d.upkeepTimer || 0;
+  busStopTimer = d.busStopTimer || 0;
+  passengerCycleTimer = d.passengerCycleTimer || 0;
+  WALLETS = {};
+  if(d.wallets){ for(const k in d.wallets) WALLETS[k] = d.wallets[k]; }
+  applyPauseSpeedFromSync(d);
+
+  const townById = new Map((d.towns || []).map(t => [t.id, t]));
+  towns = towns.filter(t => townById.has(t.id));
+  for(const t of towns){
+    const st = townById.get(t.id);
+    t.name = st.name;
+    t.cx = st.cx;
+    t.cy = st.cy;
+  }
+  nextTownId = d.nextTownId ?? nextTownId;
+  nextTrainStationId = d.nextTrainStationId || nextTrainStationId;
+  if(selectedTownId != null && !townById.has(selectedTownId)) selectedTownId = null;
+
+  const bState = new Map((d.buildings || []).map(o => [syncBuildingKey(o), o]));
+  for(const b of buildings){
+    const o = bState.get(syncBuildingKey(b));
+    if(!o) continue;
+    applyBuildingDynamicState(b, o, includeTransient);
+  }
+
+  homeless = Array.isArray(d.homeless)
+    ? d.homeless
+      .filter(h => Number.isFinite(h?.x) && Number.isFinite(h?.y))
+      .map(h => ({
+        owner: h.owner ?? null,
+        x: h.x,
+        y: h.y,
+        col: h.col || playerColor(h.owner ?? null),
+        phase: Number.isFinite(h.phase) ? h.phase : 0,
+      }))
+    : [];
+  for(const k in WALLETS) WALLETS[k].homelessSeeded = true;
+
+  const vehiclesById = new Map(vehicles.map(v => [String(v.id), v]));
+  for(const sv of d.vehicles || []){
+    if(!VEHICLE_TYPES[sv.vtype]) continue;
+    let v = vehiclesById.get(String(sv.id));
+    if(!v){
+      const garage = syncBuildingByCoords(sv.garageX, sv.garageY);
+      if(!garage || !BUILD[garage.type]?.transportDepot) continue;
+      v = createPersistentVehicle(sv.vtype, garage, sv.id ?? null);
+      if(!v) continue;
+      if(v.vtype === 'train' && !sv.name) assignTrainVehicleName(v);
+      vehiclesById.set(String(v.id), v);
+    }
+    applyVehicleDynamicState(v, sv);
+  }
+
+  trucks = [];
+  for(const st of d.trucks || []){
+    const from = syncBuildingByCoords(st.fromX, st.fromY);
+    const target = syncBuildingByCoords(st.targetX, st.targetY);
+    if(!from || !target || !Array.isArray(st.pts) || st.pts.length < 2) continue;
+    trucks.push({
+      pts: st.pts.map(p => ({ x:p.x, y:p.y })),
+      seg: Math.max(0, Math.min((st.seg || 0), Math.max(0, st.pts.length - 1))),
+      t: Math.max(0, Math.min(1, st.t || 0)),
+      res: st.res || null,
+      amt: st.amt || 0,
+      target,
+      from,
+      overtaking: !!st.overtaking,
+    });
+  }
+
+  walkers = [];
+  for(const sw of d.walkers || []){
+    if(!Array.isArray(sw.pts) || sw.pts.length < 2) continue;
+    const target = syncBuildingByCoords(sw.targetX, sw.targetY) || null;
+    walkers.push({
+      pts: sw.pts.map(p => ({ x:p.x, y:p.y })),
+      seg: Math.max(0, Math.min((sw.seg || 0), Math.max(0, sw.pts.length - 1))),
+      t: Math.max(0, Math.min(1, sw.t || 0)),
+      target,
+      leaving: !!sw.leaving,
+      fromHomeless: !!sw.fromHomeless,
+      protectedResident: !!sw.protectedResident,
+      col: sw.col || playerColor(target?.owner ?? null),
+      phase: Number.isFinite(sw.phase) ? sw.phase : 0,
+    });
+  }
+
+  floats = Array.isArray(d.floats)
+    ? d.floats
+      .filter(f => Number.isFinite(f?.x) && Number.isFinite(f?.y) && Number.isFinite(f?.life))
+      .map(f => ({ x:f.x, y:f.y, txt:f.txt || '', col:f.col || '#fff', life:f.life }))
+    : [];
+
+  if(selectedVehicle && !vehiclesById.has(String(selectedVehicle.id))) selectedVehicle = null;
+  if(focusVehicle && !vehiclesById.has(String(focusVehicle.id))){
+    focusVehicle = null;
+    camTracking = false;
+  }
+  if(typeof trainConfigVehicle !== 'undefined' && trainConfigVehicle && !vehiclesById.has(String(trainConfigVehicle.id))){
+    trainConfigVehicle = null;
+    trainConfigSelectedWagonIndex = -1;
+    trainConfigLocoSelected = false;
+  }
+}
+
 function mpRunsAuthoritativeSimulation(){
   return !MP.connected || MP.role !== 'guest';
 }
@@ -266,8 +506,8 @@ function applySnapshot(d){
   const prevTrainConfigVehicleId = typeof trainConfigVehicle !== 'undefined' ? (trainConfigVehicle?.id ?? null) : null;
   const prevSelectedTownId = selectedTownId;
   if(d.dynamicOnly){
-    // Sync runtime autoritaire : conserver le terrain/réseaux déjà reçus via
-    // snapshot initial et actions, puis ne remplacer que l'état vivant.
+    applyStateSync(d);
+    return;
   } else if(d.mapBounds){
     // Format récent : d.size = N_FULL, mapBounds fourni
     WORLD = normalizeWorldConfig(d.world || { ...WORLD, size: d.size });
@@ -1075,7 +1315,7 @@ function mpConnect(url){
         break;
 
       case 'state_sync':
-        if(MP.role === 'guest' && !MP.awaitingSnapshot && msg.state) applySnapshot(msg.state);
+        if(MP.role === 'guest' && !MP.awaitingSnapshot && msg.state) applyStateSync(msg.state);
         break;
 
       case 'action':
