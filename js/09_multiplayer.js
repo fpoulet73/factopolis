@@ -679,8 +679,17 @@ function applyVehicleDynamicState(v, sv){
   const dest = syncBuildingByCoords(sv.destX, sv.destY);
   const currentBuilding = syncBuildingByCoords(sv.currentBuildingX, sv.currentBuildingY);
   v.name = sv.name ?? v.name;
-  v.source = source || null;
-  v.dest = dest || null;
+  // Édition de route en cours côté client : la source/destination sont en train
+  // d'être choisies (clic source puis clic destination). La synchro autoritative
+  // (toutes les 0,2 s) ne doit pas écraser la source fraîchement sélectionnée,
+  // sinon au clic destination vehicleCanServeRoute échoue (source redevenue null)
+  // et affiche à tort « Destination hors rayon de la citerne source ».
+  const editingRoute = typeof vehicleRouteMode !== 'undefined' && vehicleRouteMode
+    && vehicleRouteMode.vehicle === v;
+  if(!editingRoute){
+    v.source = source || null;
+    v.dest = dest || null;
+  }
   v.currentBuilding = currentBuilding || (sv.state === 'idle' ? v.garageRef : null);
   v.state = sv.state || 'idle';
   v.cargo = sv.cargo || 0;
