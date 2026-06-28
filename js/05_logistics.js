@@ -1219,6 +1219,42 @@ function trainCanLeaveDepotNow(v){
   return { ok:true, path, firstTile, firstBlock };
 }
 
+function roadCanLeaveDepotNow(v){
+  if(!v || v.vtype === 'train') return { ok:false, reason:'not_road_vehicle' };
+  if(!vehiclePresentAtDepot(v)) return { ok:false, reason:'not_in_depot' };
+  if(!v.source || !v.dest || v.source.dead || v.dest.dead || !vehicleCanServeRoute(v))
+    return { ok:false, reason:'route_missing' };
+  const path = findRoadPath(v.garageRef, v.source);
+  if(!path?.length) return { ok:false, reason:'no_path' };
+  return { ok:true, path };
+}
+
+function setVehicleDepotDeparture(v, armed){
+  if(v?.vtype === 'train') return setTrainDepotDeparture(v, armed);
+  if(!v) return { ok:false, reason:'no_vehicle' };
+  if(!vehiclePresentAtDepot(v)) return { ok:false, reason:'not_in_depot' };
+  if(!armed){
+    resetVehicleDepotDeparture(v);
+    return { ok:true, armed:false };
+  }
+  const dep = roadCanLeaveDepotNow(v);
+  if(!dep.ok) return dep;
+  v.depotDepartureArmed = true;
+  return { ok:true, armed:true, waiting:false, path:dep.path };
+}
+
+function vehicleDepotFlagState(v){
+  if(v?.vtype === 'train') return trainDepotFlagState(v);
+  if(!vehiclePresentAtDepot(v) || !v.source || !v.dest || v.source.dead || v.dest.dead) return null;
+  const armed = vehicleDepotDepartureArmed(v);
+  const dep = armed ? roadCanLeaveDepotNow(v) : null;
+  return {
+    armed,
+    canLeaveNow: armed ? !!dep?.ok : false,
+    reason: armed ? (dep?.reason || null) : null,
+  };
+}
+
 function setTrainDepotDeparture(v, armed){
   if(v?.vtype !== 'train') return { ok:false, reason:'not_train' };
   if(!trainPresentAtDepot(v)) return { ok:false, reason:'not_in_depot' };
@@ -1681,9 +1717,11 @@ function createPersistentVehicle(vtype, garage, id=null){
 
 function syncTrainOrders(v){
   if(v?.vtype !== 'train') return false;
+  const routeOwner = v.garageRef?.owner ?? MP.myId ?? null;
   const orders = [];
   for(const b of (v.orders || [])){
     if(!b || b.dead) continue;
+    if(!vehicleRouteEndpointOk(b, 'train', routeOwner)) continue;
     const key = trainOrderStopKey(b);
     if(!key) continue;
     const prev = orders.length ? orders[orders.length - 1] : null;
@@ -1726,7 +1764,10 @@ function removePersistentVehicle(v){
   return i >= 0;
 }
 
-function vehicleRouteEndpointOk(b, vtype_override){
+function vehicleRouteEndpointOk(b, vtype_override, ownerOverride){
+  if(!b || b.dead) return false;
+  const routeOwner = ownerOverride ?? vehicleRouteMode?.vehicle?.garageRef?.owner ?? MP.myId ?? null;
+  if(!canUseBuilding(b, routeOwner)) return false;
   const vt = vtype_override || vehicleRouteMode?.vehicle?.vtype;
   if(vt === 'bus') return b?.type === 'bus_stop' || b?.type === 'train_station' || b?.type === 'train_platform';
   if(vt === 'train') return b?.type === 'train_depot' || isTrainStationPiece(b);
@@ -1742,9 +1783,12 @@ function vehicleCanServeRoute(v, res=null){
   if(v?.vtype === 'train' && Array.isArray(v.orders)){
     if(v.orders.length < 2) return false;
     if(!syncTrainOrders(v)) return false;
+    const routeOwner = v.garageRef?.owner ?? MP.myId ?? null;
+    if(!v.orders.every(b => vehicleRouteEndpointOk(b, 'train', routeOwner))) return false;
   } else {
     if(!v?.source || !v?.dest || v.source.dead || v.dest.dead) return false;
-    if(!vehicleRouteEndpointOk(v.source, v.vtype) || !vehicleRouteEndpointOk(v.dest, v.vtype)) return false;
+    const routeOwner = v?.garageRef?.owner ?? MP.myId ?? null;
+    if(!vehicleRouteEndpointOk(v.source, v.vtype, routeOwner) || !vehicleRouteEndpointOk(v.dest, v.vtype, routeOwner)) return false;
   }
   if(v.vtype === 'bus') return true;
   if(v.vtype === 'train'){
@@ -1865,11 +1909,11 @@ function startVehicleRoute(v){
       v.state = 'idle';
       return false;
     }
-    v.state = 'to_source';
-    v.waitTimer = 0;
-    v.currentBuilding = null;
-    v.atDepot = false; // quitte physiquement le dépôt
-    v.cargo = 0;
+  v.state = 'to_source';
+  v.waitTimer = 0;
+  v.currentBuilding = null;
+  v.atDepot = false; // quitte physiquement le dépôt
+  v.cargo = 0;
     v.res = null;
     v.signalWaitTime = 0;
     v.missingRailTimer = 0;
@@ -1887,6 +1931,8 @@ function startVehicleRoute(v){
   v.pts = pts; v.seg = 0; v.t = 0;
   v.cargo = 0; v.res = null;
   v.currentBuilding = null;
+  v.atDepot = false;
+  resetVehicleDepotDeparture(v);
   return true;
 }
 
@@ -1927,8 +1973,12 @@ function returnToGarage(v){
   if(pts){
     v.state = 'returning';
     v.pts = pts; v.seg = 0; v.t = 0;
+    v.atDepot = false;
+    resetVehicleDepotDeparture(v);
   } else {
     v.state = 'idle'; v.pts = [];
+    v.atDepot = false;
+    resetVehicleDepotDeparture(v);
   }
 }
 
@@ -1955,6 +2005,12 @@ function updateVehicles(dt){
             v.waitTimer = 5;
             returnToGarage(v);
           }
+        }
+      }
+      if(v.vtype !== 'train' && v.source && v.dest && vehiclePresentAtDepot(v)){
+        if(vehicleDepotDepartureArmed(v)){
+          const dep = roadCanLeaveDepotNow(v);
+          if(dep.ok) startVehicleRoute(v);
         }
       }
       if(v.state === 'idle') continue;
@@ -1990,6 +2046,8 @@ function updateVehicles(dt){
       if(v.state === 'returning'){
         v.state = 'idle'; v.pts = [];
         v.currentBuilding = v.garageRef;
+        v.atDepot = true;
+        resetVehicleDepotDeparture(v);
         continue;
       }
       if(v.state === 'to_source'){

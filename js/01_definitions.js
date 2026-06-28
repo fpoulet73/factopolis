@@ -278,17 +278,39 @@ function trainPassengerCapacity(v){
   }, 0);
 }
 
+function vehiclePresentAtDepot(v){
+  if(!v || v.state !== 'idle') return false;
+  if(v.atDepot) return true;
+  // Compatibilité anciennes sauvegardes / anciens états runtime :
+  // un véhicule routier idle, déjà revenu sur son dépôt, doit être considéré
+  // "au dépôt" même si le booléen atDepot n'avait pas encore été persisté.
+  if(v.vtype !== 'train' && v.garageRef && v.currentBuilding === v.garageRef && (!Array.isArray(v.pts) || v.pts.length === 0)){
+    v.atDepot = true;
+    return true;
+  }
+  return false;
+}
+
+function vehicleDepotDepartureArmed(v){
+  return !!(v && vehiclePresentAtDepot(v) && v.depotDepartureArmed);
+}
+
+function resetVehicleDepotDeparture(v){
+  if(!v) return;
+  v.depotDepartureArmed = false;
+}
+
 function trainPresentAtDepot(v){
-  return !!(v && v.vtype === 'train' && v.state === 'idle' && v.atDepot);
+  return !!(v && v.vtype === 'train' && vehiclePresentAtDepot(v));
 }
 
 function trainDepotDepartureArmed(v){
-  return !!(v && v.vtype === 'train' && v.depotDepartureArmed);
+  return !!(v && v.vtype === 'train' && vehicleDepotDepartureArmed(v));
 }
 
 function resetTrainDepotDeparture(v){
   if(!v || v.vtype !== 'train') return;
-  v.depotDepartureArmed = false;
+  resetVehicleDepotDeparture(v);
 }
 
 const GARAGE_COST = CFG.logistique?.garage?.cout ?? 1200;

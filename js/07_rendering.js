@@ -1551,8 +1551,12 @@ function drawTrainDepotFlags(){
   ctx.textBaseline = 'middle';
   ctx.font = 'bold 11px "Segoe UI Emoji","Segoe UI",sans-serif';
   for(const depot of buildings){
-    if(depot.dead || depot.type !== 'train_depot') continue;
-    const trains = (depot.vehicles || []).filter(v => trainPresentAtDepot(v) && (v.orders?.length || 0) >= 2);
+    if(depot.dead || (depot.type !== 'train_depot' && depot.type !== 'garage')) continue;
+    const trains = (depot.vehicles || []).filter(v =>
+      depot.type === 'train_depot'
+        ? trainPresentAtDepot(v) && (v.orders?.length || 0) >= 2
+        : v.vtype !== 'train' && vehiclePresentAtDepot(v) && v.source && v.dest
+    );
     if(!trains.length) continue;
     const center = centerOfBuilding(depot);
     const [u, v] = rotF(center.x, center.y);
@@ -1563,7 +1567,7 @@ function drawTrainDepotFlags(){
     // Un seul drapeau par dépôt, avec le nombre de trains présents.
     // Vert = tous prêts à partir, rouge = aucun, ambre = mixte.
     const armedCount = trains.reduce((n, t) => {
-      const s = trainDepotFlagState(t);
+      const s = vehicleDepotFlagState(t);
       return n + (s && s.armed ? 1 : 0);
     }, 0);
     const flagColor = armedCount === trains.length ? '#7dda5a'

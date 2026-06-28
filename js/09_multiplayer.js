@@ -625,18 +625,31 @@ function applyAction(msg){
         const source = buildings.find(b=>b.x===act.sourceX && b.y===act.sourceY);
         const dest   = buildings.find(b=>b.x===act.destX   && b.y===act.destY);
         if(!source || !dest) break;
-        if(!vehicleRouteEndpointOk(source, v.vtype) || !vehicleRouteEndpointOk(dest, v.vtype)) break;
+        if(!vehicleRouteEndpointOk(source, v.vtype, msg.from) || !vehicleRouteEndpointOk(dest, v.vtype, msg.from)) break;
         v.source = source;
         v.dest = dest;
         if(!vehicleCanServeRoute(v)){ v.source = null; v.dest = null; break; }
       }
-      if(v.vtype !== 'train') startVehicleRoute(v);
+      if(v.vtype !== 'train'){
+        if(vehiclePresentAtDepot(v)){
+          v.state = 'idle';
+          v.pts = [];
+          v.seg = 0;
+          v.t = 0;
+          v.currentBuilding = v.garageRef;
+          v.atDepot = true;
+          v.cargo = 0;
+          v.res = null;
+          resetVehicleDepotDeparture(v);
+        } else startVehicleRoute(v);
+      }
       break;
     }
-    case 'train_depot_flag': {
+    case 'train_depot_flag':
+    case 'depot_departure_flag': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
-      if(!v || v.garageRef?.owner !== msg.from || v.vtype !== 'train') break;
-      setTrainDepotDeparture(v, !!act.armed);
+      if(!v || v.garageRef?.owner !== msg.from) break;
+      setVehicleDepotDeparture(v, !!act.armed);
       break;
     }
     case 'pin_vehicle_res': {

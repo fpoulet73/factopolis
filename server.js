@@ -436,7 +436,7 @@ const ALLOWED_ACTIONS = new Set([
   'road', 'bulldoze_road', 'rail_update', 'rail_signal_update', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
   'build', 'toggle_bld_pause', 'toggle_out_block', 'clear_bld_stock', 'upgrade_plant',
   'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'pin_vehicle_res', 'merge_towns',
-  'zone_reassign', 'rename_bus_stop', 'owner_remap', 'pause', 'speed',
+  'zone_reassign', 'rename_bus_stop', 'owner_remap', 'depot_departure_flag', 'pause', 'speed',
 ]);
 const ALLOWED_BUILD_TYPES = new Set([
   'road', 'rail', 'mine', 'lumber', 'farm', 'cotton_farm', 'weaver', 'pump', 'fisher', 'mill',
@@ -505,6 +505,11 @@ function sanitizeAction(client, msg) {
     case 'return_vehicle':
       if (!validName(act.id, 64)) return null;
       out.id = String(act.id); break;
+    case 'depot_departure_flag':
+      if (!validName(act.id, 64) || typeof act.armed !== 'boolean') return null;
+      out.id = String(act.id);
+      out.armed = !!act.armed;
+      break;
     case 'pin_vehicle_res':
       if (!validName(act.id, 64)) return null;
       out.id = String(act.id);

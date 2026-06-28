@@ -14,6 +14,10 @@ const MP = {
 };
 
 const mpHasAdminRights = () => MP.connected && (MP.role === 'host' || MP.isAdmin);
+const controlledBy = (owner, actorId = (MP.connected ? MP.myId : null)) =>
+  owner == null || actorId == null || owner === actorId;
+const canUseBuilding = (b, actorId = (MP.connected ? MP.myId : null)) =>
+  !!b && !b.dead && controlledBy(b.owner ?? null, actorId);
 
 const MP_ZONE = 20; // distance minimale entre bâtiments de joueurs différents
 
@@ -513,8 +517,8 @@ function clickAt(x,y){
       const veh = vehicleRouteMode.vehicle;
       if(vehicleRouteMode.step === 'train_order_append'){
         if(veh?.vtype !== 'train') return;
-        if(!vehicleRouteEndpointOk(b, 'train')){
-          toast('⛔ Le train ne peut utiliser que des gares ou des dépôts ferroviaires.','err');
+        if(!vehicleRouteEndpointOk(b, 'train', veh.garageRef?.owner ?? MP.myId ?? null)){
+          toast('⛔ Le train ne peut utiliser que ses propres gares et dépôts ferroviaires.','err');
           return;
         }
         veh.orders = veh.orders || [];
@@ -532,37 +536,21 @@ function clickAt(x,y){
         return;
       }
       const isBus = veh.vtype === 'bus';
-      if(!vehicleRouteEndpointOk(b)){
+      if(!vehicleRouteEndpointOk(b, veh.vtype, veh.garageRef?.owner ?? MP.myId ?? null)){
         if(isBus)
-          toast('⛔ Le bus ne peut utiliser que des arrêts de bus ou des gares comme source et destination.','err');
+          toast('⛔ Le bus ne peut utiliser que ses propres arrêts et gares comme source et destination.','err');
         else if(veh.vtype === 'train')
-          toast('⛔ Le train ne peut utiliser que des gares ou des dépôts ferroviaires.','err');
+          toast('⛔ Le train ne peut utiliser que ses propres gares ou dépôts ferroviaires.','err');
         else
-          toast('⛔ Les véhicules ne peuvent utiliser que des entrepôts comme source et destination.','err');
+          toast('⛔ Les véhicules ne peuvent utiliser que leurs propres entrepôts comme source et destination.','err');
         return;
       }
       if(vehicleRouteMode.step === 'source'){
-        const v = vehicleRouteMode.vehicle;
-        const vt = VEHICLE_TYPES[v.vtype];
-        const myOwner = MP.myId;
         if(isBus){
-          // Les bus peuvent utiliser n'importe quel arrêt (y compris inter-joueurs)
           vehicleRouteMode.vehicle.source = b;
           vehicleRouteMode.step = 'dest';
           const stopName = b.name || BUILD[b.type].n;
           toast('🚌 Départ : '+stopName+'. Clique sur l\'arrêt de destination.');
-        } else if(b.owner !== myOwner && b.owner != null){
-          // Seul un marché d'un autre joueur est autorisé comme source (pas son dépôt)
-          if(b.type !== 'market'){
-            toast('⛔ Vous ne pouvez acheter que depuis le marché d\'un autre joueur.','err'); return;
-          }
-          const hasSellRes = vt.resources.some(r => b.sellTo?.[r]);
-          if(!hasSellRes){
-            toast('⛔ Ce marché ne vend pas les ressources de ce véhicule.','err'); return;
-          }
-          vehicleRouteMode.vehicle.source = b;
-          vehicleRouteMode.step = 'dest';
-          toast('🛒 Source (achat) : '+(MP.players.find(p=>p.id===b.owner)||{}).name+'. Clique sur ta destination.');
         } else {
           vehicleRouteMode.vehicle.source = b;
           vehicleRouteMode.step = 'dest';
@@ -570,13 +558,6 @@ function clickAt(x,y){
         }
       } else {
         const vRef = vehicleRouteMode.vehicle;
-        const myOwner = MP.myId;
-        if(!isBus && b.owner !== myOwner && b.owner != null){
-          // Destination chez un autre joueur : uniquement un marché (hors bus)
-          if(b.type !== 'market'){
-            toast('⛔ Vous ne pouvez livrer que vers le marché d\'un autre joueur.','err'); return;
-          }
-        }
         vRef.dest = b;
         if(!vehicleCanServeRoute(vRef)){
           vRef.dest = null;
@@ -584,16 +565,22 @@ function clickAt(x,y){
           return;
         }
         vehicleRouteMode = null;
-        const routeStarted = startVehicleRoute(vRef);
+        const routeStarted = vRef.vtype !== 'train' && vehiclePresentAtDepot(vRef)
+          ? false
+          : startVehicleRoute(vRef);
         if(MP.connected) netSend({
           type:'route_vehicle',
           id:vRef.id,
           sourceX:vRef.source.x, sourceY:vRef.source.y,
           destX:vRef.dest.x, destY:vRef.dest.y,
         });
-        if(routeStarted) toast('Route définie ! Le véhicule commence sa tournée.','win');
+        if(vRef.vtype !== 'train' && vehiclePresentAtDepot(vRef))
+          toast('Route définie. Le véhicule attend le drapeau vert pour sortir du dépôt.','win');
+        else if(routeStarted) toast('Route définie ! Le véhicule commence sa tournée.','win');
         else if(vRef.vtype === 'train') toast('⛔ Aucun chemin ferroviaire continu depuis le dépôt du train.','err');
         else toast('⛔ Aucun chemin disponible depuis le dépôt du véhicule.','err');
+        if($('info')) $('info')._html = null;
+        renderInfo();
       }
     }
     return;

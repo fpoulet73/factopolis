@@ -273,7 +273,7 @@ function panelFloat(panelId, text, color){
 }
 
 function trainDepotFlagButtonHtml(v, attrs=''){
-  const state = trainDepotFlagState(v);
+  const state = vehicleDepotFlagState(v);
   if(!state) return '';
   const color = state.armed ? '#7dda5a' : '#ff7474';
   const icon = state.armed ? '🚩' : '🟥';
@@ -283,27 +283,35 @@ function trainDepotFlagButtonHtml(v, attrs=''){
 }
 
 function handleTrainDepotFlagClick(v){
-  if(!v || v.vtype !== 'train') return;
+  if(!v) return;
   if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId){
-    toast('⛔ Ce train appartient à un autre joueur.','err');
+    toast('⛔ Ce véhicule appartient à un autre joueur.','err');
     return;
   }
-  if(!trainPresentAtDepot(v)){
-    toast('⛔ Le train doit être dans le dépôt.','err');
+  if(!vehiclePresentAtDepot(v)){
+    toast('⛔ Le véhicule doit être dans le dépôt.','err');
     return;
   }
-  const nextArmed = !trainDepotDepartureArmed(v);
-  const res = setTrainDepotDeparture(v, nextArmed);
+  const nextArmed = !vehicleDepotDepartureArmed(v);
+  const res = setVehicleDepotDeparture(v, nextArmed);
   if(!res.ok){
-    if(res.reason === 'route_missing') toast('⛔ Il faut d’abord une route valide avec au moins 2 arrêts.','err');
-    else if(res.reason === 'no_path') toast('⛔ Aucun chemin ferroviaire continu depuis le dépôt.','err');
+    if(res.reason === 'route_missing') toast(v.vtype === 'train'
+      ? '⛔ Il faut d’abord une route valide avec au moins 2 arrêts.'
+      : '⛔ Il faut d’abord une route valide.','err');
+    else if(res.reason === 'no_path') toast(v.vtype === 'train'
+      ? '⛔ Aucun chemin ferroviaire continu depuis le dépôt.'
+      : '⛔ Aucun chemin routier continu depuis le dépôt.','err');
     else toast('⛔ Départ impossible depuis ce dépôt.','err');
     return;
   }
-  if(MP.connected) netSend({ type:'train_depot_flag', id:v.id, armed:nextArmed });
+  if(MP.connected) netSend({ type:'depot_departure_flag', id:v.id, armed:nextArmed });
   if(nextArmed){
-    if(res.waiting) toast('🚩 Drapeau vert. Le train partira dès que la voie de sortie sera libre.','win');
-    else toast('🚩 Drapeau vert. Départ autorisé.','win');
+    if(v.vtype === 'train'){
+      if(res.waiting) toast('🚩 Drapeau vert. Le train partira dès que la voie de sortie sera libre.','win');
+      else toast('🚩 Drapeau vert. Départ autorisé.','win');
+    } else {
+      toast('🚩 Drapeau vert. Le véhicule va tenter de sortir du dépôt.','win');
+    }
   } else {
     toast('🟥 Drapeau rouge. Départ annulé.','win');
   }
@@ -317,31 +325,40 @@ function handleTrainDepotFlagClick(v){
 // armés). Cela arme le départ immédiatement au lieu de seulement ouvrir un panneau.
 function handleTrainDepotFlagToggle(depot){
   if(!depot || depot.dead) return;
-  const trains = (depot.vehicles || []).filter(v => trainPresentAtDepot(v) && (v.orders?.length || 0) >= 2);
-  if(!trains.length) return;
+  const depotVehicles = (depot.vehicles || []).filter(v =>
+    depot.type === 'train_depot'
+      ? trainPresentAtDepot(v) && (v.orders?.length || 0) >= 2
+      : v.vtype !== 'train' && vehiclePresentAtDepot(v) && v.source && v.dest
+  );
+  if(!depotVehicles.length) return;
   // Si tous les trains armables sont déjà verts, on les remet au rouge ; sinon on
   // arme tous ceux qui peuvent l'être.
-  const target = !trains.every(v => trainDepotDepartureArmed(v));
+  const target = !depotVehicles.every(v => vehicleDepotDepartureArmed(v));
   let changed = 0, waiting = 0, failReason = null;
-  for(const v of trains){
+  for(const v of depotVehicles){
     if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId) continue;
-    if(trainDepotDepartureArmed(v) === target) continue;
-    const res = setTrainDepotDeparture(v, target);
+    if(vehicleDepotDepartureArmed(v) === target) continue;
+    const res = setVehicleDepotDeparture(v, target);
     if(!res.ok){ failReason = res.reason || 'route_missing'; continue; }
     changed++;
     if(res.waiting) waiting++;
-    if(MP.connected) netSend({ type:'train_depot_flag', id:v.id, armed:target });
+    if(MP.connected) netSend({ type:'depot_departure_flag', id:v.id, armed:target });
   }
   if(changed){
     if(!target) toast('🟥 Drapeau rouge. Départ annulé.','win');
-    else if(waiting) toast('🚩 Drapeau vert. Le train partira dès que la voie de sortie sera libre.','win');
-    else toast('🚩 Drapeau vert. Départ autorisé.','win');
+    else if(depot.type === 'train_depot' && waiting) toast('🚩 Drapeau vert. Le train partira dès que la voie de sortie sera libre.','win');
+    else if(depot.type === 'train_depot') toast('🚩 Drapeau vert. Départ autorisé.','win');
+    else toast('🚩 Drapeau vert. Les véhicules vont tenter de sortir du dépôt.','win');
   } else if(failReason === 'no_path'){
-    toast('⛔ Aucun chemin ferroviaire continu depuis le dépôt.','err');
+    toast(depot.type === 'train_depot'
+      ? '⛔ Aucun chemin ferroviaire continu depuis le dépôt.'
+      : '⛔ Aucun chemin routier continu depuis le dépôt.','err');
   } else if(failReason){
-    toast('⛔ Il faut d’abord une route valide avec au moins 2 arrêts.','err');
+    toast(depot.type === 'train_depot'
+      ? '⛔ Il faut d’abord une route valide avec au moins 2 arrêts.'
+      : '⛔ Il faut d’abord une route valide.','err');
   }
-  if(trainConfigVehicle && trains.includes(trainConfigVehicle)) renderTrainPanel();
+  if(trainConfigVehicle && depotVehicles.includes(trainConfigVehicle)) renderTrainPanel();
 }
 
 function openTrainPanel(v){
@@ -869,6 +886,8 @@ function renderInfo(){
       let stateLabel = { idle:'En attente 💤', to_source:'Vers source 🔵', to_dest:'Vers destination 🟠', returning:'Retour au dépôt 🏪' }[veh.state] || veh.state;
       if(veh.vtype === 'train' && trainPresentAtDepot(veh) && (veh.orders?.length || 0) >= 2)
         stateLabel = trainDepotDepartureArmed(veh) ? 'Départ autorisé 🚩' : 'À l’arrêt au dépôt 🟥';
+      else if(veh.vtype !== 'train' && vehiclePresentAtDepot(veh) && veh.source && veh.dest)
+        stateLabel = vehicleDepotDepartureArmed(veh) ? 'Départ autorisé 🚩' : 'À l’arrêt au dépôt 🟥';
       const srcName = veh.source && !veh.source.dead ? trainStopLabel(veh.source) : '—';
       const dstName = veh.dest   && !veh.dest.dead   ? trainStopLabel(veh.dest)  : '—';
       const isBusVeh = veh.vtype === 'bus';
@@ -885,7 +904,7 @@ function renderInfo(){
       const orderSummary = veh.vtype === 'train' && veh.orders?.length
         ? veh.orders.map(b => trainStopLabel(b)).join(' → ')
         : null;
-      const trainFlagState = veh.vtype === 'train' ? trainDepotFlagState(veh) : null;
+      const trainFlagState = vehicleDepotFlagState(veh);
       const vehLabel = veh.vtype === 'train' ? (veh.name || 'Train') : vt.nom;
       let h = '<h3><span style="font-size:22px">'+vt.icone+'</span> '+escHtml(vehLabel)+'<span style="margin-left:auto"></span><button class="tbtn" id="infoCloseBtn" aria-label="Fermer" style="width:auto;margin:0;padding:2px 8px">✕</button></h3>';
       h += '<div class="status">'+stateLabel+'</div>';
@@ -1021,15 +1040,16 @@ function renderInfo(){
   const _demolCost = Math.floor((d.cost||0)*0.3);
   let _hdrBtns = '<span style="margin-left:auto;display:flex;gap:3px;align-items:center">';
   if(d.ind && r2)
-    _hdrBtns += '<button class="tbtn" id="bClearStock" title="Vider le stock" style="padding:2px 6px;font-size:13px;margin:0;width:auto">🗑️</button>';
+    _hdrBtns += '<button class="tbtn" id="bClearStock" title="Vider le stock" style="padding:2px 6px;font-size:13px;margin:0;width:auto"'+(canControl?'':' disabled')+'>🗑️</button>';
   if(d.ind)
-    _hdrBtns += '<button class="tbtn" id="bPauseBld" title="'+(b.paused?'Reprendre':'Mettre en pause')+'" style="padding:2px 6px;font-size:13px;margin:0;width:auto">'+(b.paused?'▶':'⏸')+'</button>';
-  _hdrBtns += '<button class="tbtn" id="bDemol" title="Démolir (+'+_demolCost+' $)" style="padding:2px 6px;font-size:13px;margin:0;width:auto">🧨</button>';
+    _hdrBtns += '<button class="tbtn" id="bPauseBld" title="'+(b.paused?'Reprendre':'Mettre en pause')+'" style="padding:2px 6px;font-size:13px;margin:0;width:auto"'+(canControl?'':' disabled')+'>'+(b.paused?'▶':'⏸')+'</button>';
+  _hdrBtns += '<button class="tbtn" id="bDemol" title="Démolir (+'+_demolCost+' $)" style="padding:2px 6px;font-size:13px;margin:0;width:auto"'+(canControl?'':' disabled')+'>🧨</button>';
   _hdrBtns += '<button class="tbtn" id="infoCloseBtn" title="Fermer" aria-label="Fermer" style="padding:2px 8px;font-size:13px;margin:0;width:auto">✕</button>';
   _hdrBtns += '</span>';
   let h = '<h3><span style="font-size:22px">'+d.ic+'</span>';
   if(d.ind || isVehicleDepot(b)){
-    h += '<input id="bldNameInput" class="bld-name-edit" value="'+escHtml(b.name||'')+'" placeholder="'+escHtml(d.n)+'">';
+    h += '<input id="bldNameInput" class="bld-name-edit" value="'+escHtml(b.name||'')+'" placeholder="'+escHtml(d.n)+'"'
+      + (canControl ? '' : ' readonly disabled') + '>';
   } else {
     h += '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
        + (b.name ? escHtml(b.name) : d.n) + '</span>';
@@ -1252,7 +1272,8 @@ function renderInfo(){
       const on = b.allow?.[k] !== false;
       const val = b.storage[k]||0, cap = capOf(b,k);
       const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
-      h += '<div class="depot-res-item'+(on?' on':'')+'" style="cursor:pointer;flex-direction:column;align-items:stretch;padding:5px 7px" data-toggle-res="'+k+'">'
+      h += '<div class="depot-res-item'+(on?' on':'')+'" style="'+(isOwner?'cursor:pointer;':'')+'flex-direction:column;align-items:stretch;padding:5px 7px"'
+         + (isOwner ? ' data-toggle-res="'+k+'"' : '') + '>'
          + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
          + '<span class="dot" style="background:'+RES[k].c+'"></span>'
          + '<span style="flex:1;font-size:11px;'+(on?'':'opacity:.4')+'">'+RES[k].n+'</span>'
@@ -1324,7 +1345,9 @@ function renderInfo(){
   }
   if(isVehicleDepot(b)){
     const bvehicles = b.vehicles || [];
-    const shownVehicles = b.type === 'train_depot' ? bvehicles.filter(trainPresentAtDepot) : bvehicles;
+    // Comme pour les trains : on n'affiche que les véhicules physiquement présents
+    // au dépôt. Une fois sur la route, le véhicule disparaît de la liste du dépôt.
+    const shownVehicles = bvehicles.filter(vehiclePresentAtDepot);
     const buyCatalog = Array.isArray(BUILD[b.type]?.buyCatalog)
       ? BUILD[b.type].buyCatalog
       : (b.type === 'garage'
@@ -1366,14 +1389,16 @@ function renderInfo(){
         const srcName = v.source && !v.source.dead ? trainStopLabel(v.source) : '—';
         const dstName = v.dest   && !v.dest.dead   ? trainStopLabel(v.dest)  : '—';
         const canStart = v.vtype === 'train' && (v.orders?.length || 0) >= 2;
-        const trainFlag = canStart ? trainDepotFlagButtonHtml(v) : '';
+        const trainFlag = ((v.vtype === 'train' && canStart) || (v.vtype !== 'train' && vehiclePresentAtDepot(v) && v.source && v.dest))
+          ? trainDepotFlagButtonHtml(v) : '';
         const vehName = v.vtype === 'train' ? (v.name || 'Train') : vt.nom;
 
         h += '<div style="padding:5px 6px;margin-bottom:4px;border:1px solid #2a3a50;border-radius:4px;background:#0f1820;font-size:11px">';
+        const canControlVehicle = !MP.connected || !v.garageRef?.owner || v.garageRef.owner === MP.myId;
 
         const cfgBtns =
-            '<button class="tbtn" style="padding:2px 3px;margin:0;font-size:11px;width:auto;border:none;background:transparent;color:#8fa3bf;cursor:pointer" data-route-v="'+v.id+'" title="Configurer">'+(v.vtype === 'train' ? '🧭' : '🔁')+'</button>'
-          + '<button class="tbtn" style="padding:2px 3px;margin:0;font-size:11px;width:auto;border:none;background:transparent;color:#ff9a8a;cursor:pointer" data-sell-v="'+v.id+'" title="Vendre">🗑️</button>';
+            '<button class="tbtn" style="padding:2px 3px;margin:0;font-size:11px;width:auto;border:none;background:transparent;color:#8fa3bf;cursor:pointer" data-route-v="'+v.id+'" title="Configurer"'+(canControlVehicle?'':' disabled')+'>'+(v.vtype === 'train' ? '🧭' : '🔁')+'</button>'
+          + '<button class="tbtn" style="padding:2px 3px;margin:0;font-size:11px;width:auto;border:none;background:transparent;color:#ff9a8a;cursor:pointer" data-sell-v="'+v.id+'" title="Vendre"'+(canControlVehicle?'':' disabled')+'>🗑️</button>';
 
         if(v.vtype === 'train'){
           const wagons = trainNormalizeWagons(v);
@@ -1409,7 +1434,8 @@ function renderInfo(){
           }
           h += '</div>';
           h += '<div style="flex:1"></div>';
-          h += '<input data-vehname-v="'+v.id+'" value="'+escHtml(vehName)+'" spellcheck="false" title="Renommer le train" style="font-weight:bold;flex:0 1 auto;width:120px;text-align:right;background:transparent;border:none;border-bottom:1px solid #2a3a50;color:#e6edf5;font-size:11px;padding:2px 2px">';
+          h += '<input data-vehname-v="'+v.id+'" value="'+escHtml(vehName)+'" spellcheck="false" title="Renommer le train" style="font-weight:bold;flex:0 1 auto;width:120px;text-align:right;background:transparent;border:none;border-bottom:1px solid #2a3a50;color:#e6edf5;font-size:11px;padding:2px 2px"'
+            + (canControlVehicle ? '' : ' readonly disabled') + '>';
           h += cfgBtns;
           if(trainFlag) h += trainFlag.replace(/style="/g,'style="font-size:11px;padding:2px 3px;margin:0 0 0 4px;');
           h += '</div>';
@@ -1420,6 +1446,7 @@ function renderInfo(){
              + '<span style="font-weight:bold;flex:0 0 auto">'+escHtml(vehName.substring(0,14))+'</span>'
              + '<span style="color:#8fa3bf;flex:1;text-align:right;font-size:10px">'+srcName.substring(0,7)+' → '+dstName.substring(0,7)+'</span>'
              + cfgBtns
+             + (trainFlag ? trainFlag.replace(/style="/g,'style="font-size:11px;padding:2px 3px;margin:0 0 0 4px;') : '')
              + '</div>';
           // Choix de la ressource transportée (camions pouvant en porter plusieurs)
           if(vt.resources.length > 1){
@@ -1429,6 +1456,7 @@ function renderInfo(){
             h += '<div style="display:flex;align-items:center;gap:5px;margin-top:3px">'
                + '<span style="color:#8fa3bf;font-size:10px;flex:0 0 auto">Ressource</span>'
                + '<select data-pin-v="'+v.id+'" title="Choisir la ressource transportée par ce camion" '
+               + (canControlVehicle ? '' : ' disabled')
                + 'style="flex:1;background:#0f1820;color:#e6edf5;border:1px solid #2a3a50;border-radius:3px;font-size:10px;padding:2px">'
                + opts + '</select>'
                + '</div>';
@@ -1448,7 +1476,7 @@ function renderInfo(){
           ? '<span style="color:#8fa3bf;font-size:10px"> · '+ vt.resources.map(r=>RES[r]?.ic||r).join(' ') +'</span>'
           : '';
         const maintLabel = vt.maintenanceCost > 0 ? ' <span style="color:#ff9a8a;font-size:10px">'+vt.maintenanceCost+' $/j</span>' : '';
-        h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:2px" data-buy-v="'+vk+'">'
+        h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:2px" data-buy-v="'+vk+'"'+(canControl?'':' disabled')+'>'
            + vt.icone+' '+vt.nom+resLabel+' <span style="color:#8fa3bf">— '+vt.cost+' $</span>'+maintLabel+'</button>';
       }
     } else if(b.type !== 'garage'){
@@ -1467,6 +1495,7 @@ function renderInfo(){
       for(const k of blockableOuts){
         const blocked = !!(b.blockedOut?.[k]);
         h += '<button class="tbtn bld-toggle-out'+(blocked?' bld-blocked':'')+'" data-out="'+k+'" '
+           + (canControl ? '' : ' disabled')
            + 'style="width:100%;text-align:left;margin-top:3px;'
            + (blocked ? 'opacity:.5;text-decoration:line-through' : '') + '">'
            + (blocked ? '🚫' : '✅')+' '+(RES[k]?.n || k)
@@ -1514,6 +1543,10 @@ function renderInfo(){
     el.onclick = ()=>{
       const depot = isTrainStationPiece(b) ? trainStationLinkedDepot(b) : null;
       if(!depot || !depot.allow) return;
+      if(MP.connected && depot.owner && depot.owner !== MP.myId){
+        toast('⛔ Ce dépôt appartient à un autre joueur','err');
+        return;
+      }
       if(!depot.trainAllow) depot.trainAllow = {};
       const k = el.dataset.stationDepotToggleRes;
       const disabled = depot.allow[k] === false;
@@ -1531,6 +1564,10 @@ function renderInfo(){
   });
   p.querySelectorAll('[data-toggle-res]').forEach(el=>{
     el.onclick = ()=>{
+      if(MP.connected && b.owner && b.owner !== MP.myId){
+        toast('⛔ Ce bâtiment appartient à un autre joueur','err');
+        return;
+      }
       if(!b.allow) b.allow = {};
       b.allow[el.dataset.toggleRes] = b.allow[el.dataset.toggleRes] === false ? undefined : false;
       p._html = null;
@@ -1538,6 +1575,10 @@ function renderInfo(){
   });
   p.querySelectorAll('.sell-toggle').forEach(el=>{
     el.onclick = ()=>{
+      if(MP.connected && b.owner && b.owner !== MP.myId){
+        toast('⛔ Ce bâtiment appartient à un autre joueur','err');
+        return;
+      }
       if(!b.sellTo) b.sellTo = {};
       b.sellTo[el.dataset.sell] = !b.sellTo[el.dataset.sell];
       p._html = null;
@@ -1545,6 +1586,10 @@ function renderInfo(){
   });
   p.querySelectorAll('.sell-min-dec').forEach(btn=>{
     btn.onclick = ()=>{
+      if(MP.connected && b.owner && b.owner !== MP.myId){
+        toast('⛔ Ce bâtiment appartient à un autre joueur','err');
+        return;
+      }
       if(!b.sellMin) b.sellMin = {};
       const k = btn.dataset.sellMin;
       b.sellMin[k] = Math.max(0, (b.sellMin[k]||0) - 10);
@@ -1553,6 +1598,10 @@ function renderInfo(){
   });
   p.querySelectorAll('.sell-min-inc').forEach(btn=>{
     btn.onclick = ()=>{
+      if(MP.connected && b.owner && b.owner !== MP.myId){
+        toast('⛔ Ce bâtiment appartient à un autre joueur','err');
+        return;
+      }
       if(!b.sellMin) b.sellMin = {};
       const k = btn.dataset.sellMin;
       b.sellMin[k] = (b.sellMin[k]||0) + 10;
@@ -1565,6 +1614,10 @@ function renderInfo(){
         const vid = +btn.dataset.routeV;
         const v = vehicles.find(vv=>vv.id===vid);
         if(!v) return;
+        if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId){
+          toast('⛔ Ce véhicule appartient à un autre joueur.','err');
+          return;
+        }
         if(v.vtype === 'train'){
           if(!trainPresentAtDepot(v)){
             toast('⛔ La configuration du train n’est possible que dans le dépôt.','err');
@@ -1591,6 +1644,10 @@ function renderInfo(){
       const saveName = ()=>{
         const newName = inp.value.trim();
         if(newName === (v.name||'')) return;
+        if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId){
+          inp.value = v.name || '';
+          return;
+        }
         v.name = newName || null;
         if(!v.name && v.vtype === 'train') assignTrainVehicleName(v);
         p._html = null;
@@ -1603,6 +1660,10 @@ function renderInfo(){
         const vid = +btn.dataset.sellV;
         const v = vehicles.find(vv=>vv.id===vid);
         if(!v) return;
+        if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId){
+          toast('⛔ Ce véhicule appartient à un autre joueur.','err');
+          return;
+        }
         const refund = Math.floor(VEHICLE_TYPES[v.vtype].cost * 0.5);
         earnMoney(refund, 'rembours');
         removePersistentVehicle(v);
@@ -1615,7 +1676,7 @@ function renderInfo(){
       btn.onclick = ()=>{
         const vid = +btn.dataset.trainFlag;
         const v = vehicles.find(vv=>vv.id===vid);
-        if(!v || v.vtype !== 'train') return;
+        if(!v) return;
         handleTrainDepotFlagClick(v);
         p._html = null;
       };
@@ -1625,6 +1686,10 @@ function renderInfo(){
         const vid = +sel.dataset.pinV;
         const v = vehicles.find(vv=>vv.id===vid);
         if(!v) return;
+        if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId){
+          sel.value = v.pinnedRes || '';
+          return;
+        }
         v.pinnedRes = sel.value || null;
         // changer la ressource en cours de transport : déposer/oublier le chargement non conforme
         if(v.pinnedRes && v.res && v.res !== v.pinnedRes){ v.cargo = 0; v.res = null; }
@@ -1637,6 +1702,10 @@ function renderInfo(){
         const vtype = btn.dataset.buyV;
         const vt = VEHICLE_TYPES[vtype];
         if(!vt) return;
+        if(MP.connected && b.owner && b.owner !== MP.myId){
+          toast('⛔ Ce dépôt appartient à un autre joueur.','err');
+          return;
+        }
         if(myWallet().money < vt.cost){ toast('Fonds insuffisants ('+vt.cost+' $)','err'); return; }
         spendMoney(vt.cost, 'construction');
         const v = createPersistentVehicle(vtype, b);
@@ -1697,6 +1766,10 @@ function renderInfo(){
     const input = $('bsNameInput');
     if(!input) return;
     const newName = input.value.trim();
+    if(MP.connected && b.owner && b.owner !== MP.myId){
+      toast('⛔ Ce bâtiment appartient à un autre joueur','err');
+      return;
+    }
     b.name = newName || null;
     if(MP.connected) netSend({ type:'rename_bus_stop', x:b.x, y:b.y, name: b.name });
     p._html = null;
@@ -2607,6 +2680,11 @@ const optMenu = $('optMenu');
 const layerMenu = $('layerMenu');
 const graphicPackSelect = $('graphicPackSelect');
 const languageSelect = $('languageSelect');
+const topbar = $('topbar');
+
+// Les menus sortent du topbar pour ne pas etre masques par son overflow horizontal.
+if(optMenu) document.body.appendChild(optMenu);
+if(layerMenu) document.body.appendChild(layerMenu);
 
 function buildLanguageSelect(){
   if(!languageSelect) return;
@@ -2620,6 +2698,7 @@ function buildLanguageSelect(){
 }
 
 function buildGraphicPackSelect(){
+  if(!graphicPackSelect) return;
   graphicPackSelect.innerHTML = '';
   for(const key in GRAPHIC_PACKS){
     const pack = GRAPHIC_PACKS[key];
@@ -2660,16 +2739,43 @@ addEventListener('factopolis:languagechange', () => {
   refreshOptMenu();
 });
 
+function positionTopbarMenu(btn, menu){
+  if(!btn || !menu) return;
+  const rect = btn.getBoundingClientRect();
+  const pad = 8;
+  const menuWidth = menu.offsetWidth || Math.max(220, rect.width);
+  const menuHeight = menu.offsetHeight || 0;
+  const left = Math.max(pad, Math.min(rect.right - menuWidth, innerWidth - menuWidth - pad));
+  const top = Math.max(pad, Math.min(rect.bottom + 6, innerHeight - menuHeight - pad));
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+}
+
+function syncTopbarMenus(){
+  if(optMenu.classList.contains('open')) positionTopbarMenu($('bOptions'), optMenu);
+  if(layerMenu.classList.contains('open')) positionTopbarMenu($('bLayer'), layerMenu);
+}
+
+function toggleTopbarMenu(btn, menu, otherMenu){
+  if(!btn || !menu) return;
+  const willOpen = !menu.classList.contains('open');
+  otherMenu?.classList.remove('open');
+  if(!willOpen){
+    menu.classList.remove('open');
+    return;
+  }
+  menu.classList.add('open');
+  positionTopbarMenu(btn, menu);
+}
+
 $('bOptions').onclick = e => {
   e.stopPropagation();
-  layerMenu.classList.remove('open');
-  optMenu.classList.toggle('open');
+  toggleTopbarMenu($('bOptions'), optMenu, layerMenu);
 };
 
 $('bLayer').onclick = e => {
   e.stopPropagation();
-  optMenu.classList.remove('open');
-  layerMenu.classList.toggle('open');
+  toggleTopbarMenu($('bLayer'), layerMenu, optMenu);
 };
 
 document.addEventListener('click', e => {
@@ -2678,6 +2784,9 @@ document.addEventListener('click', e => {
   if(!layerMenu.contains(e.target) && e.target.id !== 'bLayer')
     layerMenu.classList.remove('open');
 });
+
+addEventListener('resize', syncTopbarMenus);
+topbar?.addEventListener('scroll', syncTopbarMenus, { passive:true });
 
 document.querySelectorAll('.opt-item[data-opt]').forEach(el => {
   el.onclick = e => {
