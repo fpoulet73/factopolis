@@ -18,77 +18,182 @@ function refreshOwnerColorsFromRegistry(){
   }
 }
 
+const MP_STATE_SYNC_INTERVAL = 0.2;
+let mpStateSyncTimer = 0;
+
+function serializeTruckState(tk){
+  return {
+    pts: Array.isArray(tk.pts) ? tk.pts.map(p => ({ x:p.x, y:p.y })) : [],
+    seg: tk.seg || 0,
+    t: tk.t || 0,
+    res: tk.res || null,
+    amt: tk.amt || 0,
+    targetX: tk.target && !tk.target.dead ? tk.target.x : null,
+    targetY: tk.target && !tk.target.dead ? tk.target.y : null,
+    fromX: tk.from && !tk.from.dead ? tk.from.x : null,
+    fromY: tk.from && !tk.from.dead ? tk.from.y : null,
+    overtaking: !!tk.overtaking,
+  };
+}
+
+function serializeWalkerState(wk){
+  return {
+    pts: Array.isArray(wk.pts) ? wk.pts.map(p => ({ x:p.x, y:p.y })) : [],
+    seg: wk.seg || 0,
+    t: wk.t || 0,
+    targetX: wk.target && !wk.target.dead ? wk.target.x : null,
+    targetY: wk.target && !wk.target.dead ? wk.target.y : null,
+    leaving: !!wk.leaving,
+    fromHomeless: !!wk.fromHomeless,
+    protectedResident: !!wk.protectedResident,
+    col: wk.col || null,
+    phase: Number.isFinite(wk.phase) ? wk.phase : 0,
+  };
+}
+
+function serializeVehicleState(v){
+  return {
+    id: v.id, vtype: v.vtype,
+    name: v.name || null,
+    garageX: v.garageRef.x, garageY: v.garageRef.y,
+    sourceX: v.source && !v.source.dead ? v.source.x : null,
+    sourceY: v.source && !v.source.dead ? v.source.y : null,
+    destX:   v.dest   && !v.dest.dead   ? v.dest.x   : null,
+    destY:   v.dest   && !v.dest.dead   ? v.dest.y   : null,
+    state: v.state, cargo: v.cargo, res: v.res || null, busRouteDistance: v.busRouteDistance ?? null,
+    passengersOnBoard: v.passengersOnBoard ?? null,
+    passengersFromStationX: v.passengersFromStation && !v.passengersFromStation.dead ? v.passengersFromStation.x : null,
+    passengersFromStationY: v.passengersFromStation && !v.passengersFromStation.dead ? v.passengersFromStation.y : null,
+    currentBuildingX: v.currentBuilding && !v.currentBuilding.dead ? v.currentBuilding.x : null,
+    currentBuildingY: v.currentBuilding && !v.currentBuilding.dead ? v.currentBuilding.y : null,
+    seg: v.seg || 0,
+    t: v.t || 0,
+    waitTimer: v.waitTimer || 0,
+    pts: Array.isArray(v.pts) ? v.pts.map(p => ({ x:p.x, y:p.y })) : [],
+    pathTiles: Array.isArray(v.pathTiles) ? v.pathTiles.slice() : [],
+    railContinueTile: v.railContinueTile ?? null,
+    railPreviousTile: v.railPreviousTile ?? null,
+    railTrail: Array.isArray(v.railTrail) ? v.railTrail.map(p => ({ x:p.x, y:p.y })) : null,
+    depotDepartureArmed: !!v.depotDepartureArmed,
+    atDepot: !!v.atDepot,
+    pinnedRes: v.pinnedRes || null,
+    wagons: Array.isArray(v.wagons) ? v.wagons.map(w => typeof w === 'string' ? w : ({ type:w.type, resource:w.resource || null })) : null,
+    orderIndex: v.orderIndex || 0,
+    orders: Array.isArray(v.orders) ? v.orders.filter(b => b && !b.dead).map(b => ({ x:b.x, y:b.y })) : null,
+    orderModes: Array.isArray(v.orderModes) ? v.orderModes.slice() : null,
+    cargoLoadStopX: v.cargoLoadStop && !v.cargoLoadStop.dead ? v.cargoLoadStop.x : null,
+    cargoLoadStopY: v.cargoLoadStop && !v.cargoLoadStop.dead ? v.cargoLoadStop.y : null,
+    engineMult: v.engineMult ?? null,
+    boughtAtGtime: v.boughtAtGtime ?? null,
+    maintenanceDaysPaid: v.maintenanceDaysPaid ?? 0,
+    signalWaitTime: v.signalWaitTime ?? 0,
+    missingRailTimer: v.missingRailTimer ?? 0,
+    currentRailBlock: v.currentRailBlock ?? -1,
+    pendingFreightRevenue: v.pendingFreightRevenue ?? 0,
+    freightRevenueFireAt: v.freightRevenueFireAt ?? null,
+    railTollOwed: v.railTollOwed ? { ...v.railTollOwed } : null,
+  };
+}
+
+function snapshotBuildingRef(b){
+  if(!b) return null;
+  return { type:b.type, x:b.x, y:b.y, w:b.w, h:b.h };
+}
+
+function findSnapshotBuildingRef(ref){
+  if(!ref) return null;
+  return buildings.find(b => !b.dead && b.type === ref.type && b.x === ref.x && b.y === ref.y && b.w === ref.w && b.h === ref.h) || null;
+}
+
+function findSnapshotVehicleRef(id){
+  return vehicles.find(v => String(v.id) === String(id)) || null;
+}
+
+function mpRunsAuthoritativeSimulation(){
+  return !MP.connected || MP.role !== 'guest';
+}
+
+function mpMaybeBroadcastState(dt){
+  if(!MP.connected || MP.role !== 'host' || !MP.ws) return;
+  mpStateSyncTimer += dt;
+  if(mpStateSyncTimer < MP_STATE_SYNC_INTERVAL) return;
+  mpStateSyncTimer = 0;
+  MP.ws.send(JSON.stringify({
+    type:'state_sync',
+    state: serializeState({ includeTransient:true, includeWorld:false }),
+  }));
+}
+
 // ---- sérialisation de l'état complet (hôte → invité) ----
-function serializeState(){
+function serializeState(opts = {}){
+  const includeTransient = !!opts.includeTransient;
+  const includeWorld = opts.includeWorld !== false;
   const ownerColors = { ...(MP.ownerColors || {}) };
   for(const p of MP.players || []) if(p?.id != null && p.color) ownerColors[p.id] = p.color;
   if(MP.myId != null && MP.myColor) ownerColors[MP.myId] = MP.myColor;
-  return {
-    world: WORLD,
-    size: N,
-    mapBounds,
-    expansionLevels,
-    purchasedPieces: Array.from(purchasedPieces),
-    mapMask: Array.from(mapMask),
-    terrain: Array.from(terrain),
-    road:    Array.from(road),
-    rail:    Array.from(rail),
-    railOwner: railOwner ? Array.from(railOwner) : null,
-    railSignals: Object.values(railSignals || {}),
+  const out = {
+    dynamicOnly: !includeWorld,
     ownerColors,
     wallets: WALLETS,
-    homeless: [],
+    homeless: includeTransient
+      ? homeless.map(h => ({
+          owner: h.owner ?? null,
+          x: h.x, y: h.y,
+          col: h.col || null,
+          phase: Number.isFinite(h.phase) ? h.phase : 0,
+        }))
+      : [],
     gtime,
     paused, speed,
+    dispatchTimer,
+    taxTimer,
+    mergeTimer,
+    upkeepTimer,
+    busStopTimer,
+    passengerCycleTimer,
     buildings: buildings.map(b => ({
       type:b.type, x:b.x, y:b.y, w:b.w, h:b.h,
       storage:{...b.storage}, inc:{},
       prog:b.prog||0, trucksOut:b.trucksOut||0,
       pop:b.pop||0, protectedPop:b.protectedPop||0,
-      ct:b.ct||0, pending:0, pendingProtected:0, starve:b.starve||0,
+      ct:b.ct||0,
+      pending:includeTransient ? (b.pending||0) : 0,
+      pendingProtected:includeTransient ? (b.pendingProtected||0) : 0,
+      starve:b.starve||0,
       ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, sellMin:b.sellMin||null, trainAllow:b.trainAllow||null, paused:b.paused||false, blockedOut:b.blockedOut||null, owner:b.owner||null,
       starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
       mergeBlockedMissing:Array.isArray(b.mergeBlockedMissing) ? b.mergeBlockedMissing.slice() : null,
       passengers:b.passengers||0,
       passengersEntrant:b.passengersEntrant??null, passengersEntrantMax:b.passengersEntrantMax??null, passagersSortant:b.passagersSortant??null,
+      passengersEntrantPending:b.passengersEntrantPending??null,
       stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
     nextTownId,
     nextTrainStationId,
-    vehicles: vehicles.map(v => ({
-      id: v.id, vtype: v.vtype,
-      name: v.name || null,
-      garageX: v.garageRef.x, garageY: v.garageRef.y,
-      sourceX: v.source && !v.source.dead ? v.source.x : null,
-      sourceY: v.source && !v.source.dead ? v.source.y : null,
-      destX:   v.dest   && !v.dest.dead   ? v.dest.x   : null,
-      destY:   v.dest   && !v.dest.dead   ? v.dest.y   : null,
-      state: v.state, cargo: v.cargo, res: v.res || null, busRouteDistance: v.busRouteDistance ?? null,
-      passengersOnBoard: v.passengersOnBoard ?? null,
-      passengersFromStationX: v.passengersFromStation && !v.passengersFromStation.dead ? v.passengersFromStation.x : null,
-      passengersFromStationY: v.passengersFromStation && !v.passengersFromStation.dead ? v.passengersFromStation.y : null,
-      currentBuildingX: v.currentBuilding && !v.currentBuilding.dead ? v.currentBuilding.x : null,
-      currentBuildingY: v.currentBuilding && !v.currentBuilding.dead ? v.currentBuilding.y : null,
-      seg: v.seg || 0,
-      t: v.t || 0,
-      waitTimer: v.waitTimer || 0,
-      pts: Array.isArray(v.pts) ? v.pts.map(p => ({ x:p.x, y:p.y })) : [],
-      pathTiles: Array.isArray(v.pathTiles) ? v.pathTiles.slice() : [],
-      railContinueTile: v.railContinueTile ?? null,
-      railPreviousTile: v.railPreviousTile ?? null,
-      railTrail: Array.isArray(v.railTrail) ? v.railTrail.map(p => ({ x:p.x, y:p.y })) : null,
-      depotDepartureArmed: !!v.depotDepartureArmed,
-      atDepot: !!v.atDepot,
-      pinnedRes: v.pinnedRes || null,
-      wagons: Array.isArray(v.wagons) ? v.wagons.map(w => typeof w === 'string' ? w : ({ type:w.type, resource:w.resource || null })) : null,
-      orderIndex: v.orderIndex || 0,
-      orders: Array.isArray(v.orders) ? v.orders.filter(b => b && !b.dead).map(b => ({ x:b.x, y:b.y })) : null,
-      orderModes: Array.isArray(v.orderModes) ? v.orderModes.slice() : null,
-      cargoLoadStopX: v.cargoLoadStop && !v.cargoLoadStop.dead ? v.cargoLoadStop.x : null,
-      cargoLoadStopY: v.cargoLoadStop && !v.cargoLoadStop.dead ? v.cargoLoadStop.y : null,
-    })),
+    vehicles: vehicles.map(serializeVehicleState),
+    trucks: includeTransient ? trucks.map(serializeTruckState) : [],
+    walkers: includeTransient ? walkers.map(serializeWalkerState) : [],
+    floats: includeTransient ? floats.map(f => ({
+      x: f.x, y: f.y, txt: f.txt, col: f.col, life: f.life,
+    })) : [],
   };
+  if(includeWorld){
+    Object.assign(out, {
+      world: WORLD,
+      size: N,
+      mapBounds,
+      expansionLevels,
+      purchasedPieces: Array.from(purchasedPieces),
+      mapMask: Array.from(mapMask),
+      terrain: Array.from(terrain),
+      road:    Array.from(road),
+      rail:    Array.from(rail),
+      railOwner: railOwner ? Array.from(railOwner) : null,
+      railSignals: Object.values(railSignals || {}),
+    });
+  }
+  return out;
 }
 
 // Relie le nouveau MP.myId aux données d'une session précédente
@@ -154,7 +259,16 @@ function applyOwnerRemap(oldId, newId){
 }
 
 function applySnapshot(d){
-  if(d.mapBounds){
+  const hadTransient = Array.isArray(d.trucks) || Array.isArray(d.walkers) || Array.isArray(d.homeless);
+  const prevSelectedRef = snapshotBuildingRef(selected);
+  const prevSelectedVehicleId = selectedVehicle?.id ?? null;
+  const prevFocusVehicleId = focusVehicle?.id ?? null;
+  const prevTrainConfigVehicleId = typeof trainConfigVehicle !== 'undefined' ? (trainConfigVehicle?.id ?? null) : null;
+  const prevSelectedTownId = selectedTownId;
+  if(d.dynamicOnly){
+    // Sync runtime autoritaire : conserver le terrain/réseaux déjà reçus via
+    // snapshot initial et actions, puis ne remplacer que l'état vivant.
+  } else if(d.mapBounds){
     // Format récent : d.size = N_FULL, mapBounds fourni
     WORLD = normalizeWorldConfig(d.world || { ...WORLD, size: d.size });
     setMapSize(d.size || N);
@@ -242,6 +356,12 @@ function applySnapshot(d){
   }
   refreshOwnerColorsFromRegistry();
   gtime    = d.gtime || 0;
+  dispatchTimer = d.dispatchTimer || 0;
+  taxTimer = d.taxTimer || 0;
+  mergeTimer = d.mergeTimer || 0;
+  upkeepTimer = d.upkeepTimer || 0;
+  busStopTimer = d.busStopTimer || 0;
+  passengerCycleTimer = d.passengerCycleTimer || 0;
   WALLETS  = {};
   if(d.wallets){ for(const k in d.wallets) WALLETS[k] = d.wallets[k]; }
   paused   = d.paused;  speed   = d.speed||1;
@@ -251,7 +371,7 @@ function applySnapshot(d){
 
   buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
   vehicles = []; vehicleRouteMode = null; selectedVehicle = null; focusVehicle = null; camTracking = false; vehicleListMode = null; nextVehicleId = 0; nextTrainStationId = d.nextTrainStationId || 1;
-  towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = [];
+  towns = []; nextTownId = 0; selectedTownId = prevSelectedTownId ?? null; townLabelHits = [];
   bgrid = new Array(N*N).fill(null);
   selected = null;
 
@@ -260,15 +380,19 @@ function applySnapshot(d){
     towns = d.towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy }));
     nextTownId = d.nextTownId ?? (towns.reduce((m,t)=>Math.max(m,t.id),-1) + 1);
   }
+  if(selectedTownId != null && !towns.some(t => t.id === selectedTownId)) selectedTownId = null;
 
   for(const o of d.buildings){
     if(!BUILD[o.type]) continue;
     const b = newBuilding(o.type, o.x, o.y, o.w, o.h);
     Object.assign(b, {
       storage:o.storage||{}, inc:{},
-      prog:o.prog||0, trucksOut:0,
+      prog:o.prog||0, trucksOut:hadTransient ? (o.trucksOut||0) : 0,
       pop:o.pop||0, protectedPop:o.protectedPop||0,
-      ct:o.ct||0, pending:0, pendingProtected:0, starve:o.starve||0,
+      ct:o.ct||0,
+      pending:hadTransient ? (o.pending||0) : 0,
+      pendingProtected:hadTransient ? (o.pendingProtected||0) : 0,
+      starve:o.starve||0,
     });
     if(o.ore)   b.ore   = o.ore;
     if(o.allow) b.allow = o.allow;
@@ -284,7 +408,12 @@ function applySnapshot(d){
     if(o.name   != null) b.name   = o.name;
     if(Array.isArray(o.mergeBlockedMissing)) b.mergeBlockedMissing = o.mergeBlockedMissing.filter(r => RES[r]);
     if(o.passengers != null && b.type === 'bus_stop') b.passengers = o.passengers;
-    if(o.passengersEntrant != null && b.type === 'train_station'){ b.passengersEntrant = o.passengersEntrant; b.passengersEntrantMax = o.passengersEntrantMax ?? 0; b.passagersSortant = o.passagersSortant ?? 0; }
+    if(o.passengersEntrant != null && b.type === 'train_station'){
+      b.passengersEntrant = o.passengersEntrant;
+      b.passengersEntrantMax = o.passengersEntrantMax ?? 0;
+      b.passagersSortant = o.passagersSortant ?? 0;
+      b.passengersEntrantPending = o.passengersEntrantPending ?? 0;
+    }
     if(o.stationGroupId != null) b.stationGroupId = o.stationGroupId;
     if(o.stationAxis) b.stationAxis = o.stationAxis;
     buildings.push(b);
@@ -311,7 +440,17 @@ function applySnapshot(d){
     w.starterHomesGranted = Math.max(w.starterHomesGranted||0, w.starterHomes);
   }
   ensureAllStarterProtections();
-  homeless = [];
+  homeless = Array.isArray(d.homeless)
+    ? d.homeless
+      .filter(h => Number.isFinite(h?.x) && Number.isFinite(h?.y))
+      .map(h => ({
+        owner: h.owner ?? null,
+        x: h.x,
+        y: h.y,
+        col: h.col || playerColor(h.owner ?? null),
+        phase: Number.isFinite(h.phase) ? h.phase : 0,
+      }))
+    : [];
   for(const k in WALLETS) WALLETS[k].homelessSeeded = true;
   // Restaurer les véhicules persistants
   if(Array.isArray(d.vehicles)){
@@ -334,8 +473,17 @@ function applySnapshot(d){
       v.cargo = sv.cargo || 0;
       v.res = sv.res || null;
       v.pinnedRes = sv.pinnedRes || null;
+      if(sv.engineMult != null) v.engineMult = sv.engineMult;
       v.waitTimer = sv.waitTimer || 0;
       v.depotDepartureArmed = !!sv.depotDepartureArmed;
+      v.boughtAtGtime = sv.boughtAtGtime ?? v.boughtAtGtime;
+      v.maintenanceDaysPaid = sv.maintenanceDaysPaid ?? v.maintenanceDaysPaid;
+      v.signalWaitTime = sv.signalWaitTime || 0;
+      v.missingRailTimer = sv.missingRailTimer || 0;
+      v.currentRailBlock = sv.currentRailBlock ?? -1;
+      v.pendingFreightRevenue = sv.pendingFreightRevenue || 0;
+      v.freightRevenueFireAt = sv.freightRevenueFireAt ?? null;
+      v.railTollOwed = sv.railTollOwed ? { ...sv.railTollOwed } : {};
       // Migration : les anciennes sauvegardes n'ont pas atDepot. On l'infère
       // depuis l'état : idle sans path ni trail = train réellement au dépôt.
       v.atDepot = sv.atDepot != null
@@ -419,6 +567,45 @@ function applySnapshot(d){
       }
     }
   }
+  if(Array.isArray(d.trucks)){
+    for(const st of d.trucks){
+      const from = st.fromX != null ? buildings.find(b => b.x === st.fromX && b.y === st.fromY) : null;
+      const target = st.targetX != null ? buildings.find(b => b.x === st.targetX && b.y === st.targetY) : null;
+      if(!from || !target || !Array.isArray(st.pts) || st.pts.length < 2) continue;
+      trucks.push({
+        pts: st.pts.map(p => ({ x:p.x, y:p.y })),
+        seg: Math.max(0, Math.min((st.seg || 0), Math.max(0, st.pts.length - 1))),
+        t: Math.max(0, Math.min(1, st.t || 0)),
+        res: st.res || null,
+        amt: st.amt || 0,
+        target,
+        from,
+        overtaking: !!st.overtaking,
+      });
+    }
+  }
+  if(Array.isArray(d.walkers)){
+    for(const sw of d.walkers){
+      if(!Array.isArray(sw.pts) || sw.pts.length < 2) continue;
+      const target = sw.targetX != null ? buildings.find(b => b.x === sw.targetX && b.y === sw.targetY) || null : null;
+      walkers.push({
+        pts: sw.pts.map(p => ({ x:p.x, y:p.y })),
+        seg: Math.max(0, Math.min((sw.seg || 0), Math.max(0, sw.pts.length - 1))),
+        t: Math.max(0, Math.min(1, sw.t || 0)),
+        target,
+        leaving: !!sw.leaving,
+        fromHomeless: !!sw.fromHomeless,
+        protectedResident: !!sw.protectedResident,
+        col: sw.col || playerColor(target?.owner ?? null),
+        phase: Number.isFinite(sw.phase) ? sw.phase : 0,
+      });
+    }
+  }
+  if(Array.isArray(d.floats)){
+    floats = d.floats
+      .filter(f => Number.isFinite(f?.x) && Number.isFinite(f?.y) && Number.isFinite(f?.life))
+      .map(f => ({ x:f.x, y:f.y, txt:f.txt || '', col:f.col || '#fff', life:f.life }));
+  }
   // Valider immédiatement les choix ferroviaires restaurés, même lorsque la
   // sauvegarde est chargée en pause. Un train au milieu d'une arête conserve
   // sa position et sera réévalué sur la prochaine tuile.
@@ -432,6 +619,17 @@ function applySnapshot(d){
   }
   refreshExpansionSlots();
   remapOwnerId();
+  selected = findSnapshotBuildingRef(prevSelectedRef);
+  selectedVehicle = prevSelectedVehicleId != null ? findSnapshotVehicleRef(prevSelectedVehicleId) : null;
+  focusVehicle = prevFocusVehicleId != null ? findSnapshotVehicleRef(prevFocusVehicleId) : null;
+  if(!focusVehicle) camTracking = false;
+  if(typeof trainConfigVehicle !== 'undefined'){
+    trainConfigVehicle = prevTrainConfigVehicleId != null ? findSnapshotVehicleRef(prevTrainConfigVehicleId) : null;
+    if(!trainConfigVehicle){
+      trainConfigSelectedWagonIndex = -1;
+      trainConfigLocoSelected = false;
+    }
+  }
 }
 
 // ---- patch minimal d'une action entrante ----
@@ -739,6 +937,8 @@ function mpConnect(url){
     MP.connected = true;
     MP.shutdownNotice = false;
     MP.shutdownMessage = '';
+    MP.awaitingSnapshot = false;
+    mpStateSyncTimer = 0;
     toast('🌐 Connecté au serveur multijoueur');
     mpUpdateUI();
     // tentative de reprise de session via token stocké
@@ -758,6 +958,8 @@ function mpConnect(url){
     MP.saves = [];
     MP.rooms = [];
     MP.shutdownNotice = false;
+    MP.awaitingSnapshot = false;
+    mpStateSyncTimer = 0;
     const closeMsg = MP.shutdownMessage || 'Serveur arrêté';
     MP.shutdownMessage = '';
     toast(stopped ? '🔌 '+closeMsg : '🔌 Déconnecté du serveur','err');
@@ -790,6 +992,8 @@ function mpConnect(url){
         MP.players = [];
         MP.ownerColors = {};
         MP.cursors = {};
+        MP.awaitingSnapshot = false;
+        mpStateSyncTimer = 0;
         document.title = 'Factopolis';
         genWorld(WORLD_DEFAULTS);
         mpUpdateUI();
@@ -809,6 +1013,8 @@ function mpConnect(url){
         MP.roomId       = msg.roomId       ?? null;
         MP.roomName     = msg.roomName     ?? null;
         MP.roomSaveName = msg.saveName     ?? msg.roomName ?? null;
+        MP.awaitingSnapshot = msg.role === 'guest';
+        mpStateSyncTimer = 0;
         document.title = MP.roomName ? 'Factopolis — ' + MP.roomName : 'Factopolis';
         if(msg.worldConfig) WORLD = normalizeWorldConfig(msg.worldConfig);
         adoptSoloHomeless(MP.myId);
@@ -823,6 +1029,7 @@ function mpConnect(url){
       case 'promoted_host':
         MP.role = 'host';
         MP.isAdmin = false;
+        mpStateSyncTimer = 0;
         if(msg.worldConfig) WORLD = normalizeWorldConfig(msg.worldConfig);
         toast('👑 Tu es maintenant l\'hôte de la partie');
         mpUpdateUI();
@@ -836,9 +1043,16 @@ function mpConnect(url){
         mpRenderSaves();
         break;
 
+      case 'admin_demoted':
+        MP.isAdmin = false;
+        toast('🛡️ Tes droits administrateur ont été retirés');
+        mpUpdateUI();
+        mpRenderSaves();
+        break;
+
       case 'admin_changed':
         if(msg.playerId === MP.myId) MP.isAdmin = !!msg.isAdmin;
-        toast('🛡️ Un joueur a été promu administrateur');
+        toast(msg.isAdmin ? '🛡️ Un joueur a été promu administrateur' : '🛡️ Un joueur a perdu ses droits administrateur');
         mpUpdateUI();
         break;
 
@@ -847,7 +1061,7 @@ function mpConnect(url){
         if(MP.role === 'host'){
           MP.ws.send(JSON.stringify({
             type:'snapshot', forId: msg.forId,
-            state: serializeState(),
+            state: serializeState({ includeTransient:true }),
           }));
         }
         break;
@@ -855,8 +1069,13 @@ function mpConnect(url){
       case 'snapshot':
         // l'invité reçoit l'état initial
         applySnapshot(msg.state);
+        MP.awaitingSnapshot = false;
         resetSelectedTown();
         toast('📥 Carte synchronisée');
+        break;
+
+      case 'state_sync':
+        if(MP.role === 'guest' && !MP.awaitingSnapshot && msg.state) applySnapshot(msg.state);
         break;
 
       case 'action':
@@ -995,6 +1214,7 @@ function mpConnect(url){
 
       case 'game_loaded':
         applySnapshot(msg.state);
+        MP.awaitingSnapshot = false;
         resetSelectedTown();
         if(msg.loadedBy !== 'serveur'){
           MP.roomSaveName = msg.name;
@@ -1005,6 +1225,7 @@ function mpConnect(url){
 
       case 'game_new_world':
         applySnapshot(msg.state);
+        MP.awaitingSnapshot = false;
         if(msg.config) WORLD = normalizeWorldConfig(msg.config);
         resetSelectedTown();
         toast('🌍 Nouvelle carte créée par '+msg.createdBy);
@@ -1049,6 +1270,8 @@ function mpDisconnect(){
   MP.token = null;
   MP.saves = [];
   MP.rooms = [];
+  MP.awaitingSnapshot = false;
+  mpStateSyncTimer = 0;
   mpUpdateUI();
 }
 
@@ -1571,13 +1794,21 @@ function mpRenderPlayerList(){
     + '<span style="color:'+p.color+';flex:1">'+(p.isHost?'👑 ':p.isAdmin?'🛡️ ':'')
     + escHtml(p.name) + (p.username ? ' <span style="color:#8fa3bf;font-size:10px">('+escHtml(p.username)+')</span>' : '')
     + '</span>'
-    + (mpHasAdminRights() && !p.isHost && !p.isAdmin && p.id !== MP.myId
-      ? '<button class="tbtn" style="padding:1px 6px;font-size:11px" data-promote="'+p.id+'">Admin</button>' : '')
+    + (mpHasAdminRights() && !p.isHost && p.id !== MP.myId
+      ? (p.isAdmin
+        ? '<button class="tbtn on" style="padding:1px 6px;font-size:11px" data-demote="'+p.id+'" title="Retirer les droits admin">🛡️ ✕</button>'
+        : '<button class="tbtn" style="padding:1px 6px;font-size:11px" data-promote="'+p.id+'" title="Donner les droits admin">＋ Admin</button>')
+      : '')
     + '</div>'
   ).join('');
   el.querySelectorAll('[data-promote]').forEach(btn=>{
     btn.onclick = ()=>{
       MP.ws.send(JSON.stringify({ type:'promote_admin', playerId:+btn.dataset.promote }));
+    };
+  });
+  el.querySelectorAll('[data-demote]').forEach(btn=>{
+    btn.onclick = ()=>{
+      MP.ws.send(JSON.stringify({ type:'demote_admin', playerId:+btn.dataset.demote }));
     };
   });
 }

@@ -642,12 +642,16 @@ function drawTrainStationPiece(b){
     }
   }
   const selectedGroup = trainStationSelectionMatches(selected, b);
+  const _trainRoute = vehicleRouteMode?.vehicle?.vtype === 'train';
+  const _foreignStation = _trainRoute && b.owner != null && b.owner !== (MP.connected ? MP.myId : null);
   const routeEligible = vehicleRouteMode && vehicleRouteEndpointOk(b)
-    && (vehicleRouteMode.step === 'dest' || b.owner == null || b.owner === (MP.connected ? MP.myId : null));
+    && (vehicleRouteMode.step === 'dest' || b.owner == null || b.owner === (MP.connected ? MP.myId : null)
+        || (_trainRoute && isTrainStationPiece(b)));
   if(selectedGroup || routeEligible){
     ctx.save();
     if(routeEligible){
-      ctx.strokeStyle = '#9fe8a0'; ctx.lineWidth = 1.5;
+      // Gare d'un autre joueur (commerce inter-joueurs) → or, sinon vert.
+      ctx.strokeStyle = _foreignStation ? '#f0c060' : '#9fe8a0'; ctx.lineWidth = 1.5;
       ctx.setLineDash([4,3]);
       diamond(rx, ry); ctx.stroke();
     } else if(trainStationSelectionMatches(selected, b) && isTrainStationPiece(selected)){

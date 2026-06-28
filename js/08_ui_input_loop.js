@@ -632,8 +632,11 @@ function renderTrainPanel(){
       const modeLabel = mode === 'load' ? '📥 Load' :
                         mode === 'unload' ? '📤 Unload' :
                         '🔄 Load&Unload';
+      const _foreign = b.owner != null && b.owner !== (MP.myId ?? null);
+      const ownerTag = _foreign
+        ? ' <span style="font-size:10px;color:'+playerColor(b.owner)+';margin-left:6px">🌐 '+escHtml(playerName(b.owner))+'</span>' : '';
       h += '<div class="tp-order"><div><b>'+(idx + 1)+'.</b> '+escHtml(trainStopLabel(b))
-         + ' <span style="font-size:10px;color:#8fa3bf;margin-left:8px">'+modeLabel+'</span></div>'
+         + ownerTag + ' <span style="font-size:10px;color:#8fa3bf;margin-left:8px">'+modeLabel+'</span></div>'
          + '<div style="display:flex;gap:4px">'
          + '<button class="tbtn" data-train-order-mode="'+idx+'" style="width:auto;margin:0;font-size:10px;padding:2px 6px">Changer</button>'
          + '<button class="tbtn" data-train-order-del="'+idx+'" style="width:auto;margin:0;color:#ff9a8a;font-size:10px;padding:2px 6px">Supprimer</button>'
@@ -1199,7 +1202,27 @@ function renderInfo(){
         }
         h += '</div>';
       } else {
-        h += '<div style="color:#8fa3bf;font-size:12px;font-style:italic">Appartient à un autre joueur.</div>';
+        // Gare d'un autre joueur : contenu ressource visible en lecture seule
+        // (les trains peuvent s'y arrêter pour le commerce inter-joueurs).
+        const _hubOwner = linkedDepot.owner ?? null;
+        h += '<div style="color:#8fa3bf;font-size:11px;margin-bottom:6px">Propriétaire : <b style="color:'+playerColor(_hubOwner)+'">'+escHtml(playerName(_hubOwner))+'</b> · commerce au tarif <b style="color:#f0c060">marchand</b></div>';
+        h += '<div class="depot-cols-3">';
+        for(const k in RES){
+          if(k === 'water') continue;
+          const val = linkedDepot.storage[k]||0, cap = capOf(linkedDepot,k);
+          const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
+          const price = TRADE_PRICES[k] || 0;
+          h += '<div class="depot-res-item" style="flex-direction:column;align-items:stretch;padding:5px 7px;opacity:.88">'
+             + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
+             + '<span class="dot" style="background:'+RES[k].c+'"></span>'
+             + '<span style="flex:1;font-size:11px">'+RES[k].n+'</span>'
+             + (cap>0 ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '')
+             + '</div>'
+             + (cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px"></i></div>' : '')
+             + '<div style="font-size:9px;color:#f0c060;margin-top:2px">'+price+' $/u</div>'
+             + '</div>';
+        }
+        h += '</div>';
       }
     } else {
       h += '<div style="margin-top:8px;color:#8fa3bf;font-size:11px;font-style:italic">Aucun entrepôt adjacent — les trains ne peuvent pas charger de ressources.</div>';
@@ -3196,7 +3219,8 @@ function frame(now){
   panKeys(rdt);
   trackCamera();
   smoothCamera(rdt);
-  if(!paused) update(rdt*speed);
+  if(!paused && mpRunsAuthoritativeSimulation()) update(rdt*speed);
+  if(typeof mpMaybeBroadcastState === 'function') mpMaybeBroadcastState(rdt);
   drawFn();
   updateHUD(rdt);
   // Décompte sauvegarde auto (temps réel, pas affecté par speed/pause)

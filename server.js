@@ -435,7 +435,7 @@ function sanitizeWorldConfig(config = {}) {
 const ALLOWED_ACTIONS = new Set([
   'road', 'bulldoze_road', 'rail_update', 'rail_signal_update', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
   'build', 'toggle_bld_pause', 'toggle_out_block', 'clear_bld_stock', 'upgrade_plant',
-  'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'pin_vehicle_res', 'merge_towns',
+  'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'pin_vehicle_res', 'configure_train', 'merge_towns',
   'zone_reassign', 'rename_bus_stop', 'owner_remap', 'depot_departure_flag', 'pause', 'speed',
 ]);
 const ALLOWED_BUILD_TYPES = new Set([
@@ -515,9 +515,46 @@ function sanitizeAction(client, msg) {
       out.id = String(act.id);
       out.res = act.res == null ? null : String(act.res).slice(0, 32);
       break;
-    case 'route_vehicle':
-      if (!validName(act.id, 64) || !intInRange(act.sourceX) || !intInRange(act.sourceY) || !intInRange(act.destX) || !intInRange(act.destY)) return null;
-      Object.assign(out, { id: String(act.id), sourceX: act.sourceX, sourceY: act.sourceY, destX: act.destX, destY: act.destY }); break;
+    case 'route_vehicle': {
+      if (!validName(act.id, 64)) return null;
+      out.id = String(act.id);
+      if (Array.isArray(act.orders)) {
+        // Train : liste d'ordres (gares)
+        const orders = [];
+        for (const o of act.orders) {
+          if (!o || !intInRange(o.x) || !intInRange(o.y)) return null;
+          orders.push({ x: o.x, y: o.y });
+        }
+        out.orders = orders;
+        if (Number.isInteger(act.orderIndex)) out.orderIndex = act.orderIndex;
+        if (Array.isArray(act.orderModes)) {
+          out.orderModes = act.orderModes
+            .map(m => (typeof m === 'string' && m.length <= 16) ? m : null)
+            .filter(m => m !== null);
+        }
+      } else {
+        // Véhicule routier : source + destination
+        if (!intInRange(act.sourceX) || !intInRange(act.sourceY) || !intInRange(act.destX) || !intInRange(act.destY)) return null;
+        Object.assign(out, { sourceX: act.sourceX, sourceY: act.sourceY, destX: act.destX, destY: act.destY });
+      }
+      break;
+    }
+    case 'configure_train': {
+      if (!validName(act.id, 64)) return null;
+      out.id = String(act.id);
+      if (Array.isArray(act.wagons)) {
+        const wagons = [];
+        for (const w of act.wagons) {
+          if (!w || typeof w !== 'object' || typeof w.type !== 'string' || w.type.length > 32) return null;
+          const wagon = { type: w.type };
+          if (w.resource != null) wagon.resource = String(w.resource).slice(0, 32);
+          wagons.push(wagon);
+        }
+        out.wagons = wagons;
+      }
+      if (typeof act.engineMult === 'number' && act.engineMult >= 1 && act.engineMult <= 100) out.engineMult = act.engineMult;
+      break;
+    }
     case 'merge_towns':
       if (!intInRange(act.dstId, 0, 1000000) || !intInRange(act.srcId, 0, 1000000)) return null;
       Object.assign(out, { dstId: act.dstId, srcId: act.srcId }); break;
@@ -869,6 +906,23 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'demote_admin': {
+        if (!requirePrivileged(client, 'permission_err')) break;
+        const room = roomOf(client);
+        if (!room) break;
+        const targetId = Number(msg.playerId);
+        if (targetId === room.hostId) { send(client, { type:'permission_err', msg:'L\'hôte ne peut pas être rétrogradé' }); break; }
+        const target = roomClients(room.id).find(c => c.id === targetId);
+        if (!target) { send(client, { type:'permission_err', msg:'Joueur introuvable' }); break; }
+        if (!target.isAdmin) { send(client, { type:'permission_err', msg:'Ce joueur n\'est pas administrateur' }); break; }
+        target.isAdmin = false;
+        send(target, { type:'admin_demoted' });
+        broadcastRoom(room.id, { type:'admin_changed', playerId: target.id, isAdmin: false, by: client.username || client.name });
+        broadcastPlayerList(room.id);
+        console.log(`[admin] ${target.name} rétrogradé par ${client.name}`);
+        break;
+      }
+
       case 'action': {
         if (!client.username) break;
         const room = roomOf(client);
@@ -877,6 +931,14 @@ wss.on('connection', (ws) => {
         if (!act) break;
         if ((act.type === 'pause' || act.type === 'speed') && !isPrivileged(client)) break;
         broadcastRoom(room.id, { type:'action', act, from:id, fromUsername: client.username || null }, id);
+        break;
+      }
+
+      case 'state_sync': {
+        const room = roomOf(client);
+        if (!room || client.id !== room.hostId || !msg.state) break;
+        msg.state.playerRegistry = Object.fromEntries(userOwnerRegistry);
+        broadcastRoom(room.id, { type:'state_sync', state: msg.state }, id);
         break;
       }
 
@@ -942,6 +1004,7 @@ function printConsoleHelp() {
   console.log('  say <message>                Envoie un message système à tous');
   console.log('  kick <id> [raison]           Déconnecte un joueur');
   console.log('  promote <id>                 Donne les droits admin à un joueur');
+  console.log('  demote <id>                  Retire les droits admin d\'un joueur');
   console.log('  setmoney <nom> <montant>     Fixe le solde d\'un joueur');
   console.log('  regenexpansions              Régénère les zones d\'expansion');
   console.log('  spawnfields <type> [count]   Génère des champs (wheat/cotton)');
@@ -1025,6 +1088,23 @@ function handleConsoleCommand(line) {
         broadcastPlayerList(target.roomId);
       }
       console.log(`[admin] ${target.name} promu depuis la console`);
+      break;
+    }
+
+    case 'demote': {
+      const pId = Number(args[0]);
+      const target = allClients.find(c => c.id === pId);
+      if (!target) { console.log('Joueur introuvable.'); break; }
+      const room = target.roomId != null ? rooms.get(target.roomId) : null;
+      if (room && target.id === room.hostId) { console.log('L\'hôte ne peut pas être rétrogradé.'); break; }
+      if (!target.isAdmin) { console.log(`${target.name} n'est pas administrateur.`); break; }
+      target.isAdmin = false;
+      send(target, { type:'admin_demoted' });
+      if (target.roomId != null) {
+        broadcastRoom(target.roomId, { type:'admin_changed', playerId: target.id, isAdmin: false, by:'console serveur' });
+        broadcastPlayerList(target.roomId);
+      }
+      console.log(`[admin] ${target.name} rétrogradé depuis la console`);
       break;
     }
 

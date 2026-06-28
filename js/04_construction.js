@@ -518,7 +518,7 @@ function clickAt(x,y){
       if(vehicleRouteMode.step === 'train_order_append'){
         if(veh?.vtype !== 'train') return;
         if(!vehicleRouteEndpointOk(b, 'train', veh.garageRef?.owner ?? MP.myId ?? null)){
-          toast('⛔ Le train ne peut utiliser que ses propres gares et dépôts ferroviaires.','err');
+          toast('⛔ Le train ne peut utiliser que des gares ou dépôts ferroviaires.','err');
           return;
         }
         veh.orders = veh.orders || [];
@@ -540,7 +540,7 @@ function clickAt(x,y){
         if(isBus)
           toast('⛔ Le bus ne peut utiliser que ses propres arrêts et gares comme source et destination.','err');
         else if(veh.vtype === 'train')
-          toast('⛔ Le train ne peut utiliser que ses propres gares ou dépôts ferroviaires.','err');
+          toast('⛔ Le train ne peut utiliser que des gares ou dépôts ferroviaires.','err');
         else
           toast('⛔ Les véhicules ne peuvent utiliser que leurs propres entrepôts comme source et destination.','err');
         return;

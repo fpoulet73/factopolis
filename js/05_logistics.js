@@ -1324,6 +1324,28 @@ function trainEarnPassengerRevenue(v, numPassengers, departStop, arrivalStop){
   addFloat(arrivalStop.x + (arrivalStop.w-1)/2, arrivalStop.y, '+'+revenue+' $ 🚃', '#c8e040');
 }
 
+// Transaction commerciale inter-joueurs : l'acheteur paie le vendeur au tarif
+// TRADE_PRICES pour jusqu'à `qty` unités de `res`. Retourne la quantité
+// réellement échangée (plafonnée par les fonds de l'acheteur ; 0 si pas de prix
+// ou si l'opération n'est pas inter-joueurs). Mouvements financiers identiques
+// au commerce des camions (cf. updateVehicles).
+function applyInterPlayerTrade(buyerOwner, sellerOwner, res, qty){
+  if(qty <= 0 || buyerOwner == null || sellerOwner == null || buyerOwner === sellerOwner) return 0;
+  const price = TRADE_PRICES[res] || 0;
+  if(price <= 0) return 0;
+  const buyer = walletOf(buyerOwner), seller = walletOf(sellerOwner);
+  const maxAffordable = Math.floor(buyer.money / price);
+  const take = Math.min(qty, Math.max(0, maxAffordable));
+  if(take <= 0) return 0;
+  const cost = take * price;
+  buyer.money -= cost;
+  buyer.fin.construction = (buyer.fin.construction||0) + cost; // colonne « achats »
+  seller.money += cost;
+  seller.fin.ventes = (seller.fin.ventes||0) + cost;
+  recordVente(seller, 'res', res, cost);
+  return take;
+}
+
 function trainProcessStop(v, stopB, nextStop){
   if(!v || !stopB || stopB.dead) return;
 
@@ -1377,20 +1399,27 @@ function trainProcessStop(v, stopB, nextStop){
 
   let unloadedRes = null;
   if(canUnload && v.cargo > 0 && v.res && freightHub){
+    const trainOwner = v.garageRef?.owner ?? null;
+    const hubOwner   = freightHub.owner ?? null;
+    const interPlayer = hubOwner != null && trainOwner != null && hubOwner !== trainOwner;
     const room = Math.max(0, capOf(freightHub, v.res) - (freightHub.storage[v.res]||0));
-    const deposit = Math.min(v.cargo, room);
+    let deposit = Math.min(v.cargo, room);
+    // Commerce inter-joueurs : le propriétaire du hub achète la marchandise livrée.
+    if(interPlayer) deposit = applyInterPlayerTrade(hubOwner, trainOwner, v.res, deposit);
     if(deposit > 0){
       freightHub.storage[v.res] = (freightHub.storage[v.res]||0) + deposit;
       unloadedRes = v.res;
-      // Revenu de fret : différé à mi-temps d'arrêt (voir updateTrainVehicle)
-      const loadB = v.cargoLoadStop;
-      if(loadB && loadB !== stopB){
-        const cx = stopB.x + (stopB.w||1)/2, cy = stopB.y + (stopB.h||1)/2;
-        const lx = loadB.x + (loadB.w||1)/2,  ly = loadB.y + (loadB.h||1)/2;
-        const dist = Math.max(1, Math.round(Math.abs(cx - lx) + Math.abs(cy - ly)));
-        const revenue = Math.round(deposit * (TRADE_PRICES[v.res] || 1) * dist * TRAIN_FREIGHT_FACTOR);
-        if(revenue > 0)
-          v.pendingFreightRevenue = (v.pendingFreightRevenue || 0) + revenue;
+      if(!interPlayer){
+        // Revenu de fret (même propriétaire) : différé à mi-temps d'arrêt (voir updateTrainVehicle)
+        const loadB = v.cargoLoadStop;
+        if(loadB && loadB !== stopB){
+          const cx = stopB.x + (stopB.w||1)/2, cy = stopB.y + (stopB.h||1)/2;
+          const lx = loadB.x + (loadB.w||1)/2,  ly = loadB.y + (loadB.h||1)/2;
+          const dist = Math.max(1, Math.round(Math.abs(cx - lx) + Math.abs(cy - ly)));
+          const revenue = Math.round(deposit * (TRADE_PRICES[v.res] || 1) * dist * TRAIN_FREIGHT_FACTOR);
+          if(revenue > 0)
+            v.pendingFreightRevenue = (v.pendingFreightRevenue || 0) + revenue;
+        }
       }
     }
     v.cargo -= deposit;
@@ -1413,11 +1442,18 @@ function trainProcessStop(v, stopB, nextStop){
     if(amt > bestAmt){ bestAmt = amt; bestRes = r; }
   }
   if(bestRes && bestAmt > 0){
-    freightHub.storage[bestRes] -= bestAmt;
-    // Mémoriser l'origine du chargement (seulement si le train était vide avant)
-    if(v.cargo === 0 || v.res !== bestRes) v.cargoLoadStop = stopB;
-    v.cargo = (v.res === bestRes ? v.cargo : 0) + bestAmt;
-    v.res = bestRes;
+    const trainOwner = v.garageRef?.owner ?? null;
+    const hubOwner   = freightHub.owner ?? null;
+    const interPlayer = hubOwner != null && trainOwner != null && hubOwner !== trainOwner;
+    // Commerce inter-joueurs : le propriétaire du train achète la ressource chargée.
+    const take = interPlayer ? applyInterPlayerTrade(trainOwner, hubOwner, bestRes, bestAmt) : bestAmt;
+    if(take > 0){
+      freightHub.storage[bestRes] -= take;
+      // Mémoriser l'origine du chargement (seulement si le train était vide avant)
+      if(v.cargo === 0 || v.res !== bestRes) v.cargoLoadStop = stopB;
+      v.cargo = (v.res === bestRes ? v.cargo : 0) + take;
+      v.res = bestRes;
+    }
   }
 }
 
@@ -1798,8 +1834,13 @@ function focusOnVehicle(v){
 function vehicleRouteEndpointOk(b, vtype_override, ownerOverride){
   if(!b || b.dead) return false;
   const routeOwner = ownerOverride ?? vehicleRouteMode?.vehicle?.garageRef?.owner ?? MP.myId ?? null;
-  if(!canUseBuilding(b, routeOwner)) return false;
   const vt = vtype_override || vehicleRouteMode?.vehicle?.vtype;
+  // Les trains peuvent utiliser les gares d'un autre joueur comme arrêt
+  // (commerce inter-joueurs). Le train_depot reste réservé à son propriétaire.
+  if(vt === 'train' && isTrainStationPiece(b) && b.owner != null && b.owner !== routeOwner){
+    return true;
+  }
+  if(!canUseBuilding(b, routeOwner)) return false;
   if(vt === 'bus') return b?.type === 'bus_stop' || b?.type === 'train_station' || b?.type === 'train_platform';
   if(vt === 'train') return b?.type === 'train_depot' || isTrainStationPiece(b);
   return isStorageHub(b);
