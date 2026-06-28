@@ -137,7 +137,8 @@ mpInjectUI();
 buildToolbar();
 genWorld();
 renderAutoSaves();
-requestAnimationFrame(frame);
+requestAnimationFrame(frame);   // rendu (suspendu si onglet en arrière-plan)
+startSimClock();                 // simulation (continue en arrière-plan)
 
 // ======================================================================
 // COMMANDES CONSOLE

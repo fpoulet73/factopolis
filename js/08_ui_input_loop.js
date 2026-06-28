@@ -3212,6 +3212,11 @@ graphicPackSelect.onchange = e => {
 // drawFn est une indirection pour permettre aux extensions (multijoueur) de surcharger draw
 let drawFn = draw;
 
+// --- Boucle de RENDU (requestAnimationFrame) ---
+// rAF est suspendu/throttlé par le navigateur quand l'onglet n'est plus au
+// premier plan. On y laisse donc UNIQUEMENT ce qui est visuel : si personne ne
+// regarde, peu importe que le rendu se mette en pause. La simulation, elle, est
+// pilotée par une horloge indépendante (voir simStep / startSimClock plus bas).
 let last = performance.now();
 function frame(now){
   const rdt = Math.min(0.05, (now-last)/1000);
@@ -3220,16 +3225,63 @@ function frame(now){
   panKeys(rdt);
   trackCamera();
   smoothCamera(rdt);
-  if(!paused && mpRunsAuthoritativeSimulation()) update(gdt);
-  if(typeof mpMaybeBroadcastState === 'function') mpMaybeBroadcastState(rdt);
   if(typeof mpUpdateGuestVisuals === 'function') mpUpdateGuestVisuals(rdt, gdt);
   drawFn();
   updateHUD(rdt);
+  requestAnimationFrame(frame);
+}
+
+// --- Boucle de SIMULATION (indépendante du focus de l'onglet) ---
+// Avance l'état du jeu, diffuse l'état (hôte) et gère la sauvegarde auto.
+// Pilotée par startSimClock() via un Web Worker dont les timers ne sont pas
+// throttlés en arrière-plan : l'hôte continue donc à simuler et à diffuser même
+// quand son onglet n'a plus le focus, et les invités ne voient plus le jeu figé.
+let simLast = performance.now();
+function simStep(now){
+  let rdt = (now - simLast) / 1000;
+  simLast = now;
+  if(rdt <= 0) return;
+  // Plafonne le rattrapage après une longue suspension pour éviter un gros saut.
+  if(rdt > 1) rdt = 1;
+  // Sous-découpe en tranches de 50 ms max : même pas de simulation que l'ancienne
+  // boucle rAF (stabilité), tout en gardant la cadence temps réel si les ticks
+  // sont espacés (onglet en arrière-plan).
+  if(!paused && mpRunsAuthoritativeSimulation()){
+    let acc = rdt;
+    while(acc > 0){
+      const step = acc > 0.05 ? 0.05 : acc;
+      acc -= step;
+      update(step * speed);
+    }
+  }
+  if(typeof mpMaybeBroadcastState === 'function') mpMaybeBroadcastState(rdt);
   // Décompte sauvegarde auto (temps réel, pas affecté par speed/pause)
   autoSaveTimer -= rdt;
   if(autoSaveTimer <= 0){
     autoSaveTimer = AUTO_SAVE_INTERVAL;
     performAutoSave();
   }
-  requestAnimationFrame(frame);
+}
+
+let _simWorker = null, _simFallbackInterval = null;
+function startSimClock(){
+  if(_simWorker || _simFallbackInterval) return;
+  simLast = performance.now();
+  const SIM_TICK_MS = 16; // ~60 Hz quand l'onglet est actif
+  try {
+    // Le Worker sert uniquement d'horloge : ses setInterval ne sont pas
+    // throttlés à 1 s comme ceux du thread principal en arrière-plan.
+    const src =
+      'let id=null;onmessage=function(e){' +
+      'if(e.data&&e.data.t==="start"){if(!id)id=setInterval(function(){postMessage(0);},e.data.ms);}' +
+      'else if(e.data&&e.data.t==="stop"){clearInterval(id);id=null;}};';
+    const blob = new Blob([src], { type:'application/javascript' });
+    _simWorker = new Worker(URL.createObjectURL(blob));
+    _simWorker.onmessage = function(){ simStep(performance.now()); };
+    _simWorker.postMessage({ t:'start', ms:SIM_TICK_MS });
+  } catch(err){
+    // Fallback : setInterval principal (throttlé à ~1 s en arrière-plan, mais
+    // grâce au sous-découpage de simStep le jeu garde tout de même sa cadence).
+    _simFallbackInterval = setInterval(function(){ simStep(performance.now()); }, SIM_TICK_MS);
+  }
 }
