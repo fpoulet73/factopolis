@@ -417,7 +417,14 @@ function checkRect(x,y,w,h,targetLevel=null){
         : b.mergeBlockedMissing;
       if(blockedMissing.length && !residHasAll(b, blockedMissing)) return null;
     }
-    if(!b.starterHome && !residHasAll(b, residFusionRequiredOf(b))) return null;
+    // Note : on n'exige plus residFusionRequiredOf(b) en stock ici.
+    // Un bâtiment plein (pop = popCap) a forcément été ravitaillé récemment
+    // en ressources indispensables (sinon la croissance se serait arrêtée).
+    // Exiger le stock à l'instant t empêchait la fusion dès qu'un cycle de
+    // consommation venait de vider la ressource (ex. maison pleine sans goods
+    // → la maison de départ protégée restait bloquée à 2×1). Le drapeau
+    // mergeBlockedMissing (géré ci-dessus) couvre le cas des pièces issues
+    // d'une défusion et empêche la re-fusion instantanée.
     if(!set.includes(b)) set.push(b);
   }
   return set;

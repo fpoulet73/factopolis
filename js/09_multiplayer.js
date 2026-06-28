@@ -651,7 +651,9 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   b.mergeBlockedMissing = Array.isArray(o.mergeBlockedMissing) ? o.mergeBlockedMissing.filter(r => RES[r]) : null;
   if(b.type === 'bus_stop'){
     b.passengers = o.passengers || 0;
+    b.passengersMax = o.passengersMax ?? 0;
     b.passengersEntrant = o.passengersEntrant ?? 0;
+    b.passagersSortant = o.passagersSortant ?? 0;
   }
   if(b.type === 'train_station'){
     b.passengersEntrant = o.passengersEntrant ?? 0;
@@ -974,6 +976,7 @@ function serializeState(opts = {}){
       starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
       mergeBlockedMissing:Array.isArray(b.mergeBlockedMissing) ? b.mergeBlockedMissing.slice() : null,
       passengers:b.passengers||0,
+      passengersMax:b.passengersMax??null,
       passengersEntrant:b.passengersEntrant??null, passengersEntrantMax:b.passengersEntrantMax??null, passagersSortant:b.passagersSortant??null,
       passengersEntrantPending:b.passengersEntrantPending??null,
       stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null,
@@ -1266,7 +1269,12 @@ function applySnapshot(d){
     if(o.townId != null) b.townId = o.townId;
     if(o.name   != null) b.name   = o.name;
     if(Array.isArray(o.mergeBlockedMissing)) b.mergeBlockedMissing = o.mergeBlockedMissing.filter(r => RES[r]);
-    if(o.passengers != null && b.type === 'bus_stop') b.passengers = o.passengers;
+    if(o.passengers != null && b.type === 'bus_stop'){
+      b.passengers = o.passengers;
+      b.passengersMax = o.passengersMax ?? 0;
+      b.passengersEntrant = o.passengersEntrant ?? 0;
+      b.passagersSortant = o.passagersSortant ?? 0;
+    }
     if(o.passengersEntrant != null && b.type === 'train_station'){
       b.passengersEntrant = o.passengersEntrant;
       b.passengersEntrantMax = o.passengersEntrantMax ?? 0;
