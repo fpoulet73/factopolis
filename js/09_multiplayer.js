@@ -1895,6 +1895,7 @@ function mpConnect(url){
         mpUpdateUI();
         mpRenderSaves();
         renderAutoSaves();
+        mpRequestRoomSaves(); // sauvegardes de la room (carte), pas du joueur
         break;
 
       case 'promoted_host':
@@ -1905,6 +1906,7 @@ function mpConnect(url){
         toast('👑 Tu es maintenant l\'hôte de la partie');
         mpUpdateUI();
         mpRenderSaves();
+        mpRequestRoomSaves();
         break;
 
       case 'admin_promoted':
@@ -1912,6 +1914,7 @@ function mpConnect(url){
         toast('🛡️ Tu es maintenant administrateur');
         mpUpdateUI();
         mpRenderSaves();
+        mpRequestRoomSaves();
         break;
 
       case 'admin_demoted':
@@ -2708,15 +2711,20 @@ function mpIsAutoSaveName(name){
   return /^\[Auto\]/i.test(String(name || '').trim());
 }
 
+// Demande au serveur la liste des sauvegardes de la room courante (scopée par
+// carte, pas par joueur). Réservé à l'hôte/admin identifié dans une room.
+function mpRequestRoomSaves(){
+  if(MP.token && MP.roomId != null && MP.ws && MP.ws.readyState === 1){
+    MP.ws.send(JSON.stringify({ type:'list_saves', token:MP.token }));
+  }
+}
+
 function mpRenderSaves(){
   const el = $('mpSaveList');
   if(!el) return;
-  const roomFilter = MP.roomSaveName || MP.roomName;
-  const saves = MP.saves.filter(s => {
-    if(mpIsAutoSaveName(s.name)) return false;
-    if(roomFilter) return s.name === roomFilter;
-    return true;
-  });
+  // Le serveur renvoie déjà uniquement les sauvegardes de la room courante ;
+  // on n'exclut ici que les auto-sauvegardes (affichées séparément).
+  const saves = MP.saves.filter(s => !mpIsAutoSaveName(s.name));
   if(!saves.length){
     el.innerHTML = '<div style="color:#8fa3bf;font-size:11px;font-style:italic">Aucune sauvegarde</div>';
     return;

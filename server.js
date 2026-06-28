@@ -66,8 +66,6 @@ function validateToken(token) {
 }
 
 const safeName = s => s.replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 64);
-const saveFileName = (username, name) => safeName(username) + '_' + safeName(name) + '.json';
-const savePath = (username, name) => path.join(SAVES_DIR, saveFileName(username, name));
 const isAutoSaveName = name => /^\[Auto\]/i.test(String(name || '').trim());
 
 function saveBelongsToUser(file, data, username) {
@@ -75,42 +73,6 @@ function saveBelongsToUser(file, data, username) {
   const prefixLower = safeName(username) + '_';
   return file.toLowerCase().startsWith(prefixLower.toLowerCase())
     || String(data?.meta?.username || '').toLowerCase() === userLower;
-}
-
-function resolveSavePath(username, name, { mustExist = false } = {}) {
-  const wanted = saveFileName(username, name);
-  const exact = path.join(SAVES_DIR, wanted);
-  if (fs.existsSync(exact)) return exact;
-  const wantedLower = wanted.toLowerCase();
-  try {
-    const match = fs.readdirSync(SAVES_DIR).find(f => {
-      if (!f.endsWith('.json') || f.toLowerCase() !== wantedLower) return false;
-      try {
-        const data = JSON.parse(fs.readFileSync(path.join(SAVES_DIR, f), 'utf8'));
-        return saveBelongsToUser(f, data, username);
-      } catch { return f.toLowerCase().startsWith((safeName(username) + '_').toLowerCase()); }
-    });
-    if (match) return path.join(SAVES_DIR, match);
-  } catch {}
-  const wantedNameLower = String(name || '').toLowerCase();
-  try {
-    const byMetaName = fs.readdirSync(SAVES_DIR)
-      .filter(f => f.endsWith('.json'))
-      .map(f => {
-        const fullPath = path.join(SAVES_DIR, f);
-        const stat = fs.statSync(fullPath);
-        try {
-          const data = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-          return { file: f, path: fullPath, mtimeMs: stat.mtimeMs, name: data.meta?.name || null, data };
-        } catch { return null; }
-      })
-      .filter(Boolean)
-      .filter(s => saveBelongsToUser(s.file, s.data, username))
-      .filter(s => String(s.name || '').toLowerCase() === wantedNameLower)
-      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
-    if (byMetaName) return byMetaName.path;
-  } catch {}
-  return mustExist ? null : exact;
 }
 
 function listUserSaves(username) {
@@ -138,6 +100,65 @@ function listUserSaves(username) {
       });
     return saves.sort((a, b) => b.date.localeCompare(a.date));
   } catch { return []; }
+}
+
+// ---- sauvegardes rattachées à la ROOM (carte), pas au joueur ----
+// Une sauvegarde appartient à la room courante si elle porte son identité de
+// room (nom de la carte). Les nouvelles sauvegardes la stockent dans meta.room ;
+// les anciennes (sans meta.room) sont rattachées par leur meta.name == nom de
+// room, ce qui couvre le modèle « une sauvegarde principale nommée comme la room ».
+function roomIdentity(room) {
+  return String(room?.name || '').toLowerCase();
+}
+function saveBelongsToRoom(data, room) {
+  const rid = roomIdentity(room);
+  if (!rid) return false;
+  const metaRoom = String(data?.meta?.room || '').toLowerCase();
+  if (metaRoom) return metaRoom === rid;
+  // héritage : pas de meta.room → rattachement par nom de sauvegarde
+  const metaName = String(data?.meta?.name || '').toLowerCase();
+  const saveName = String(room?.saveName || '').toLowerCase();
+  return metaName === rid || (saveName && metaName === saveName);
+}
+
+function listRoomSaves(room) {
+  try {
+    const files = fs.readdirSync(SAVES_DIR).filter(f => f.endsWith('.json'));
+    const saves = [];
+    for (const f of files) {
+      const fullPath = path.join(SAVES_DIR, f);
+      let data = null;
+      try { data = JSON.parse(fs.readFileSync(fullPath, 'utf8')); } catch { continue; }
+      if (!saveBelongsToRoom(data, room)) continue;
+      const stat = fs.statSync(fullPath);
+      const name = data?.meta?.name || f.replace(/\.json$/, '');
+      saves.push({ name, date: stat.mtime.toISOString() });
+    }
+    return saves.sort((a, b) => b.date.localeCompare(a.date));
+  } catch { return []; }
+}
+
+// Résout le fichier d'une sauvegarde nommée DANS la room. Si elle n'existe pas
+// et que mustExist=false, retourne un chemin neuf nommé d'après la room (les
+// sauvegardes d'une même carte sont ainsi regroupées, indépendamment du joueur).
+function resolveRoomSavePath(room, name, { mustExist = false } = {}) {
+  const wantedName = String(name || '').toLowerCase();
+  try {
+    const match = fs.readdirSync(SAVES_DIR)
+      .filter(f => f.endsWith('.json'))
+      .map(f => {
+        const p = path.join(SAVES_DIR, f);
+        let data = null, mtimeMs = 0;
+        try { data = JSON.parse(fs.readFileSync(p, 'utf8')); mtimeMs = fs.statSync(p).mtimeMs; } catch {}
+        return { p, data, mtimeMs };
+      })
+      .filter(x => x.data && saveBelongsToRoom(x.data, room)
+        && String(x.data?.meta?.name || '').toLowerCase() === wantedName)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+    if (match) return match.p;
+  } catch {}
+  if (mustExist) return null;
+  return path.join(SAVES_DIR, safeName(room.name) + '_' + safeName(name) + '.json');
 }
 
 // Charge une sauvegarde par nom (optionnel) — sinon la plus récente du dossier
@@ -236,7 +257,9 @@ function createRoom({ name, worldConfig, saveName, saveUsername } = {}) {
 function initRooms() {
   try {
     const files = fs.readdirSync(SAVES_DIR).filter(f => f.endsWith('.json'));
-    const byName = new Map(); // name → { username, mtimeMs, worldConfig }
+    // Regroupe les sauvegardes par ROOM (carte), pas par nom de sauvegarde :
+    // une room = identité meta.room (ou, en héritage, le nom de la sauvegarde).
+    const byRoom = new Map(); // roomName → { saveName, username, mtimeMs, worldConfig }
     for (const f of files) {
       const fullPath = path.join(SAVES_DIR, f);
       const stat = fs.statSync(fullPath);
@@ -245,17 +268,18 @@ function initRooms() {
       if (!data?.state) continue;
       const name = data.meta?.name || f.replace(/\.json$/, '');
       if (/^\[Auto\]/i.test(name)) continue; // ignorer les auto-sauvegardes
+      const roomName = data.meta?.room || name; // héritage : room = nom de save
       const username = data.meta?.username || null;
-      const existing = byName.get(name);
+      const existing = byRoom.get(roomName);
       if (!existing || stat.mtimeMs > existing.mtimeMs) {
-        byName.set(name, { username, mtimeMs: stat.mtimeMs, worldConfig: data.state?.world });
+        byRoom.set(roomName, { saveName: name, username, mtimeMs: stat.mtimeMs, worldConfig: data.state?.world });
       }
     }
-    if (byName.size === 0) {
+    if (byRoom.size === 0) {
       createRoom({ name: 'Monde 1' });
     } else {
-      for (const [name, info] of byName.entries()) {
-        createRoom({ name, saveName: name, saveUsername: info.username, worldConfig: info.worldConfig });
+      for (const [roomName, info] of byRoom.entries()) {
+        createRoom({ name: roomName, saveName: info.saveName, saveUsername: info.username, worldConfig: info.worldConfig });
         if (rooms.size >= 20) break; // limite de sécurité
       }
     }
@@ -801,7 +825,8 @@ wss.on('connection', (ws) => {
       case 'list_saves': {
         const user = validateToken(msg.token);
         if (!user) { send(client, { type:'save_err', msg:'Non authentifié' }); break; }
-        send(client, { type:'saves_list', saves: listUserSaves(user.username) });
+        const room = roomOf(client);
+        send(client, { type:'saves_list', saves: room ? listRoomSaves(room) : [] });
         break;
       }
 
@@ -814,12 +839,12 @@ wss.on('connection', (ws) => {
         const sName = (msg.name || '').trim();
         if (!sName) { send(client, { type:'save_err', msg:'Nom de sauvegarde requis' }); break; }
         try {
-          const p = resolveSavePath(user.username, sName);
+          const p = resolveRoomSavePath(room, sName);
           const stateWithRegistry = Object.assign({}, msg.state, {
             playerRegistry: Object.fromEntries(userOwnerRegistry),
           });
           fs.writeFileSync(p, JSON.stringify({
-            meta: { username: user.username, name: sName, date: new Date().toISOString() },
+            meta: { room: room.name, username: user.username, name: sName, date: new Date().toISOString() },
             state: stateWithRegistry,
           }));
           if (!isAutoSaveName(sName)) {
@@ -828,7 +853,7 @@ wss.on('connection', (ws) => {
           }
           send(client, { type:'save_ok', name: sName });
           broadcastRoom(room.id, { type:'game_saved', name: sName, savedBy: user.username });
-          send(client, { type:'saves_list', saves: listUserSaves(user.username) });
+          send(client, { type:'saves_list', saves: listRoomSaves(room) });
           console.log(`[save] ${user.username} → "${sName}" (monde "${room.name}")`);
         } catch(e) { send(client, { type:'save_err', msg:'Erreur: ' + e.message }); }
         break;
@@ -842,7 +867,7 @@ wss.on('connection', (ws) => {
         if (!room) break;
         const lName = (msg.name || '').trim();
         try {
-          const p = resolveSavePath(user.username, lName, { mustExist: true });
+          const p = resolveRoomSavePath(room, lName, { mustExist: true });
           if (!p || !fs.existsSync(p)) { send(client, { type:'save_err', msg:'Sauvegarde introuvable' }); break; }
           const data = JSON.parse(fs.readFileSync(p, 'utf8'));
           room.saveName = lName;
@@ -857,13 +882,15 @@ wss.on('connection', (ws) => {
         if (!requirePrivileged(client, 'save_err')) break;
         const user = validateToken(msg.token);
         if (!user) { send(client, { type:'save_err', msg:'Non authentifié' }); break; }
+        const room = roomOf(client);
+        if (!room) break;
         const dName = (msg.name || '').trim();
         try {
-          const p = resolveSavePath(user.username, dName, { mustExist: true });
+          const p = resolveRoomSavePath(room, dName, { mustExist: true });
           if (!p || !fs.existsSync(p)) { send(client, { type:'save_err', msg:'Sauvegarde introuvable' }); break; }
           fs.unlinkSync(p);
           send(client, { type:'save_deleted', name: dName });
-          send(client, { type:'saves_list', saves: listUserSaves(user.username) });
+          send(client, { type:'saves_list', saves: listRoomSaves(room) });
           console.log(`[delete] ${user.username} ✕ "${dName}"`);
         } catch(e) { send(client, { type:'save_err', msg:'Erreur: ' + e.message }); }
         break;
