@@ -132,6 +132,20 @@
     pointer-events:none;z-index:50}
   #info .row{display:flex;justify-content:space-between;margin:3px 0}
   #info .bar{height:7px;border-radius:4px;background:#243246;overflow:hidden;margin:2px 0 7px}
+  /* ---- panneau liste véhicules / trains ---- */
+  #vehicleListPanel{top:70px;left:12px;width:300px;max-height:70vh;display:none;z-index:10;padding:10px 12px;font-size:13px}
+  #vehicleListPanel .vehlist-count{color:#8fa3bf;font-weight:normal}
+  #vehicleListPanel .vehlist-hint{font-size:11px;color:#8fa3bf;margin:0 0 8px;line-height:1.3}
+  #vehicleListPanel .vehlist-empty{color:#8fa3bf;padding:16px 4px;text-align:center;font-style:italic}
+  #vehicleListPanel .vehlist{display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:calc(70vh - 90px)}
+  #vehicleListPanel .vehlist-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;
+    background:#1d2939;border:1px solid #2a3a52;cursor:pointer;transition:background .12s,border-color .12s}
+  #vehicleListPanel .vehlist-row:hover{background:#243449;border-color:#3a5170}
+  #vehicleListPanel .vehlist-row.sel{background:#2a4a78;border-color:#5b93e8;box-shadow:0 0 0 1px #5b93e8 inset}
+  #vehicleListPanel .vehlist-icon{font-size:18px;line-height:1}
+  #vehicleListPanel .vehlist-info{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+  #vehicleListPanel .vehlist-info b{font-size:13px;font-weight:600;color:#e8eef7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #vehicleListPanel .vehlist-date{font-size:11px;color:#8fa3bf;font-variant-numeric:tabular-nums}
   #info .bar i{display:block;height:100%}
   #info .status{color:#9fc1ef;margin:7px 0;font-style:italic}
   #info .warn{color:#ffb04d}
@@ -311,7 +325,8 @@
   <span class="stat" title="Village sélectionné" data-i18n-title="topbar.townTitle">🏘️ <b id="hTown">—</b></span>
   <span class="stat" title="Population / logements du village sélectionné" data-i18n-title="topbar.popTitle">👥 <b id="hPop">0</b></span>
   <span class="stat" title="Ouvriers employés / emplois accessibles au village sélectionné" data-i18n-title="topbar.jobsTitle">🛠️ <b id="hJobs">0</b></span>
-  <span class="stat" title="Camions en circulation" data-i18n-title="topbar.trucksTitle">🚚 <b id="hTrucks">0</b></span>
+  <span class="stat" id="sVehicles" style="cursor:pointer" title="Véhicules achetés (clic : liste)" data-i18n-title="topbar.vehiclesTitle">🚚 <b id="hVehicles">0</b></span>
+  <span class="stat" id="sTrains" style="cursor:pointer" title="Trains achetés (clic : liste)" data-i18n-title="topbar.trainsTitle">🚆 <b id="hTrains">0</b></span>
   <span class="sep"></span>
   <button class="tbtn" id="bRotL" title="Pivoter la vue à gauche (Maj+R)" data-i18n-title="topbar.rotateLeft">⟲</button>
   <button class="tbtn" id="bRotR" title="Pivoter la vue à droite (R)" data-i18n-title="topbar.rotateRight">⟳</button>
@@ -366,6 +381,7 @@
 </div>
 <div id="finance" class="panel"></div>
 <div id="info" class="panel"></div>
+<div id="vehicleListPanel" class="panel"></div>
 <div id="toasts"></div>
 <div id="confirmOverlay">
   <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
@@ -457,24 +473,24 @@
 
 </div>
 
-<script src="config.js?v=11"></script>
-<script src="js/i18n/fr.js?v=11"></script>
-<script src="js/i18n/en.js?v=11"></script>
-<script src="js/i18n/es.js?v=11"></script>
-<script src="js/i18n.js?v=11"></script>
-<script src="js/01_definitions.js?v=11"></script>
-<script src="js/05_depots/vehicules.js?v=11"></script>
-<script src="js/05_depots/train.js?v=11"></script>
-<script src="js/05_depots/bateau.js?v=11"></script>
-<script src="js/05_depots/avion.js?v=11"></script>
-<script src="js/02_world_state.js?v=11"></script>
-<script src="js/03_buildings_population.js?v=11"></script>
-<script src="js/04_construction.js?v=11"></script>
-<script src="js/05_logistics.js?v=11"></script>
-<script src="js/06_simulation.js?v=11"></script>
-<script src="js/07_rendering.js?v=11"></script>
-<script src="js/08_ui_input_loop.js?v=11"></script>
-<script src="js/09_multiplayer.js?v=11"></script>
-<script src="js/10_saves_chat_console.js?v=11"></script>
+<script src="config.js?v=13"></script>
+<script src="js/i18n/fr.js?v=13"></script>
+<script src="js/i18n/en.js?v=13"></script>
+<script src="js/i18n/es.js?v=13"></script>
+<script src="js/i18n.js?v=13"></script>
+<script src="js/01_definitions.js?v=13"></script>
+<script src="js/05_depots/vehicules.js?v=13"></script>
+<script src="js/05_depots/train.js?v=13"></script>
+<script src="js/05_depots/bateau.js?v=13"></script>
+<script src="js/05_depots/avion.js?v=13"></script>
+<script src="js/02_world_state.js?v=13"></script>
+<script src="js/03_buildings_population.js?v=13"></script>
+<script src="js/04_construction.js?v=13"></script>
+<script src="js/05_logistics.js?v=13"></script>
+<script src="js/06_simulation.js?v=13"></script>
+<script src="js/07_rendering.js?v=13"></script>
+<script src="js/08_ui_input_loop.js?v=13"></script>
+<script src="js/09_multiplayer.js?v=13"></script>
+<script src="js/10_saves_chat_console.js?v=13"></script>
 </body>
 </html>

@@ -1761,7 +1761,38 @@ function removePersistentVehicle(v){
   if(g) g.vehicles = (g.vehicles||[]).filter(vv=>vv!==v);
   if(vehicleRouteMode && vehicleRouteMode.vehicle===v) vehicleRouteMode = null;
   if(selectedVehicle === v) selectedVehicle = null;
+  if(focusVehicle === v){ focusVehicle = null; camTracking = false; }
   return i >= 0;
+}
+
+// Un véhicule m'appartient-il ? (en solo, tout est à moi ; en multi, filtré par owner)
+function isMyVehicle(v){
+  return !MP.connected || !v?.garageRef?.owner || v.garageRef.owner === MP.myId;
+}
+
+// Position monde (px) d'un véhicule pour le focus caméra.
+function vehicleWorldPos(v){
+  if(!v) return null;
+  const pts = v.pts;
+  if(pts && pts.length >= 2){
+    const seg = Math.min(v.seg||0, pts.length-1);
+    const a = pts[seg], b = pts[Math.min(seg+1, pts.length-1)];
+    return { x: a.x + (b.x-a.x)*(v.t||0), y: a.y + (b.y-a.y)*(v.t||0) };
+  }
+  if(pts && pts.length === 1) return { x: pts[0].x, y: pts[0].y };
+  const b = v.currentBuilding || v.garageRef;
+  if(b && !b.dead) return { x: (b.x + (b.w||1)/2)*TILE, y: (b.y + (b.h||1)/2)*TILE };
+  return null;
+}
+
+// Sélectionne un véhicule pour l'affichage du trajet + focus caméra (sans panneau détail).
+function focusOnVehicle(v){
+  if(!v) return;
+  focusVehicle = v;
+  camTracking = true;
+  const pos = vehicleWorldPos(v);
+  if(pos) centerOn(pos.x, pos.y);
+  if(typeof renderVehicleListPanel === 'function') renderVehicleListPanel();
 }
 
 function vehicleRouteEndpointOk(b, vtype_override, ownerOverride){

@@ -1611,6 +1611,13 @@ function drawVehicle(veh){
     trainPrism(u, v, du, dv, hl,      hw,      6, '#2f3640');
     trainPrism(u, v, du, dv, hl*0.78, hw*0.78, 8, locoColor, 5);
     trainPrism(u+(du/nd)*0.06, v+(dv/nd)*0.06, du, dv, hl*0.28, hw, 10, '#92a2b4', 8);
+    if(veh === focusVehicle){
+      const pu = 0.6 + 0.4*Math.sin(performance.now()/300);
+      ctx.save();
+      ctx.strokeStyle = '#4dd9ff'; ctx.lineWidth = 3; ctx.globalAlpha = 0.45 + 0.4*pu;
+      ctx.beginPath(); ctx.ellipse(c[0], c[1], 17 + 1.5*pu, 8, 0, 0, Math.PI*2); ctx.stroke();
+      ctx.restore();
+    }
     if(veh === selectedVehicle){
       ctx.save();
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.globalAlpha = 0.9;
@@ -1639,6 +1646,13 @@ function drawVehicle(veh){
     ctx.strokeText(label, c[0], c[1] - TH);
     ctx.fillStyle = '#fff';
     ctx.fillText(label, c[0], c[1] - TH);
+  }
+  if(veh === focusVehicle){
+    const pu = 0.6 + 0.4*Math.sin(performance.now()/300);
+    ctx.save();
+    ctx.strokeStyle = '#4dd9ff'; ctx.lineWidth = 3; ctx.globalAlpha = 0.45 + 0.4*pu;
+    ctx.beginPath(); ctx.ellipse(c[0], c[1], 15 + 1.5*pu, 7, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
   }
   // Cercle blanc si sélectionné
   if(veh === selectedVehicle){
@@ -2264,6 +2278,8 @@ function draw(){
   // Parcours du véhicule sélectionné (style Transport Tycoon)
   if(selectedVehicle && !selectedVehicle.garageRef?.dead)
     drawVehicleRoute(selectedVehicle);
+  if(focusVehicle && focusVehicle !== selectedVehicle && !focusVehicle.garageRef?.dead)
+    drawVehicleRoute(focusVehicle);
 
   // Noms des villages au centre de chaque groupe de maisons
   drawTownLabels();

@@ -25,7 +25,8 @@ function updateHUD(dt){
   if(townEl) townEl.textContent = town ? town.name : '—';
   $('hPop').textContent = pop + ' / ' + cap;
   $('hJobs').textContent = workers + ' / ' + jobs;
-  $('hTrucks').textContent = trucks.length;
+  $('hVehicles').textContent = vehicles.filter(v => v.vtype !== 'train' && isMyVehicle(v)).length;
+  $('hTrains').textContent = vehicles.filter(v => v.vtype === 'train' && isMyVehicle(v)).length;
   // Compteur sauvegarde auto
   const cdEl = $('autoSaveCountdown');
   if(cdEl){
@@ -44,6 +45,7 @@ function updateHUD(dt){
   }
   renderInfo();
   renderFinance();
+  renderVehicleListPanel();
   if(trainConfigVehicle) renderTrainPanel();
 }
 
@@ -228,6 +230,7 @@ makePanelDraggable('townPanel');
 makePanelDraggable('trainPanel');
 makePanelDraggable('finance');
 makePanelDraggable('help');
+makePanelDraggable('vehicleListPanel');
 
 function closeInfoPanel(){
   const p = $('info');
@@ -256,6 +259,87 @@ function closeTrainPanel(){
   trainConfigSelectedWagonIndex = -1;
   trainConfigLocoSelected = false;
 }
+
+// ---------- panneau liste véhicules / trains ----------
+function openVehicleListPanel(mode){
+  vehicleListMode = (mode === 'train') ? 'train' : 'road';
+  const p = $('vehicleListPanel');
+  if(!p) return;
+  p.style.display = 'block';
+  p._html = null; // forcer le re-rendu
+  renderVehicleListPanel();
+}
+function closeVehicleListPanel(){
+  const p = $('vehicleListPanel');
+  if(p){ p.style.display = 'none'; p._html = null; }
+  vehicleListMode = null;
+  focusVehicle = null;
+  camTracking = false;
+}
+function renderVehicleListPanel(){
+  const p = $('vehicleListPanel');
+  if(!p || p.style.display !== 'block') return;
+  const isTrain = vehicleListMode === 'train';
+  const list = vehicles
+    .filter(v => (isTrain ? v.vtype === 'train' : v.vtype !== 'train') && isMyVehicle(v))
+    .slice()
+    .sort((a, b) => (a.boughtAtGtime || 0) - (b.boughtAtGtime || 0));
+  const titleKey = isTrain ? 'vehlist.titleTrain' : 'vehlist.titleRoad';
+  const parts = [
+    '<div class="panel-head"><h3>' + t(titleKey) + ' <span class="vehlist-count">(' + list.length + ')</span></h3>',
+    '<button class="tbtn" id="bVehListX" aria-label="Fermer" title="' + t('vehlist.close') + '">✕</button></div>'
+  ];
+  if(!list.length){
+    parts.push('<div class="vehlist-empty">' + t('vehlist.empty') + '</div>');
+  } else {
+    parts.push('<div class="vehlist-hint">' + t('vehlist.hint') + '</div>');
+    parts.push('<div class="vehlist">');
+    for(const v of list){
+      const vt = VEHICLE_TYPES[v.vtype] || {};
+      const sel = (selectedVehicle === v || focusVehicle === v) ? ' sel' : '';
+      const nom = vt.nom || v.vtype;
+      parts.push(
+        '<div class="vehlist-row' + sel + '" data-vid="' + v.id + '">'
+        + '<span class="vehlist-icon">' + (vt.icone || '🚗') + '</span>'
+        + '<span class="vehlist-info"><b>' + nom + '</b>'
+        + '<span class="vehlist-date">#' + v.id + ' · ' + formatGameDate(v.boughtAtGtime) + '</span>'
+        + '</span></div>'
+      );
+    }
+    parts.push('</div>');
+  }
+  const h = parts.join('');
+  if(p._html === h) return; // mémo : rien n'a changé
+  p._html = h; p._b = null;
+  p.innerHTML = h;
+  ensurePanelDragHandle('vehicleListPanel');
+}
+// Délégation d'événements sur le panneau liste (survit aux reconstructions ~5×/s).
+(function(){
+  const p = $('vehicleListPanel');
+  if(!p) return;
+  let lastClickVid = null, lastClickTime = 0;
+  p.addEventListener('click', e => {
+    if(e.target.closest('#bVehListX')){ closeVehicleListPanel(); return; }
+    const row = e.target.closest('.vehlist-row');
+    if(!row) return;
+    const v = vehicles.find(vv => String(vv.id) === row.dataset.vid);
+    if(!v) return;
+    const now = performance.now();
+    if(lastClickVid === row.dataset.vid && (now - lastClickTime) < 350){
+      lastClickVid = null;
+      focusOnVehicle(v);
+      selectedVehicle = v;
+      selected = null;
+      selectedExpansion = null;
+      renderInfo();
+    } else {
+      lastClickVid = row.dataset.vid;
+      lastClickTime = now;
+      focusOnVehicle(v);
+    }
+  });
+})();
 
 // Texte flottant centré dans un panneau (feedback d'achat / remboursement).
 function panelFloat(panelId, text, color){
@@ -877,6 +961,7 @@ function renderInfo(){
   }
 
   // --- Véhicule sélectionné ---
+  if(focusVehicle?.garageRef?.dead){ focusVehicle = null; camTracking = false; }
   if(selectedVehicle){
     if(selectedVehicle.garageRef?.dead){ selectedVehicle = null; }
     else {
@@ -2639,6 +2724,7 @@ function canvasPanMove(x, y){
   cam.x -= dx/cam.z; cam.y -= dy/cam.z;
   clampCam();
   syncTargetCam();
+  camTracking = false; // l'utilisateur reprend la main
   mouse.lastX = x; mouse.lastY = y;
 }
 
@@ -2722,6 +2808,7 @@ cv.addEventListener('pointermove', e=>{
       const dx = p.x - panLast.x, dy = p.y - panLast.y;
       cam.x -= dx/cam.z; cam.y -= dy/cam.z;
       clampCam(); syncTargetCam();
+      camTracking = false; // l'utilisateur reprend la main
       panLast = { x: p.x, y: p.y };
     }
   } else if(touchMode === 'place' && activePointers.size === 1){
@@ -2801,6 +2888,19 @@ function smoothCamera(dt){
   updateMouseTileAt(mouse.x, mouse.y);
 }
 
+// Suit focusVehicle en continu : recentre targetCam sur sa position live.
+// Le zoom (targetCam.z) reste libre ; un pan manuel désactive camTracking.
+function trackCamera(){
+  if(!camTracking || !focusVehicle) return;
+  if(focusVehicle.garageRef?.dead){ camTracking = false; focusVehicle = null; return; }
+  const pos = vehicleWorldPos(focusVehicle);
+  if(!pos) return;
+  const p = worldPxToIso(pos.x, pos.y);
+  targetCam.x = p[0] - W/(2*targetCam.z);
+  targetCam.y = p[1] - H/(2*targetCam.z);
+  clampCamera(targetCam);
+}
+
 const keys = new Set();
 addEventListener('keydown', e=>{
   if(e.target.tagName==='INPUT') return;
@@ -2841,7 +2941,7 @@ addEventListener('keydown', e=>{
   }
   keys.add(e.code);
   if(e.code==='Space'){ e.preventDefault(); togglePause(); }
-  if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; closeTownPanel(); closeTrainPanel(); }
+  if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; focusVehicle = null; camTracking = false; closeTownPanel(); closeTrainPanel(); closeVehicleListPanel(); }
   if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown && tool==='road')
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, true);
   if(e.code==='KeyH') toggleHelp();
@@ -2876,7 +2976,7 @@ function panKeys(dt){
   if(keys.has('ArrowUp')   || keys.has('KeyW') || keys.has('KeyZ')){ cam.y -= s; moved = true; }
   if(keys.has('ArrowDown') || keys.has('KeyS')){ cam.y += s; moved = true; }
   clampCam();
-  if(moved) syncTargetCam();
+  if(moved){ syncTargetCam(); camTracking = false; } // l'utilisateur reprend la main
 }
 
 // ---------- boutons du haut ----------
@@ -2905,6 +3005,8 @@ $('ctxShift').onclick = ()=>{
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, shiftToggle);
 };
 $('sMoney').onclick = toggleFinance;
+$('sVehicles').onclick = () => openVehicleListPanel('road');
+$('sTrains').onclick  = () => openVehicleListPanel('train');
 // délégation : le ✕ survit aux reconstructions du panneau (rafraîchi 5×/s)
 // Le panneau est reconstruit ~5×/s : on agit sur pointerdown (immédiat) plutôt que sur
 // click (mousedown+mouseup), qui se perd quand une reconstruction survient entre les deux.
@@ -3092,6 +3194,7 @@ function frame(now){
   const rdt = Math.min(0.05, (now-last)/1000);
   last = now;
   panKeys(rdt);
+  trackCamera();
   smoothCamera(rdt);
   if(!paused) update(rdt*speed);
   drawFn();
