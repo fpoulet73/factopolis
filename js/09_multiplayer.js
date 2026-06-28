@@ -177,6 +177,26 @@ function interpolatePointLists(from, to, alpha){
   return out;
 }
 
+// railTrail est une file circulaire : on empile les nouveaux points côté
+// locomotive (fin du tableau) et on rogne les plus anciens en tête. Aligner
+// l'interpolation par l'index 0 mélangerait donc des points décalés d'un cran
+// dès qu'un point est rogné, ce qui fait sauter les wagons. On aligne par la fin
+// (côté loco, stable) et on conserve la queue ancienne du tampon le plus récent.
+function interpolateRailTrail(from, to, alpha){
+  if(!Array.isArray(from) || !from.length) return copyPointList(to);
+  if(!Array.isArray(to) || !to.length) return copyPointList(from);
+  const n = Math.min(from.length, to.length);
+  const fOff = from.length - n, tOff = to.length - n;
+  const out = [];
+  const lead = to.length >= from.length ? to.slice(0, tOff) : from.slice(0, fOff);
+  for(const p of lead) out.push({ x:p.x, y:p.y });
+  for(let i=0; i<n; i++){
+    const f = from[fOff + i], t = to[tOff + i];
+    out.push({ x: f.x + (t.x - f.x) * alpha, y: f.y + (t.y - f.y) * alpha });
+  }
+  return out;
+}
+
 function setVehicleRenderImmediate(v, state){
   v.renderPts = copyPointList(state.pts);
   v.renderPathTiles = Array.isArray(state.pathTiles) ? state.pathTiles.slice() : [];
@@ -251,7 +271,11 @@ function wrappedProgressDiff(current, target, total){
 }
 
 function buildingRenderProg(b){
-  return b?.renderProg ?? b?.prog ?? 0;
+  // renderProg n'est entretenu que pour l'invité (interpolation de snapshots).
+  // L'hôte et le solo simulent en direct : on lit toujours la progression vive,
+  // sinon une valeur renderProg périmée gèlerait la barre de progression.
+  if(MP.connected && MP.role === 'guest') return b?.renderProg ?? b?.prog ?? 0;
+  return b?.prog ?? 0;
 }
 
 function mpResetGuestSnapshotBuffer(){
@@ -349,11 +373,31 @@ function snapshotProgressValue(s){
   return (s?.seg || 0) + (s?.t || 0);
 }
 
+// Un train réécrit la queue de son itinéraire à chaque aiguillage
+// (pathTiles.slice(0, seg+1).concat(...)), donc la signature complète change en
+// permanence alors que le train suit la même trajectoire. Comparer la totalité
+// ferait échouer l'interpolation et saccader la loco à chaque snapshot. On
+// vérifie plutôt que le préfixe déjà parcouru (jusqu'à la position la plus en
+// arrière des deux snapshots) coïncide : c'est la portion réellement stable.
+function trainSnapshotsCompatible(a, b){
+  const ta = a.pathTiles, tb = b.pathTiles;
+  if(!Array.isArray(ta) || !ta.length || !Array.isArray(tb) || !tb.length){
+    return vehiclePathSignature(a, 'train') === vehiclePathSignature(b, 'train');
+  }
+  const lo = Math.min(Math.floor(snapshotProgressValue(a)), Math.floor(snapshotProgressValue(b)));
+  const need = Math.max(0, Math.min(lo, ta.length - 1, tb.length - 1));
+  for(let i=0; i<=need; i++) if(ta[i] !== tb[i]) return false;
+  return true;
+}
+
 function interpolateVehicleSnapshotState(a, b, alpha){
   if(!a && !b) return null;
   if(!a) return b;
   if(!b) return a;
-  const samePath = vehiclePathSignature(a, a.vtype) === vehiclePathSignature(b, b.vtype);
+  const isTrain = a.vtype === 'train' && b.vtype === 'train';
+  const samePath = isTrain
+    ? trainSnapshotsCompatible(a, b)
+    : vehiclePathSignature(a, a.vtype) === vehiclePathSignature(b, b.vtype);
   if(!samePath || a.state !== b.state){
     return alpha < 0.5 ? a : b;
   }
@@ -363,7 +407,7 @@ function interpolateVehicleSnapshotState(a, b, alpha){
   const progress = aProgress + (bProgress - aProgress) * alpha;
   return {
     ...b,
-    railTrail: interpolatePointLists(a.railTrail, b.railTrail, alpha),
+    railTrail: interpolateRailTrail(a.railTrail, b.railTrail, alpha),
     currentBuildingX: alpha < 0.5 ? a.currentBuildingX : b.currentBuildingX,
     currentBuildingY: alpha < 0.5 ? a.currentBuildingY : b.currentBuildingY,
     railContinueTile: alpha < 0.5 ? a.railContinueTile : b.railContinueTile,
