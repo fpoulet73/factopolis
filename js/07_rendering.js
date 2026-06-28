@@ -199,6 +199,8 @@ function packTerrain(kind, x, y){
 function packBuildingColor(b, d){
   const p = graphicBasePack();
   if(b.type === 'mine' && b.ore) return b.ore === 'iron' ? '#8a5c3a' : '#4a4a5a';
+  // Le dépôt de train prend la couleur du joueur, comme les gares et les rails.
+  if(b.type === 'train_depot' && b.owner) return playerColor(b.owner);
   if(p.buildings && p.buildings[b.type]) return p.buildings[b.type];
   if(BUILD[b.type]?.transportDepot && p.category?.transport) return p.category.transport;
   if(d.resid && p.category?.resid) return p.category.resid;
