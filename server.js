@@ -457,6 +457,14 @@ const numInRange = (v, min, max) => typeof v === 'number' && Number.isFinite(v) 
 function validName(value, max = 64) {
   return value == null || (typeof value === 'string' && value.length <= max);
 }
+// Les IDs de véhicule sont normalisés en chaîne (out.id = String(act.id)) mais
+// le client peut légitimement émettre un id numérique (vehicleIdSeed). On
+// accepte donc chaîne (≤64) OU nombre fini — sinon un achat à id numérique est
+// rejeté et n'atteint jamais l'hôte.
+function validVehicleId(value, max = 64) {
+  return (typeof value === 'string' && value.length <= max)
+    || (typeof value === 'number' && Number.isFinite(value));
+}
 function sanitizeAction(client, msg) {
   const act = msg && msg.act;
   if (!act || typeof act !== 'object' || !ALLOWED_ACTIONS.has(act.type)) return null;
@@ -499,24 +507,24 @@ function sanitizeAction(client, msg) {
       if (!intInRange(act.x) || !intInRange(act.y) || !ALLOWED_BUILD_TYPES.has(act.targetType)) return null;
       Object.assign(out, { x: act.x, y: act.y, targetType: act.targetType }); break;
     case 'buy_vehicle':
-      if (!validName(act.id, 64) || !ALLOWED_VEHICLE_TYPES.has(act.vtype) || !intInRange(act.garageX) || !intInRange(act.garageY)) return null;
+      if (!validVehicleId(act.id) || !ALLOWED_VEHICLE_TYPES.has(act.vtype) || !intInRange(act.garageX) || !intInRange(act.garageY)) return null;
       Object.assign(out, { id: String(act.id), vtype: act.vtype, garageX: act.garageX, garageY: act.garageY }); break;
     case 'sell_vehicle':
     case 'return_vehicle':
-      if (!validName(act.id, 64)) return null;
+      if (!validVehicleId(act.id)) return null;
       out.id = String(act.id); break;
     case 'depot_departure_flag':
-      if (!validName(act.id, 64) || typeof act.armed !== 'boolean') return null;
+      if (!validVehicleId(act.id) || typeof act.armed !== 'boolean') return null;
       out.id = String(act.id);
       out.armed = !!act.armed;
       break;
     case 'pin_vehicle_res':
-      if (!validName(act.id, 64)) return null;
+      if (!validVehicleId(act.id)) return null;
       out.id = String(act.id);
       out.res = act.res == null ? null : String(act.res).slice(0, 32);
       break;
     case 'route_vehicle': {
-      if (!validName(act.id, 64)) return null;
+      if (!validVehicleId(act.id)) return null;
       out.id = String(act.id);
       if (Array.isArray(act.orders)) {
         // Train : liste d'ordres (gares)
@@ -540,7 +548,7 @@ function sanitizeAction(client, msg) {
       break;
     }
     case 'configure_train': {
-      if (!validName(act.id, 64)) return null;
+      if (!validVehicleId(act.id)) return null;
       out.id = String(act.id);
       if (Array.isArray(act.wagons)) {
         const wagons = [];

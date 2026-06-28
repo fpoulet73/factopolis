@@ -530,6 +530,7 @@ function clickAt(x,y){
         }
         veh.orders.push(b);
         veh.orderModes.push('load_unload');
+        veh.ordersDraft = true; // arrêt ajouté localement, pas encore enregistré : la synchro hôte ne doit pas l'écraser
         syncTrainOrders(veh);
         if(typeof renderTrainPanel === 'function') renderTrainPanel();
         toast('🚂 Arrêt ajouté : '+trainStopLabel(b));

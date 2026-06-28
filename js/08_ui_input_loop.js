@@ -255,6 +255,8 @@ function closeTrainPanel(){
     p._trainId = null;
   }
   if(vehicleRouteMode?.step === 'train_order_append') vehicleRouteMode = null;
+  // Brouillon non enregistré abandonné : l'hôte redevient autoritatif au prochain sync.
+  if(trainConfigVehicle) trainConfigVehicle.ordersDraft = false;
   trainConfigVehicle = null;
   trainConfigSelectedWagonIndex = -1;
   trainConfigLocoSelected = false;
@@ -452,6 +454,7 @@ function openTrainPanel(v){
     return;
   }
   trainConfigVehicle = v;
+  v.ordersDraft = false; // part d'un état propre : l'hôte reste autoritatif tant qu'on n'édite pas
   trainNormalizeWagons(v);
   trainConfigSelectedWagonIndex = Math.min(Math.max(0, trainConfigSelectedWagonIndex), Math.max(0, (v.wagons?.length || 0) - 1));
   renderTrainPanel();
@@ -746,6 +749,7 @@ function renderTrainPanel(){
     const idx = +btn.dataset.trainOrderDel;
     v.orders.splice(idx, 1);
     if(v.orderModes) v.orderModes.splice(idx, 1);
+    v.ordersDraft = true; // édition locale non enregistrée : la synchro ne doit pas l'écraser
     syncTrainOrders(v);
     resetTrainDepotDeparture(v);
     renderTrainPanel();
@@ -758,6 +762,7 @@ function renderTrainPanel(){
     const current = v.orderModes[idx] || 'load_unload';
     const currentIdx = modes.indexOf(current);
     v.orderModes[idx] = modes[(currentIdx + 1) % modes.length];
+    v.ordersDraft = true; // édition locale non enregistrée
     renderTrainPanel();
   });
   $('tpAddStop').onclick = ()=>{
@@ -772,6 +777,7 @@ function renderTrainPanel(){
     v.dest = null;
     v.orderIndex = 0;
     v.vizRoute = null;
+    v.ordersDraft = true; // édition locale non enregistrée
     resetTrainDepotDeparture(v);
     renderTrainPanel();
     renderInfo();
@@ -787,6 +793,7 @@ function renderTrainPanel(){
     }
     v.orderIndex = 0;
     syncTrainOrders(v);
+    v.ordersDraft = false; // route enregistrée et envoyée : l'hôte redevient autoritatif
     v.state = 'idle';
     v.currentBuilding = v.garageRef;
     v.pts = [];
@@ -1719,8 +1726,8 @@ function renderInfo(){
   if(isVehicleDepot(b)){
     p.querySelectorAll('[data-route-v]').forEach(btn=>{
       btn.onclick = ()=>{
-        const vid = +btn.dataset.routeV;
-        const v = vehicles.find(vv=>vv.id===vid);
+        const vid = btn.dataset.routeV;
+        const v = vehicles.find(vv=>String(vv.id)===vid);
         if(!v) return;
         if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId){
           toast('⛔ Ce véhicule appartient à un autre joueur.','err');
@@ -1746,8 +1753,8 @@ function renderInfo(){
       };
     });
     p.querySelectorAll('input[data-vehname-v]').forEach(inp=>{
-      const vid = +inp.dataset.vehnameV;
-      const v = vehicles.find(vv=>vv.id===vid);
+      const vid = inp.dataset.vehnameV;
+      const v = vehicles.find(vv=>String(vv.id)===vid);
       if(!v) return;
       const saveName = ()=>{
         const newName = inp.value.trim();
@@ -1765,8 +1772,8 @@ function renderInfo(){
     });
     p.querySelectorAll('[data-sell-v]').forEach(btn=>{
       btn.onclick = ()=>{
-        const vid = +btn.dataset.sellV;
-        const v = vehicles.find(vv=>vv.id===vid);
+        const vid = btn.dataset.sellV;
+        const v = vehicles.find(vv=>String(vv.id)===vid);
         if(!v) return;
         if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId){
           toast('⛔ Ce véhicule appartient à un autre joueur.','err');
@@ -1782,8 +1789,8 @@ function renderInfo(){
     });
     p.querySelectorAll('[data-train-flag]').forEach(btn=>{
       btn.onclick = ()=>{
-        const vid = +btn.dataset.trainFlag;
-        const v = vehicles.find(vv=>vv.id===vid);
+        const vid = btn.dataset.trainFlag;
+        const v = vehicles.find(vv=>String(vv.id)===vid);
         if(!v) return;
         handleTrainDepotFlagClick(v);
         p._html = null;
@@ -1791,8 +1798,8 @@ function renderInfo(){
     });
     p.querySelectorAll('select[data-pin-v]').forEach(sel=>{
       sel.onchange = ()=>{
-        const vid = +sel.dataset.pinV;
-        const v = vehicles.find(vv=>vv.id===vid);
+        const vid = sel.dataset.pinV;
+        const v = vehicles.find(vv=>String(vv.id)===vid);
         if(!v) return;
         if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId){
           sel.value = v.pinnedRes || '';
@@ -1817,7 +1824,21 @@ function renderInfo(){
         if(myWallet().money < vt.cost){ toast('Fonds insuffisants ('+vt.cost+' $)','err'); return; }
         spendMoney(vt.cost, 'construction');
         const v = createPersistentVehicle(vtype, b);
-        if(MP.connected) netSend({ type:'buy_vehicle', id:v.id, vtype, garageX:b.x, garageY:b.y });
+        if(MP.connected){
+          // Les IDs de véhicule transitent en CHAÎNE côté serveur/hôte (le
+          // serveur valide via validName() qui exige une string, et stocke
+          // String(act.id)). Un id numérique frais fait rejeter l'achat par le
+          // serveur — l'hôte ne crée jamais le véhicule. On aligne donc l'id
+          // optimiste sur la convention chaîne dès la création, pour que CET
+          // achat et toutes les actions ultérieures (route, drapeau…) passent.
+          v.id = String(v.id);
+          // Achat optimiste : l'hôte est autoritatif. On marque le véhicule en
+          // attente de confirmation pour qu'il soit élagué (cf. applyStateSync)
+          // si l'hôte ne le reconnaît jamais.
+          v.mpPendingAck = true;
+          v.mpCreatedRealTime = performance.now();
+          netSend({ type:'buy_vehicle', id:v.id, vtype, garageX:b.x, garageY:b.y });
+        }
         toast(vt.icone+' '+vt.nom+' acheté ! Définis sa route avec 🔁 Route.','win');
         p._html = null;
       };

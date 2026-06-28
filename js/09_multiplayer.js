@@ -704,11 +704,18 @@ function applyVehicleDynamicState(v, sv){
   v.railContinueTile = sv.railContinueTile ?? null;
   v.railPreviousTile = sv.railPreviousTile ?? null;
   v.cargoLoadStop = syncBuildingByCoords(sv.cargoLoadStopX, sv.cargoLoadStopY) || null;
-  if(Array.isArray(sv.orders)){
-    v.orders = sv.orders.map(o => syncBuildingByCoords(o.x, o.y)).filter(Boolean);
+  // Brouillon de route en cours d'édition côté client (arrêts ajoutés mais pas
+  // encore « Enregistrés ») : la synchro autoritative ne doit pas écraser les
+  // ordres locaux, sinon l'arrêt fraîchement ajouté disparaît au prochain sync
+  // (toutes les 0,2 s). Une fois la route appliquée (route_vehicle envoyé) ou le
+  // panneau fermé, le drapeau retombe et l'hôte redevient autoritatif.
+  if(!v.ordersDraft){
+    if(Array.isArray(sv.orders)){
+      v.orders = sv.orders.map(o => syncBuildingByCoords(o.x, o.y)).filter(Boolean);
+    }
+    if(Number.isInteger(sv.orderIndex)) v.orderIndex = sv.orderIndex;
+    if(Array.isArray(sv.orderModes)) v.orderModes = sv.orderModes.slice();
   }
-  if(Number.isInteger(sv.orderIndex)) v.orderIndex = sv.orderIndex;
-  if(Array.isArray(sv.orderModes)) v.orderModes = sv.orderModes.slice();
   if(Array.isArray(sv.wagons)){
     v.wagons = sv.wagons
       .map(w => typeof w === 'string'
@@ -796,8 +803,10 @@ function applyStateSync(d){
   for(const k in WALLETS) WALLETS[k].homelessSeeded = true;
 
   const vehiclesById = new Map(vehicles.map(v => [String(v.id), v]));
+  const hostVehicleIds = new Set();
   for(const sv of d.vehicles || []){
     if(!VEHICLE_TYPES[sv.vtype]) continue;
+    hostVehicleIds.add(String(sv.id));
     let v = vehiclesById.get(String(sv.id));
     if(!v){
       const garage = syncBuildingByCoords(sv.garageX, sv.garageY);
@@ -807,7 +816,34 @@ function applyStateSync(d){
       if(v.vtype === 'train' && !sv.name) assignTrainVehicleName(v);
       vehiclesById.set(String(v.id), v);
     }
+    // L'hôte connaît ce véhicule : l'achat optimiste est confirmé.
+    v.mpPendingAck = false;
     applyVehicleDynamicState(v, sv);
+  }
+  // L'hôte transmet TOUJOURS sa liste complète de véhicules. Tout véhicule
+  // local absent de cette liste n'existe pas pour l'hôte autoritatif : c'est un
+  // fantôme issu d'un achat optimiste rejeté (dépôt dont l'owner ne correspond
+  // pas à l'ID de session du client). Sans cet élagage, un tel train reste
+  // affiché avec son drapeau vert mais ne sort jamais du dépôt, car l'hôte ne
+  // le simule pas. On laisse une brève fenêtre de grâce aux achats tout récents
+  // (l'hôte n'a pas encore renvoyé de sync).
+  const OPTIMISTIC_ACK_GRACE_MS = 8000;
+  const nowReal = performance.now();
+  const ghosts = vehicles.filter(v => !hostVehicleIds.has(String(v.id))
+    && !(v.mpPendingAck && v.mpCreatedRealTime != null && (nowReal - v.mpCreatedRealTime) < OPTIMISTIC_ACK_GRACE_MS));
+  for(const v of ghosts){
+    if(selectedVehicle === v) selectedVehicle = null;
+    if(focusVehicle === v){ focusVehicle = null; camTracking = false; }
+    if(typeof trainConfigVehicle !== 'undefined' && trainConfigVehicle === v) trainConfigVehicle = null;
+    const garageVehicles = v.garageRef?.vehicles;
+    if(Array.isArray(garageVehicles)){
+      const gi = garageVehicles.indexOf(v);
+      if(gi >= 0) garageVehicles.splice(gi, 1);
+    }
+  }
+  if(ghosts.length){
+    const dropped = new Set(ghosts);
+    vehicles = vehicles.filter(v => !dropped.has(v));
   }
 
   trucks = [];
@@ -1017,6 +1053,52 @@ function applyOwnerRemap(oldId, newId){
     WALLETS[newId] = WALLETS[0];
     delete WALLETS[0];
   }
+}
+
+// Nom d'utilisateur (identité STABLE) de l'expéditeur d'une action côté hôte.
+// Les IDs de session (msg.from) changent à chaque connexion ; le nom non.
+function mpSenderUsername(msg){
+  if(msg.fromUsername) return msg.fromUsername;
+  const p = (MP.players || []).find(pl => pl?.id === msg.from);
+  if(p?.username) return p.username;
+  return WALLETS[msg.from]?.username || null;
+}
+
+// Nom d'utilisateur associé à un ancien ID de propriétaire (via le wallet, qui
+// voyage avec le joueur, ou le registre nom→id de la sauvegarde courante).
+function mpUsernameOfOwnerId(ownerId){
+  if(ownerId == null) return null;
+  if(WALLETS[ownerId]?.username) return WALLETS[ownerId].username;
+  const reg = MP.savedRegistry || {};
+  for(const [name, id] of Object.entries(reg)) if(Number(id) === Number(ownerId)) return name;
+  return null;
+}
+
+// L'expéditeur contrôle-t-il ce bâtiment ? On accepte l'ID de session courant,
+// mais aussi un ANCIEN ID du même nom d'utilisateur — à condition qu'il ne soit
+// pas l'ID courant d'un AUTRE joueur connecté (anti-vol). Dans ce cas on réalise
+// le remap durable oldId→msg.from pour que tout l'état converge et que les
+// prochaines actions correspondent directement (cf. mp-owner-id-instability).
+function mpSenderControlsOwner(ownerId, msg){
+  if(ownerId == null) return false;
+  if(ownerId === msg.from || Number(ownerId) === Number(msg.from)) return true;
+  // L'ID owner ne doit pas être l'ID courant d'un AUTRE joueur connecté (anti-vol).
+  for(const pl of MP.players || []){
+    if(pl?.id != null && Number(pl.id) === Number(ownerId) && Number(pl.id) !== Number(msg.from)) return false;
+  }
+  // Cas 1 : l'ancien ID se résout au nom d'utilisateur de l'expéditeur.
+  // Cas 2 (repli) : l'ID est périmé — il n'appartient à AUCUN joueur connecté ni
+  // à un autre nom du registre. En pratique, les bâtiments à ID périmé sont ceux
+  // du joueur qui revient (son wallet/owner a déjà pu être déplacé par un remap
+  // partiel), jamais ceux de l'hôte (connecté, ID courant). On réconcilie donc.
+  const senderName = mpSenderUsername(msg);
+  const ownerName = mpUsernameOfOwnerId(ownerId);
+  const ownerIsConnected = (MP.players || []).some(pl => pl?.id != null && Number(pl.id) === Number(ownerId));
+  const belongsToSender = (senderName && ownerName === senderName)
+    || (!ownerIsConnected && ownerName == null);
+  if(!belongsToSender) return false;
+  applyOwnerRemap(Number(ownerId), msg.from);
+  return true;
 }
 
 function applySnapshot(d){
@@ -1547,7 +1629,7 @@ function applyAction(msg){
       if(!VEHICLE_TYPES[act.vtype]) break;
       if(!validXY(act.garageX, act.garageY)) break;
       const garage = buildings.find(b=>b.x===act.garageX && b.y===act.garageY && BUILD[b.type]?.transportDepot);
-      if(!garage || garage.owner !== msg.from) break;
+      if(!garage || !mpSenderControlsOwner(garage.owner, msg)) break;
       if(vehicles.some(v=>String(v.id) === String(act.id))) break;
       const cost = VEHICLE_TYPES[act.vtype].cost || 0;
       const wSender = walletOf(msg.from);
@@ -1559,7 +1641,7 @@ function applyAction(msg){
     }
     case 'sell_vehicle': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
-      if(!v || v.garageRef?.owner !== msg.from) break;
+      if(!v || !mpSenderControlsOwner(v.garageRef?.owner, msg)) break;
       const refund = Math.floor((VEHICLE_TYPES[v.vtype]?.cost||0) * 0.5);
       walletOf(msg.from).money += refund;
       walletOf(msg.from).fin.rembours = (walletOf(msg.from).fin.rembours||0) + refund;
@@ -1568,7 +1650,7 @@ function applyAction(msg){
     }
     case 'route_vehicle': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
-      if(!v || v.garageRef?.owner !== msg.from) break;
+      if(!v || !mpSenderControlsOwner(v.garageRef?.owner, msg)) break;
       if(v.vtype === 'train' && Array.isArray(act.orders)){
         v.orders = act.orders
           .map(o => validXY(o.x, o.y) ? buildings.find(b => b.x===o.x && b.y===o.y) : null)
@@ -1590,6 +1672,14 @@ function applyAction(msg){
         const source = buildings.find(b=>b.x===act.sourceX && b.y===act.sourceY);
         const dest   = buildings.find(b=>b.x===act.destX   && b.y===act.destY);
         if(!source || !dest) break;
+        // Réconcilier la propriété périmée des extrémités : leurs ID owner sont
+        // aussi volatils que ceux des dépôts (cf. mp-owner-id-instability). Sans
+        // ça, l'égalité stricte de canUseBuilding échoue et la route est rejetée
+        // alors que l'expéditeur route bien entre SES propres bâtiments. Aucun
+        // effet sur un bâtiment d'un autre joueur (mpSenderControlsOwner ne
+        // remappe que les anciens ID du même nom d'utilisateur).
+        mpSenderControlsOwner(source.owner, msg);
+        mpSenderControlsOwner(dest.owner, msg);
         if(!vehicleRouteEndpointOk(source, v.vtype, msg.from) || !vehicleRouteEndpointOk(dest, v.vtype, msg.from)) break;
         v.source = source;
         v.dest = dest;
@@ -1613,13 +1703,13 @@ function applyAction(msg){
     case 'train_depot_flag':
     case 'depot_departure_flag': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
-      if(!v || v.garageRef?.owner !== msg.from) break;
+      if(!v || !mpSenderControlsOwner(v.garageRef?.owner, msg)) break;
       setVehicleDepotDeparture(v, !!act.armed);
       break;
     }
     case 'pin_vehicle_res': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
-      if(!v || v.garageRef?.owner !== msg.from) break;
+      if(!v || !mpSenderControlsOwner(v.garageRef?.owner, msg)) break;
       const vt = VEHICLE_TYPES[v.vtype];
       v.pinnedRes = (act.res && vt?.resources.includes(act.res)) ? act.res : null;
       if(v.pinnedRes && v.res && v.res !== v.pinnedRes){ v.cargo = 0; v.res = null; }
@@ -1627,7 +1717,7 @@ function applyAction(msg){
     }
     case 'configure_train': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
-      if(!v || v.garageRef?.owner !== msg.from || v.vtype !== 'train') break;
+      if(!v || !mpSenderControlsOwner(v.garageRef?.owner, msg) || v.vtype !== 'train') break;
       v.wagons = Array.isArray(act.wagons) ? act.wagons
         .map(w => typeof w === 'string'
           ? trainCreateWagon(w)
@@ -1639,7 +1729,7 @@ function applyAction(msg){
     }
     case 'return_vehicle': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
-      if(!v || v.garageRef?.owner !== msg.from) break;
+      if(!v || !mpSenderControlsOwner(v.garageRef?.owner, msg)) break;
       returnToGarage(v);
       break;
     }
