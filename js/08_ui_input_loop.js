@@ -278,6 +278,21 @@ function closeVehicleListPanel(){
   focusVehicle = null;
   camTracking = false;
 }
+// Libellé de la ressource configurée pour un véhicule (épinglée, unique, ou « Auto »).
+function vehicleConfiguredResLabel(v){
+  const vt = VEHICLE_TYPES[v.vtype] || {};
+  if(v.vtype === 'bus') return '👤 ' + t('vehlist.passengers');
+  if(v.vtype === 'train')
+    return v.res ? ((RES[v.res]?.ic ? RES[v.res].ic + ' ' : '') + (RES[v.res]?.n || v.res)) : '—';
+  const r = v.pinnedRes || (vt.resources && vt.resources.length === 1 ? vt.resources[0] : null);
+  if(r) return (RES[r]?.ic ? RES[r].ic + ' ' : '') + (RES[r]?.n || r);
+  return t('vehlist.resAuto');
+}
+// Ancienneté d'un véhicule en mois de jeu (30 jours = 1 mois, comme l'entretien).
+function vehicleAgeMonths(v){
+  if(v.boughtAtGtime == null) return null;
+  return Math.max(0, Math.floor((gtime - v.boughtAtGtime) / (VEHICLE_MAINTENANCE_DAY * 30)));
+}
 function renderVehicleListPanel(){
   const p = $('vehicleListPanel');
   if(!p || p.style.display !== 'block') return;
@@ -300,11 +315,14 @@ function renderVehicleListPanel(){
       const vt = VEHICLE_TYPES[v.vtype] || {};
       const sel = (selectedVehicle === v || focusVehicle === v) ? ' sel' : '';
       const nom = vt.nom || v.vtype;
+      const resLabel = vehicleConfiguredResLabel(v);
+      const ageM = vehicleAgeMonths(v);
+      const ageLabel = ageM != null ? t('vehlist.months', { n: ageM }) : '—';
       parts.push(
         '<div class="vehlist-row' + sel + '" data-vid="' + v.id + '">'
         + '<span class="vehlist-icon">' + (vt.icone || '🚗') + '</span>'
-        + '<span class="vehlist-info"><b>' + nom + '</b>'
-        + '<span class="vehlist-date">#' + v.id + ' · ' + formatGameDate(v.boughtAtGtime) + '</span>'
+        + '<span class="vehlist-info"><span class="vehlist-name"><b>' + nom + '</b><span class="vehlist-res">' + resLabel + '</span></span>'
+        + '<span class="vehlist-date">#' + v.id + ' · ' + ageLabel + '</span>'
         + '</span></div>'
       );
     }

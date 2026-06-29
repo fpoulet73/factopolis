@@ -468,8 +468,10 @@ const ALLOWED_BUILD_TYPES = new Set([
   'tank', 'garage', 'train_depot', 'train_station', 'boat_depot', 'plane_depot', 'bus_stop', 'terrassement',
 ]);
 const ALLOWED_VEHICLE_TYPES = new Set([
-  'minerai', 'bois', 'ble', 'coton', 'vetement', 'farine', 'citerne', 'pain',
-  'poisson', 'acier', 'marchandises', 'bus', 'train',
+  // types achetables actuels
+  'minerai', 'plateau', 'cereale', 'marchandises', 'frigo', 'citerne', 'bus', 'train',
+  // types hérités (sauvegardes existantes, plus achetables mais toujours routables)
+  'bois', 'ble', 'coton', 'vetement', 'farine', 'pain', 'poisson', 'acier',
 ]);
 const intInRange = (v, min = 0, max = 4096) => Number.isInteger(v) && v >= min && v <= max;
 // Index de tuile = y*N+x : la grille vaut taille jouable (≤128) + marge d'expansion
