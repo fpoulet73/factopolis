@@ -139,32 +139,39 @@ const recordVente = (w, kind, key, amt)=>{
 let dist = new Int32Array(N*N);
 let prev = new Int32Array(N*N);
 
-const WORLD_DEFAULTS = {
-  size: 64,
-  maxPlayers: 8,
-  resources: { tree: 8, wheat: 4, cotton: 1, iron: 2, coal: 2 },
-};
-let WORLD = JSON.parse(JSON.stringify(WORLD_DEFAULTS));
-
 function clampNum(v, min, max, def){
   v = Number(v);
   if(!Number.isFinite(v)) return def;
   return Math.max(min, Math.min(max, v));
 }
 
+function worldDefaultsFromConfig(){
+  const worldCfg = CFG.monde || {};
+  const resourcesCfg = worldCfg.ressources || {};
+  return {
+    size: Math.round(clampNum(worldCfg.taille, 32, 128, 64)),
+    maxPlayers: Math.round(clampNum(worldCfg.joueursMax, 1, 32, 8)),
+    waterPct: clampNum(worldCfg.eauPct, 0, 100, 40),
+    resources: {
+      tree: clampNum(resourcesCfg.tree, 0, 100, 8),
+      wheat: clampNum(resourcesCfg.wheat, 0, 100, 4),
+      cotton: clampNum(resourcesCfg.cotton, 0, 100, 1),
+      iron: clampNum(resourcesCfg.iron, 0, 100, 2),
+      coal: clampNum(resourcesCfg.coal, 0, 100, 2),
+    },
+  };
+}
+
+const WORLD_DEFAULTS = worldDefaultsFromConfig();
+let WORLD = normalizeWorldConfig(WORLD_DEFAULTS);
+
 function normalizeWorldConfig(config){
   const c = config || {};
-  const r = c.resources || {};
   return {
     size: Math.round(clampNum(c.size, 32, 128, WORLD_DEFAULTS.size)),
     maxPlayers: Math.round(clampNum(c.maxPlayers, 1, 32, WORLD_DEFAULTS.maxPlayers)),
-    resources: {
-      tree: clampNum(r.tree, 0, 40, WORLD_DEFAULTS.resources.tree),
-      wheat: clampNum(r.wheat, 0, 40, WORLD_DEFAULTS.resources.wheat),
-      cotton: clampNum(r.cotton, 0, 40, WORLD_DEFAULTS.resources.cotton),
-      iron: clampNum(r.iron, 0, 40, WORLD_DEFAULTS.resources.iron),
-      coal: clampNum(r.coal, 0, 40, WORLD_DEFAULTS.resources.coal),
-    },
+    waterPct: WORLD_DEFAULTS.waterPct,
+    resources: { ...WORLD_DEFAULTS.resources },
   };
 }
 
@@ -290,6 +297,63 @@ function valueNoise(cell){
   };
 }
 
+function tileTouchesWater(x, y){
+  for(const [dx,dy] of DIRS){
+    const nx = x + dx, ny = y + dy;
+    if(nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+    if(terrain[ny*N+nx] === T.WATER) return true;
+  }
+  return false;
+}
+
+function applyShoreResources(noiseFn, inScope){
+  const sandPct = Math.max(0, Math.min(1, CFG.lac?.sablePct ?? 0.12));
+  const clayPct = Math.max(0, Math.min(1, CFG.lac?.argilePct ?? 0.08));
+  if(sandPct <= 0 && clayPct <= 0) return;
+  const shore = [];
+  for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+    if(inScope && !inScope(x, y)) continue;
+    const i = y * N + x;
+    if(terrain[i] !== T.GRASS) continue;
+    if(!tileTouchesWater(x, y)) continue;
+    shore.push({ x, y, score: noiseFn(x, y) + (hash(x, y) & 31) / 1024 });
+  }
+  if(!shore.length) return;
+  shore.sort((a, b) => b.score - a.score);
+  const sandCount = Math.min(shore.length, Math.round(shore.length * sandPct));
+  const clayCount = Math.min(shore.length - sandCount, Math.round(shore.length * clayPct));
+  for(let i = 0; i < sandCount; i++){
+    const t = shore[i];
+    terrain[t.y * N + t.x] = T.SAND;
+  }
+  for(let i = sandCount; i < sandCount + clayCount; i++){
+    const t = shore[i];
+    terrain[t.y * N + t.x] = T.CLAY;
+  }
+}
+
+function terrainHeight(n1, n2, n3, x, y){
+  return 0.55 * n1(x, y) + 0.30 * n2(x, y) + 0.15 * n3(x, y);
+}
+
+function applyBaseTerrain(noiseA, noiseB, noiseC, waterPct, inScope){
+  const candidates = [];
+  for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+    if(inScope && !inScope(x, y)) continue;
+    const i = y * N + x;
+    terrain[i] = T.GRASS;
+    candidates.push({
+      i,
+      score: terrainHeight(noiseA, noiseB, noiseC, x, y) + (hash(x, y) & 31) / 1024,
+    });
+  }
+  if(!candidates.length) return;
+  const waterTiles = Math.min(candidates.length, Math.max(0, Math.round(candidates.length * waterPct / 100)));
+  if(waterTiles <= 0) return;
+  candidates.sort((a, b) => a.score - b.score);
+  for(let i = 0; i < waterTiles; i++) terrain[candidates[i].i] = T.WATER;
+}
+
 function genWorld(config){
   WORLD = normalizeWorldConfig(config || WORLD);
   const N_PLAY = WORLD.size;
@@ -321,12 +385,7 @@ function genWorld(config){
 
   const n1 = valueNoise(16), n2 = valueNoise(7), n3 = valueNoise(3);
   const tn = valueNoise(9);
-  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
-    const h = 0.55*n1(x,y) + 0.30*n2(x,y) + 0.15*n3(x,y);
-    let t = T.GRASS;
-    if(h < 0.40) t = T.WATER;
-    terrain[y*N+x] = t;
-  }
+  applyBaseTerrain(n1, n2, n3, WORLD.waterPct, null);
   const treeCandidates = [];
   for(let y=0;y<N;y++) for(let x=0;x<N;x++){
     if(terrain[y*N+x] !== T.GRASS) continue;
@@ -361,6 +420,8 @@ function genWorld(config){
   placePatch(T.COTTON, patchCount(WORLD.resources.cotton), { maxRadius:1, fillChance:0.65 });
   placePatch(T.IRON, patchCount(WORLD.resources.iron));
   placePatch(T.COAL, patchCount(WORLD.resources.coal));
+  applyShoreResources(tn, (x, y) => !!mapMask[y*N+x]);
+  markGroundDirty();
 
   // caméra : centrée sur une zone d'herbe proche du milieu de la zone jouable
   const mcx = (mapBounds.x0+mapBounds.x1)>>1, mcy = (mapBounds.y0+mapBounds.y1)>>1;
@@ -430,11 +491,7 @@ function generateExpansionTerrain(){
   const inPlay=(x,y)=>x>=mapBounds.x0&&y>=mapBounds.y0&&x<mapBounds.x1&&y<mapBounds.y1;
 
   // Eau / herbe de base
-  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
-    if(inPlay(x,y)) continue;
-    const h=0.55*n1(x,y)+0.30*n2(x,y)+0.15*n3(x,y);
-    terrain[y*N+x]=h<0.40?T.WATER:T.GRASS;
-  }
+  applyBaseTerrain(n1, n2, n3, WORLD.waterPct, (x, y) => !inPlay(x, y));
   // Arbres
   const tc=[];
   for(let y=0;y<N;y++) for(let x=0;x<N;x++){
@@ -466,6 +523,8 @@ function generateExpansionTerrain(){
   pp(T.COTTON,cnt(WORLD.resources?.cotton??2),{maxRadius:1,fillChance:0.65});
   pp(T.IRON, cnt(WORLD.resources?.iron??10));
   pp(T.COAL, cnt(WORLD.resources?.coal??10));
+  applyShoreResources(tn, (x, y) => !inPlay(x, y));
+  markGroundDirty();
 }
 
 // Coût d'une tuile selon son terrain (prix de base au niveau 0)
@@ -477,6 +536,8 @@ function expTileCost(t){
   if(t===T.COTTON)return 4200;  // ressource textile
   if(t===T.IRON)  return 6000;  // minerai rare
   if(t===T.COAL)  return 5500;  // minerai
+  if(t===T.SAND)  return 3600;  // ressource littorale
+  if(t===T.CLAY)  return 3900;  // ressource littorale
   return 3000;
 }
 

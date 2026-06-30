@@ -43,6 +43,23 @@ const CONFIG = {
     citerne:        { cout: 450 },
   },
 
+  /* ---------- GÉNÉRATION DU MONDE ----------
+     Les pourcentages ci-dessous pilotent la création des nouvelles cartes
+     et l'apparition du terrain lors des expansions.
+     Ils ne sont plus modifiables depuis l'UI de création de carte. */
+  monde: {
+    taille: 128,
+    joueursMax: 4,
+    eauPct: 10,
+    ressources: {
+      tree:   4,
+      wheat:  0.05,
+      cotton: 0.04,
+      iron:   0.05,
+      coal:   0.1,
+    },
+  },
+
   /* ---------- MAISONS ---------- */
   maison: {
     intervalleConsommation: 60,
@@ -331,8 +348,11 @@ const CONFIG = {
   },
 
   lac: {
-    poissonRayon: 4,    // distance max depuis la rive (Manhattan) pour placer des poissons
-    poissonPct:   0.03, // fraction de tuiles de rive éligibles qui reçoivent des poissons
+    poissonRayon:             4,    // distance max depuis la rive (Manhattan) pour placer des poissons
+    poissonPct:               0.03, // fraction de tuiles de rive éligibles qui reçoivent des poissons
+    poissonAnimationZoomMin:  1.2,  // zoom minimal pour animer les poissons (en dessous ils restent statiques)
+    sablePct:                 0.12, // fraction des tuiles de rive en herbe remplacées par du sable
+    argilePct:                0.08, // fraction des tuiles de rive en herbe remplacées par de l'argile
   },
 
   /* ---------- SONS ----------

@@ -51,7 +51,7 @@ let N = 64;              // taille de la carte (tuiles)
 const TILE = 36;         // taille d'une tuile en px monde (simulation)
 const TW = 64, TH = 36;  // taille d'une tuile iso à l'écran (36 pour perspective correcte)
 const TW2 = TW/2, TH2 = TH/2;
-const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4, WHEAT:5, COTTON:6 };
+const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4, WHEAT:5, COTTON:6, SAND:7, CLAY:8 };
 const DIRS  = [[1,0],[-1,0],[0,1],[0,-1]];
 const DIRS8 = [[1,0],[-1,0],[0,1],[0,-1],[1,-1],[-1,1],[1,1],[-1,-1]];
 const RAIL_DIRS = [
@@ -353,6 +353,8 @@ const GRAPHIC_PACKS = {
     sky: ['#1c2740', '#0b101a'],
     grass: ['#74b048','#6ea944','#7ab84d','#68a23f'],
     water: ['#3590cf','#3187c2'],
+    sand: ['#ccb56d','#d6c178','#c8af63'],
+    clay: ['#9f6d52','#a9765a','#8f6249'],
     road: '#33373e',
     roadLine: '#4c525c',
     roof: 'flat',
@@ -366,6 +368,8 @@ const GRAPHIC_PACKS = {
     sky: ['#26384b', '#111820'],
     grass: ['#6d9d4a','#638f43','#78aa54','#5b883b'],
     water: ['#2f87b5','#2b799f'],
+    sand: ['#cdb579','#d9c488','#c6aa67'],
+    clay: ['#9f6d56','#a87962','#91624d'],
     road: '#3a3430',
     roadLine: '#5a524a',
     roof: 'tiles',
@@ -396,6 +400,8 @@ const GRAPHIC_PACKS = {
     sky: ['#203049', '#0d121a'],
     grass: ['#5f9f55','#57964f','#66aa5c','#4f8849'],
     water: ['#2c99d5','#228bc6'],
+    sand: ['#c7bb82','#d5c892','#bfae6e'],
+    clay: ['#95695a','#a17361','#875c4d'],
     road: '#2c3440',
     roadLine: '#596675',
     roof: 'glass',
@@ -428,6 +434,8 @@ const GRAPHIC_PACKS = {
     sky: ['#202833', '#101216'],
     grass: ['#667d4b','#5f7445','#718656','#586d41'],
     water: ['#347f95','#2d6f82'],
+    sand: ['#b6a36d','#c1ae76','#aa9662'],
+    clay: ['#865d4d','#926654','#7a5446'],
     road: '#2c2c2c',
     roadLine: '#555555',
     roof: 'vents',

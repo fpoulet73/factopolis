@@ -2829,16 +2829,6 @@ function mpInjectUI(){
     <input id="mpWorldSize" type="number" min="32" max="128" step="8" style="${INP}">
     <label style="display:block;color:#8fa3bf;font-size:11px">Joueurs max</label>
     <input id="mpMaxPlayers" type="number" min="1" max="32" step="1" style="${INP}">
-    <label style="display:block;color:#8fa3bf;font-size:11px">Arbres / bois (%)</label>
-    <input id="mpResTree" type="number" min="0" max="40" step="0.5" style="${INP}">
-    <label style="display:block;color:#8fa3bf;font-size:11px">Champs de blé (%)</label>
-    <input id="mpResWheat" type="number" min="0" max="40" step="0.5" style="${INP}">
-    <label style="display:block;color:#8fa3bf;font-size:11px">Champs de coton (%)</label>
-    <input id="mpResCotton" type="number" min="0" max="40" step="0.5" style="${INP}">
-    <label style="display:block;color:#8fa3bf;font-size:11px">Fer (%)</label>
-    <input id="mpResIron" type="number" min="0" max="40" step="0.5" style="${INP}">
-    <label style="display:block;color:#8fa3bf;font-size:11px">Charbon (%)</label>
-    <input id="mpResCoal" type="number" min="0" max="40" step="0.5" style="${INP}">
     <button class="tbtn" id="mpBtnNewWorld" style="width:100%">Créer la carte</button>
     <div id="mpWorldErr" style="color:#ff9a8a;font-size:11px;min-height:14px;margin-top:4px"></div>
   </div>
@@ -2938,13 +2928,6 @@ function mpInjectUI(){
     const config = normalizeWorldConfig({
       size: $('mpWorldSize').value,
       maxPlayers: $('mpMaxPlayers').value,
-      resources: {
-        tree: $('mpResTree').value,
-        wheat: $('mpResWheat').value,
-        cotton: $('mpResCotton').value,
-        iron: $('mpResIron').value,
-        coal: $('mpResCoal').value,
-      },
     });
     genWorld(config);
     MP.ws.send(JSON.stringify({ type:'new_world', config, state:serializeState() }));
@@ -3036,11 +3019,6 @@ function mpSyncWorldInputs(){
   if(!$('mpWorldSize')) return;
   $('mpWorldSize').value = WORLD.size;
   $('mpMaxPlayers').value = WORLD.maxPlayers;
-  $('mpResTree').value = WORLD.resources.tree;
-  $('mpResWheat').value = WORLD.resources.wheat;
-  $('mpResCotton').value = WORLD.resources.cotton;
-  $('mpResIron').value = WORLD.resources.iron;
-  $('mpResCoal').value = WORLD.resources.coal;
 }
 
 function mpShowAuthError(msg){

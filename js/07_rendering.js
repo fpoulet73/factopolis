@@ -7,7 +7,7 @@ function addFloat(x,y,txt,col){
 function hash(x,y){ return ((x*73856093) ^ (y*19349663)) >>> 0; }
 
 // --- Poissons dans les lacs ---
-let _fishTilesCache = null, _fishTerrainRef = null;
+let _fishTilesCache = null, _fishTerrainRef = null, _fishGroundVersion = -1;
 
 function computeFishTiles(){
   const SHORE_MAX = (CFG.lac?.poissonRayon ?? 4) | 0;
@@ -32,30 +32,45 @@ function computeFishTiles(){
 }
 
 function getFishTiles(){
-  if(_fishTerrainRef !== terrain){
+  if(_fishTerrainRef !== terrain || _fishGroundVersion !== groundVersion){
     _fishTilesCache = computeFishTiles();
     _fishTerrainRef = terrain;
+    _fishGroundVersion = groundVersion;
   }
   return _fishTilesCache;
+}
+
+function fishAnimationEnabled(){
+  const zoomMin = Math.max(0.35, CFG.lac?.poissonAnimationZoomMin ?? 1.2);
+  return (cam.z || 1) >= zoomMin;
 }
 
 function drawFishOnTile(rx, ry, x, y){
   const c = iso(rx+0.5, ry+0.5);
   const hs = hash(x, y);
+  const animated = fishAnimationEnabled();
+  const now = animated ? performance.now() * 0.0012 : 0;
   ctx.save();
   for(let k = 0; k < 3; k++){
     const k5 = k * 5;
-    const px = c[0] + (((hs >> k5)      & 15) / 15 * TW * 0.60 - TW * 0.30);
-    const py = c[1] + (((hs >> (k5+4))  &  7) /  7 * TH * 0.58 - TH * 0.29);
+    const swimBase = ((hs >> (k5+11)) & 31) * 0.23 + k * 0.7;
+    const swim = now + swimBase;
+    const px = c[0]
+      + (((hs >> k5)      & 15) / 15 * TW * 0.54 - TW * 0.27)
+      + (animated ? Math.sin(swim * 1.2) * TW * 0.055 : 0);
+    const py = c[1]
+      + (((hs >> (k5+4))  &  7) /  7 * TH * 0.50 - TH * 0.25)
+      + (animated ? Math.cos(swim * 1.6) * TH * 0.11 : 0);
     const sz = 2.6 + ((hs >> (k5+8)) & 3) * 0.45;
-    const dir = ((hs >> (k5+10)) & 1) ? 1 : -1;
+    const dir = animated ? (Math.sin(swim) >= 0 ? 1 : -1) : (((hs >> (k5+13)) & 1) ? 1 : -1);
+    const tailSwing = animated ? Math.sin(swim * 2.8) * sz * 0.22 : 0;
 
     // queue
     ctx.fillStyle = 'rgba(150,205,240,0.80)';
     ctx.beginPath();
     ctx.moveTo(px - dir * sz * 0.85, py);
-    ctx.lineTo(px - dir * sz * 1.65, py - sz * 0.55);
-    ctx.lineTo(px - dir * sz * 1.65, py + sz * 0.55);
+    ctx.lineTo(px - dir * sz * 1.65, py - sz * 0.55 + tailSwing);
+    ctx.lineTo(px - dir * sz * 1.65, py + sz * 0.55 + tailSwing);
     ctx.closePath();
     ctx.fill();
 
@@ -192,7 +207,10 @@ function graphicBasePack(){
 
 function packTerrain(kind, x, y){
   const p = graphicBasePack();
-  const cols = kind === T.WATER ? p.water : p.grass;
+  const cols = kind === T.WATER ? p.water
+    : kind === T.SAND ? (p.sand || p.grass)
+    : kind === T.CLAY ? (p.clay || p.grass)
+    : p.grass;
   return cols[hash(x,y) % cols.length];
 }
 
@@ -1916,6 +1934,7 @@ function draw(){
     center: centerOfBuilding(selected),
     r: fisherRadiusOf(selected),
   } : null;
+  const visibleFish = [];
 
   // --- passe 1 : sol (ordre ligne par ligne = peintre) ---
   for(let ry=minRy; ry<=maxRy; ry++) for(let rx=minRx; rx<=maxRx; rx++){
@@ -1933,7 +1952,7 @@ function draw(){
         if(expZone){
           // Terrain dim + overlay sarcelle teinté par pièce
           ctx.globalAlpha = 0.22;
-          ctx.fillStyle = packTerrain(t===T.WATER ? T.WATER : T.GRASS, x, y);
+          ctx.fillStyle = packTerrain(t, x, y);
           diamond(rx,ry); ctx.fill();
           ctx.globalAlpha = 1;
           const isHov = expZone === hoveredExpansion;
@@ -1962,9 +1981,8 @@ function draw(){
     if(t===T.WATER){
       ctx.fillStyle = packTerrain(T.WATER, x, y);
       diamond(rx,ry); ctx.fill();
-      if(!drawFast && getFishTiles().has(i)) drawFishOnTile(rx, ry, x, y);
     } else {
-      ctx.fillStyle = packTerrain(T.GRASS, x, y);
+      ctx.fillStyle = packTerrain(t, x, y);
       diamond(rx,ry); ctx.fill();
       if(!drawFast && t===T.WHEAT){
         const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
@@ -2000,7 +2018,29 @@ function draw(){
           ctx.beginPath(); ctx.ellipse(c[0]+ox, c[1]+oy, 4.2, 2.6, 0, 0, 7); ctx.fill();
         }
       }
+      if(!drawFast && t===T.SAND){
+        const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
+        ctx.fillStyle = 'rgba(247,228,176,.70)';
+        for(let k=0;k<6;k++){
+          const ox = ((hs>>(k*3))&7)/7*TW*0.46 - TW*0.23;
+          const oy = ((hs>>(k*3+6))&7)/7*TH*0.38 - TH*0.19;
+          ctx.beginPath(); ctx.arc(c[0]+ox, c[1]+oy, 1.2 + ((hs>>(k*3+9))&1)*0.5, 0, Math.PI*2); ctx.fill();
+        }
+      }
+      if(!drawFast && t===T.CLAY){
+        const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
+        ctx.fillStyle = 'rgba(123,78,58,.30)';
+        for(let k=0;k<4;k++){
+          const ox = ((hs>>(k*4))&7)/7*TW*0.40 - TW*0.20;
+          const oy = ((hs>>(k*4+8))&7)/7*TH*0.32 - TH*0.16;
+          const rw = 5 + ((hs>>(k*4+12))&3);
+          const rh = 2.4 + ((hs>>(k*4+14))&1);
+          ctx.beginPath(); ctx.ellipse(c[0]+ox, c[1]+oy, rw, rh, ((hs>>(k*4+16))&3) * 0.2, 0, Math.PI*2); ctx.fill();
+        }
+      }
     }
+
+    if(!drawFast && t===T.WATER && getFishTiles().has(i)) visibleFish.push({ rx, ry, x, y });
 
     // falaises au bord de la carte
     const D = 15;
@@ -2265,6 +2305,9 @@ function draw(){
 
   // Éléments du sol DYNAMIQUES (hors cache) : feux de circulation et signaux
   // ferroviaires changent de couleur en continu → dessinés chaque frame.
+  if(!drawFast){
+    for(const fish of visibleFish) drawFishOnTile(fish.rx, fish.ry, fish.x, fish.y);
+  }
   if(!drawFast){
     for(const tl of trafficLights) drawTrafficLight(tl.c, tl.approaches);
   }

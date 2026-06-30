@@ -439,7 +439,7 @@ function placeTrainStationTile(x, y, owner = MP.myId){
 function canPlace(t,x,y){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
-  if(t==='terraform') return { ok: !!(road[i] || rail[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL) };
+  if(t==='terraform') return { ok: !!(road[i] || rail[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL || ter===T.SAND || ter===T.CLAY) };
   if(t==='fill_water'){
     if(ter !== T.WATER) return { ok:false, msg:'L\'outil Remblai ne s\'applique que sur l\'eau' };
     if(!terrassementNear(x, y, MP.myId ?? 1)) return { ok:false, msg:'Aucune usine de terrassement à portée avec assez de terre ('+FILL_WATER_COST+' terres requises)' };
@@ -637,7 +637,7 @@ function clickAt(x,y){
       if(occ){ toast('⛔ Un train occupe cette voie','err'); return; }
       const { updates, refund } = collectRailRemovalUpdates(x, y);
       railApplyMaskUpdates(updates, -refund);
-    } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON || terrain[i]===T.IRON || terrain[i]===T.COAL){
+    } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON || terrain[i]===T.IRON || terrain[i]===T.COAL || terrain[i]===T.SAND || terrain[i]===T.CLAY){
       terrain[i] = T.GRASS; markGroundDirty(); // l'envoi réseau est géré par clickFn (09_multiplayer.js)
     }
     return;

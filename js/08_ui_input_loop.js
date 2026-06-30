@@ -1184,6 +1184,8 @@ function renderInfo(){
         { t:T.TREE,   ic:RES.wood.ic,   n:RES.wood.n   },
         { t:T.WHEAT,  ic:RES.wheat.ic,  n:RES.wheat.n  },
         { t:T.COTTON, ic:RES.cotton.ic, n:RES.cotton.n },
+        { t:T.SAND,   ic:'🏖️',          n:'Sable'       },
+        { t:T.CLAY,   ic:'🧱',          n:'Argile'      },
         { t:T.WATER,  ic:'💧',          n:'Eau'         },
       ];
       let h_ = '<div class="panel-head"><h3>🧩 Pièce de puzzle</h3><button class="tbtn" id="infoCloseBtn" aria-label="Fermer">✕</button></div>';
