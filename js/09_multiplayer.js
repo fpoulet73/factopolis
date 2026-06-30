@@ -862,6 +862,9 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   b.pending = includeTransient ? (o.pending || 0) : 0;
   b.pendingProtected = includeTransient ? (o.pendingProtected || 0) : 0;
   b.starve = o.starve || 0;
+  b.upgradeProgress = o.upgradeProgress || {};
+  b.upgradeInc = includeTransient ? (o.upgradeInc || {}) : {};
+  b.upgradePaused = o.upgradePaused || {};
   b.ore = o.ore || null;
   b.allow = o.allow || null;
   b.sellTo = o.sellTo || null;
@@ -875,6 +878,7 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   b.townId = o.townId ?? null;
   b.name = o.name || null;
   b.mergeBlockedMissing = Array.isArray(o.mergeBlockedMissing) ? o.mergeBlockedMissing.filter(r => RES[r]) : null;
+  if(BUILD[b.type]?.resid) normalizeResidentialUpgradeState(b);
   if(b.type === 'bus_stop'){
     b.passengers = o.passengers || 0;
     b.passengersMax = o.passengersMax ?? 0;
@@ -1270,6 +1274,9 @@ function serializeState(opts = {}){
     buildings: buildings.map(b => ({
       type:b.type, x:b.x, y:b.y, w:b.w, h:b.h,
       storage:{...b.storage}, inc:{},
+      upgradeProgress:{...(b.upgradeProgress || {})},
+      upgradeInc:includeTransient ? { ...(b.upgradeInc || {}) } : {},
+      upgradePaused:{...(b.upgradePaused || {})},
       prog:b.prog||0, trucksOut:includeTransient ? (b.trucksOut||0) : 0,
       pop:b.pop||0, protectedPop:b.protectedPop||0,
       ct:b.ct||0,
@@ -1551,6 +1558,9 @@ function applySnapshot(d){
     const b = newBuilding(o.type, o.x, o.y, o.w, o.h);
     Object.assign(b, {
       storage:o.storage||{}, inc:{},
+      upgradeProgress:o.upgradeProgress||{},
+      upgradeInc:hadTransient ? (o.upgradeInc||{}) : {},
+      upgradePaused:o.upgradePaused||{},
       prog:o.prog||0, trucksOut:hadTransient ? (o.trucksOut||0) : 0,
       pop:o.pop||0, protectedPop:o.protectedPop||0,
       ct:o.ct||0,
@@ -1562,6 +1572,7 @@ function applySnapshot(d){
     b.mpProgRate = 0;
     b.mpProgSyncGtime = gtime || 0;
     b.mpConfirmedAt = performance.now(); // snapshot complet autoritatif
+    if(BUILD[b.type]?.resid) normalizeResidentialUpgradeState(b);
     if(o.ore)   b.ore   = o.ore;
     if(o.allow) b.allow = o.allow;
     if(o.sellTo) b.sellTo = o.sellTo;
@@ -1919,6 +1930,16 @@ function applyAction(msg){
       if(b.owner && b.owner !== msg.from) break;
       if(!b.blockedOut) b.blockedOut = {};
       b.blockedOut[act.res] = !!act.blocked;
+      break;
+    }
+    case 'toggle_resid_upgrade_pause': {
+      if(!validXY(act.x, act.y) || typeof act.res !== 'string') break;
+      const b = bgrid[act.y*N+act.x];
+      if(!b || !BUILD[b.type]?.resid) break;
+      if(b.owner && b.owner !== msg.from) break;
+      normalizeResidentialUpgradeState(b);
+      if(!residUpgradeTargetOf(b, act.res) || residUpgradeRemainingOf(b, act.res) <= 0) break;
+      b.upgradePaused[act.res] = !!act.paused;
       break;
     }
     case 'clear_bld_stock': {

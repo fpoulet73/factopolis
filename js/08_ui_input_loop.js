@@ -1067,12 +1067,17 @@ function statusOf(b){
     if(b.starterHome) return 'Maison de départ protégée (pas besoin de ravitaillement)';
     const req = residRequiredOf(b);
     const missingReq = req.filter(r => (b.storage[r]||0) <= 0);
-    const fusionMissing = residFusionRequiredOf(b)
-      .filter(r => !req.includes(r) && (b.storage[r]||0) <= 0);
+    const upgradePending = residUpgradeResourcesOf(b)
+      .filter(r => residUpgradeRemainingOf(b, r) > 0)
+      .map(r => residUpgradeProgressOf(b, r)+'/'+residUpgradeTargetOf(b, r)+' '+RES[r].n.toLowerCase()
+        + (residUpgradePaused(b, r) ? ' (pause)' : ''));
     const bonusMissing = residBonusOf(b).filter(r => (b.storage[r]||0) <= 0);
     if(missingReq.length === 0){
       const txt = 'Consomme '+resNames(req)+'…';
-      if(fusionMissing.length) return txt+' — manque '+resNames(fusionMissing)+' pour monter';
+      if(upgradePending.length) return txt+' — upgrade : '+upgradePending.join(' · ');
+      if(residUpgradeResourcesOf(b).length) return txt + (b.pop >= BUILD[b.type].resid.popCap
+        ? ' — prêt pour fusionner'
+        : ' — upgrade prêt');
       if(bonusMissing.length) return txt+' — bonus demandé : '+resNames(bonusMissing);
       return txt;
     }
@@ -1522,14 +1527,13 @@ function renderInfo(){
   if(d.resid && !b.starterHome){
     const pop = Math.max(1, b.pop);
     const priceSum = list => list.reduce((a,r)=>a+(RESID_PRICES[r]||0),0);
-    const fusionExtra = residFusionRequiredOf(b).filter(r=>!residRequiredOf(b).includes(r));
     const reqIncome = Math.round(priceSum(residRequiredOf(b)) * pop);
-    const maxIncome = Math.round((priceSum(residRequiredOf(b)) + priceSum(fusionExtra) + priceSum(residBonusOf(b))) * pop);
+    const maxIncome = Math.round((priceSum(residRequiredOf(b)) + priceSum(residBonusOf(b))) * pop);
     const ratePerMin = b.pop > 0 ? Math.round(reqIncome / d.resid.interval * 60) : 0;
     h += '<div class="row"><span>Revenu / cycle</span><b>'+reqIncome+(maxIncome>reqIncome ? ' à '+maxIncome : '')+' $</b></div>';
     h += '<div class="row"><span>Besoins indispensables</span><b>'+escHtml(resNames(residRequiredOf(b)))+'</b></div>';
-    h += '<div class="row"><span>Besoins de fusion</span><b>'+escHtml(resNames(residFusionRequiredOf(b)))+'</b></div>';
-    h += '<div class="row"><span>Bonus</span><b style="color:#c7e7e9">'+escHtml(resNames(residBonusOf(b)))+' (revenu en plus si livré)</b></div>';
+    if(residBonusOf(b).length)
+      h += '<div class="row"><span>Bonus</span><b style="color:#c7e7e9">'+escHtml(resNames(residBonusOf(b)))+' (revenu en plus si livré)</b></div>';
     h += '<div class="row"><span>Intervalle conso.</span><b>'+d.resid.interval+' s</b></div>';
     h += '<div class="row"><span>Revenu / min</span><b style="color:#9fe8a0">~'+ratePerMin+' $</b></div>';
   }
@@ -1540,10 +1544,11 @@ function renderInfo(){
   const outKeys = d.ind && r2 ? Object.keys(r2.out||{}) : [];
   const inSet   = new Set(inKeys), outSet = new Set(outKeys);
   const extraKeys = Object.keys(b.storage).filter(k => b.storage[k]>0 && !inSet.has(k) && !outSet.has(k));
-  const showStock = (k) => {
+  const showStock = (k, opts={}) => {
+    const hideQuant = !!opts.hideQuant;
     const cap = capOf(b,k), val = b.storage[k]||0;
     const ic = RES[k].ic ? '<span style="margin-right:4px">'+RES[k].ic+'</span>' : '';
-    h += '<div class="row"><span>'+ic+RES[k].n+'</span><b>'+val+' / '+cap+'</b></div>';
+    h += '<div class="row"><span>'+ic+RES[k].n+'</span><b>'+(hideQuant ? '' : (val+' / '+cap))+'</b></div>';
     h += '<div class="bar"><i style="width:'+Math.min(100,100*val/cap)+'%;background:'+RES[k].c+'"></i></div>';
   };
   if(d.ind && r2){
@@ -1580,12 +1585,38 @@ function renderInfo(){
     }
   } else if(!isStorageDepot(b) && !isVehicleDepot(b)) {
     // bâtiments non-industriels (logements…)
-    const allKeys = [...new Set([
-      ...Object.keys(b.storage).filter(k=>b.storage[k]>0 || (b.inc[k]||0)>0),
-    ])];
+    if(d.resid && !b.starterHome){
+      const upgradeResources = residUpgradeResourcesOf(b);
+      if(upgradeResources.length){
+        h += '<div style="margin-top:8px;color:#8fa3bf">Demande pour fusion</div>';
+        for(const r of upgradeResources){
+          const paused = residUpgradePaused(b, r);
+          h += '<div class="row"><span>'+(RES[r].ic ? RES[r].ic+' ' : '')+RES[r].n+'</span><b style="display:flex;align-items:center;gap:6px">'
+            + '<span>'+residUpgradeProgressOf(b, r)+'/'+residUpgradeTargetOf(b, r)+'</span>'
+            + (canControl && residUpgradeRemainingOf(b, r) > 0
+              ? '<button class="tbtn" style="width:auto;min-width:30px;margin:0;padding:1px 8px;line-height:1.2'
+                + (paused ? ';opacity:.7' : '')
+                + '" data-upgrade-toggle="'+r+'" title="'+(paused ? 'Reprendre la demande' : 'Mettre en pause la demande')+'">'
+                + (paused ? '▶' : '⏸')
+                + '</button>'
+              : (paused ? '<span style="color:#8fa3bf">pause</span>' : ''))
+            + '</b></div>';
+          h += '<div class="bar"><i style="width:'+Math.min(100, 100 * residUpgradeProgressOf(b, r) / Math.max(1, residUpgradeTargetOf(b, r)))+'%;background:'+RES[r].c+'"></i></div>';
+        }
+      }
+    }
+    const allKeys = d.resid
+      ? [...new Set([
+          ...residRequiredOf(b),
+          ...residBonusOf(b),
+          ...Object.keys(b.storage).filter(k=>b.storage[k]>0 || (b.inc[k]||0)>0),
+        ])].filter(k => RES[k])
+      : [...new Set([
+          ...Object.keys(b.storage).filter(k=>b.storage[k]>0 || (b.inc[k]||0)>0),
+        ])];
     if(allKeys.length){
       h += '<div style="margin-top:8px;color:#8fa3bf">Stocks</div>';
-      allKeys.forEach(showStock);
+      allKeys.forEach(k => showStock(k, { hideQuant: !!d.resid }));
     }
   }
   if(isStorageDepot(b) && b.type !== 'market'){
@@ -2095,6 +2126,18 @@ function renderInfo(){
       b.blockedOut[k] = !b.blockedOut[k];
       if(MP.connected) netSend({ type:'toggle_out_block', x:b.x, y:b.y, res:k, blocked:b.blockedOut[k] });
       p._html = null;
+    };
+  });
+  p.querySelectorAll('[data-upgrade-toggle]').forEach(btn=>{
+    btn.onclick = ()=>{
+      if(MP.connected && b.owner && b.owner !== MP.myId){ toast('⛔ Bâtiment d\'un autre joueur','err'); return; }
+      normalizeResidentialUpgradeState(b);
+      const r = btn.dataset.upgradeToggle;
+      if(!residUpgradeTargetOf(b, r) || residUpgradeRemainingOf(b, r) <= 0) return;
+      b.upgradePaused[r] = !b.upgradePaused[r];
+      if(MP.connected) netSend({ type:'toggle_resid_upgrade_pause', x:b.x, y:b.y, res:r, paused:!!b.upgradePaused[r] });
+      p._html = null;
+      renderInfo();
     };
   });
   const clearBtn = $('bClearStock');

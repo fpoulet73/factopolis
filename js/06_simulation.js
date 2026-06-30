@@ -83,19 +83,6 @@ function update(dt){
       }
     }
     const rc = BUILD[b.type].resid;
-    if(rc && b.mergeBlockedMissing){
-      // ne conserver que les ressources que ce logement peut réellement recevoir :
-      // une maison ne se fait jamais livrer de pain/vêtements, donc un drapeau
-      // portant ces ressources ne se lèverait jamais et bloquerait la fusion à vie.
-      const reachable = b.mergeBlockedMissing.filter(r => residDeliveryResourcesOf(b).includes(r));
-      if(reachable.length !== b.mergeBlockedMissing.length){
-        if(reachable.length) b.mergeBlockedMissing = reachable;
-        else delete b.mergeBlockedMissing;
-      }
-      if(b.mergeBlockedMissing && residHasAll(b, b.mergeBlockedMissing)){
-        delete b.mergeBlockedMissing;
-      }
-    }
     if(rc && !b.starterHome && residHasAll(b, residRequiredOf(b))){
       b.starve = 0;
       b.ct += dt;
@@ -105,8 +92,6 @@ function update(dt){
         // Revenu = somme des prix de vente des ressources consommées ce cycle × habitants.
         const consumed = [...residRequiredOf(b)];
         residConsumeAll(b, residRequiredOf(b));
-        const fusionOptional = residFusionRequiredOf(b).filter(r => !residRequiredOf(b).includes(r));
-        for(const r of fusionOptional) if((b.storage[r]||0) > 0){ b.storage[r]--; consumed.push(r); } // consommé si présent, pas obligatoire
         const bonusResources = residBonusOf(b).filter(r => (b.storage[r]||0) > 0);
         for(const r of bonusResources){ b.storage[r]--; consumed.push(r); }
         let income = 0;
@@ -411,7 +396,6 @@ function update(dt){
 // petits → fusion en bâtiment de niveau supérieur
 function checkRect(x,y,w,h,targetLevel=null){
   const area = w*h, set = [];
-  const targetFusionRequired = targetLevel?.resid?.fusionRequired || null;
   for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++){
     const b = bgrid[yy*N+xx];
     if(!b) return null;
@@ -420,20 +404,7 @@ function checkRect(x,y,w,h,targetLevel=null){
     if(b.w*b.h >= area) return null;                            // pas plus petit
     if(b.x<x || b.y<y || b.x+b.w>x+w || b.y+b.h>y+h) return null; // déborde du rectangle
     if(b.pop < rc.popCap) return null;                          // pas plein
-    if(b.mergeBlockedMissing){
-      const blockedMissing = targetFusionRequired
-        ? b.mergeBlockedMissing.filter(r => targetFusionRequired.includes(r))
-        : b.mergeBlockedMissing;
-      if(blockedMissing.length && !residHasAll(b, blockedMissing)) return null;
-    }
-    // Note : on n'exige plus residFusionRequiredOf(b) en stock ici.
-    // Un bâtiment plein (pop = popCap) a forcément été ravitaillé récemment
-    // en ressources indispensables (sinon la croissance se serait arrêtée).
-    // Exiger le stock à l'instant t empêchait la fusion dès qu'un cycle de
-    // consommation venait de vider la ressource (ex. maison pleine sans goods
-    // → la maison de départ protégée restait bloquée à 2×1). Le drapeau
-    // mergeBlockedMissing (géré ci-dessus) couvre le cas des pièces issues
-    // d'une défusion et empêche la re-fusion instantanée.
+    if(!residUpgradeSatisfied(b)) return null;                  // compteur d'upgrade incomplet
     if(!set.includes(b)) set.push(b);
   }
   return set;
@@ -690,7 +661,6 @@ function splitBuilding(b){
   let protectedPop = b.protectedPop||0;
   const pools = {};
   for(const k in b.storage) if(RES[k]) pools[k] = b.storage[k]||0;
-  const mergeBlockedMissing = residFusionRequiredOf(b).filter(r => (b.storage[r]||0) <= 0);
   const excess = Math.max(0, pop - lowerPopCap);
   b.dead = true;
   buildings.splice(buildings.indexOf(b),1);
@@ -707,7 +677,6 @@ function splitBuilding(b){
     h.starterHome = h.protectedPop > 0;
     protectedPop -= h.protectedPop;
     h.starve = 0;
-    if(mergeBlockedMissing.length) h.mergeBlockedMissing = mergeBlockedMissing.slice();
     buildings.push(h);
     setGrid(h,h);
     newHomes.push(h);

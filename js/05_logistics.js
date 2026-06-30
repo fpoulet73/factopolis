@@ -215,7 +215,7 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
     const rcc = BUILD[c.type].resid;
     const full = !!rcc && c.pop >= rcc.popCap;
     const demand = rcc ? residDeliveryResourcesOf(c) : [];
-    const residRatio = demand.length ? Math.min(...demand.map(r => ((c.storage[r]||0) + (c.inc[r]||0)) / (rcc.stockCap || 1))) : 0;
+    const residRatio = demand.length ? Math.min(...demand.map(r => residSupplyRatio(c, r))) : 0;
     const cap = capOf(c, res);
     const indRatio = (targetIsInd && cap > 0) ? ((c.storage[res]||0) + (c.inc[res]||0)) / cap : 0;
     const stockRatio = rcc ? residRatio : indRatio;
@@ -263,7 +263,7 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
   const amt = Math.min(load, b.storage[res]);
   b.storage[res] -= amt;
   b.trucksOut++;
-  target.inc[res] = (target.inc[res]||0) + amt;
+  const reservation = reserveIncomingResource(target, res, amt);
 
   // tracer le chemin vers la cible
   const C = i => ({ x:(i%N)*TILE+TILE/2, y:((i/N)|0)*TILE+TILE/2 });
@@ -285,7 +285,7 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
       { x: tx - dx/len*stop, y: ty - dy/len*stop },
     ];
   }
-  trucks.push({ id: nextTruckId++, pts, seg:0, t:0, res, amt, target, from:b });
+  trucks.push({ id: nextTruckId++, pts, seg:0, t:0, res, amt, target, from:b, reservation });
   return true;
 }
 
@@ -297,16 +297,14 @@ function updateTrucks(dt){
     if(tk.seg >= tk.pts.length-1){
       let tg = tk.target;
       if(!tg.dead){
-        tg.inc[tk.res] = Math.max(0, (tg.inc[tk.res]||0) - tk.amt);
+        releaseIncomingResource(tg, tk.res, tk.reservation);
       } else {
         const rep = bgrid[tg.y*N+tg.x];
         tg = (rep && !rep.dead && accepts(rep,tk.res)) ? rep : null;
       }
       let delivered = 0;
       if(tg){
-        const room = capOf(tg,tk.res) - (tg.storage[tk.res]||0);
-        delivered = Math.min(Math.max(0,room), tk.amt);
-        tg.storage[tk.res] = (tg.storage[tk.res]||0) + delivered;
+        delivered = depositResourceIntoBuilding(tg, tk.res, tk.amt);
       }
       const remaining = tk.amt - delivered;
       if(remaining > 0 && tryRedirect(tk, tg ?? tk.target, remaining)){
@@ -368,14 +366,18 @@ function tryRedirect(tk, currentBuilding, remaining){
     for(const t of adjRoadTiles(c))
       if(dist[t]>=0 && dist[t]<bd){ bd = dist[t]; bt = t; }
     if(bt < 0) continue;
-    const cap = capOf(c, res);
-    const ratio = cap > 0 ? ((c.storage[res]||0) + (c.inc[res]||0)) / cap : 1;
+    const ratio = BUILD[c.type]?.resid
+      ? residSupplyRatio(c, res)
+      : (() => {
+          const cap = capOf(c, res);
+          return cap > 0 ? ((c.storage[res]||0) + (c.inc[res]||0)) / cap : 1;
+        })();
     const score = bd + (isStorageHub(c) ? 400 : 0) + ratio * 100;
     if(score < bestScore){ bestScore = score; bestB = c; bestTile = bt; }
   }
   if(!bestB) return false;
 
-  bestB.inc[res] = (bestB.inc[res]||0) + remaining;
+  tk.reservation = reserveIncomingResource(bestB, res, remaining);
   const C = i2 => ({ x:(i2%N)*TILE+TILE/2, y:((i2/N)|0)*TILE+TILE/2 });
   const path = [];
   let t = bestTile;
@@ -390,9 +392,10 @@ function tryRedirect(tk, currentBuilding, remaining){
 
 function syncIncomingReservations(){
   for(const b of buildings) b.inc = {};
+  for(const b of buildings) if(BUILD[b.type]?.resid) b.upgradeInc = {};
   for(const tk of trucks){
     if(!tk.target || tk.target.dead || !tk.res || !tk.amt) continue;
-    tk.target.inc[tk.res] = (tk.target.inc[tk.res]||0) + tk.amt;
+    tk.reservation = reserveIncomingResource(tk.target, tk.res, tk.amt);
   }
 }
 
@@ -2305,9 +2308,7 @@ function updateVehicles(dt){
           const canDeposit = accepts(dst, v.res)
             && vehicleCanServeRoute(v, v.res)
             && !(v.res === 'water' && v.source?.type === 'pump' && dst.type === 'bakery');
-          const room = canDeposit ? Math.max(0, capOf(dst, v.res) - (dst.storage[v.res]||0)) : 0;
-          const deposit = Math.min(v.cargo, room);
-          if(deposit > 0) dst.storage[v.res] = (dst.storage[v.res]||0) + deposit;
+          if(canDeposit) depositResourceIntoBuilding(dst, v.res, v.cargo);
           v.cargo = 0; v.res = null;
         }
         const pts = findRoadPath(v.dest, v.source);

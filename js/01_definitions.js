@@ -6,9 +6,9 @@
 
 // ---------- configuration (voir config.js) ----------
 const CFG = (typeof CONFIG !== 'undefined') ? CONFIG : {};
-const DEFAULT_RESIDENT_NEEDS = ['goods','clothes'];
-const DEFAULT_RESIDENT_FUSION_NEEDS = ['goods','clothes','bread'];
-const DEFAULT_RESIDENT_BONUS = ['fish_fillet'];
+const DEFAULT_RESIDENT_NEEDS = ['fish_fillet'];
+const DEFAULT_RESIDENT_UPGRADE_NEEDS = { goods:1 };
+const DEFAULT_RESIDENT_BONUS = [];
 function _resList(raw, def){
   const list = Array.isArray(raw) ? raw : def;
   const out = [];
@@ -17,10 +17,19 @@ function _resList(raw, def){
   }
   return out;
 }
+function _resMap(raw, def){
+  const src = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : def;
+  const out = {};
+  for(const k in (src || {})){
+    const n = Math.max(0, Math.floor(+src[k] || 0));
+    if(typeof k === 'string' && k && n > 0) out[k] = n;
+  }
+  return out;
+}
 function _resid(c, def){
   c = c || {};
   const required = _resList(c.ressourcesIndispensables, def.required || DEFAULT_RESIDENT_NEEDS);
-  const fusionRequired = _resList(c.ressourcesFusion, def.fusionRequired || DEFAULT_RESIDENT_FUSION_NEEDS);
+  const upgradeTargets = _resMap(c.ressourcesUpgrade, def.upgradeTargets || DEFAULT_RESIDENT_UPGRADE_NEEDS);
   const bonus = _resList(c.ressourcesBonus, def.bonus || DEFAULT_RESIDENT_BONUS);
   return {
     interval: c.intervalleConsommation ?? def.interval,
@@ -28,7 +37,7 @@ function _resid(c, def){
     popCap:   c.habitantsMax          ?? def.popCap,
     stockCap: c.stockMax              ?? def.stockCap,
     required,
-    fusionRequired,
+    upgradeTargets,
     bonus,
   };
 }
@@ -213,6 +222,8 @@ function trainWagonDef(wagon){
 function trainWagonSelectedResource(wagon){
   return wagon && typeof wagon === 'object' && typeof wagon.resource === 'string' ? wagon.resource : null;
 }
+
+const EMPTY_RES_MAP = Object.freeze({});
 
 function trainWagonAcceptedResources(wagon){
   const def = trainWagonDef(wagon);
@@ -724,8 +735,9 @@ const LEVELS = [
     if(L.key==='house'){
       Object.assign(BUILD.house, { resid:L.resid, area:1 });
       const reqPrice = L.resid.required.reduce((a,r)=>a+(RESID_PRICES[r]||0),0);
+      const upgradeTxt = resTargetNames(L.resid.upgradeTargets);
       BUILD.house.desc = 'Consomme '+resNames(L.resid.required)+' → +1 habitant et +'+reqPrice
-        +' $ par habitant. Fusion : '+resNames(L.resid.fusionRequired)+'.';
+        +' $ par habitant.' + (upgradeTxt ? ' Upgrade : '+upgradeTxt+'.' : '');
       continue;
     }
     BUILD[L.key] = { n:L.n, ic:L.ic, col:L.col, hgt:L.hgt, cost:100*area, area,
@@ -740,14 +752,40 @@ function _residCfgOf(b){
   return BUILD[type]?.resid || null;
 }
 function residRequiredOf(b){ return _residCfgOf(b)?.required || DEFAULT_RESIDENT_NEEDS; }
-function residFusionRequiredOf(b){ return _residCfgOf(b)?.fusionRequired || DEFAULT_RESIDENT_FUSION_NEEDS; }
+function residUpgradeTargetsOf(b){ return _residCfgOf(b)?.upgradeTargets || EMPTY_RES_MAP; }
+function residUpgradeResourcesOf(b){ return Object.keys(residUpgradeTargetsOf(b)).filter(r => RES[r]); }
+function residUpgradeTargetOf(b,res){ return residUpgradeTargetsOf(b)[res] || 0; }
+function residUpgradeProgressOf(b,res){ return Math.max(0, Math.floor(b?.upgradeProgress?.[res] || 0)); }
+function residUpgradeIncomingOf(b,res){ return Math.max(0, Math.floor(b?.upgradeInc?.[res] || 0)); }
+function residUpgradePaused(b,res){ return !!(b?.upgradePaused?.[res]); }
+function residUpgradeRemainingOf(b,res){ return Math.max(0, residUpgradeTargetOf(b,res) - residUpgradeProgressOf(b,res)); }
+function residUpgradeSatisfied(b){
+  for(const r of residUpgradeResourcesOf(b))
+    if(residUpgradeRemainingOf(b, r) > 0) return false;
+  return true;
+}
+function residConsumesResource(b,res){
+  return residRequiredOf(b).includes(res) || residBonusOf(b).includes(res);
+}
 function residBonusOf(b){ return _residCfgOf(b)?.bonus || DEFAULT_RESIDENT_BONUS; }
 function residDeliveryResourcesOf(b){
   const out = [];
-  for(const r of [...residRequiredOf(b), ...residFusionRequiredOf(b), ...residBonusOf(b)]){
+  const upgradeDemand = residUpgradeResourcesOf(b)
+    .filter(r => !residUpgradePaused(b, r) && residUpgradeRemainingOf(b, r) > 0);
+  for(const r of [...residRequiredOf(b), ...upgradeDemand, ...residBonusOf(b)]){
     if(RES[r] && !out.includes(r)) out.push(r);
   }
   return out;
+}
+function residSupplyRatio(b,res){
+  if(residConsumesResource(b, res)){
+    const cap = _residCfgOf(b)?.stockCap || 1;
+    return ((b.storage[res]||0) + (b.inc[res]||0)) / cap;
+  }
+  const target = residUpgradeTargetOf(b, res);
+  if(residUpgradePaused(b, res)) return 1;
+  if(target > 0) return (residUpgradeProgressOf(b, res) + residUpgradeIncomingOf(b, res)) / target;
+  return 1;
 }
 function residHasAll(b, list){
   return list.every(r => (b.storage[r]||0) > 0);
@@ -757,6 +795,12 @@ function residConsumeAll(b, list){
 }
 function resNames(list){
   return list.filter(r => RES[r]).map(r => RES[r].n.toLowerCase()).join(' + ');
+}
+function resTargetNames(targets){
+  return Object.keys(targets || {})
+    .filter(r => RES[r] && targets[r] > 0)
+    .map(r => targets[r]+' '+RES[r].n.toLowerCase())
+    .join(' + ');
 }
 // niveaux fusionnables, du plus grand au plus petit
 const MERGE_ORDER = LEVELS.filter(L=>L.key!=='house')

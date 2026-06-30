@@ -51,11 +51,11 @@ const CONFIG = {
     stockMax: 10,
     // Ressources indispensables pour que les habitants restent.
     // Ressources disponibles : goods, clothes, bread, fish_fillet, etc.
-    ressourcesIndispensables: ['goods'],
-    // Ressources requises en plus pour fusionner/monter en niveau.
-    ressourcesFusion: ['goods'],
+    ressourcesIndispensables: ['fish_fillet'],
+    // Ressources requises pour l'upgrade : compteur à atteindre, non consommé en continu.
+    ressourcesUpgrade: { goods: 50 },
     // Ressources optionnelles consommées si disponibles, bonus revenu +20 %.
-    ressourcesBonus: ['fish_fillet'],
+    ressourcesBonus: [],
   },
 
   /* ---------- IMMEUBLES (niveau 2×2) ---------- */
@@ -64,9 +64,9 @@ const CONFIG = {
     revenuParUnite: 15,
     habitantsMax: 30,
     stockMax: 25,
-    ressourcesIndispensables: ['goods','bread'],
-    ressourcesFusion: ['goods','clothes','bread'],
-    ressourcesBonus: ['fish_fillet'],
+    ressourcesIndispensables: ['fish_fillet','bread'],
+    ressourcesUpgrade: { goods: 150 },
+    ressourcesBonus: [],
   },
 
   /* ---------- DUPLEX ----------
@@ -77,9 +77,9 @@ const CONFIG = {
     revenuParUnite: 17,
     habitantsMax: 12,
     stockMax: 14,
-    ressourcesIndispensables: ['goods'],
-    ressourcesFusion: ['goods','bread'],
-    ressourcesBonus: ['fish_fillet'],
+    ressourcesIndispensables: ['fish_fillet'],
+    ressourcesUpgrade: { goods: 300 },
+    ressourcesBonus: [],
   },
 
   /* ---------- MAISONS EN RANGÉE ---------- */
@@ -89,9 +89,9 @@ const CONFIG = {
     revenuParUnite: 18,
     habitantsMax: 20,
     stockMax: 18,
-    ressourcesIndispensables: ['goods'],
-    ressourcesFusion: ['goods','bread'],
-    ressourcesBonus: ['fish_fillet'],
+    ressourcesIndispensables: ['fish_fillet'],
+    ressourcesUpgrade: { goods: 250 },
+    ressourcesBonus: [],
   },
 
   /* ---------- RÉSIDENCE ---------- */
@@ -101,9 +101,9 @@ const CONFIG = {
     revenuParUnite: 20,
     habitantsMax: 28,
     stockMax: 22,
-    ressourcesIndispensables: ['goods','bread'],
-    ressourcesFusion: ['goods','clothes','bread'],
-    ressourcesBonus: ['fish_fillet'],
+    ressourcesIndispensables: ['fish_fillet','bread'],
+    ressourcesUpgrade: { goods: 350 },
+    ressourcesBonus: [],
   },
 
   /* ---------- GRAND IMMEUBLE ---------- */
@@ -113,9 +113,9 @@ const CONFIG = {
     revenuParUnite: 18,
     habitantsMax: 60,
     stockMax: 40,
-    ressourcesIndispensables: ['goods','bread'],
-    ressourcesFusion: ['goods','clothes','bread'],
-    ressourcesBonus: ['fish_fillet'],
+    ressourcesIndispensables: ['fish_fillet','bread'],
+    ressourcesUpgrade: { goods: 400 },
+    ressourcesBonus: [],
   },
 
   /* ---------- TOUR (niveau 3×3) ---------- */
@@ -125,9 +125,9 @@ const CONFIG = {
     revenuParUnite: 19,
     habitantsMax: 95,
     stockMax: 60,
-    ressourcesIndispensables: ['goods','bread','clothes'],
-    ressourcesFusion: ['goods','clothes','bread'],
-    ressourcesBonus: ['fish_fillet'],
+    ressourcesIndispensables: ['fish_fillet','bread','clothes'],
+    ressourcesUpgrade: { goods: 500 },
+    ressourcesBonus: [],
   },
 
   /* ---------- GRATTE-CIEL ---------- */
@@ -137,9 +137,9 @@ const CONFIG = {
     revenuParUnite: 20,
     habitantsMax: 150,
     stockMax: 80,
-    ressourcesIndispensables: ['goods','bread','clothes'],
-    ressourcesFusion: ['goods','clothes','bread'],
-    ressourcesBonus: ['fish_fillet'],
+    ressourcesIndispensables: ['fish_fillet','bread','clothes'],
+    ressourcesUpgrade: {},
+    ressourcesBonus: [],
   },
 
   /* ---------- FUSION INDUSTRIELLE ----------

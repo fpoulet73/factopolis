@@ -31,8 +31,40 @@ function newBuilding(type,x,y,w,h){
     b.passengersEntrantPending = 0;
   }
   if(d.ind) b.paused = false;
-  if(d.resid){ b.pop = 0; b.protectedPop = 0; b.ct = 0; b.bonusCt = 0; b.pending = 0; b.pendingProtected = 0; b.starve = 0; }
+  if(d.resid){
+    b.pop = 0; b.protectedPop = 0; b.ct = 0; b.bonusCt = 0; b.pending = 0; b.pendingProtected = 0; b.starve = 0;
+    b.upgradeProgress = {};
+    b.upgradeInc = {};
+    b.upgradePaused = {};
+  }
   return b;
+}
+
+function normalizeResidentialUpgradeState(b){
+  if(!BUILD[b.type]?.resid) return;
+  if(!b.upgradeProgress || typeof b.upgradeProgress !== 'object') b.upgradeProgress = {};
+  if(!b.upgradeInc || typeof b.upgradeInc !== 'object') b.upgradeInc = {};
+  if(!b.upgradePaused || typeof b.upgradePaused !== 'object') b.upgradePaused = {};
+  for(const r of residUpgradeResourcesOf(b)){
+    const target = residUpgradeTargetOf(b, r);
+    let progress = Math.max(0, Math.floor(b.upgradeProgress[r] || 0));
+    if(!residConsumesResource(b, r) && (b.storage[r]||0) > 0){
+      progress += Math.floor(b.storage[r] || 0);
+      delete b.storage[r];
+    }
+    if(target > 0) b.upgradeProgress[r] = Math.min(target, progress);
+    else delete b.upgradeProgress[r];
+  }
+  for(const r in b.upgradeProgress){
+    if(!RES[r] || residUpgradeTargetOf(b, r) <= 0) delete b.upgradeProgress[r];
+  }
+  for(const r in b.upgradeInc){
+    if(!RES[r] || residUpgradeTargetOf(b, r) <= 0) delete b.upgradeInc[r];
+  }
+  for(const r in b.upgradePaused){
+    if(!RES[r] || residUpgradeTargetOf(b, r) <= 0) delete b.upgradePaused[r];
+    else b.upgradePaused[r] = !!b.upgradePaused[r];
+  }
 }
 
 function markStarterHomeIfNeeded(b){
@@ -120,7 +152,7 @@ function adjRoadTiles(b){
 
 function capOf(b,res){
   const rc = BUILD[b.type].resid;
-  if(rc) return rc.stockCap;
+  if(rc) return residConsumesResource(b, res) ? rc.stockCap : 0;
   const d = BUILD[b.type];
   if(d?.storageHub){
     if(b.type === 'tank') return res === 'water' ? TANK_STOCK_PER_CELL * b.w * b.h : 0;
@@ -150,7 +182,66 @@ function accepts(b,res){
   const r = recipeOf(b);
   return !!(r && res in r.in);
 }
-const space = (b,res)=> capOf(b,res) - (b.storage[res]||0) - (b.inc[res]||0);
+function reserveIncomingResource(b,res,amt){
+  const reservation = { stock:0, upgrade:0 };
+  if(!(amt > 0)) return reservation;
+  if(BUILD[b.type]?.resid){
+    normalizeResidentialUpgradeState(b);
+    const stockRoom = Math.max(0, capOf(b,res) - (b.storage[res]||0) - (b.inc[res]||0));
+    reservation.stock = Math.min(amt, stockRoom);
+    if(reservation.stock > 0) b.inc[res] = (b.inc[res]||0) + reservation.stock;
+    const upgradeRoom = residUpgradePaused(b, res)
+      ? 0
+      : Math.max(0, residUpgradeRemainingOf(b, res) - (b.upgradeInc[res]||0));
+    reservation.upgrade = Math.min(amt - reservation.stock, upgradeRoom);
+    if(reservation.upgrade > 0) b.upgradeInc[res] = (b.upgradeInc[res]||0) + reservation.upgrade;
+    return reservation;
+  }
+  reservation.stock = amt;
+  b.inc[res] = (b.inc[res]||0) + amt;
+  return reservation;
+}
+function releaseIncomingResource(b,res,reservation){
+  if(!b || !reservation) return;
+  if(reservation.stock > 0) b.inc[res] = Math.max(0, (b.inc[res]||0) - reservation.stock);
+  if(reservation.upgrade > 0 && b.upgradeInc)
+    b.upgradeInc[res] = Math.max(0, (b.upgradeInc[res]||0) - reservation.upgrade);
+}
+function depositResourceIntoBuilding(b,res,amt){
+  if(!(amt > 0)) return 0;
+  let remaining = amt;
+  let delivered = 0;
+  if(BUILD[b.type]?.resid) normalizeResidentialUpgradeState(b);
+  const stockCap = capOf(b, res);
+  if(stockCap > 0){
+    const room = Math.max(0, stockCap - (b.storage[res]||0));
+    const take = Math.min(remaining, room);
+    if(take > 0){
+      b.storage[res] = (b.storage[res]||0) + take;
+      remaining -= take;
+      delivered += take;
+    }
+  }
+  if(BUILD[b.type]?.resid){
+    const upgradeRoom = residUpgradePaused(b, res) ? 0 : residUpgradeRemainingOf(b, res);
+    const take = Math.min(remaining, upgradeRoom);
+    if(take > 0){
+      b.upgradeProgress[res] = residUpgradeProgressOf(b, res) + take;
+      remaining -= take;
+      delivered += take;
+    }
+  }
+  return delivered;
+}
+const space = (b,res)=>{
+  const stockRoom = Math.max(0, capOf(b,res) - (b.storage[res]||0) - (b.inc[res]||0));
+  if(!BUILD[b.type]?.resid) return stockRoom;
+  normalizeResidentialUpgradeState(b);
+  const upgradeRoom = residUpgradePaused(b, res)
+    ? 0
+    : Math.max(0, residUpgradeRemainingOf(b, res) - (b.upgradeInc[res]||0));
+  return stockRoom + upgradeRoom;
+};
 
 function treeNear(x,y,r){
   for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
