@@ -2122,10 +2122,15 @@ function mpConnect(url){
     if(saved) ws.send(JSON.stringify({ type:'resume', token:saved }));
   };
 
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
+    // Le serveur ferme l'ancienne connexion (code 4000) quand le même compte
+    // se reconnecte depuis une autre machine : on doit quitter la partie ici.
+    const replaced = ev && ev.code === 4000 && ev.reason === 'replaced_by_new_session';
     const stopped = MP.shutdownNotice;
+    const wasInGame = MP.roomId != null;
     MP.connected = false;
     MP.role = null;
+    MP.myId = null;
     MP.isAdmin = false;
     MP.players = [];
     MP.cursors = {};
@@ -2139,7 +2144,38 @@ function mpConnect(url){
     mpStateSyncTimer = 0;
     const closeMsg = MP.shutdownMessage || 'Serveur arrêté';
     MP.shutdownMessage = '';
-    toast(stopped ? '🔌 '+closeMsg : '🔌 Déconnecté du serveur','err');
+
+    // Dès qu'on était en partie, on en sort automatiquement : il n'y a pas de
+    // reconnexion, donc une coupure (serveur arrêté proprement, tué, ou réseau
+    // perdu) doit ramener à une carte vierge plutôt que laisser jouer une partie
+    // figée et désynchronisée.
+    if(replaced || stopped || wasInGame){
+      MP.roomId = null;
+      MP.roomName = null;
+      MP.roomSaveName = null;
+      MP.ownerColors = {};
+      if(replaced) localStorage.removeItem('fp_token'); // session invalidée côté serveur
+      document.title = 'Factopolis';
+      genWorld(WORLD_DEFAULTS);
+      mpUpdateUI();
+      mpRenderPlayerList();
+      let title, noticeMsg;
+      if(replaced){
+        title = '🔌 Connexion depuis une autre machine — déconnecté';
+        noticeMsg = 'Ce compte vient de se connecter depuis une autre machine.\nVous avez été déconnecté de la partie.';
+      } else if(stopped){
+        title = '🔌 ' + closeMsg;
+        noticeMsg = closeMsg + '\nVous avez été déconnecté de la partie.';
+      } else {
+        title = '🔌 Connexion au serveur perdue';
+        noticeMsg = 'La connexion au serveur a été perdue (serveur arrêté ?).\nVous avez été déconnecté de la partie.';
+      }
+      toast(title, 'err');
+      confirmAction(noticeMsg, { title:'Déconnecté', okText:'OK', hideCancel:true });
+      return;
+    }
+
+    toast('🔌 Déconnecté du serveur', 'err');
     mpUpdateUI();
     mpRenderPlayerList();
   };

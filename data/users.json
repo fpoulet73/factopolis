@@ -12,8 +12,8 @@
     "color": "#e2a93f",
     "passwordAlgo": "scrypt",
     "passwordSalt": "483c4f58a5c343aa390587c1decac2e2",
-    "sessionHash": "c0b1414fbb76a1a49481f531f1a4f227f0addebe0afa1866fa10d385ec971430",
-    "sessionIssuedAt": "2026-06-30T10:43:53.391Z"
+    "sessionHash": "c9bdf02df6ec5934d191a72f199d5a1d5b02ce61bb2d2ce4c0e1d3eca874ad91",
+    "sessionIssuedAt": "2026-06-30T13:16:18.215Z"
   },
   "gege": {
     "passwordHash": "b887ec20206d9216b5e49d4a328828fc7d0735ac53424a8a30378fb6b2ef4b462696b0cfecd8940dc32c7ed9abca52e5abe1297c5980f9f1035e36356fcd5b7a",

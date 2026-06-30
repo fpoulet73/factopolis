@@ -1971,6 +1971,7 @@ function confirmAction(message, options={}){
   const cancel = $('confirmCancel');
   ok.textContent = options.okText || 'Confirmer';
   cancel.textContent = options.cancelText || 'Annuler';
+  cancel.style.display = options.hideCancel ? 'none' : '';
   ok.classList.toggle('danger', options.danger === true);
   ok.classList.toggle('primary', options.danger !== true);
   overlay.classList.add('open');
