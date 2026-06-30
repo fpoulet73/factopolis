@@ -3230,7 +3230,8 @@ function trackCamera(){
   if(focusVehicle.garageRef?.dead){ camTracking = false; focusVehicle = null; return; }
   const pos = vehicleWorldPos(focusVehicle);
   if(!pos) return;
-  const p = worldPxToIso(pos.x, pos.y);
+  const [u, v] = rotF(pos.x / TILE, pos.y / TILE);
+  const p = liftedIso(u, v, terrainLiftPxAtWorld(pos.x, pos.y));
   targetCam.x = p[0] - W/(2*targetCam.z);
   targetCam.y = p[1] - H/(2*targetCam.z);
   clampCamera(targetCam);

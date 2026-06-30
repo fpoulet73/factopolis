@@ -51,6 +51,14 @@ const CONFIG = {
     taille: 128,
     joueursMax: 4,
     eauPct: 10,
+    relief: {
+      niveaux: 6,
+      hauteurPalierPx: 14,
+      variation: 0.18,
+      plateaux: 0.22,
+      neigeNiveau: 5,
+      neigeFondu: 0.35,
+    },
     ressources: {
       tree:   4,
       wheat:  0.05,

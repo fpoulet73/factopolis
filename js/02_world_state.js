@@ -1,7 +1,7 @@
 const COLORS = ['#e25e4c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#f0a040','#40d0c0','#e0e0e0'];
 
 // ---------- état ----------
-let terrain, road, rail, railOwner, railSignals, railBlocks, railBlockOccupancy, bgrid, buildings, trucks, walkers, homeless, floats;
+let terrain, terrainHeightMap, waterHeightMap, road, rail, railOwner, railSignals, railBlocks, railBlockOccupancy, bgrid, buildings, trucks, walkers, homeless, floats;
 let smoke = [];  // particules de fumée (locomotives) — purement cosmétique, transitoire
 let vehicles = [];        // véhicules persistants
 let vehicleRouteMode = null; // { vehicle, step:'source'|'dest' } ou null
@@ -152,6 +152,7 @@ function worldDefaultsFromConfig(){
     size: Math.round(clampNum(worldCfg.taille, 32, 128, 64)),
     maxPlayers: Math.round(clampNum(worldCfg.joueursMax, 1, 32, 8)),
     waterPct: clampNum(worldCfg.eauPct, 0, 100, 40),
+    reliefEnabled: worldCfg.reliefEnabled !== false,
     resources: {
       tree: clampNum(resourcesCfg.tree, 0, 100, 8),
       wheat: clampNum(resourcesCfg.wheat, 0, 100, 4),
@@ -171,8 +172,129 @@ function normalizeWorldConfig(config){
     size: Math.round(clampNum(c.size, 32, 128, WORLD_DEFAULTS.size)),
     maxPlayers: Math.round(clampNum(c.maxPlayers, 1, 32, WORLD_DEFAULTS.maxPlayers)),
     waterPct: WORLD_DEFAULTS.waterPct,
+    reliefEnabled: c.reliefEnabled !== false,
     resources: { ...WORLD_DEFAULTS.resources },
   };
+}
+
+function reliefCfg(){
+  const src = CFG.monde?.relief || {};
+  const levels = Math.max(0, Math.min(12, Math.round(src.niveaux ?? 6)));
+  return {
+    enabled: levels > 0 && WORLD?.reliefEnabled !== false,
+    levels,
+    stepPx: clampNum(src.hauteurPalierPx, 6, 32, 14),
+    roughness: clampNum(src.variation, 0, 1, 0.18),
+    plateauNoise: clampNum(src.plateaux, 0, 1, 0.22),
+    snowLevel: Math.round(clampNum(src.neigeNiveau, 1, Math.max(1, levels), Math.max(1, levels - 1))),
+    snowBlend: clampNum(src.neigeFondu, 0, 1, 0.35),
+  };
+}
+
+function terrainReliefStepPx(){
+  return reliefCfg().stepPx;
+}
+
+function terrainLevelAt(x, y){
+  if(!terrainHeightMap || x < 0 || y < 0 || x >= N || y >= N) return 0;
+  return terrainHeightMap[y * N + x] || 0;
+}
+
+function waterLevelAt(x, y){
+  if(!waterHeightMap || x < 0 || y < 0 || x >= N || y >= N) return 0;
+  return waterHeightMap[y * N + x] || 0;
+}
+
+function terrainLiftPxAt(x, y){
+  if(terrain && terrain[y * N + x] === T.WATER) return waterLevelAt(x, y) * terrainReliefStepPx();
+  return terrainLevelAtFloat(x + 0.5, y + 0.5) * terrainReliefStepPx();
+}
+
+function terrainCornerLevelAt(gx, gy){
+  if(!terrainHeightMap) return 0;
+  let best = 0;
+  for(let oy = -1; oy <= 0; oy++) for(let ox = -1; ox <= 0; ox++){
+    const tx = gx + ox, ty = gy + oy;
+    if(tx < 0 || ty < 0 || tx >= N || ty >= N) continue;
+    best = Math.max(best, terrainLevelAt(tx, ty));
+  }
+  return best;
+}
+
+function terrainTileCornerLevels(x, y){
+  return {
+    nw: terrainCornerLevelAt(x, y),
+    ne: terrainCornerLevelAt(x + 1, y),
+    se: terrainCornerLevelAt(x + 1, y + 1),
+    sw: terrainCornerLevelAt(x, y + 1),
+  };
+}
+
+function terrainLevelAtFloat(tx, ty){
+  if(!terrainHeightMap) return 0;
+  const x0 = Math.max(0, Math.min(N - 1, Math.floor(tx)));
+  const y0 = Math.max(0, Math.min(N - 1, Math.floor(ty)));
+  if(terrain && terrain[y0 * N + x0] === T.WATER) return waterLevelAt(x0, y0);
+  const fx = Math.max(0, Math.min(1, tx - x0));
+  const fy = Math.max(0, Math.min(1, ty - y0));
+  const corners = terrainTileCornerLevels(x0, y0);
+  const hx0 = corners.nw + (corners.ne - corners.nw) * fx;
+  const hx1 = corners.sw + (corners.se - corners.sw) * fx;
+  return hx0 + (hx1 - hx0) * fy;
+}
+
+function rebuildWaterLevels(){
+  if(!waterHeightMap || waterHeightMap.length !== N * N) waterHeightMap = new Uint8Array(N * N);
+  else waterHeightMap.fill(0);
+  if(!terrain) return;
+  if(!reliefCfg().enabled) return;
+  const seen = new Uint8Array(N * N);
+  const queue = new Int32Array(N * N);
+  for(let i = 0; i < N * N; i++){
+    if(terrain[i] !== T.WATER || seen[i]) continue;
+    let qh = 0, qt = 0;
+    queue[qt++] = i;
+    seen[i] = 1;
+    const tiles = [];
+    let shoreMin = Infinity;
+    while(qh < qt){
+      const cur = queue[qh++];
+      tiles.push(cur);
+      const x = cur % N, y = (cur / N) | 0;
+      for(const [dx, dy] of DIRS){
+        const nx = x + dx, ny = y + dy;
+        if(nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        const ni = ny * N + nx;
+        if(terrain[ni] === T.WATER){
+          if(!seen[ni]){
+            seen[ni] = 1;
+            queue[qt++] = ni;
+          }
+        } else {
+          shoreMin = Math.min(shoreMin, terrainLevelAt(nx, ny));
+        }
+      }
+    }
+    const level = Number.isFinite(shoreMin) ? Math.max(0, shoreMin - 1) : 0;
+    for(const wi of tiles) waterHeightMap[wi] = level;
+  }
+}
+
+function terrainLiftPxAtWorld(wx, wy){
+  return terrainLevelAtFloat(wx / TILE, wy / TILE) * terrainReliefStepPx();
+}
+
+function terrainLiftPxAtRot(u, v){
+  const [tx, ty] = invRotF(u, v);
+  return terrainLevelAtFloat(tx, ty) * terrainReliefStepPx();
+}
+
+function buildingLiftPx(b){
+  if(!b) return 0;
+  return Math.round(terrainLiftPxAtWorld(
+    (b.x + (b.w || 1) * 0.5) * TILE,
+    (b.y + (b.h || 1) * 0.5) * TILE
+  ));
 }
 
 function setMapSize(size){
@@ -332,26 +454,107 @@ function applyShoreResources(noiseFn, inScope){
   }
 }
 
-function terrainHeight(n1, n2, n3, x, y){
+function terrainNoiseScore(n1, n2, n3, x, y){
   return 0.55 * n1(x, y) + 0.30 * n2(x, y) + 0.15 * n3(x, y);
 }
 
+function pseudoNoise(x, y, scaleX, scaleY, seed){
+  const v = Math.sin((x + seed) * scaleX + (y - seed) * scaleY) * 43758.5453123;
+  return v - Math.floor(v);
+}
+
+function smoothTerrainHeights(inScope){
+  if(!terrainHeightMap) return;
+  const cfg = reliefCfg();
+  if(!cfg.enabled) return;
+  const next = new Uint8Array(terrainHeightMap);
+  for(let pass = 0; pass < 3; pass++){
+    for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+      if(inScope && !inScope(x, y)) continue;
+      const i = y * N + x;
+      if(terrain[i] === T.WATER){ next[i] = 0; continue; }
+      let sum = terrainHeightMap[i] * 3;
+      let count = 3;
+      let minNeighbor = terrainHeightMap[i];
+      for(const [dx, dy] of DIRS){
+        const nx = x + dx, ny = y + dy;
+        if(nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        if(inScope && !inScope(nx, ny)) continue;
+        const nh = terrain[(ny * N) + nx] === T.WATER ? 0 : terrainHeightMap[(ny * N) + nx];
+        sum += nh;
+        count++;
+        if(nh < minNeighbor) minNeighbor = nh;
+      }
+      let h = Math.round(sum / count);
+      h = Math.max(1, Math.min(cfg.levels, h));
+      if(h > minNeighbor + 1) h = minNeighbor + 1;
+      next[i] = h;
+    }
+    terrainHeightMap.set(next);
+  }
+}
+
+function rebuildTerrainHeightsFromTerrain(inScope){
+  if(!terrainHeightMap || terrainHeightMap.length !== N * N) terrainHeightMap = new Uint8Array(N * N);
+  const cfg = reliefCfg();
+  for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+    if(inScope && !inScope(x, y)) continue;
+    const i = y * N + x;
+    if(terrain[i] === T.WATER || !cfg.enabled){
+      terrainHeightMap[i] = 0;
+      continue;
+    }
+    const broad = pseudoNoise(x, y, 0.065, 0.052, 17);
+    const detail = pseudoNoise(x, y, 0.17, 0.11, 53);
+    const coastPenalty = tileTouchesWater(x, y) ? 0.22 : 0;
+    const richness = (terrain[i] === T.IRON || terrain[i] === T.COAL) ? 0.08 : 0;
+    const value = Math.max(0, Math.min(1, broad * 0.78 + detail * 0.22 - coastPenalty + richness));
+    terrainHeightMap[i] = 1 + Math.round(value * Math.max(0, cfg.levels - 1));
+  }
+  smoothTerrainHeights(inScope);
+  if(!inScope) rebuildWaterLevels();
+}
+
 function applyBaseTerrain(noiseA, noiseB, noiseC, waterPct, inScope){
+  if(!terrainHeightMap || terrainHeightMap.length !== N * N) terrainHeightMap = new Uint8Array(N * N);
+  if(!waterHeightMap || waterHeightMap.length !== N * N) waterHeightMap = new Uint8Array(N * N);
+  const cfg = reliefCfg();
+  const ridgeNoise = valueNoise(21);
+  const plateauNoise = valueNoise(5);
   const candidates = [];
   for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
     if(inScope && !inScope(x, y)) continue;
     const i = y * N + x;
-    terrain[i] = T.GRASS;
-    candidates.push({
-      i,
-      score: terrainHeight(noiseA, noiseB, noiseC, x, y) + (hash(x, y) & 31) / 1024,
-    });
+    const base = terrainNoiseScore(noiseA, noiseB, noiseC, x, y);
+    const ridge = 1 - Math.abs(ridgeNoise(x, y) * 2 - 1);
+    const plateau = (plateauNoise(x, y) - 0.5) * cfg.plateauNoise;
+    candidates.push({ i, x, y, water: base, land: base * 0.7 + ridge * 0.3 + plateau });
   }
   if(!candidates.length) return;
   const waterTiles = Math.min(candidates.length, Math.max(0, Math.round(candidates.length * waterPct / 100)));
-  if(waterTiles <= 0) return;
-  candidates.sort((a, b) => a.score - b.score);
-  for(let i = 0; i < waterTiles; i++) terrain[candidates[i].i] = T.WATER;
+  const sorted = candidates.slice().sort((a, b) => a.water - b.water);
+  const waterSet = new Set(sorted.slice(0, waterTiles).map(c => c.i));
+  const waterThreshold = waterTiles > 0 ? sorted[Math.max(0, waterTiles - 1)].water : 0;
+  const den = Math.max(0.001, 1 - waterThreshold);
+  for(const entry of candidates){
+    if(waterSet.has(entry.i)){
+      terrain[entry.i] = T.WATER;
+      terrainHeightMap[entry.i] = 0;
+      continue;
+    }
+    terrain[entry.i] = T.GRASS;
+    if(!cfg.enabled){
+      terrainHeightMap[entry.i] = 0;
+      continue;
+    }
+    const normalized = Math.max(0, Math.min(1, (entry.land - waterThreshold) / den));
+    const terraces = Math.pow(normalized, 0.82);
+    const jitter = (pseudoNoise(entry.x, entry.y, 0.31, 0.19, 91) - 0.5) * cfg.roughness;
+    const level = 1 + Math.round(Math.max(0, Math.min(1, terraces + jitter)) * Math.max(0, cfg.levels - 1));
+    terrainHeightMap[entry.i] = Math.max(1, Math.min(cfg.levels, level));
+  }
+  smoothTerrainHeights(inScope);
+  if(!inScope) rebuildWaterLevels();
 }
 
 function genWorld(config){
@@ -360,6 +563,8 @@ function genWorld(config){
   const N_FULL_MAP = N_PLAY + 2 * EXP_MARGIN;
   setMapSize(N_FULL_MAP);
   terrain = new Uint8Array(N*N);
+  terrainHeightMap = new Uint8Array(N*N);
+  waterHeightMap = new Uint8Array(N*N);
   road = new Uint8Array(N*N);
   rail = new Uint8Array(N*N);
   railOwner = new Int16Array(N*N).fill(-1);
@@ -524,6 +729,7 @@ function generateExpansionTerrain(){
   pp(T.IRON, cnt(WORLD.resources?.iron??10));
   pp(T.COAL, cnt(WORLD.resources?.coal??10));
   applyShoreResources(tn, (x, y) => !inPlay(x, y));
+  rebuildWaterLevels();
   markGroundDirty();
 }
 

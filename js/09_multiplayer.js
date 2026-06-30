@@ -1311,6 +1311,8 @@ function serializeState(opts = {}){
       purchasedPieces: Array.from(purchasedPieces),
       mapMask: Array.from(mapMask),
       terrain: Array.from(terrain),
+      terrainHeightMap: Array.from(terrainHeightMap || new Uint8Array(N * N)),
+      waterHeightMap: Array.from(waterHeightMap || new Uint8Array(N * N)),
       road:    Array.from(road),
       rail:    Array.from(rail),
       railOwner: railOwner ? Array.from(railOwner) : null,
@@ -1444,6 +1446,12 @@ function applySnapshot(d){
     WORLD = normalizeWorldConfig(d.world || { ...WORLD, size: d.size });
     setMapSize(d.size || N);
     terrain = Uint8Array.from(d.terrain);
+    terrainHeightMap = (d.terrainHeightMap && d.terrainHeightMap.length === N * N)
+      ? Uint8Array.from(d.terrainHeightMap)
+      : new Uint8Array(N * N);
+    waterHeightMap = (d.waterHeightMap && d.waterHeightMap.length === N * N)
+      ? Uint8Array.from(d.waterHeightMap)
+      : new Uint8Array(N * N);
     road    = Uint8Array.from(d.road);
     rail    = d.rail ? normalizeLegacyRailGrid(d.rail) : new Uint8Array((d.size || N) * (d.size || N));
     railOwner = (d.railOwner && d.railOwner.length === N*N) ? Int16Array.from(d.railOwner) : new Int16Array(N*N).fill(-1);
@@ -1461,6 +1469,11 @@ function applySnapshot(d){
           mapMask[y*N+x] = 1;
       generateExpansionTerrain(); // les marges étaient vides (tout herbe)
     }
+    if(!d.terrainHeightMap || d.terrainHeightMap.length !== N * N){
+      WORLD.reliefEnabled = false;
+      terrainHeightMap.fill(0);
+    }
+    if(d.terrainHeightMap && (!d.waterHeightMap || d.waterHeightMap.length !== N * N)) rebuildWaterLevels();
   } else {
     // Ancien format : d.size = N_PLAY, migration vers la nouvelle structure
     const N_PLAY = d.size || 64;
@@ -1474,13 +1487,23 @@ function applySnapshot(d){
     const oldTerrain = Uint8Array.from(d.terrain);
     const oldRoad    = Uint8Array.from(d.road);
     const oldRail    = d.rail ? normalizeLegacyRailGrid(d.rail) : new Uint8Array(N_PLAY * N_PLAY);
+    const oldHeights = (d.terrainHeightMap && d.terrainHeightMap.length === N_PLAY * N_PLAY)
+      ? Uint8Array.from(d.terrainHeightMap)
+      : null;
+    const oldWaterHeights = (d.waterHeightMap && d.waterHeightMap.length === N_PLAY * N_PLAY)
+      ? Uint8Array.from(d.waterHeightMap)
+      : null;
     terrain = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
+    terrainHeightMap = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
+    waterHeightMap = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     road    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     rail    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     railOwner = new Int16Array(N_FULL_MAP * N_FULL_MAP).fill(-1);
     railSignals = Object.create(null);
     for(let y=0; y<N_PLAY; y++) for(let x=0; x<N_PLAY; x++){
       terrain[(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldTerrain[y*N_PLAY+x];
+      if(oldHeights) terrainHeightMap[(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldHeights[y*N_PLAY+x];
+      if(oldWaterHeights) waterHeightMap[(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldWaterHeights[y*N_PLAY+x];
       road   [(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldRoad   [y*N_PLAY+x];
       rail   [(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldRail   [y*N_PLAY+x];
     }
@@ -1501,6 +1524,11 @@ function applySnapshot(d){
       for(let x=mapBounds.x0; x<mapBounds.x1; x++)
         mapMask[y*N+x] = 1;
     generateExpansionTerrain();
+    if(!oldHeights){
+      WORLD.reliefEnabled = false;
+      terrainHeightMap.fill(0);
+    }
+    if(oldHeights && !oldWaterHeights) rebuildWaterLevels();
     // Re-centrer la caméra sur la zone jouable migée
     const pcx = (mapBounds.x0 + mapBounds.x1) / 2;
     const pcy = (mapBounds.y0 + mapBounds.y1) / 2;
@@ -1868,7 +1896,9 @@ function applyAction(msg){
       break;
     case 'fill_water': {
       if(!validIdx(act.i) || !validXY(act.depotX, act.depotY)) break;
-      terrain[act.i] = T.GRASS; markGroundDirty();
+      terrain[act.i] = T.GRASS;
+      rebuildWaterLevels();
+      markGroundDirty();
       const depot = bgrid[act.depotY*N+act.depotX];
       if(depot && depot.type === 'terrassement')
         depot.storage['dirt'] = Math.max(0, (depot.storage['dirt']||0) - FILL_WATER_COST);

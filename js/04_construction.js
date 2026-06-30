@@ -648,7 +648,7 @@ function clickAt(x,y){
     const depot = terrassementNear(x, y, MP.myId ?? 1);
     if(!depot){ toast('⛔ Aucune usine de terrassement à portée avec '+FILL_WATER_COST+' terres','err'); return; }
     depot.storage['dirt'] = (depot.storage['dirt']||0) - FILL_WATER_COST;
-    terrain[i] = T.GRASS; markGroundDirty();
+    terrain[i] = T.GRASS; rebuildWaterLevels(); markGroundDirty();
     // netSend géré par l'intercept MP (09_multiplayer.js) pour éviter le double envoi
     return;
   }

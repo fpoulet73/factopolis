@@ -6,6 +6,81 @@ function addFloat(x,y,txt,col){
 // ---------- rendu isométrique ----------
 function hash(x,y){ return ((x*73856093) ^ (y*19349663)) >>> 0; }
 
+function liftedIso(u, v, lift){
+  const c = iso(u, v);
+  return [c[0], c[1] - (lift || 0)];
+}
+
+function tileCenterIso(rx, ry, x, y){
+  return liftedIso(rx + 0.5, ry + 0.5, terrainLiftPxAt(x, y));
+}
+
+function entityIso(u, v){
+  return liftedIso(u, v, terrainLiftPxAtRot(u, v));
+}
+
+function terrainTilePoints(rx, ry, x, y){
+  const h = terrain[y * N + x] === T.WATER
+    ? (() => {
+        const wl = waterLevelAt(x, y);
+        return { nw:wl, ne:wl, se:wl, sw:wl };
+      })()
+    : terrainTileCornerLevels(x, y);
+  const step = terrainReliefStepPx();
+  return {
+    A: liftedIso(rx, ry, h.nw * step),
+    B: liftedIso(rx + 1, ry, h.ne * step),
+    C: liftedIso(rx + 1, ry + 1, h.se * step),
+    D: liftedIso(rx, ry + 1, h.sw * step),
+  };
+}
+
+function pathTilePoints(p){
+  ctx.beginPath();
+  ctx.moveTo(p.A[0], p.A[1]);
+  ctx.lineTo(p.B[0], p.B[1]);
+  ctx.lineTo(p.C[0], p.C[1]);
+  ctx.lineTo(p.D[0], p.D[1]);
+  ctx.closePath();
+}
+
+function tilePolygon(rx, ry, x, y){
+  const p = terrainTilePoints(rx, ry, x, y);
+  pathTilePoints(p);
+  return p;
+}
+
+function drawWaterBankFaces(rx, ry, x, y, t, snowAmount){
+  if(t === T.WATER) return;
+  const p = terrainTilePoints(rx, ry, x, y);
+  const bank = cliffColorForTile(t, snowAmount > 0.55);
+
+  if(ry < N - 1){
+    const [nx, ny] = invRotIdx(rx, ry + 1);
+    if(nx >= 0 && ny >= 0 && nx < N && ny < N && terrain[ny * N + nx] === T.WATER){
+      const wl = waterLevelAt(nx, ny) * terrainReliefStepPx();
+      const wC = liftedIso(rx + 1, ry + 1, wl);
+      const wD = liftedIso(rx, ry + 1, wl);
+      if(Math.abs(p.C[1] - wC[1]) > 0.5 || Math.abs(p.D[1] - wD[1]) > 0.5){
+        ctx.fillStyle = shade(bank, -0.15);
+        quad(p.C, p.D, wD, wC);
+      }
+    }
+  }
+  if(rx < N - 1){
+    const [nx, ny] = invRotIdx(rx + 1, ry);
+    if(nx >= 0 && ny >= 0 && nx < N && ny < N && terrain[ny * N + nx] === T.WATER){
+      const wl = waterLevelAt(nx, ny) * terrainReliefStepPx();
+      const wB = liftedIso(rx + 1, ry, wl);
+      const wC = liftedIso(rx + 1, ry + 1, wl);
+      if(Math.abs(p.B[1] - wB[1]) > 0.5 || Math.abs(p.C[1] - wC[1]) > 0.5){
+        ctx.fillStyle = shade(bank, -0.35);
+        quad(p.B, p.C, wC, wB);
+      }
+    }
+  }
+}
+
 // --- Poissons dans les lacs ---
 let _fishTilesCache = null, _fishTerrainRef = null, _fishGroundVersion = -1;
 
@@ -46,7 +121,7 @@ function fishAnimationEnabled(){
 }
 
 function drawFishOnTile(rx, ry, x, y){
-  const c = iso(rx+0.5, ry+0.5);
+  const c = tileCenterIso(rx, ry, x, y);
   const hs = hash(x, y);
   const animated = fishAnimationEnabled();
   const now = animated ? performance.now() * 0.0012 : 0;
@@ -174,7 +249,8 @@ function prism(u0,v0,u1,v1,hp,col,lift){
 
 function diamond(rx,ry,w,h){
   w = w||1; h = h||w;
-  const A = iso(rx,ry), B = iso(rx+w,ry), C = iso(rx+w,ry+h), D = iso(rx,ry+h);
+  const lift = arguments[4] || 0;
+  const A = liftedIso(rx, ry, lift), B = liftedIso(rx+w, ry, lift), C = liftedIso(rx+w, ry+h, lift), D = liftedIso(rx, ry+h, lift);
   ctx.beginPath();
   ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]);
   ctx.lineTo(C[0],C[1]); ctx.lineTo(D[0],D[1]);
@@ -214,6 +290,25 @@ function packTerrain(kind, x, y){
   return cols[hash(x,y) % cols.length];
 }
 
+function snowAmountForTile(x, y){
+  const cfg = reliefCfg();
+  if(!cfg.enabled) return 0;
+  const level = terrainLevelAt(x, y);
+  if(level < cfg.snowLevel) return 0;
+  const depth = Math.max(1, cfg.levels - cfg.snowLevel + 1);
+  const base = (level - cfg.snowLevel + 1) / depth;
+  const grain = (((hash(x + 17, y - 11) >>> 8) & 255) / 255 - 0.5) * cfg.snowBlend;
+  return Math.max(0.15, Math.min(1, base + grain));
+}
+
+function cliffColorForTile(t, snowy){
+  if(snowy) return '#d8e2ea';
+  if(t === T.WATER) return '#1c557f';
+  if(t === T.SAND) return '#b28f5a';
+  if(t === T.CLAY) return '#7b4e3a';
+  return '#6f5236';
+}
+
 function packBuildingColor(b, d){
   const p = graphicBasePack();
   if(b.type === 'mine' && b.ore) return b.ore === 'iron' ? '#8a5c3a' : '#4a4a5a';
@@ -228,11 +323,11 @@ function packBuildingColor(b, d){
   return d.col;
 }
 
-function drawRoofAccent(rx0, ry0, rw, rh, hp, col, b, d){
+function drawRoofAccent(rx0, ry0, rw, rh, hp, col, b, d, lift){
   if(drawFast) return;
   const style = graphicBasePack().roof;
   if(style === 'flat') return;
-  const A = iso(rx0,ry0), B = iso(rx0+rw,ry0), C = iso(rx0+rw,ry0+rh), D = iso(rx0,ry0+rh);
+  const A = liftedIso(rx0, ry0, lift), B = liftedIso(rx0+rw, ry0, lift), C = liftedIso(rx0+rw, ry0+rh, lift), D = liftedIso(rx0, ry0+rh, lift);
   const up = p => [p[0], p[1]-hp];
   const TA = up(A), TB = up(B), TC = up(C), TD = up(D);
   const lerp = (P,Q,t) => [P[0]+(Q[0]-P[0])*t, P[1]+(Q[1]-P[1])*t];
@@ -390,7 +485,7 @@ function spriteFootprintSize(rw, rh){
   };
 }
 
-function drawBuildingSprite(b, rx0, ry0, rw, rh, d){
+function drawBuildingSprite(b, rx0, ry0, rw, rh, d, lift){
   const sprite = spriteForBuilding(b, rw, rh);
   const img = imageForSprite(sprite);
   if(!img || !img.complete || !img.naturalWidth) return null;
@@ -400,7 +495,9 @@ function drawBuildingSprite(b, rx0, ry0, rw, rh, d){
   // PNG sprites anchor to bottom corner of the isometric diamond (most natural for building sprites)
   // SVG/other sprites without fitFootprint anchor to the tile center (legacy behaviour)
   const isPng = /\.png(?:[?#]|$)/i.test(sprite?.src || '');
-  const base = (fitFootprint || isPng) ? iso(rx0 + rw, ry0 + rh) : iso(rx0 + rw*0.5, ry0 + rh*0.5);
+  const base = (fitFootprint || isPng)
+    ? liftedIso(rx0 + rw, ry0 + rh, lift)
+    : liftedIso(rx0 + rw*0.5, ry0 + rh*0.5, lift);
   const ax = sprite.anchorX == null ? 0.5 : sprite.anchorX;
   const ay = sprite.anchorY == null ? 1 : sprite.anchorY;
   const ox = sprite.offsetX || 0;
@@ -433,7 +530,7 @@ function drawBuildingSprite(b, rx0, ry0, rw, rh, d){
 }
 
 function drawTree(rx,ry,x,y){
-  const c = iso(rx+0.5, ry+0.5);
+  const c = tileCenterIso(rx, ry, x, y);
   const h = 13 + (hash(x,y)&7);
   ctx.fillStyle = 'rgba(0,0,0,.16)';
   ctx.beginPath(); ctx.ellipse(c[0]+2, c[1]+2, 9, 4.5, 0, 0, 7); ctx.fill();
@@ -458,12 +555,12 @@ function isUnderstaffedOwnFactory(b){
   return req > 0 && workersAllocatedOf(b) < req;
 }
 
-function drawBuildingLayerDiagnostic(b, rx0, ry0, rw, rh){
+function drawBuildingLayerDiagnostic(b, rx0, ry0, rw, rh, lift){
   const d = BUILD[b.type];
   const target = isUnderstaffedOwnFactory(b);
   const own = ownedBy(b, myOwner());
   ctx.save();
-  diamond(rx0, ry0, rw, rh);
+  diamond(rx0, ry0, rw, rh, lift);
   if(target){
     ctx.fillStyle = '#ff2d2d';
     ctx.strokeStyle = '#fff200';
@@ -484,7 +581,7 @@ function drawBuildingLayerDiagnostic(b, rx0, ry0, rw, rh){
   ctx.fill();
   ctx.stroke();
 
-  const c = iso(rx0 + rw * 0.5, ry0 + rh * 0.5);
+  const c = liftedIso(rx0 + rw * 0.5, ry0 + rh * 0.5, lift);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   if(target){
@@ -577,6 +674,7 @@ function trainStationGroupBounds(groupId, type){
 
 function drawTrainStationPiece(b){
   const [rx, ry] = rotIdx(b.x, b.y);
+  const lift = terrainLiftPxAt(b.x, b.y);
   if(b.type === 'train_platform'){
     if(trainPlatformTrackAnchor(b) === b){
       const ownerColor = b.owner ? playerColor(b.owner) : '#b07b49';
@@ -603,8 +701,8 @@ function drawTrainStationPiece(b){
       }
       const [frx, fry] = rotIdx(first.x, first.y);
       const [lrx, lry] = rotIdx(last.x, last.y);
-      const c0 = iso(frx + 0.5, fry + 0.5);
-      const c1 = iso(lrx + 0.5, lry + 0.5);
+      const c0 = liftedIso(frx + 0.5, fry + 0.5, terrainLiftPxAt(first.x, first.y));
+      const c1 = liftedIso(lrx + 0.5, lry + 0.5, terrainLiftPxAt(last.x, last.y));
       const half = len * 0.48, offset = 9;
       const x0 = c0[0] - tx * half + nx * offset, y0 = c0[1] - ty * half + ny * offset;
       const x1 = c1[0] + tx * half + nx * offset, y1 = c1[1] + ty * half + ny * offset;
@@ -638,11 +736,11 @@ function drawTrainStationPiece(b){
           const [mrx, mry] = rotIdx(mx, my);
           ctx.save();
           ctx.fillStyle = 'rgba(220,40,40,0.42)';
-          diamond(mrx, mry); ctx.fill();
+          diamond(mrx, mry, 1, 1, terrainLiftPxAt(mx, my)); ctx.fill();
           ctx.strokeStyle = '#ff5252'; ctx.lineWidth = 2; ctx.setLineDash([4,3]);
-          diamond(mrx, mry); ctx.stroke();
+          diamond(mrx, mry, 1, 1, terrainLiftPxAt(mx, my)); ctx.stroke();
           ctx.restore();
-          const c = iso(mrx + 0.5, mry + 0.5);
+          const c = liftedIso(mrx + 0.5, mry + 0.5, terrainLiftPxAt(mx, my));
           ctx.font = '13px "Segoe UI Emoji",sans-serif';
           ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
           ctx.fillText('⚠️', c[0], c[1]);
@@ -653,8 +751,8 @@ function drawTrainStationPiece(b){
     const bounds = trainStationGroupBounds(b.stationGroupId, 'train_station');
     if(bounds && bounds.pieces[0] === b){
       const col = b.owner ? playerColor(b.owner) : '#b07b49';
-      prism(bounds.rx0 + 0.08, bounds.ry0 + 0.08, bounds.rx0 + bounds.rw - 0.08, bounds.ry0 + bounds.rh - 0.08, 10, col);
-      const c = iso(bounds.rx0 + bounds.rw * 0.5, bounds.ry0 + bounds.rh * 0.5);
+      prism(bounds.rx0 + 0.08, bounds.ry0 + 0.08, bounds.rx0 + bounds.rw - 0.08, bounds.ry0 + bounds.rh - 0.08, 10, col, lift);
+      const c = liftedIso(bounds.rx0 + bounds.rw * 0.5, bounds.ry0 + bounds.rh * 0.5, lift);
       ctx.fillStyle = '#f5e7c8';
       ctx.font = '14px "Segoe UI Emoji",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -673,7 +771,7 @@ function drawTrainStationPiece(b){
       // Gare d'un autre joueur (commerce inter-joueurs) → or, sinon vert.
       ctx.strokeStyle = _foreignStation ? '#f0c060' : '#9fe8a0'; ctx.lineWidth = 1.5;
       ctx.setLineDash([4,3]);
-      diamond(rx, ry); ctx.stroke();
+      diamond(rx, ry, 1, 1, lift); ctx.stroke();
     } else if(trainStationSelectionMatches(selected, b) && isTrainStationPiece(selected)){
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
       const stationPieces = buildings.filter(piece => isTrainStationPiece(piece) && piece.stationGroupId === b.stationGroupId);
@@ -685,7 +783,7 @@ function drawTrainStationPiece(b){
         rx1 = Math.max(rx1, prx);
         ry1 = Math.max(ry1, pry);
       }
-      diamond(rx0, ry0, rx1 - rx0 + 1, ry1 - ry0 + 1); ctx.stroke();
+      diamond(rx0, ry0, rx1 - rx0 + 1, ry1 - ry0 + 1, lift); ctx.stroke();
     }
     ctx.restore();
   }
@@ -702,13 +800,14 @@ function drawBuilding(b){
   const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
   // l'empreinte tournée échange largeur et profondeur selon l'orientation
   const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
+  const lift = buildingLiftPx(b);
   if(!drawFast && UI_OPTIONS.highlightUnderstaffedFactories){
-    drawBuildingLayerDiagnostic(b, rx0, ry0, rw, rh);
+    drawBuildingLayerDiagnostic(b, rx0, ry0, rw, rh, lift);
     if(b === selected || trainStationSelectionMatches(selected, b)){
       ctx.save();
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
-      diamond(rx0, ry0, rw, rh);
+      diamond(rx0, ry0, rw, rh, lift);
       ctx.stroke();
       ctx.restore();
     }
@@ -717,16 +816,16 @@ function drawBuilding(b){
   // les sites industriels fusionnés gagnent en hauteur avec leur taille
   const hgt = d.ind ? d.hgt*(1+0.18*(Math.max(b.w,b.h)-1)) : d.hgt;
   const bCol = packBuildingColor(b, d);
-  let tc = drawBuildingSprite(b, rx0, ry0, rw, rh, d);
+  let tc = drawBuildingSprite(b, rx0, ry0, rw, rh, d, lift);
   const usedSprite = !!tc;
   if(!tc){
-    tc = prism(rx0, ry0, rx0+rw, ry0+rh, hgt, bCol);
-    drawRoofAccent(rx0, ry0, rw, rh, hgt, bCol, b, d);
+    tc = prism(rx0, ry0, rx0+rw, ry0+rh, hgt, bCol, lift);
+    drawRoofAccent(rx0, ry0, rw, rh, hgt, bCol, b, d, lift);
   }
 
   // fenêtres éclairées sur les faces des grands logements
   if(!usedSprite && !drawFast && d.resid && d.hgt >= 40){
-    const B = iso(rx0+rw,ry0), C = iso(rx0+rw,ry0+rh), D = iso(rx0,ry0+rh);
+    const B = liftedIso(rx0+rw, ry0, lift), C = liftedIso(rx0+rw, ry0+rh, lift), D = liftedIso(rx0, ry0+rh, lift);
     const rows = Math.max(3, Math.min(9, Math.floor(d.hgt/14)));
     const face = (P,Q,tiles,seed)=>{
       const cols = Math.min(8, 3*tiles);
@@ -807,19 +906,19 @@ function drawBuilding(b){
   if(!drawFast && !UI_OPTIONS.hideColorMarkers && b.owner){
     const ownerColor = playerColor(b.owner);
     ctx.strokeStyle = ownerColor; ctx.lineWidth = (b===selected || trainStationSelectionMatches(selected, b)) ? 3 : 1.5;
-    diamond(rx0, ry0, rw, rh); ctx.stroke();
+    diamond(rx0, ry0, rw, rh, lift); ctx.stroke();
     // petit drapeau couleur en haut à gauche du toit
     ctx.fillStyle = ownerColor;
     ctx.beginPath(); ctx.arc(tc[0]-TW*rw*0.28, tc[1]-4, 4, 0, 7); ctx.fill();
   } else if(b===selected || trainStationSelectionMatches(selected, b)){
     // sélection solo
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-    diamond(rx0, ry0, rw, rh); ctx.stroke();
+    diamond(rx0, ry0, rw, rh, lift); ctx.stroke();
   }
   // sélection par-dessus (multijoueur)
   if((b===selected || trainStationSelectionMatches(selected, b)) && MP.connected){
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-    diamond(rx0, ry0, rw, rh); ctx.stroke();
+    diamond(rx0, ry0, rw, rh, lift); ctx.stroke();
   }
   // Indicateur "en vente" : petit $ doré sur le dépôt
   if(!drawFast && BUILD[b.type]?.storageHub && b.type !== 'tank' && b.sellTo && Object.values(b.sellTo).some(v=>v)){
@@ -846,19 +945,19 @@ function drawBuilding(b){
       // Pour les bus : tous les arrêts sont éligibles (y compris d'autres joueurs)
       ctx.strokeStyle = '#7dd8ff'; ctx.lineWidth = 1.5;
       ctx.setLineDash([4,3]);
-      diamond(rx0, ry0, rw, rh); ctx.stroke();
+      diamond(rx0, ry0, rw, rh, lift); ctx.stroke();
       ctx.setLineDash([]);
     } else if(vehicleRouteMode.step === 'dest' || b.owner == null || b.owner === myOid || b.type === 'tank'){
       ctx.strokeStyle = '#9fe8a0'; ctx.lineWidth = 1.5;
       ctx.setLineDash([4,3]);
-      diamond(rx0, ry0, rw, rh); ctx.stroke();
+      diamond(rx0, ry0, rw, rh, lift); ctx.stroke();
       ctx.setLineDash([]);
     } else if(b.owner != null && b.owner !== myOid && b.type === 'market'){
       const vt = VEHICLE_TYPES[vehicleRouteMode.vehicle.vtype];
       if(vt.resources.some(r => b.sellTo?.[r])){
         ctx.strokeStyle = '#f0c060'; ctx.lineWidth = 1.5;
         ctx.setLineDash([4,3]);
-        diamond(rx0, ry0, rw, rh); ctx.stroke();
+        diamond(rx0, ry0, rw, rh, lift); ctx.stroke();
         ctx.setLineDash([]);
       }
     }
@@ -872,7 +971,7 @@ function drawWalker(wk){
   const a = rs.pts[seg], b = rs.pts[Math.min(seg+1, rs.pts.length-1)];
   const wx = a.x + (b.x-a.x)*rs.t, wy = a.y + (b.y-a.y)*rs.t;
   const [u,v] = rotF(wx/TILE, wy/TILE);
-  const c = iso(u,v);
+  const c = liftedIso(u, v, terrainLiftPxAtWorld(wx, wy));
   const bob = Math.sin(gtime*12 + wk.phase)*1.1;
   ctx.fillStyle = 'rgba(0,0,0,.18)';
   ctx.beginPath(); ctx.ellipse(c[0], c[1]+1, 3.2, 1.7, 0, 0, 7); ctx.fill();
@@ -884,7 +983,7 @@ function drawWalker(wk){
 
 function drawHomeless(h){
   const [u,v] = rotF(h.x/TILE, h.y/TILE);
-  const c = iso(u,v);
+  const c = liftedIso(u, v, terrainLiftPxAtWorld(h.x, h.y));
   const bob = Math.sin(gtime*4 + h.phase)*0.7;
   ctx.fillStyle = 'rgba(0,0,0,.18)';
   ctx.beginPath(); ctx.ellipse(c[0], c[1]+1, 3.2, 1.7, 0, 0, 7); ctx.fill();
@@ -900,11 +999,11 @@ function drawWorkRadiusOverlay(center, radius, color, minRx, maxRx, minRy, maxRy
     const d = Math.max(Math.abs(x-center.x), Math.abs(y-center.y));
     if(d > radius) continue;
     ctx.fillStyle = color + (Math.ceil(d) === radius ? '33' : '1a');
-    diamond(rx,ry); ctx.fill();
+    tilePolygon(rx, ry, x, y); ctx.fill();
     if(Math.ceil(d) === radius){
       ctx.strokeStyle = color + '99';
       ctx.lineWidth = 1;
-      diamond(rx,ry); ctx.stroke();
+      tilePolygon(rx, ry, x, y); ctx.stroke();
     }
   }
 }
@@ -922,15 +1021,15 @@ function drawFisherRadiusOverlay(center, radius, minRx, maxRx, minRy, maxRy){
     const atEdge = d > radius - 1.0;
     const isFish = fishTiles.has(y * N + x);
     ctx.fillStyle = isFish ? '#1de9b633' : '#3bc4f51a';
-    diamond(rx, ry); ctx.fill();
+    tilePolygon(rx, ry, x, y); ctx.fill();
     if(isFish){
       ctx.fillStyle = '#1de9b622';
-      diamond(rx, ry); ctx.fill();
+      tilePolygon(rx, ry, x, y); ctx.fill();
     }
     if(atEdge){
       ctx.strokeStyle = '#3bc4f599';
       ctx.lineWidth = 1;
-      diamond(rx, ry); ctx.stroke();
+      tilePolygon(rx, ry, x, y); ctx.stroke();
     }
   }
 }
@@ -1069,14 +1168,15 @@ function drawTrainWagon(veh, wagonIndex){
   const wtype = trainWagonDef(wagon);
   if(!wtype) return;
   const selectedRes = trainWagonSelectedResource(wagon);
-  const c = iso(u, v);
+  const c = entityIso(u, v);
+  const lift = terrainLiftPxAtRot(u, v);
   const nd0 = Math.hypot(du, dv) || 1;
   const fn0 = du/nd0, fv0 = dv/nd0;
   const shadowAngle0 = Math.atan2((fn0+fv0)*TH2, (fn0-fv0)*TW2);
   ctx.fillStyle = 'rgba(0,0,0,.18)';
   ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 11, 4.5, shadowAngle0, 0, Math.PI*2); ctx.fill();
-  trainPrism(u, v, du, dv, 0.30,      0.13,      5, '#252e38');
-  trainPrism(u, v, du, dv, 0.30*0.82, 0.13*0.82, 7, wtype.color, 4);
+  trainPrism(u, v, du, dv, 0.30,      0.13,      5, '#252e38', lift);
+  trainPrism(u, v, du, dv, 0.30*0.82, 0.13*0.82, 7, wtype.color, lift + 4);
   if(selectedRes && RES[selectedRes]?.ic){
     const label = RES[selectedRes].ic;
     ctx.save();
@@ -1125,7 +1225,7 @@ function trainPose(veh){
 function isTrainLocoVisible(veh){
   const pose = trainPose(veh);
   if(!pose) return false;
-  const [ix, iy] = iso(pose.u, pose.v);
+  const [ix, iy] = entityIso(pose.u, pose.v);
   const z = cam.z || 1;
   return ix >= cam.x && ix <= cam.x + W / z && iy >= cam.y && iy <= cam.y + H / z;
 }
@@ -1135,7 +1235,7 @@ function emitTrainSmoke(veh){
   if(smoke.length > 140) return;
   const pose = trainPose(veh);
   if(!pose) return;
-  const [ix, iy] = iso(pose.u, pose.v);
+  const [ix, iy] = entityIso(pose.u, pose.v);
   const life = 1.1 + Math.random() * 0.6;
   smoke.push({
     x: ix + (Math.random() - 0.5) * 6,
@@ -1171,11 +1271,12 @@ function drawTruck(tk){
   const nd = Math.hypot(du, dv) || 1;
   const fn = du/nd, fv = dv/nd;
   const shadowAngle = Math.atan2((fn+fv)*TH2, (fn-fv)*TW2);
-  const c = iso(u,v);
+  const c = entityIso(u, v);
+  const lift = terrainLiftPxAtRot(u, v);
   ctx.fillStyle = 'rgba(0,0,0,.20)';
   ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 9, 4, shadowAngle, 0, Math.PI*2); ctx.fill();
-  trainPrism(u, v, du, dv, 0.21, 0.11, 4, '#39404c');
-  trainPrism(u, v, du, dv, 0.21*0.72, 0.11*0.72, 6, RES[tk.res]?.c ?? '#aaa', 4);
+  trainPrism(u, v, du, dv, 0.21, 0.11, 4, '#39404c', lift);
+  trainPrism(u, v, du, dv, 0.21*0.72, 0.11*0.72, 6, RES[tk.res]?.c ?? '#aaa', lift + 4);
 }
 
 function drawVehicleRoute(veh){
@@ -1185,7 +1286,7 @@ function drawVehicleRoute(veh){
     ctx.beginPath();
     let first = true;
     for(const pt of pts){
-      const [sx, sy] = worldPxToIso(pt.x, pt.y);
+      const [sx, sy] = liftedIso(...rotF(pt.x / TILE, pt.y / TILE), terrainLiftPxAtWorld(pt.x, pt.y));
       if(first){ ctx.moveTo(sx, sy); first = false; }
       else ctx.lineTo(sx, sy);
     }
@@ -1203,19 +1304,22 @@ function drawVehicleRoute(veh){
   const highlightBld = (b, col) => {
     if(!b || b.dead) return;
     let rx0, ry0, rw, rh;
+    let lift = 0;
     if(isTrainStationPiece(b)){
       const bounds = trainStationGroupBounds(b.stationGroupId, null);
       if(!bounds) return;
       rx0 = bounds.rx0; ry0 = bounds.ry0; rw = bounds.rw; rh = bounds.rh;
+      lift = terrainLiftPxAt(b.x, b.y);
     } else {
       const [r1x,r1y] = rotIdx(b.x, b.y);
       const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
       rx0 = Math.min(r1x,r2x); ry0 = Math.min(r1y,r2y);
       rw = Math.abs(r1x-r2x)+1; rh = Math.abs(r1y-r2y)+1;
+      lift = buildingLiftPx(b);
     }
     ctx.save();
     ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.globalAlpha = 0.9;
-    diamond(rx0, ry0, rw, rh); ctx.stroke();
+    diamond(rx0, ry0, rw, rh, lift); ctx.stroke();
     ctx.restore();
   };
   if(veh.vtype === 'train' && Array.isArray(veh.orders)){
@@ -1268,7 +1372,7 @@ function isoWorldOffset(c, alongWorld, rightWorld, magAlong, magRight){
 // au clic (chooseRailSignalDef) utilisent exactement le même point.
 function railSignalScreenPos(x, y, def){
   const [rx, ry] = rotIdx(x, y);
-  const c = iso(rx + 0.5, ry + 0.5);
+  const c = tileCenterIso(rx, ry, x, y);
   // Clé = direction de MARCHE du train protégé (= -def) en monde.
   // along monde = def (vers le train qui arrive) ; droite monde = (def.dy,-def.dx)
   // = droite du mécanicien (et non plus sa gauche comme avec l'ancien (dv,-du)).
@@ -1565,13 +1669,13 @@ function drawTownLabels(){
     for(const b of members){ sx += b.x + b.w/2; sy += b.y + b.h/2; }
     const cx = sx / members.length, cy = sy / members.length;
     const [ruc, rvc] = rotF(cx, cy);
-    const [ix] = iso(ruc, rvc);
+    const [ix] = liftedIso(ruc, rvc, terrainLiftPxAtRot(ruc, rvc));
 
     // Trouver le point le plus haut (min Y iso) parmi tous les bâtiments du village
     let topIsoY = Infinity;
     for(const b of members){
       const [ru, rv] = rotF(b.x + b.w/2, b.y + b.h/2);
-      const [, biy] = iso(ru, rv);
+      const [, biy] = liftedIso(ru, rv, buildingLiftPx(b));
       const bTop = biy - BUILD[b.type].hgt;
       if(bTop < topIsoY) topIsoY = bTop;
     }
@@ -1634,7 +1738,7 @@ function drawTrainDepotFlags(){
     if(!trains.length) continue;
     const center = centerOfBuilding(depot);
     const [u, v] = rotF(center.x, center.y);
-    const [ix, iy] = iso(u, v);
+    const [ix, iy] = liftedIso(u, v, buildingLiftPx(depot));
     const cssX = (ix - cam.x) * cam.z;
     const cssY = (iy - cam.y) * cam.z - 28;
     if(cssX < -60 || cssX > W + 60 || cssY < -80 || cssY > H + 40) continue;
@@ -1675,7 +1779,8 @@ function drawVehicle(veh){
   if(veh.vtype === 'train'){
     const {u, v, du, dv} = trainPose(veh);
     const vt = VEHICLE_TYPES[veh.vtype];
-    const c = iso(u, v);
+    const c = entityIso(u, v);
+    const lift = terrainLiftPxAtRot(u, v);
     const hl=0.34, hw=0.16, nd=Math.hypot(du,dv)||1;
     const fn_l=du/nd, fv_l=dv/nd;
     const shadowAngle_l = Math.atan2((fn_l+fv_l)*TH2, (fn_l-fv_l)*TW2);
@@ -1683,9 +1788,9 @@ function drawVehicle(veh){
     ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 13, 5.5, shadowAngle_l, 0, Math.PI*2); ctx.fill();
     const locoOwner = veh.garageRef?.owner ?? null;
     const locoColor = locoOwner != null ? playerColor(locoOwner) : vt.color;
-    trainPrism(u, v, du, dv, hl,      hw,      6, '#2f3640');
-    trainPrism(u, v, du, dv, hl*0.78, hw*0.78, 8, locoColor, 5);
-    trainPrism(u+(du/nd)*0.06, v+(dv/nd)*0.06, du, dv, hl*0.28, hw, 10, '#92a2b4', 8);
+    trainPrism(u, v, du, dv, hl,      hw,      6, '#2f3640', lift);
+    trainPrism(u, v, du, dv, hl*0.78, hw*0.78, 8, locoColor, lift + 5);
+    trainPrism(u+(du/nd)*0.06, v+(dv/nd)*0.06, du, dv, hl*0.28, hw, 10, '#92a2b4', lift + 8);
     if(veh === focusVehicle){
       const pu = 0.6 + 0.4*Math.sin(performance.now()/300);
       ctx.save();
@@ -1708,11 +1813,12 @@ function drawVehicle(veh){
   const fn = du/nd, fv = dv/nd;
   const shadowAngle = Math.atan2((fn+fv)*TH2, (fn-fv)*TW2);
   const vt = VEHICLE_TYPES[veh.vtype];
-  const c = iso(u, v);
+  const c = entityIso(u, v);
+  const lift = terrainLiftPxAtRot(u, v);
   ctx.fillStyle = 'rgba(0,0,0,.20)';
   ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 10, 4.6, shadowAngle, 0, Math.PI*2); ctx.fill();
-  trainPrism(u, v, du, dv, 0.23, 0.13, 5, '#39404c');
-  trainPrism(u, v, du, dv, 0.23*0.72, 0.13*0.72, 7, vt.color, 5);
+  trainPrism(u, v, du, dv, 0.23, 0.13, 5, '#39404c', lift);
+  trainPrism(u, v, du, dv, 0.23*0.72, 0.13*0.72, 7, vt.color, lift + 5);
   if(!drawFast && veh.cargo > 0){
     const label = vt.icone + ' ' + veh.cargo;
     ctx.font = 'bold 10px sans-serif';
@@ -1832,7 +1938,7 @@ function drawExpansionBadges(){
     const canAfford = myWallet().money >= exp.cost;
     // Centre ISO de la pièce
     const [ru, rv] = rotF(exp.cx, exp.cy);
-    const [px, py] = iso(ru, rv);
+    const [px, py] = liftedIso(ru, rv, terrainLiftPxAtRot(ru, rv));
     const pulse = 0.85 + 0.15 * Math.sin(gtime * 2.4 + exp.cx * 0.12);
 
     // Mini badge fond
@@ -1943,6 +2049,8 @@ function draw(){
     const [x,y] = invRotIdx(rx,ry);
     if(x<0||y<0||x>=N||y>=N) continue;
     const i = y*N+x, t = terrain[i];
+    const lift = terrainLiftPxAt(x, y);
+    const snowAmount = t === T.WATER ? 0 : snowAmountForTile(x, y);
 
     // Tuiles hors zone jouable : zones d'expansion ou void (sol → caché)
     const inPlay = !!mapMask && mapMask[i]===1;
@@ -1953,7 +2061,7 @@ function draw(){
           // Terrain dim + overlay sarcelle teinté par pièce
           ctx.globalAlpha = 0.22;
           ctx.fillStyle = packTerrain(t, x, y);
-          diamond(rx,ry); ctx.fill();
+          tilePolygon(rx, ry, x, y); ctx.fill();
           ctx.globalAlpha = 1;
           const isHov = expZone === hoveredExpansion;
           const isSel = expZone === selectedExpansion;
@@ -1961,7 +2069,7 @@ function draw(){
           const PIECE_COLS = ['rgba(14,68,52,0.68)','rgba(20,82,62,0.68)','rgba(10,58,44,0.68)'];
           const hovCol = isSel ? 'rgba(50,180,120,0.80)' : isHov ? 'rgba(38,150,105,0.75)' : PIECE_COLS[expZone.pieceIndex%3];
           ctx.fillStyle = hovCol;
-          diamond(rx,ry); ctx.fill();
+          tilePolygon(rx, ry, x, y); ctx.fill();
           // Bordure lumineuse sur les tuiles adjacentes à la zone jouable
           if(!drawFast){
             const nextToMap = (x>0&&mapMask[i-1]===1)||(x<N-1&&mapMask[i+1]===1)
@@ -1969,7 +2077,7 @@ function draw(){
             if(nextToMap){
               ctx.strokeStyle = isHov||isSel ? 'rgba(60,220,150,0.90)' : 'rgba(40,160,100,0.50)';
               ctx.lineWidth = 1.5;
-              diamond(rx,ry); ctx.stroke();
+              tilePolygon(rx, ry, x, y); ctx.stroke();
             }
           }
         }
@@ -1980,12 +2088,19 @@ function draw(){
     if(groundDirty){
     if(t===T.WATER){
       ctx.fillStyle = packTerrain(T.WATER, x, y);
-      diamond(rx,ry); ctx.fill();
+      tilePolygon(rx, ry, x, y); ctx.fill();
     } else {
       ctx.fillStyle = packTerrain(t, x, y);
-      diamond(rx,ry); ctx.fill();
+      tilePolygon(rx, ry, x, y); ctx.fill();
+      if(snowAmount > 0){
+        ctx.save();
+        ctx.globalAlpha = 0.24 + snowAmount * 0.46;
+        ctx.fillStyle = '#eef5fb';
+        tilePolygon(rx, ry, x, y); ctx.fill();
+        ctx.restore();
+      }
       if(!drawFast && t===T.WHEAT){
-        const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
+        const hs = hash(x,y), c = tileCenterIso(rx, ry, x, y);
         ctx.strokeStyle = '#d7b348';
         ctx.lineWidth = 1.2;
         for(let k=0;k<6;k++){
@@ -1998,7 +2113,7 @@ function draw(){
         }
       }
       if(!drawFast && t===T.COTTON){
-        const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
+        const hs = hash(x,y), c = tileCenterIso(rx, ry, x, y);
         for(let k=0;k<7;k++){
           const ox = ((hs>>(k*3))&7)/7*TW*0.42 - TW*0.21;
           const oy = ((hs>>(k*3+6))&7)/7*TH*0.34 - TH*0.17;
@@ -2011,7 +2126,7 @@ function draw(){
       }
       if(!drawFast && (t===T.IRON || t===T.COAL)){
         ctx.fillStyle = t===T.IRON ? '#c0763a' : '#23232b';
-        const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
+        const hs = hash(x,y), c = tileCenterIso(rx, ry, x, y);
         for(let k=0;k<4;k++){
           const ox = ((hs>>(k*4))&7)/7*TW*0.36 - TW*0.18;
           const oy = ((hs>>(k*4+8))&7)/7*TH*0.36 - TH*0.18;
@@ -2019,7 +2134,7 @@ function draw(){
         }
       }
       if(!drawFast && t===T.SAND){
-        const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
+        const hs = hash(x,y), c = tileCenterIso(rx, ry, x, y);
         ctx.fillStyle = 'rgba(247,228,176,.70)';
         for(let k=0;k<6;k++){
           const ox = ((hs>>(k*3))&7)/7*TW*0.46 - TW*0.23;
@@ -2028,7 +2143,7 @@ function draw(){
         }
       }
       if(!drawFast && t===T.CLAY){
-        const hs = hash(x,y), c = iso(rx+0.5, ry+0.5);
+        const hs = hash(x,y), c = tileCenterIso(rx, ry, x, y);
         ctx.fillStyle = 'rgba(123,78,58,.30)';
         for(let k=0;k<4;k++){
           const ox = ((hs>>(k*4))&7)/7*TW*0.40 - TW*0.20;
@@ -2041,20 +2156,7 @@ function draw(){
     }
 
     if(!drawFast && t===T.WATER && getFishTiles().has(i)) visibleFish.push({ rx, ry, x, y });
-
-    // falaises au bord de la carte
-    const D = 15;
-    const cliff = t===T.WATER ? '#1c557f' : '#6f5236';
-    if(ry===N-1){
-      const Cc = iso(rx+1,ry+1), Dd = iso(rx,ry+1);
-      ctx.fillStyle = shade(cliff,-0.15);
-      quad(Cc, Dd, [Dd[0],Dd[1]+D], [Cc[0],Cc[1]+D]);
-    }
-    if(rx===N-1){
-      const Bb = iso(rx+1,ry), Cc = iso(rx+1,ry+1);
-      ctx.fillStyle = shade(cliff,-0.35);
-      quad(Bb, Cc, [Cc[0],Cc[1]+D], [Bb[0],Bb[1]+D]);
-    }
+    drawWaterBankFaces(rx, ry, x, y, t, snowAmount);
     } // fin if(groundDirty) — dessin du sol
 
     // collecte des sprites (arbres / bâtiments) au passage
@@ -2090,7 +2192,7 @@ function draw(){
     const [x,y] = invRotIdx(rx,ry);
     if(x<0||y<0||x>=N||y>=N) continue;
     const i = y*N+x;
-    const c = iso(rx+0.5, ry+0.5);
+    const c = tileCenterIso(rx, ry, x, y);
     if(road[i]){
       roadNodes.push(c);
       let links = 0;
@@ -2101,7 +2203,7 @@ function draw(){
         if(ny < y || (ny === y && nx < x)) continue;
         if(dx !== 0 && dy !== 0 && (road[y*N+nx] || road[ny*N+x])) continue;
         const [du,dv] = rotDir(dx,dy);
-        roadSegments.push([c, iso(rx+du+0.5, ry+dv+0.5)]);
+        roadSegments.push([c, liftedIso(rx+du+0.5, ry+dv+0.5, terrainLiftPxAt(nx, ny))]);
       }
       if(!links) roadSingles.push(c);
       else if(!UI_OPTIONS.disableTrafficLights && isTrafficIntersectionTile({ x, y, i })){
@@ -2134,7 +2236,7 @@ function draw(){
         if(ny < y || (ny === y && nx < x)) continue;
         // Rail masks describe explicit edges. Do not hide a diagonal edge at a
         // junction merely because the tile also has an orthogonal connection.
-        railSegments.push({ a:c, b:iso(rx+du+0.5, ry+dv+0.5), dir:[du, dv], owner });
+        railSegments.push({ a:c, b:liftedIso(rx+du+0.5, ry+dv+0.5, terrainLiftPxAt(nx, ny)), dir:[du, dv], owner });
       }
       if(!links) railSingles.push({ c, owner });
       else if(links <= 2) railNodeSleepers.push({ center:c, dirs:railDirs });
@@ -2454,7 +2556,7 @@ function draw(){
       if(!inMap(t.x, t.y)) continue;
       const [rx, ry] = rotIdx(t.x, t.y);
       ctx.fillStyle = canPlace(tool, t.x, t.y).ok ? 'rgba(110,230,120,.55)' : 'rgba(200,200,200,.2)';
-      diamond(rx, ry); ctx.fill();
+      tilePolygon(rx, ry, t.x, t.y); ctx.fill();
     }
   }
 
@@ -2463,7 +2565,7 @@ function draw(){
     const va = canPlace(tool, mouse.tx, mouse.ty);
     const [grx,gry] = rotIdx(mouse.tx, mouse.ty);
     ctx.fillStyle = va.ok ? 'rgba(110,230,120,.4)' : 'rgba(235,80,80,.4)';
-    diamond(grx,gry); ctx.fill();
+    tilePolygon(grx, gry, mouse.tx, mouse.ty); ctx.fill();
     const d = BUILD[tool];
     if(d.resid){
       drawWorkRadiusOverlay(
@@ -2473,12 +2575,12 @@ function draw(){
         minRx, maxRx, minRy, maxRy
       );
       ctx.fillStyle = va.ok ? 'rgba(110,230,120,.45)' : 'rgba(235,80,80,.45)';
-      diamond(grx,gry); ctx.fill();
+      tilePolygon(grx, gry, mouse.tx, mouse.ty); ctx.fill();
     }
     if(va.ok && d.hgt){
       ctx.globalAlpha = 0.55;
       const ghost = { type:tool, x:mouse.tx, y:mouse.ty, w:1, h:1 };
-      const tc = prism(grx, gry, grx+1, gry+1, d.hgt, packBuildingColor(ghost, d));
+      const tc = prism(grx, gry, grx+1, gry+1, d.hgt, packBuildingColor(ghost, d), terrainLiftPxAt(mouse.tx, mouse.ty));
       ctx.font = (TH*0.62)+'px "Segoe UI Emoji",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(d.ic, tc[0], tc[1]+1);
@@ -2487,7 +2589,7 @@ function draw(){
   } else if(tool==='select' && inMap(mouse.tx,mouse.ty)){
     const [grx,gry] = rotIdx(mouse.tx, mouse.ty);
     ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1.5;
-    diamond(grx,gry); ctx.stroke();
+    tilePolygon(grx, gry, mouse.tx, mouse.ty); ctx.stroke();
   }
 
   // badges des zones d'expansion
@@ -2499,7 +2601,8 @@ function draw(){
   // textes flottants
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for(const f of floats){
-    const p = worldPxToIso(f.x, f.y);
+    const [u, v] = rotF(f.x / TILE, f.y / TILE);
+    const p = liftedIso(u, v, terrainLiftPxAtWorld(f.x, f.y));
     ctx.globalAlpha = Math.min(1, f.life);
     ctx.fillStyle = f.col;
     ctx.font = 'bold 12px sans-serif';
