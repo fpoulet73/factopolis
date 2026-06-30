@@ -341,6 +341,15 @@ function update(dt){
     if(floats[i].life <= 0) floats.splice(i,1);
   }
 
+  for(let i=smoke.length-1;i>=0;i--){
+    const s = smoke[i];
+    s.life -= dt;
+    if(s.life <= 0){ smoke.splice(i,1); continue; }
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+    s.r += s.grow * dt;
+  }
+
   // Arrêts de bus / gares : mise à jour des max toutes les 3s
   // Somme par ville = habitants sans travail, répartis sur les arrêts/gares proches des habitations.
   busStopTimer += dt;
@@ -472,7 +481,7 @@ function tryMergeInd(){
       setGrid(t,t);
       if(wasSel) selected = t;
       toast('🏭 '+set.length+' × '+BUILD[type].n+' → '+w+'×'+h
-        +' — production ×'+prodMult(t).toFixed(1)+' !','win');
+        +' — production ×'+prodMult(t).toFixed(1)+' !','win', eventTargetForBuilding(t));
       return true;
     }
   }
@@ -510,7 +519,7 @@ function tryMerge(){
         buildings.push(t);
         setGrid(t,t);
         if(wasSel) selected = t;
-        toast('🏗️ '+set.length+' logements pleins → '+d.n+' ('+w+'×'+h+') !','win');
+        toast('🏗️ '+set.length+' logements pleins → '+d.n+' ('+w+'×'+h+') !','win', eventTargetForBuilding(t));
         return; // une fusion à la fois : la liste vient d'être modifiée
       }
     }
@@ -726,7 +735,8 @@ function splitBuilding(b){
   }
   if(excess > 0) spawnLeavers(bgrid[b.y*N+b.x], excess);
   toast('📉 '+BUILD[b.type].n+' sans '+resNames(residRequiredOf(b))+' : défusion'
-    + (excess>0 ? ', '+excess+" habitants s'en vont" : ''),'err');
+    + (excess>0 ? ', '+excess+" habitants s'en vont" : ''),'err',
+    eventTargetForBuilding(newHomes[0]) || eventTargetForTile(b.x, b.y, BUILD[b.type].n));
   if(excess > 0) addFloat(b.x+(b.w-1)/2, b.y, '−'+excess+' 👤', '#ff9a8a');
   // tenter de remplir les maisons incomplètes avec les sans-abri disponibles
   assignHomelessToHousing(owner);

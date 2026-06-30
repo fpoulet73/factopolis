@@ -1102,6 +1102,48 @@ function trainPose(veh){
   return pose;
 }
 
+// ---------- fumée de locomotive ----------
+// Locomotive actuellement dans la fenêtre visible ?
+function isTrainLocoVisible(veh){
+  const pose = trainPose(veh);
+  if(!pose) return false;
+  const [ix, iy] = iso(pose.u, pose.v);
+  const z = cam.z || 1;
+  return ix >= cam.x && ix <= cam.x + W / z && iy >= cam.y && iy <= cam.y + H / z;
+}
+// Émet une bouffée de fumée au-dessus de la cheminée de la loco. Positions
+// stockées en px iso (repère monde, avant transform caméra), comme les floats.
+function emitTrainSmoke(veh){
+  if(smoke.length > 140) return;
+  const pose = trainPose(veh);
+  if(!pose) return;
+  const [ix, iy] = iso(pose.u, pose.v);
+  const life = 1.1 + Math.random() * 0.6;
+  smoke.push({
+    x: ix + (Math.random() - 0.5) * 6,
+    y: iy - TH * 0.95 + (Math.random() - 0.5) * 4,  // au-dessus de la loco
+    vx: (Math.random() - 0.5) * 7,
+    vy: -(11 + Math.random() * 9),                  // montée (px iso/s)
+    r: 2.5 + Math.random() * 2,
+    grow: 9 + Math.random() * 7,                    // expansion (px/s)
+    life, life0: life,
+  });
+}
+
+function drawSmoke(){
+  if(!smoke.length) return;
+  for(const s of smoke){
+    const a = Math.max(0, s.life / s.life0) * 0.45;
+    if(a <= 0.01) continue;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#c2c7cc';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawTruck(tk){
   const rs = typeof mpTruckRenderState === 'function' ? mpTruckRenderState(tk) : tk;
   if(!rs.pts || !rs.pts.length) return;
@@ -2407,6 +2449,9 @@ function draw(){
 
   // badges des zones d'expansion
   if(!drawFast && expansions.length) drawExpansionBadges();
+
+  // fumée des locomotives (au-dessus des sprites, sous les textes)
+  drawSmoke();
 
   // textes flottants
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';

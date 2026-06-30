@@ -46,6 +46,7 @@ function updateHUD(dt){
   renderInfo();
   renderFinance();
   renderVehicleListPanel();
+  renderEventsPanel();
   if(trainConfigVehicle) renderTrainPanel();
 }
 
@@ -231,6 +232,7 @@ makePanelDraggable('trainPanel');
 makePanelDraggable('finance');
 makePanelDraggable('help');
 makePanelDraggable('vehicleListPanel');
+makePanelDraggable('eventsPanel');
 
 function closeInfoPanel(){
   const p = $('info');
@@ -277,6 +279,225 @@ function closeVehicleListPanel(){
   vehicleListMode = null;
   focusVehicle = null;
   camTracking = false;
+}
+
+const GAME_EVENT_MAX = 200;
+
+function eventTargetForBuilding(b){
+  if(!b || b.dead) return null;
+  const ref = typeof trainStationSelectionRepresentative === 'function'
+    ? trainStationSelectionRepresentative(b) || b
+    : b;
+  const center = centerOfBuilding(ref);
+  return {
+    kind: 'building',
+    label: ref.name || BUILD[ref.type]?.n || ref.type || 'Bâtiment',
+    x: ref.x,
+    y: ref.y,
+    mapX: center.x,
+    mapY: center.y,
+    stationGroupId: (typeof isTrainStationPiece === 'function' && isTrainStationPiece(ref)) ? ref.stationGroupId : null,
+  };
+}
+
+function eventTargetForVehicle(v){
+  if(!v) return null;
+  const pos = typeof vehicleWorldPos === 'function' ? vehicleWorldPos(v) : null;
+  const vt = VEHICLE_TYPES[v.vtype] || {};
+  return {
+    kind: 'vehicle',
+    label: v.vtype === 'train' ? (v.name || 'Train') : (vt.nom || v.vtype || 'Véhicule'),
+    id: String(v.id),
+    mapX: pos ? pos.x / TILE : ((v.garageRef?.x ?? 0) + ((v.garageRef?.w || 1) / 2) - 0.5),
+    mapY: pos ? pos.y / TILE : ((v.garageRef?.y ?? 0) + ((v.garageRef?.h || 1) / 2) - 0.5),
+  };
+}
+
+function eventTargetForTown(t){
+  if(!t) return null;
+  return {
+    kind: 'town',
+    label: t.name || 'Village',
+    id: t.id,
+    mapX: t.cx,
+    mapY: t.cy,
+  };
+}
+
+function eventTargetForTile(x, y, label){
+  return {
+    kind: 'tile',
+    label: label || 'Carte',
+    mapX: x + 0.5,
+    mapY: y + 0.5,
+  };
+}
+
+function escUiHtml(s){
+  if(typeof escHtml === 'function') return escHtml(s);
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function pushGameEvent(msg, target, cls){
+  if(!target || !Array.isArray(gameEvents)) return;
+  gameEvents.unshift({
+    id: nextGameEventId++,
+    gtime: gtime || 0,
+    text: String(msg || ''),
+    cls: cls || '',
+    target,
+  });
+  if(gameEvents.length > GAME_EVENT_MAX) gameEvents.length = GAME_EVENT_MAX;
+  if(UI_OPTIONS.panelEvents) renderEventsPanel();
+}
+
+function focusGameEventTarget(target){
+  if(!target) return;
+  setTool('select');
+  selectedExpansion = null;
+  vehicleRouteMode = null;
+
+  if(target.kind === 'vehicle'){
+    const v = vehicles.find(veh => String(veh.id) === String(target.id));
+    selected = null;
+    closeTownPanel();
+    if(v){
+      selectedVehicle = v;
+      focusVehicle = v;
+      camTracking = false;
+      const pos = vehicleWorldPos(v);
+      if(pos) centerOn(pos.x, pos.y);
+      renderInfo();
+      renderVehicleListPanel();
+      return;
+    }
+  } else if(target.kind === 'town'){
+    const town = towns.find(t => t.id === target.id);
+    selected = null;
+    selectedVehicle = null;
+    focusVehicle = null;
+    camTracking = false;
+    if(town){
+      selectedTownId = town.id;
+      centerOn(town.cx * TILE, town.cy * TILE);
+      openTownPanel(town.id);
+      return;
+    }
+  } else if(target.kind === 'building'){
+    let b = null;
+    if(target.stationGroupId != null && typeof trainStationGroupRepresentative === 'function'){
+      b = trainStationGroupRepresentative(target.stationGroupId) || null;
+    }
+    if(!b && bgrid){
+      const tx = Math.max(0, Math.min(N - 1, Math.round(target.x)));
+      const ty = Math.max(0, Math.min(N - 1, Math.round(target.y)));
+      b = bgrid[ty * N + tx];
+    }
+    if(b && !b.dead){
+      selected = typeof trainStationSelectionRepresentative === 'function'
+        ? trainStationSelectionRepresentative(b) || b
+        : b;
+      selectedVehicle = null;
+      focusVehicle = null;
+      camTracking = false;
+      closeTownPanel();
+      const center = centerOfBuilding(selected);
+      centerOn(center.x * TILE, center.y * TILE);
+      renderInfo();
+      return;
+    }
+  }
+
+  selected = null;
+  selectedVehicle = null;
+  focusVehicle = null;
+  camTracking = false;
+  closeTownPanel();
+  if(target.mapX != null && target.mapY != null){
+    centerOn(target.mapX * TILE, target.mapY * TILE);
+  }
+}
+
+function setPanelVisibility(optKey, visible){
+  if(UI_OPTIONS[optKey] === !!visible){
+    if(optKey === 'panelEvents') renderEventsPanel();
+    return;
+  }
+  UI_OPTIONS[optKey] = !!visible;
+  saveUIOptions();
+  refreshPanelMenu();
+  if(optKey === 'panelEvents') renderEventsPanel();
+}
+
+function closeEventsPanel(){
+  const p = $('eventsPanel');
+  if(p){
+    p.style.display = 'none';
+    p._html = null;
+  }
+  setPanelVisibility('panelEvents', false);
+}
+
+function renderEventsPanel(){
+  const p = $('eventsPanel');
+  if(!p) return;
+  if(!UI_OPTIONS.panelEvents){
+    p.style.display = 'none';
+    p._html = null;
+    return;
+  }
+  p.style.display = 'block';
+  const list = Array.isArray(gameEvents) ? gameEvents : [];
+  const parts = [
+    '<div class="panel-head"><h3>📝 ' + t('events.title') + ' <span class="events-count">(' + list.length + ')</span></h3>',
+    '<button class="tbtn" id="bEventsX" aria-label="Fermer" title="' + t('vehlist.close') + '">✕</button></div>'
+  ];
+  if(!list.length){
+    parts.push('<div class="events-empty">' + t('events.empty') + '</div>');
+  } else {
+    parts.push('<div class="events-hint">' + t('events.hint') + '</div>');
+    parts.push('<div class="events-list">');
+    for(const ev of list){
+      parts.push(
+        '<div class="event-item" data-event-id="' + ev.id + '">'
+        + '<div class="event-head">'
+        + '<span class="event-target">' + escUiHtml(ev.target?.label || '—') + '</span>'
+        + '<span class="event-time">' + escUiHtml(formatGameDate(ev.gtime)) + '</span>'
+        + '</div>'
+        + '<div class="event-text">' + escUiHtml(ev.text) + '</div>'
+        + '</div>'
+      );
+    }
+    parts.push('</div>');
+  }
+  const html = parts.join('');
+  if(p._html === html) return;
+  p._html = html;
+  p.innerHTML = html;
+  ensurePanelDragHandle('eventsPanel');
+  const closeBtn = $('bEventsX');
+  if(closeBtn) closeBtn.onclick = ()=> closeEventsPanel();
+  p.querySelectorAll('[data-event-id]').forEach(el => {
+    el.onclick = () => {
+      const id = +el.dataset.eventId;
+      const ev = gameEvents.find(entry => entry.id === id);
+      if(ev) focusGameEventTarget(ev.target);
+    };
+  });
+}
+
+function refreshPanelMenu(){
+  document.querySelectorAll('[data-panel-opt]').forEach(el => {
+    const key = el.dataset.panelOpt;
+    const active = !!UI_OPTIONS[key];
+    el.classList.toggle('active', active);
+    const chk = el.querySelector('.chk');
+    if(chk) chk.textContent = active ? '✓' : '';
+  });
 }
 // Libellé de la ressource configurée pour un véhicule (épinglée, unique, ou « Auto »).
 function vehicleConfiguredResLabel(v){
@@ -1673,7 +1894,7 @@ function renderInfo(){
       selected = b;
       p._html = null;
       renderInfo();
-      toast('🏭 Usine créée : '+targetDef.n, 'win');
+      toast('🏭 Usine créée : '+targetDef.n, 'win', eventTargetForBuilding(b));
     };
   });
   p.querySelectorAll('[data-station-depot-toggle-res]').forEach(el=>{
@@ -1861,7 +2082,7 @@ function renderInfo(){
           v.mpCreatedRealTime = performance.now();
           netSend({ type:'buy_vehicle', id:v.id, vtype, garageX:b.x, garageY:b.y });
         }
-        toast(vt.icone+' '+vt.nom+' acheté ! Définis sa route avec 🔁 Route.','win');
+        toast(vt.icone+' '+vt.nom+' acheté ! Définis sa route avec 🔁 Route.','win', eventTargetForVehicle(v));
         p._html = null;
       };
     });
@@ -1941,7 +2162,8 @@ function renderInfo(){
 }
 
 // ---------- toasts ----------
-function toast(msg, cls){
+function toast(msg, cls, target){
+  if(target) pushGameEvent(msg, target, cls);
   const t = document.createElement('div');
   t.className = 'toast' + (cls ? ' '+cls : '');
   t.textContent = msg;
@@ -2563,6 +2785,7 @@ function renderTownPanel(tid){
       if(forbidden){ toast('⛔ Ce village contient des bâtiments d\'un autre joueur.','err'); return; }
       if(MP.connected) netSend({ type:'merge_towns', dstId:t.id, srcId });
       mergeTowns(t.id, srcId);
+      toast('🏘️ Villages fusionnés : '+srcTown.name+' → '+t.name, 'win', eventTargetForTown(towns.find(tt => tt.id === t.id) || t));
       hudTimer=0; updateHUD(0);
       renderTownPanel(t.id);
     };
@@ -2594,7 +2817,7 @@ function renderTownPanel(tid){
     reassignBuildingsInRect(newTown.id, rx1, ry1, rx2, ry2, oid);
     cancelTownZoneSelect();
     hudTimer=0; updateHUD(0);
-    toast('🏘️ Nouveau village : '+newTown.name,'win');
+    toast('🏘️ Nouveau village : '+newTown.name,'win', eventTargetForTown(newTown));
     renderTownPanel(tid);
   };
 
@@ -3008,7 +3231,7 @@ addEventListener('keydown', e=>{
   }
   keys.add(e.code);
   if(e.code==='Space'){ e.preventDefault(); togglePause(); }
-  if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; focusVehicle = null; camTracking = false; closeTownPanel(); closeTrainPanel(); closeVehicleListPanel(); }
+  if(e.code==='Escape'){ setTool('select'); selected = null; selectedExpansion = null; vehicleRouteMode = null; selectedVehicle = null; focusVehicle = null; camTracking = false; closeTownPanel(); closeTrainPanel(); closeVehicleListPanel(); closeEventsPanel(); }
   if((e.code==='ShiftLeft'||e.code==='ShiftRight') && roadDragStart && mouse.lDown && tool==='road')
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, true);
   if(e.code==='KeyH') toggleHelp();
@@ -3118,13 +3341,17 @@ $('sSplashGo').onclick = ()=> $('splash').style.display = 'none';
 // ---------- dropdown options ----------
 const optMenu = $('optMenu');
 const layerMenu = $('layerMenu');
+const panelMenu = $('panelMenu');
 const graphicPackSelect = $('graphicPackSelect');
 const languageSelect = $('languageSelect');
+const soundVolumeSlider = $('soundVolumeSlider');
+const soundZoomSlider = $('soundZoomSlider');
 const topbar = $('topbar');
 
 // Les menus sortent du topbar pour ne pas etre masques par son overflow horizontal.
 if(optMenu) document.body.appendChild(optMenu);
 if(layerMenu) document.body.appendChild(layerMenu);
+if(panelMenu) document.body.appendChild(panelMenu);
 
 function buildLanguageSelect(){
   if(!languageSelect) return;
@@ -3165,6 +3392,14 @@ function refreshOptMenu(){
     languageSelect.value = UI_OPTIONS.language;
   }
   if(graphicPackSelect) graphicPackSelect.value = UI_OPTIONS.graphicPack;
+  if(soundVolumeSlider){
+    soundVolumeSlider.value = Math.round((UI_OPTIONS.soundVolume ?? 1) * 100);
+    soundVolumeSlider.disabled = !!UI_OPTIONS.disableSounds;
+  }
+  if(soundZoomSlider){
+    soundZoomSlider.value = UI_OPTIONS.soundZoomMin ?? 1.0;
+    soundZoomSlider.disabled = !!UI_OPTIONS.disableSounds;
+  }
   document.querySelectorAll('.opt-item[data-opt]').forEach(el => {
     const key = el.dataset.opt;
     const active = !!UI_OPTIONS[key];
@@ -3173,10 +3408,14 @@ function refreshOptMenu(){
   });
 }
 refreshOptMenu();
+refreshPanelMenu();
 applyI18n();
+renderEventsPanel();
 addEventListener('factopolis:languagechange', () => {
   buildLanguageSelect();
   refreshOptMenu();
+  refreshPanelMenu();
+  renderEventsPanel();
 });
 
 function positionTopbarMenu(btn, menu){
@@ -3194,12 +3433,19 @@ function positionTopbarMenu(btn, menu){
 function syncTopbarMenus(){
   if(optMenu.classList.contains('open')) positionTopbarMenu($('bOptions'), optMenu);
   if(layerMenu.classList.contains('open')) positionTopbarMenu($('bLayer'), layerMenu);
+  if(panelMenu.classList.contains('open')) positionTopbarMenu($('bPanels'), panelMenu);
 }
 
-function toggleTopbarMenu(btn, menu, otherMenu){
+function closeTopbarMenus(exceptMenu=null){
+  [optMenu, layerMenu, panelMenu].forEach(menu => {
+    if(menu && menu !== exceptMenu) menu.classList.remove('open');
+  });
+}
+
+function toggleTopbarMenu(btn, menu){
   if(!btn || !menu) return;
   const willOpen = !menu.classList.contains('open');
-  otherMenu?.classList.remove('open');
+  closeTopbarMenus(willOpen ? menu : null);
   if(!willOpen){
     menu.classList.remove('open');
     return;
@@ -3210,12 +3456,17 @@ function toggleTopbarMenu(btn, menu, otherMenu){
 
 $('bOptions').onclick = e => {
   e.stopPropagation();
-  toggleTopbarMenu($('bOptions'), optMenu, layerMenu);
+  toggleTopbarMenu($('bOptions'), optMenu);
 };
 
 $('bLayer').onclick = e => {
   e.stopPropagation();
-  toggleTopbarMenu($('bLayer'), layerMenu, optMenu);
+  toggleTopbarMenu($('bLayer'), layerMenu);
+};
+
+$('bPanels').onclick = e => {
+  e.stopPropagation();
+  toggleTopbarMenu($('bPanels'), panelMenu);
 };
 
 document.addEventListener('click', e => {
@@ -3223,6 +3474,8 @@ document.addEventListener('click', e => {
     optMenu.classList.remove('open');
   if(!layerMenu.contains(e.target) && e.target.id !== 'bLayer')
     layerMenu.classList.remove('open');
+  if(!panelMenu.contains(e.target) && e.target.id !== 'bPanels')
+    panelMenu.classList.remove('open');
 });
 
 addEventListener('resize', syncTopbarMenus);
@@ -3235,6 +3488,14 @@ document.querySelectorAll('.opt-item[data-opt]').forEach(el => {
     UI_OPTIONS[key] = !UI_OPTIONS[key];
     saveUIOptions();
     refreshOptMenu();
+  };
+});
+
+document.querySelectorAll('.opt-item[data-panel-opt]').forEach(el => {
+  el.onclick = e => {
+    e.stopPropagation();
+    const key = el.dataset.panelOpt;
+    setPanelVisibility(key, !UI_OPTIONS[key]);
   };
 });
 
@@ -3251,6 +3512,22 @@ graphicPackSelect.onchange = e => {
   refreshOptMenu();
   toast(t('settings.graphicPackChanged', { pack: GRAPHIC_PACKS[UI_OPTIONS.graphicPack].n }));
 };
+
+if(soundVolumeSlider){
+  soundVolumeSlider.oninput = e => {
+    e.stopPropagation();
+    UI_OPTIONS.soundVolume = Math.max(0, Math.min(1, Number(soundVolumeSlider.value) / 100));
+    saveUIOptions();
+  };
+}
+
+if(soundZoomSlider){
+  soundZoomSlider.oninput = e => {
+    e.stopPropagation();
+    UI_OPTIONS.soundZoomMin = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Number(soundZoomSlider.value)));
+    saveUIOptions();
+  };
+}
 
 // ---------- boucle principale ----------
 // drawFn est une indirection pour permettre aux extensions (multijoueur) de surcharger draw

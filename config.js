@@ -334,4 +334,15 @@ const CONFIG = {
     poissonRayon: 4,    // distance max depuis la rive (Manhattan) pour placer des poissons
     poissonPct:   0.03, // fraction de tuiles de rive éligibles qui reçoivent des poissons
   },
+
+  /* ---------- SONS ----------
+     volume  : niveau de lecture par effet (0 = muet, 1 = max). Multiplié par le
+               volume global réglable dans les paramètres (⚙️).
+     fichier : chemin du mp3 (servi depuis assets/).
+     zoomMin : zoom minimal pour entendre les sons « de carte » (départ de train…).
+               En-dessous (vue trop dézoomée) le son ne joue pas. Plage 0.35 → 2.4. */
+  sons: {
+    zoomMin: 1.0,
+    trainDepart: { fichier: 'assets/sounds/train_depart.mp3', volume: 0.6 },
+  },
 };

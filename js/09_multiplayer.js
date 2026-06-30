@@ -1533,7 +1533,7 @@ function applySnapshot(d){
   $('bPause').classList.toggle('on', paused);
   document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===speed));
 
-  buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
+  buildings = []; trucks = []; walkers = []; homeless = []; floats = []; smoke = [];
   vehicles = []; vehicleRouteMode = null; selectedVehicle = null; focusVehicle = null; camTracking = false; vehicleListMode = null; nextTruckId = 0; nextVehicleId = 0; nextTrainStationId = d.nextTrainStationId || 1;
   towns = []; nextTownId = 0; selectedTownId = prevSelectedTownId ?? null; townLabelHits = [];
   bgrid = new Array(N*N).fill(null);

@@ -1577,7 +1577,26 @@ function advanceRailVehicle(v, move){
   }
 }
 
+// Fumée de démarrage : durée d'émission et cadence (secondes de jeu).
+const TRAIN_SMOKE_DURATION = 1.6;
+const TRAIN_SMOKE_EMIT_INTERVAL = 0.06;
+// Arme une bouffée de fumée si la locomotive est actuellement visible à l'écran.
+function startTrainSmoke(v){
+  if(!isTrainLocoVisible(v)) return;
+  v.smokeTimer = TRAIN_SMOKE_DURATION;
+  v.smokeEmitAcc = 0;
+}
+
 function updateTrainVehicle(v, dt){
+  // Émission de fumée pendant le démarrage (purement visuel).
+  if(v.smokeTimer > 0){
+    v.smokeTimer -= dt;
+    v.smokeEmitAcc = (v.smokeEmitAcc || 0) + dt;
+    while(v.smokeEmitAcc >= TRAIN_SMOKE_EMIT_INTERVAL){
+      v.smokeEmitAcc -= TRAIN_SMOKE_EMIT_INTERVAL;
+      emitTrainSmoke(v);
+    }
+  }
   if(v.orders?.length && !syncTrainOrders(v)){
     v.state = 'idle';
     v.pts = [];
@@ -1608,6 +1627,14 @@ function updateTrainVehicle(v, dt){
       v.pendingFreightRevenue = 0;
       v.freightRevenueFireAt = null;
     }
+    // Son de locomotive ~1 s avant le départ, depuis une gare visible (pas le
+    // dépôt) et au zoom suffisant. Drapeau anti-répétition par arrêt.
+    if(!v.departSoundPlayed && v.waitTimer <= 1 && isTrainStationPiece(v.currentBuilding)){
+      const b = v.currentBuilding;
+      const cx = b.x + (b.w || 1) / 2, cy = b.y + (b.h || 1) / 2;
+      if(isMapSoundAudible(cx, cy)) playSound('trainDepart');
+      v.departSoundPlayed = true;
+    }
     if(v.waitTimer > 0) return;
     // Le train repart : annuler tout gain en attente non encore affiché
     v.pendingFreightRevenue = 0;
@@ -1619,6 +1646,11 @@ function updateTrainVehicle(v, dt){
     if(!prepareRailTrip(v, fromB, toB, continueTile, previousTile)){
       v.waitTimer = 5;
       return;
+    }
+    // Bouffée de fumée au démarrage depuis une gare visible (pas le dépôt).
+    if(isTrainStationPiece(fromB)){
+      const cx = fromB.x + (fromB.w || 1) / 2, cy = fromB.y + (fromB.h || 1) / 2;
+      if(isWorldTileVisible(cx, cy)){ v.smokeTimer = TRAIN_SMOKE_DURATION; v.smokeEmitAcc = 0; }
     }
     v.railContinueTile = null;
     v.railPreviousTile = null;
@@ -1635,7 +1667,7 @@ function updateTrainVehicle(v, dt){
   if(pre.missingRail){
     v.missingRailTimer = (v.missingRailTimer || 0) + dt;
     if(v.missingRailTimer >= 10 && v.state !== 'returning'){
-      toast('🚂 '+v.name+' : voie interrompue, retour au dépôt','err');
+      toast('🚂 '+v.name+' : voie interrompue, retour au dépôt','err', eventTargetForVehicle(v));
       v.missingRailTimer = 0;
       returnToGarage(v);
     }
@@ -1648,18 +1680,24 @@ function updateTrainVehicle(v, dt){
   advanceRailVehicle(v, VEHICLE_TYPES[v.vtype].speed * (v.engineMult || 1) * TILE * dt);
   const progressAfter = v.seg + v.t;
   if(Math.abs(progressAfter - progressBefore) > 1e-6){
+    // Reprise de mouvement : si le train était arrêté un instant (feu rouge,
+    // attente d'un canton…), il « repart » → bouffée de fumée si la loco est visible.
+    if((v.stoppedTime || 0) >= 0.3 && v.smokeTimer <= 0) startTrainSmoke(v);
+    v.stoppedTime = 0;
     v.signalWaitTime = 0;
   } else if(v.state !== 'returning' && trainEdgeHasFacingSignal(v)){
     // Arrêt normal derrière un feu rouge : le canton suivant (p.ex. une gare de
     // destination surchargée) est occupé. Comportement ferroviaire attendu : le
     // train patiente au feu jusqu'au dégagement, il ne rebrousse PAS chemin vers
     // le dépôt (= sa gare de départ). On n'arme donc pas le watchdog ici.
+    v.stoppedTime = (v.stoppedTime || 0) + dt;
     v.signalWaitTime = 0;
   } else if(v.state !== 'returning'){
+    v.stoppedTime = (v.stoppedTime || 0) + dt;
     v.signalWaitTime = (v.signalWaitTime || 0) + dt;
     const sw = v.signalWaitTime;
     if(sw >= 60){
-      toast('🚂 '+v.name+' bloqué trop longtemps, mis en attente','err');
+      toast('🚂 '+v.name+' bloqué trop longtemps, mis en attente','err', eventTargetForVehicle(v));
       v.state = 'idle';
       v.pts = [];
       v.pathTiles = [];
@@ -1669,7 +1707,7 @@ function updateTrainVehicle(v, dt){
       return;
     }
     if(sw >= 30 && v.state !== 'returning'){
-      toast('🚂 '+v.name+' bloqué, tentative de retour au dépôt','err');
+      toast('🚂 '+v.name+' bloqué, tentative de retour au dépôt','err', eventTargetForVehicle(v));
       v.signalWaitTime = 30.001; // éviter de re-déclencher returnToGarage chaque frame
       returnToGarage(v);
       return;
@@ -1694,6 +1732,7 @@ function updateTrainVehicle(v, dt){
     v.state = 'to_dest';
     v.waitTimer = trainStopDurationFor(v.source);
     v.freightRevenueFireAt = v.waitTimer / 2;
+    v.departSoundPlayed = false;
     holdTrainAtArrival(v);
     return;
   }
@@ -1709,6 +1748,7 @@ function updateTrainVehicle(v, dt){
   }
   v.waitTimer = trainStopDurationFor(v.currentBuilding);
   v.freightRevenueFireAt = v.waitTimer / 2;
+  v.departSoundPlayed = false;
   holdTrainAtArrival(v);
 }
 

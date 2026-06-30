@@ -35,10 +35,10 @@
 
   /* ---- dropdown options ---- */
   .opt-wrap{position:relative}
-  #optMenu,#layerMenu{position:fixed;top:0;left:0;right:auto;min-width:220px;max-width:calc(100vw - 16px);
+  #optMenu,#layerMenu,#panelMenu{position:fixed;top:0;left:0;right:auto;min-width:220px;max-width:calc(100vw - 16px);
     background:rgba(13,18,28,.97);border:1px solid #36465e;border-radius:10px;
     box-shadow:0 6px 22px rgba(0,0,0,.55);padding:6px 0;z-index:50;display:none}
-  #optMenu.open,#layerMenu.open{display:block}
+  #optMenu.open,#layerMenu.open,#panelMenu.open{display:block}
   .opt-item{display:flex;align-items:center;gap:10px;padding:7px 14px;
     cursor:pointer;font-size:13px;color:#e8eef7;white-space:nowrap}
   .opt-item:hover{background:rgba(255,255,255,.06)}
@@ -148,6 +148,19 @@
   #vehicleListPanel .vehlist-info b{font-size:13px;font-weight:600;color:#e8eef7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #vehicleListPanel .vehlist-res{font-size:11px;color:#c8d6ea;background:#223044;border-radius:3px;padding:1px 5px;white-space:nowrap;flex:0 0 auto}
   #vehicleListPanel .vehlist-date{font-size:11px;color:#8fa3bf;font-variant-numeric:tabular-nums}
+  /* ---- panneau événements ---- */
+  #eventsPanel{top:70px;right:12px;width:min(360px,calc(100vw - 24px));max-height:72vh;display:none;z-index:16;padding:10px 12px;font-size:13px}
+  #eventsPanel .events-count{color:#8fa3bf;font-weight:normal}
+  #eventsPanel .events-hint{font-size:11px;color:#8fa3bf;margin:0 0 8px;line-height:1.3}
+  #eventsPanel .events-empty{color:#8fa3bf;padding:18px 6px;text-align:center;font-style:italic}
+  #eventsPanel .events-list{display:flex;flex-direction:column;gap:6px;overflow-y:auto;max-height:calc(72vh - 92px)}
+  #eventsPanel .event-item{display:flex;flex-direction:column;gap:3px;padding:8px 9px;border-radius:7px;
+    background:#1d2939;border:1px solid #2a3a52;cursor:pointer;transition:background .12s,border-color .12s}
+  #eventsPanel .event-item:hover{background:#243449;border-color:#5b93e8}
+  #eventsPanel .event-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  #eventsPanel .event-time{font-size:11px;color:#8fa3bf;font-variant-numeric:tabular-nums;white-space:nowrap}
+  #eventsPanel .event-target{font-size:11px;color:#9fc1ef;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #eventsPanel .event-text{color:#e8eef7;line-height:1.35}
   #info .bar i{display:block;height:100%}
   #info .status{color:#9fc1ef;margin:7px 0;font-style:italic}
   #info .warn{color:#ffb04d}
@@ -352,6 +365,17 @@
   </div>
   <span class="sep"></span>
   <div class="opt-wrap">
+    <button class="tbtn" id="bPanels" title="Panneaux" data-i18n-title="panels.title" data-i18n="panels.button">Panneaux</button>
+    <div id="panelMenu">
+      <div class="opt-title" data-i18n="panels.title">Panneaux</div>
+      <div class="opt-item" data-panel-opt="panelEvents">
+        <span class="chk"></span>
+        <span data-i18n="panels.events">Événements</span>
+      </div>
+    </div>
+  </div>
+  <span class="sep"></span>
+  <div class="opt-wrap">
     <button class="tbtn" id="bOptions" title="Options d'affichage" data-i18n-title="settings.title">⚙️</button>
     <div id="optMenu">
       <div class="opt-title" data-i18n="settings.language">Langue</div>
@@ -368,6 +392,14 @@
         <span class="chk"></span>
         <span data-i18n="settings.disableTrafficLights">Désactiver les feux de circulation</span>
       </div>
+      <div class="opt-item" id="optDisableSounds" data-opt="disableSounds">
+        <span class="chk"></span>
+        <span data-i18n="settings.disableSounds">Désactiver les sons</span>
+      </div>
+      <div class="opt-title" data-i18n="settings.soundVolume">Volume des sons</div>
+      <input type="range" class="opt-select" id="soundVolumeSlider" min="0" max="100" step="5">
+      <div class="opt-title" data-i18n="settings.soundZoomMin">Zoom minimal des sons</div>
+      <input type="range" class="opt-select" id="soundZoomSlider" min="0.35" max="2.4" step="0.05">
     </div>
   </div>
 </div>
@@ -384,6 +416,7 @@
 <div id="finance" class="panel"></div>
 <div id="info" class="panel"></div>
 <div id="vehicleListPanel" class="panel"></div>
+<div id="eventsPanel" class="panel"></div>
 <div id="toasts"></div>
 <div id="confirmOverlay">
   <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">

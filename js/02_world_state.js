@@ -2,6 +2,7 @@ const COLORS = ['#e25e4c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#f0a040','#40
 
 // ---------- état ----------
 let terrain, road, rail, railOwner, railSignals, railBlocks, railBlockOccupancy, bgrid, buildings, trucks, walkers, homeless, floats;
+let smoke = [];  // particules de fumée (locomotives) — purement cosmétique, transitoire
 let vehicles = [];        // véhicules persistants
 let vehicleRouteMode = null; // { vehicle, step:'source'|'dest' } ou null
 let selectedVehicle = null;  // véhicule sélectionné
@@ -45,10 +46,53 @@ const UI_OPTIONS = (() => {
     hideColorMarkers: saved.hideColorMarkers ?? false,
     highlightUnderstaffedFactories: saved.highlightUnderstaffedFactories ?? false,
     disableTrafficLights: saved.disableTrafficLights ?? false,
+    disableSounds: saved.disableSounds ?? false,
+    soundVolume: (typeof saved.soundVolume === 'number') ? Math.max(0, Math.min(1, saved.soundVolume)) : 0.7,
+    soundZoomMin: (typeof saved.soundZoomMin === 'number') ? saved.soundZoomMin : ((CFG && CFG.sons && CFG.sons.zoomMin) ?? 1.0),
     graphicPack: GRAPHIC_PACKS[saved.graphicPack] || /^asset:/.test(saved.graphicPack || '') ? saved.graphicPack : 'classic',
+    panelEvents: saved.panelEvents ?? false,
   };
 })();
 function saveUIOptions(){ localStorage.setItem('factopolis_ui_options', JSON.stringify(UI_OPTIONS)); }
+
+// Historique runtime des événements UI focalisables (non persisté dans les sauvegardes).
+let gameEvents = [];
+let nextGameEventId = 1;
+
+// ---------- sons ----------
+// Effets sonores du jeu, définis dans config.js (CFG.sons) : nom logique →
+// { fichier, volume }. Volume effectif = volume global (réglages ⚙️) × volume
+// par effet (config). Désactivables globalement via UI_OPTIONS.disableSounds.
+const SOUNDS = (CFG && CFG.sons) ? CFG.sons : {};
+const _soundCache = {};
+function playSound(name){
+  if(UI_OPTIONS.disableSounds) return;
+  const def = SOUNDS[name];
+  if(!def || !def.fichier) return;
+  const vol = Math.max(0, Math.min(1, (UI_OPTIONS.soundVolume ?? 1) * (def.volume ?? 1)));
+  if(vol <= 0) return;
+  try {
+    // Élément de référence mis en cache (préchargé) ; on clone pour autoriser
+    // plusieurs lectures simultanées (départs rapprochés).
+    let base = _soundCache[name];
+    if(!base){
+      base = new Audio(def.fichier);
+      base.preload = 'auto';
+      _soundCache[name] = base;
+    }
+    const a = base.cloneNode();
+    a.volume = vol;
+    const p = a.play();
+    if(p && typeof p.catch === 'function') p.catch(() => {});
+  } catch(e){ /* autoplay bloqué ou fichier absent : on ignore */ }
+}
+// Un son « de carte » (départ de train…) ne joue que si le point (en tuiles) est
+// visible à l'écran ET que le zoom est suffisamment proche (CFG.sons.zoomMin).
+function isMapSoundAudible(tx, ty){
+  const zoomMin = UI_OPTIONS.soundZoomMin ?? (CFG.sons && CFG.sons.zoomMin) ?? 1.0;
+  if((cam.z || 1) < zoomMin) return false;
+  return isWorldTileVisible(tx, ty);
+}
 const ZOOM_MAX = 2.4;
 const ZOOM_WHEEL_SENS = 0.0022;
 const CAM_SMOOTH = 18;
@@ -194,6 +238,14 @@ function worldPxToIso(wx,wy){
   const [u,v] = rotF(wx/TILE, wy/TILE);
   return iso(u,v);
 }
+// Tuile monde (tx,ty en tuiles) dans la fenêtre visible courante ?
+function isWorldTileVisible(tx, ty, margin = 0){
+  const z = cam.z || 1;
+  const [u,v] = rotF(tx, ty);
+  const [px,py] = iso(u,v);
+  return px >= cam.x - margin && px <= cam.x + W/z + margin
+      && py >= cam.y - margin && py <= cam.y + H/z + margin;
+}
 // rotation d'un vecteur direction monde -> tourné
 function rotDir(dx,dy){
   switch(rot){
@@ -251,10 +303,11 @@ function genWorld(config){
   railBlocks = null;
   railBlockOccupancy = null;
   bgrid = new Array(N*N).fill(null);
-  buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
+  buildings = []; trucks = []; walkers = []; homeless = []; floats = []; smoke = [];
   vehicles = []; vehicleRouteMode = null; selectedVehicle = null; focusVehicle = null; camTracking = false; vehicleListMode = null; nextTruckId = 0; nextWalkerId = 0; nextVehicleId = 0; nextTrainStationId = 1;
   towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = []; trainDepotFlagHits = [];
   WALLETS = {}; gtime = 0;
+  gameEvents = []; nextGameEventId = 1;
   selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0; busStopTimer = 0; passengerCycleTimer = 0;
   mapBounds = { x0: EXP_MARGIN, y0: EXP_MARGIN, x1: EXP_MARGIN + N_PLAY, y1: EXP_MARGIN + N_PLAY };
   expansions = []; expansionLevels = { left:0, right:0, top:0, bottom:0 };

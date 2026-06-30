@@ -345,7 +345,7 @@ function tryMergeTrainStations(){
       const targetId = Math.min(idA, idB);
       mergeTrainStationGroups([idA, idB], targetId);
       assignTrainStationName(targetId);
-      toast('🚉 Gares adjacentes fusionnées !', 'win');
+      toast('🚉 Gares adjacentes fusionnées !', 'win', eventTargetForBuilding(trainStationGroupRepresentative(targetId)));
       return true;
     }
   }
@@ -541,7 +541,7 @@ function clickAt(x,y){
         veh.ordersDraft = true; // arrêt ajouté localement, pas encore enregistré : la synchro hôte ne doit pas l'écraser
         syncTrainOrders(veh);
         if(typeof renderTrainPanel === 'function') renderTrainPanel();
-        toast('🚂 Arrêt ajouté : '+trainStopLabel(b));
+        toast('🚂 Arrêt ajouté : '+trainStopLabel(b), 'win', eventTargetForVehicle(veh));
         return;
       }
       const isBus = veh.vtype === 'bus';
@@ -584,8 +584,8 @@ function clickAt(x,y){
           destX:vRef.dest.x, destY:vRef.dest.y,
         });
         if(vRef.vtype !== 'train' && vehiclePresentAtDepot(vRef))
-          toast('Route définie. Le véhicule attend le drapeau vert pour sortir du dépôt.','win');
-        else if(routeStarted) toast('Route définie ! Le véhicule commence sa tournée.','win');
+          toast('Route définie. Le véhicule attend le drapeau vert pour sortir du dépôt.','win', eventTargetForVehicle(vRef));
+        else if(routeStarted) toast('Route définie ! Le véhicule commence sa tournée.','win', eventTargetForVehicle(vRef));
         else if(vRef.vtype === 'train') toast('⛔ Aucun chemin ferroviaire continu depuis le dépôt du train.','err');
         else toast('⛔ Aucun chemin disponible depuis le dépôt du véhicule.','err');
         if($('info')) $('info')._html = null;
