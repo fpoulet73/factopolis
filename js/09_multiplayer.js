@@ -18,10 +18,12 @@ function refreshOwnerColorsFromRegistry(){
   }
 }
 
-const MP_STATE_SYNC_INTERVAL = 0.2;
+const MP_STATE_SYNC_INTERVAL = 0.2;   // cadence du flux « mouvement » (léger)
+const MP_WORLD_SYNC_INTERVAL = 1.0;   // cadence du flux « monde » complet (lourd)
 const MP_RENDER_DELAY = 0.3;
 const MP_SNAPSHOT_BUFFER_MAX = 16;
 let mpStateSyncTimer = 0;
+let mpWorldSyncTimer = 0;
 
 // L'hôte diffuse toutes les MP_STATE_SYNC_INTERVAL secondes RÉELLES ; l'écart de
 // gtime entre deux snapshots vaut donc MP_STATE_SYNC_INTERVAL * speed. Si la
@@ -51,6 +53,7 @@ function serializeTruckState(tk){
 
 function serializeWalkerState(wk){
   return {
+    id: wk.id ?? null,
     pts: Array.isArray(wk.pts) ? wk.pts.map(p => ({ x:p.x, y:p.y })) : [],
     seg: wk.seg || 0,
     t: wk.t || 0,
@@ -268,6 +271,61 @@ function setTruckRenderImmediate(tk, state){
   tk.renderT = state.t ?? 0;
 }
 
+function mpWalkerRenderState(wk){
+  if(!wk) return null;
+  return {
+    pts: wk.renderPts || wk.pts || [],
+    seg: wk.renderSeg ?? wk.seg ?? 0,
+    t: wk.renderT ?? wk.t ?? 0,
+  };
+}
+
+function setWalkerRenderImmediate(wk, state){
+  wk.renderPts = copyPointList(state.pts);
+  wk.renderSeg = state.seg ?? 0;
+  wk.renderT = state.t ?? 0;
+}
+
+// Reconstruit la liste des piétons d'un snapshot hôte en RÉUTILISANT les objets
+// existants (appariés par id) : leurs champs render* survivent ainsi d'un sync à
+// l'autre, condition de l'interpolation fluide. Les nouveaux sont créés, les
+// disparus tombent (absents du résultat).
+function reconcileGuestWalkers(prevWalkers, snapWalkers){
+  const byId = new Map();
+  for(const w of (prevWalkers || [])) if(w.id != null) byId.set(String(w.id), w);
+  const out = [];
+  for(const sw of (snapWalkers || [])){
+    if(!Array.isArray(sw.pts) || sw.pts.length < 2) continue;
+    const target = syncBuildingByCoords(sw.targetX, sw.targetY) || null;
+    const seg = Math.max(0, Math.min((sw.seg || 0), Math.max(0, sw.pts.length - 1)));
+    const t = Math.max(0, Math.min(1, sw.t || 0));
+    const col = sw.col || playerColor(target?.owner ?? null);
+    const phase = Number.isFinite(sw.phase) ? sw.phase : 0;
+    let wk = sw.id != null ? byId.get(String(sw.id)) : null;
+    if(wk){
+      wk.pts = sw.pts.map(p => ({ x:p.x, y:p.y }));
+      wk.seg = seg; wk.t = t;
+      wk.target = target;
+      wk.leaving = !!sw.leaving;
+      wk.fromHomeless = !!sw.fromHomeless;
+      wk.protectedResident = !!sw.protectedResident;
+      wk.col = col; wk.phase = phase;
+    } else {
+      wk = {
+        id: sw.id ?? null,
+        pts: sw.pts.map(p => ({ x:p.x, y:p.y })),
+        seg, t, target,
+        leaving: !!sw.leaving,
+        fromHomeless: !!sw.fromHomeless,
+        protectedResident: !!sw.protectedResident,
+        col, phase,
+      };
+    }
+    out.push(wk);
+  }
+  return out;
+}
+
 function setVehicleRenderProgress(v, progress){
   const pts = v.renderPts || [];
   if(!pts.length){
@@ -311,23 +369,7 @@ function buildingRenderProg(b){
 function mpResetGuestSnapshotBuffer(){
   MP.renderSnapshots = [];
   MP.renderClockGtime = null;
-}
-
-function serializeGuestRenderVehicleSnapshot(sv){
-  return {
-    id: String(sv.id),
-    vtype: sv.vtype,
-    state: sv.state || 'idle',
-    pts: copyPointList(sv.pts),
-    pathTiles: Array.isArray(sv.pathTiles) ? sv.pathTiles.slice() : [],
-    railTrail: copyPointList(sv.railTrail),
-    seg: sv.seg || 0,
-    t: sv.t || 0,
-    currentBuildingX: sv.currentBuildingX ?? null,
-    currentBuildingY: sv.currentBuildingY ?? null,
-    railContinueTile: sv.railContinueTile ?? null,
-    railPreviousTile: sv.railPreviousTile ?? null,
-  };
+  MP.smoothLatest = NaN;
 }
 
 function serializeGuestRenderTruckSnapshot(st){
@@ -339,20 +381,48 @@ function serializeGuestRenderTruckSnapshot(st){
   };
 }
 
-function mpBuildGuestRenderSnapshot(d){
-  const buildings = Object.create(null);
-  for(const b of d.buildings || []) buildings[syncBuildingKey(b)] = { prog:b.prog || 0 };
+function serializeGuestRenderWalkerSnapshot(sw){
   return {
-    gtime: d.gtime || 0,
-    buildings,
-    vehicles: new Map((d.vehicles || []).map(sv => [String(sv.id), serializeGuestRenderVehicleSnapshot(sv)])),
-    trucks: new Map((d.trucks || []).map(st => [String(st.id ?? `${st.fromX},${st.fromY}:${st.targetX},${st.targetY}:${st.res}:${st.amt}`), serializeGuestRenderTruckSnapshot(st)])),
+    id: String(sw.id),
+    pts: copyPointList(sw.pts),
+    seg: sw.seg || 0,
+    t: sw.t || 0,
   };
 }
 
-function mpPushGuestRenderSnapshot(d){
-  if(!MP.connected || MP.role !== 'guest' || !d) return;
-  const snap = mpBuildGuestRenderSnapshot(d);
+// Construit un snapshot de rendu à partir du flux « mouvement ». Les chemins
+// (pts/pathTiles/railTrail) absents du paquet (inchangés) sont complétés depuis le
+// cache par id (MP.vehPathCache), mis à jour par applyMoveSync/applyStateSync.
+function mpBuildGuestRenderSnapshotFromMove(d){
+  const cache = MP.vehPathCache || (MP.vehPathCache = new Map());
+  const vehicles = new Map();
+  for(const mv of d.vehicles || []){
+    const c = cache.get(String(mv.id)) || {};
+    vehicles.set(String(mv.id), {
+      id: String(mv.id),
+      vtype: mv.vtype,
+      state: mv.state || 'idle',
+      pts: copyPointList(Array.isArray(mv.pts) ? mv.pts : c.pts),
+      pathTiles: Array.isArray(mv.pathTiles) ? mv.pathTiles.slice() : (Array.isArray(c.pathTiles) ? c.pathTiles.slice() : []),
+      railTrail: copyPointList(mv.railTrail !== undefined ? mv.railTrail : c.railTrail),
+      seg: mv.seg || 0,
+      t: mv.t || 0,
+      currentBuildingX: mv.currentBuildingX ?? null,
+      currentBuildingY: mv.currentBuildingY ?? null,
+      railContinueTile: mv.railContinueTile ?? null,
+      railPreviousTile: mv.railPreviousTile ?? null,
+    });
+  }
+  return {
+    gtime: d.gtime || 0,
+    buildings: Object.create(null), // la progression des bâtiments est avancée localement (mpProgRate)
+    vehicles,
+    trucks: new Map((d.trucks || []).map(st => [String(st.id ?? `${st.fromX},${st.fromY}:${st.targetX},${st.targetY}:${st.res}:${st.amt}`), serializeGuestRenderTruckSnapshot(st)])),
+    walkers: new Map((d.walkers || []).filter(sw => sw.id != null).map(sw => [String(sw.id), serializeGuestRenderWalkerSnapshot(sw)])),
+  };
+}
+
+function mpEnqueueRenderSnapshot(snap){
   const buf = MP.renderSnapshots || (MP.renderSnapshots = []);
   const last = buf[buf.length - 1];
   if(last && snap.gtime < last.gtime - 1e-6) return;
@@ -366,6 +436,90 @@ function mpPushGuestRenderSnapshot(d){
   else if(MP.renderClockGtime < (oldest?.gtime || 0)) MP.renderClockGtime = oldest.gtime;
 }
 
+function mpPushGuestRenderSnapshotMove(d){
+  if(!MP.connected || MP.role !== 'guest' || !d) return;
+  mpEnqueueRenderSnapshot(mpBuildGuestRenderSnapshotFromMove(d));
+}
+
+// Recharge le cache des chemins depuis les véhicules vivants (après un flux monde
+// complet ou un snapshot initial) : filet de sécurité si un delta de chemin du
+// flux mouvement a été manqué.
+function mpRefreshVehPathCache(){
+  const cache = MP.vehPathCache || (MP.vehPathCache = new Map());
+  cache.clear();
+  for(const v of vehicles){
+    cache.set(String(v.id), {
+      pts: Array.isArray(v.pts) ? v.pts.map(p => ({ x:p.x, y:p.y })) : [],
+      pathTiles: Array.isArray(v.pathTiles) ? v.pathTiles.slice() : [],
+      railTrail: Array.isArray(v.railTrail) ? v.railTrail.map(p => ({ x:p.x, y:p.y })) : null,
+    });
+  }
+}
+
+// Reconstruit la liste des camions (éphémères) depuis un paquet hôte.
+function rebuildGuestTrucks(dTrucks){
+  trucks = [];
+  for(const st of dTrucks || []){
+    const from = syncBuildingByCoords(st.fromX, st.fromY);
+    const target = syncBuildingByCoords(st.targetX, st.targetY);
+    if(!from || !target || !Array.isArray(st.pts) || st.pts.length < 2) continue;
+    const truckId = st.id ?? nextTruckId++;
+    if(Number.isFinite(Number(truckId))) nextTruckId = Math.max(nextTruckId, Number(truckId) + 1);
+    trucks.push({
+      id: truckId,
+      pts: st.pts.map(p => ({ x:p.x, y:p.y })),
+      seg: Math.max(0, Math.min((st.seg || 0), Math.max(0, st.pts.length - 1))),
+      t: Math.max(0, Math.min(1, st.t || 0)),
+      res: st.res || null, amt: st.amt || 0,
+      target, from, overtaking: !!st.overtaking,
+    });
+  }
+  // trucksOut reconstruit depuis les camions présents (évite un compteur résiduel
+  // qui bloquerait le dispatch — cf. applyStateSync).
+  for(const b of buildings) b.trucksOut = 0;
+  for(const tk of trucks) if(tk.from) tk.from.trucksOut++;
+}
+
+// Application du flux « mouvement » côté invité : positions des véhicules (chemins
+// complétés depuis le cache), cycle de vie complet des camions/piétons, puis
+// alimentation du tampon de rendu interpolé. Léger → exécuté à 5 Hz sans saccade.
+function applyMoveSync(d){
+  if(!d) return;
+  paused = !!d.paused;
+  speed = d.speed || 1;
+  if(d.gtime != null) gtime = d.gtime;
+  const cache = MP.vehPathCache || (MP.vehPathCache = new Map());
+  const byId = new Map(vehicles.map(v => [String(v.id), v]));
+  for(const mv of d.vehicles || []){
+    const v = byId.get(String(mv.id));
+    if(!v) continue; // l'existence est gérée par le flux monde (1 Hz)
+    v.state = mv.state || v.state;
+    v.currentBuilding = syncBuildingByCoords(mv.currentBuildingX, mv.currentBuildingY) || (v.state === 'idle' ? v.garageRef : null);
+    v.railContinueTile = mv.railContinueTile ?? null;
+    v.railPreviousTile = mv.railPreviousTile ?? null;
+    if(Array.isArray(mv.pts) || Array.isArray(mv.pathTiles)){
+      if(v.vtype === 'train' && Array.isArray(mv.pathTiles) && mv.pathTiles.length){
+        v.pathTiles = mv.pathTiles.slice();
+        v.pts = mv.pathTiles.map(idx => ({ x:(idx % N) * TILE + TILE / 2, y:((idx / N) | 0) * TILE + TILE / 2 }));
+      } else {
+        v.pathTiles = Array.isArray(mv.pathTiles) ? mv.pathTiles.slice() : [];
+        v.pts = Array.isArray(mv.pts) ? mv.pts.map(p => ({ x:p.x, y:p.y })) : [];
+      }
+      if(mv.railTrail !== undefined) v.railTrail = Array.isArray(mv.railTrail) ? mv.railTrail.map(p => ({ x:p.x, y:p.y })) : v.railTrail;
+      cache.set(String(mv.id), {
+        pts: v.pts.map(p => ({ x:p.x, y:p.y })),
+        pathTiles: Array.isArray(v.pathTiles) ? v.pathTiles.slice() : [],
+        railTrail: Array.isArray(v.railTrail) ? v.railTrail.map(p => ({ x:p.x, y:p.y })) : null,
+      });
+    }
+    v.seg = Math.max(0, Math.min((mv.seg || 0), Math.max(0, v.pts.length - 1)));
+    v.t = Math.max(0, Math.min(1, mv.t || 0));
+  }
+  rebuildGuestTrucks(d.trucks);
+  walkers = reconcileGuestWalkers(walkers, d.walkers);
+  mpPushGuestRenderSnapshotMove(d);
+}
+
 function mpAdvanceGuestRenderClock(gameDt){
   const buf = MP.renderSnapshots || [];
   if(!buf.length){
@@ -374,10 +528,31 @@ function mpAdvanceGuestRenderClock(gameDt){
   }
   const oldest = buf[0];
   const latest = buf[buf.length - 1];
-  const target = Math.max(oldest.gtime, latest.gtime - mpRenderDelay());
-  if(!Number.isFinite(MP.renderClockGtime)) MP.renderClockGtime = target;
-  if(!paused && gameDt > 0) MP.renderClockGtime += gameDt;
-  if(MP.renderClockGtime > target) MP.renderClockGtime = target;
+  const delay = mpRenderDelay();
+  // La source de saccade : le gtime du snapshot le plus récent (`latest`) n'avance
+  // que par paliers de 200 ms, donc toute horloge qui s'y recale « pulse ». On
+  // construit d'abord une estimation CONTINUE de ce gtime (`smoothLatest`) : elle
+  // avance par le temps local et se recale exponentiellement (doucement) sur le
+  // vrai latest, sans jamais le dépasser (pas de prédiction au-delà des données).
+  if(!Number.isFinite(MP.smoothLatest)){
+    MP.smoothLatest = latest.gtime;
+  } else {
+    if(!paused && gameDt > 0) MP.smoothLatest += gameDt;
+    MP.smoothLatest += (latest.gtime - MP.smoothLatest) * Math.min(1, gameDt * 2);
+    if(MP.smoothLatest > latest.gtime) MP.smoothLatest = latest.gtime;
+    if(MP.smoothLatest < oldest.gtime) MP.smoothLatest = oldest.gtime;
+  }
+  // Cible de lecture : toujours `delay` derrière l'estimation LISSE → cible qui
+  // avance régulièrement, donc l'horloge la suit sans à-coup tout en gardant le
+  // tampon centré (robuste à la gigue ET au léger décalage de cadence hôte/invité).
+  const target = Math.max(oldest.gtime, MP.smoothLatest - delay);
+  if(!Number.isFinite(MP.renderClockGtime)){ MP.renderClockGtime = target; return; }
+  if(!paused && gameDt > 0){
+    MP.renderClockGtime += gameDt;                                                      // avance de base à vitesse normale
+    MP.renderClockGtime += (target - MP.renderClockGtime) * Math.min(1, gameDt * 2);    // recalage doux (amorti)
+  }
+  // Bornes dures : ne jamais extrapoler au-delà du plus récent ni avant le plus ancien.
+  if(MP.renderClockGtime > latest.gtime) MP.renderClockGtime = latest.gtime;
   if(MP.renderClockGtime < oldest.gtime) MP.renderClockGtime = oldest.gtime;
 }
 
@@ -510,6 +685,23 @@ function interpolateTruckSnapshotState(a, b, alpha){
   };
 }
 
+// Les piétons (walkers) se déplacent le long d'un pts fixe (comme les camions) :
+// même logique d'interpolation de la progression (seg+t) si le chemin est stable.
+function interpolateWalkerSnapshotState(a, b, alpha){
+  if(!a && !b) return null;
+  if(!a) return b;
+  if(!b) return a;
+  const samePath = vehiclePathSignature(a, 'road') === vehiclePathSignature(b, 'road');
+  if(!samePath) return alpha < 0.5 ? a : b;
+  const aProgress = snapshotProgressValue(a);
+  const bProgress = snapshotProgressValue(b);
+  if(bProgress + 1e-6 < aProgress) return alpha < 0.5 ? a : b;
+  return {
+    ...b,
+    interpProgress: aProgress + (bProgress - aProgress) * alpha,
+  };
+}
+
 function mpUpdateGuestVisuals(realDt=0, gameDt=0){
   if(!MP.connected || MP.role !== 'guest'){
     mpResetGuestSnapshotBuffer();
@@ -528,6 +720,11 @@ function mpUpdateGuestVisuals(realDt=0, gameDt=0){
       tk.renderSeg = null;
       tk.renderT = null;
     }
+    for(const wk of walkers){
+      wk.renderPts = null;
+      wk.renderSeg = null;
+      wk.renderT = null;
+    }
     return;
   }
   mpAdvanceGuestRenderClock(gameDt);
@@ -536,21 +733,23 @@ function mpUpdateGuestVisuals(realDt=0, gameDt=0){
     for(const b of buildings) b.renderProg = b.prog || 0;
     for(const v of vehicles) setVehicleRenderImmediate(v, vehicleAuthoritativeStateSnapshot(v));
     for(const tk of trucks) setTruckRenderImmediate(tk, truckRenderStateSnapshot(tk));
+    for(const wk of walkers) setWalkerRenderImmediate(wk, mpWalkerRenderState(wk));
     return;
   }
   const { a, b, alpha } = bracket;
 
+  // Barres de progression : le flux monde n'arrive qu'à ~1 Hz, on avance donc la
+  // progression localement à 60 fps à partir du taux mesuré entre deux flux monde
+  // (b.mpProgRate, unités de prog par gtime). Plus de saccade des barres.
   for(const bld of buildings){
     const r = recipeOf(bld);
-    const pa = a.buildings[syncBuildingKey(bld)]?.prog;
-    const pb = b.buildings[syncBuildingKey(bld)]?.prog;
-    if(!r || pa == null || pb == null){
-      bld.renderProg = bld.prog || 0;
-      continue;
+    if(!r){ bld.renderProg = bld.prog || 0; continue; }
+    if(bld.renderProg == null) bld.renderProg = bld.prog || 0;
+    if(!paused && gameDt > 0 && bld.mpProgRate){
+      bld.renderProg += bld.mpProgRate * gameDt;
+      while(bld.renderProg >= r.time) bld.renderProg -= r.time;
+      while(bld.renderProg < 0) bld.renderProg += r.time;
     }
-    bld.renderProg = pa + wrappedProgressDiff(pa, pb, r.time) * alpha;
-    while(bld.renderProg >= r.time) bld.renderProg -= r.time;
-    while(bld.renderProg < 0) bld.renderProg += r.time;
   }
 
   for(const v of vehicles){
@@ -599,6 +798,33 @@ function mpUpdateGuestVisuals(realDt=0, gameDt=0){
     } else {
       tk.renderSeg = 0;
       tk.renderT = 0;
+    }
+  }
+
+  for(const wk of walkers){
+    const wa = a.walkers?.get(String(wk.id));
+    const wb = b.walkers?.get(String(wk.id));
+    const interp = interpolateWalkerSnapshotState(wa, wb, alpha);
+    if(!interp){
+      setWalkerRenderImmediate(wk, mpWalkerRenderState(wk));
+      continue;
+    }
+    wk.renderPts = copyPointList(interp.pts);
+    const progress = interp.interpProgress ?? snapshotProgressValue(interp);
+    const pts = wk.renderPts || [];
+    if(pts.length >= 2){
+      const maxProgress = pts.length - 1;
+      const clamped = Math.max(0, Math.min(maxProgress, progress || 0));
+      if(clamped >= maxProgress){
+        wk.renderSeg = Math.max(0, pts.length - 2);
+        wk.renderT = 1;
+      } else {
+        wk.renderSeg = Math.max(0, Math.min(Math.floor(clamped), pts.length - 2));
+        wk.renderT = clamped - Math.floor(clamped);
+      }
+    } else {
+      wk.renderSeg = 0;
+      wk.renderT = 0;
     }
   }
 }
@@ -915,47 +1141,18 @@ function applyStateSync(d){
     const dropped = new Set(ghosts);
     vehicles = vehicles.filter(v => !dropped.has(v));
   }
+  // Filet de sécurité : recharge le cache des chemins depuis l'état complet, pour
+  // que le flux mouvement (qui n'émet les chemins qu'au changement) reste correct
+  // même si un delta a été manqué.
+  mpRefreshVehPathCache();
 
-  trucks = [];
-  for(const st of d.trucks || []){
-    const from = syncBuildingByCoords(st.fromX, st.fromY);
-    const target = syncBuildingByCoords(st.targetX, st.targetY);
-    if(!from || !target || !Array.isArray(st.pts) || st.pts.length < 2) continue;
-    const truckId = st.id ?? nextTruckId++;
-    if(Number.isFinite(Number(truckId))) nextTruckId = Math.max(nextTruckId, Number(truckId) + 1);
-    trucks.push({
-      id: truckId,
-      pts: st.pts.map(p => ({ x:p.x, y:p.y })),
-      seg: Math.max(0, Math.min((st.seg || 0), Math.max(0, st.pts.length - 1))),
-      t: Math.max(0, Math.min(1, st.t || 0)),
-      res: st.res || null,
-      amt: st.amt || 0,
-      target,
-      from,
-      overtaking: !!st.overtaking,
-    });
-  }
-  // trucksOut reconstruit depuis les camions réellement présents (cf. applySnapshot) :
-  // évite tout compteur résiduel qui bloquerait le dispatch des sorties.
-  for(const b of buildings) b.trucksOut = 0;
-  for(const tk of trucks) if(tk.from) tk.from.trucksOut++;
+  rebuildGuestTrucks(d.trucks);
 
-  walkers = [];
-  for(const sw of d.walkers || []){
-    if(!Array.isArray(sw.pts) || sw.pts.length < 2) continue;
-    const target = syncBuildingByCoords(sw.targetX, sw.targetY) || null;
-    walkers.push({
-      pts: sw.pts.map(p => ({ x:p.x, y:p.y })),
-      seg: Math.max(0, Math.min((sw.seg || 0), Math.max(0, sw.pts.length - 1))),
-      t: Math.max(0, Math.min(1, sw.t || 0)),
-      target,
-      leaving: !!sw.leaving,
-      fromHomeless: !!sw.fromHomeless,
-      protectedResident: !!sw.protectedResident,
-      col: sw.col || playerColor(target?.owner ?? null),
-      phase: Number.isFinite(sw.phase) ? sw.phase : 0,
-    });
-  }
+  // Réconciliation par id : on réutilise les objets walker existants afin de
+  // préserver leurs champs render* (l'interpolation lit le snapshot a/b mais
+  // écrit l'état lissé sur l'objet vivant, qui doit donc survivre d'un snapshot
+  // à l'autre — sinon le piéton sauterait à chaque sync).
+  walkers = reconcileGuestWalkers(walkers, d.walkers);
 
   floats = Array.isArray(d.floats)
     ? d.floats
@@ -987,12 +1184,60 @@ function mpRunsAuthoritativeSimulation(){
 function mpMaybeBroadcastState(dt){
   if(!MP.connected || MP.role !== 'host' || !MP.ws) return;
   mpStateSyncTimer += dt;
-  if(mpStateSyncTimer < MP_STATE_SYNC_INTERVAL) return;
-  mpStateSyncTimer = 0;
-  MP.ws.send(JSON.stringify({
-    type:'state_sync',
-    state: serializeState({ includeTransient:true, includeWorld:false }),
-  }));
+  mpWorldSyncTimer += dt;
+  // Flux « mouvement » léger (positions des entités mobiles) à haute fréquence :
+  // c'est lui qui assure la fluidité côté invité, pour un coût minime.
+  if(mpStateSyncTimer >= MP_STATE_SYNC_INTERVAL){
+    mpStateSyncTimer = 0;
+    MP.ws.send(JSON.stringify({ type:'move_sync', state: serializeMoveSync() }));
+  }
+  // Flux « monde » complet (bâtiments, stockage, économie, existence des
+  // véhicules…) à basse fréquence : c'est la grosse charge thread-principal, donc
+  // on l'espace. Les barres de progression sont avancées localement entre deux.
+  if(mpWorldSyncTimer >= MP_WORLD_SYNC_INTERVAL){
+    mpWorldSyncTimer = 0;
+    MP.ws.send(JSON.stringify({
+      type:'state_sync',
+      state: serializeState({ includeTransient:true, includeWorld:false }),
+    }));
+  }
+}
+
+// Flux « mouvement » : uniquement ce qui doit bouger de façon fluide. Les chemins
+// (pts/pathTiles/railTrail) des véhicules persistants ne sont émis QU'AU
+// changement (l'invité les met en cache par id) — c'est ~65 % du payload véhicule
+// évité à chaque tick. Les camions et piétons (éphémères, chemins courts) sont
+// envoyés entiers pour gérer simplement leur cycle de vie.
+function serializeMoveSync(){
+  const sigMap = MP._sentVehPathSig || (MP._sentVehPathSig = new Map());
+  const seen = new Set();
+  const vehs = vehicles.map(v => {
+    const key = String(v.id);
+    seen.add(key);
+    const m = {
+      id: v.id, vtype: v.vtype, state: v.state,
+      seg: v.seg || 0, t: v.t || 0,
+      currentBuildingX: v.currentBuilding && !v.currentBuilding.dead ? v.currentBuilding.x : null,
+      currentBuildingY: v.currentBuilding && !v.currentBuilding.dead ? v.currentBuilding.y : null,
+      railContinueTile: v.railContinueTile ?? null,
+      railPreviousTile: v.railPreviousTile ?? null,
+    };
+    const sig = vehiclePathSignature(v, v.vtype === 'train' ? 'train' : 'road');
+    if(sigMap.get(key) !== sig){
+      sigMap.set(key, sig);
+      m.pts = Array.isArray(v.pts) ? v.pts.map(p => ({ x:p.x, y:p.y })) : [];
+      m.pathTiles = Array.isArray(v.pathTiles) ? v.pathTiles.slice() : [];
+      m.railTrail = Array.isArray(v.railTrail) ? v.railTrail.map(p => ({ x:p.x, y:p.y })) : null;
+    }
+    return m;
+  });
+  for(const k of sigMap.keys()) if(!seen.has(k)) sigMap.delete(k);
+  return {
+    gtime, paused, speed,
+    vehicles: vehs,
+    trucks: trucks.map(serializeTruckState),
+    walkers: walkers.map(serializeWalkerState),
+  };
 }
 
 // ---- sérialisation de l'état complet (hôte → invité) ----
@@ -1520,23 +1765,7 @@ function applySnapshot(d){
   // usines à l'arrêt). On le reconstruit depuis les camions effectivement chargés.
   for(const b of buildings) b.trucksOut = 0;
   for(const tk of trucks) if(tk.from) tk.from.trucksOut++;
-  if(Array.isArray(d.walkers)){
-    for(const sw of d.walkers){
-      if(!Array.isArray(sw.pts) || sw.pts.length < 2) continue;
-      const target = sw.targetX != null ? buildings.find(b => b.x === sw.targetX && b.y === sw.targetY) || null : null;
-      walkers.push({
-        pts: sw.pts.map(p => ({ x:p.x, y:p.y })),
-        seg: Math.max(0, Math.min((sw.seg || 0), Math.max(0, sw.pts.length - 1))),
-        t: Math.max(0, Math.min(1, sw.t || 0)),
-        target,
-        leaving: !!sw.leaving,
-        fromHomeless: !!sw.fromHomeless,
-        protectedResident: !!sw.protectedResident,
-        col: sw.col || playerColor(target?.owner ?? null),
-        phase: Number.isFinite(sw.phase) ? sw.phase : 0,
-      });
-    }
-  }
+  if(Array.isArray(d.walkers)) walkers = reconcileGuestWalkers(walkers, d.walkers);
   if(Array.isArray(d.floats)){
     floats = d.floats
       .filter(f => Number.isFinite(f?.x) && Number.isFinite(f?.y) && Number.isFinite(f?.life))
@@ -2020,17 +2249,25 @@ function mpConnect(url){
       case 'snapshot':
         // l'invité reçoit l'état initial
         mpResetGuestSnapshotBuffer();
-        mpPushGuestRenderSnapshot(msg.state);
         applySnapshot(msg.state);
+        mpRefreshVehPathCache();
         MP.awaitingSnapshot = false;
         resetSelectedTown();
         toast('📥 Carte synchronisée');
         break;
 
+      // Flux « monde » complet (1 Hz) : existence des entités, bâtiments, économie.
+      // N'alimente PAS le tampon de rendu (c'est le rôle du flux mouvement).
       case 'state_sync':
         if(MP.role === 'guest' && !MP.awaitingSnapshot && msg.state){
-          mpPushGuestRenderSnapshot(msg.state);
           applyStateSync(msg.state);
+        }
+        break;
+
+      // Flux « mouvement » léger (5 Hz) : positions interpolées des entités mobiles.
+      case 'move_sync':
+        if(MP.role === 'guest' && !MP.awaitingSnapshot && msg.state){
+          applyMoveSync(msg.state);
         }
         break;
 
@@ -2169,11 +2406,9 @@ function mpConnect(url){
         break;
 
       case 'game_loaded':
-        if(MP.role === 'guest'){
-          mpResetGuestSnapshotBuffer();
-          mpPushGuestRenderSnapshot(msg.state);
-        }
+        if(MP.role === 'guest') mpResetGuestSnapshotBuffer();
         applySnapshot(msg.state);
+        if(MP.role === 'guest') mpRefreshVehPathCache();
         MP.awaitingSnapshot = false;
         resetSelectedTown();
         if(msg.loadedBy !== 'serveur'){
@@ -2184,11 +2419,9 @@ function mpConnect(url){
         break;
 
       case 'game_new_world':
-        if(MP.role === 'guest'){
-          mpResetGuestSnapshotBuffer();
-          mpPushGuestRenderSnapshot(msg.state);
-        }
+        if(MP.role === 'guest') mpResetGuestSnapshotBuffer();
         applySnapshot(msg.state);
+        if(MP.role === 'guest') mpRefreshVehPathCache();
         MP.awaitingSnapshot = false;
         if(msg.config) WORLD = normalizeWorldConfig(msg.config);
         resetSelectedTown();

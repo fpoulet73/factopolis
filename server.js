@@ -979,6 +979,14 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      // Flux « mouvement » léger (positions des entités mobiles) relayé tel quel.
+      case 'move_sync': {
+        const room = roomOf(client);
+        if (!room || client.id !== room.hostId || !msg.state) break;
+        broadcastRoom(room.id, { type:'move_sync', state: msg.state }, id);
+        break;
+      }
+
       case 'cursor': {
         const room = roomOf(client);
         if (room) broadcastRoom(room.id, msg, id);

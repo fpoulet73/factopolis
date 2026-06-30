@@ -601,7 +601,7 @@ function spawnWalker(b){
   const pts = pathToEdge(b);
   if(!pts){ growPop(b); return; } // logement enclavé : arrivée instantanée
   b.pending++;
-  walkers.push({ pts, seg:0, t:0, target:b,
+  walkers.push({ id: nextWalkerId++, pts, seg:0, t:0, target:b,
                  col: playerColor(b.owner),
                  phase: Math.random()*7 });
 }
@@ -611,7 +611,7 @@ function spawnLeavers(b, n){
   for(let i=0; i<n && walkers.length<=80; i++){
     const pts = pathToEdge(b);
     if(!pts) return;
-    walkers.push({ pts:[...pts].reverse(), seg:0, t:0, target:null, leaving:true,
+    walkers.push({ id: nextWalkerId++, pts:[...pts].reverse(), seg:0, t:0, target:null, leaving:true,
                    col: playerColor(b.owner),
                    phase: Math.random()*7 });
   }
@@ -773,6 +773,7 @@ function updateWalkers(dt){
       else if(wk.fromHomeless){
         const exit = randomExitPoint();
         walkers.push({
+          id: nextWalkerId++,
           pts:[wk.pts[wk.pts.length-1], exit],
           seg:0, t:0, target:null, leaving:true,
           col:wk.col, phase:wk.phase,

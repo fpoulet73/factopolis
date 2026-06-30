@@ -848,8 +848,11 @@ function drawBuilding(b){
 }
 
 function drawWalker(wk){
-  const a = wk.pts[wk.seg], b = wk.pts[Math.min(wk.seg+1, wk.pts.length-1)];
-  const wx = a.x + (b.x-a.x)*wk.t, wy = a.y + (b.y-a.y)*wk.t;
+  const rs = typeof mpWalkerRenderState === 'function' ? mpWalkerRenderState(wk) : wk;
+  if(!rs.pts || !rs.pts.length) return;
+  const seg = Math.min(rs.seg, rs.pts.length-1);
+  const a = rs.pts[seg], b = rs.pts[Math.min(seg+1, rs.pts.length-1)];
+  const wx = a.x + (b.x-a.x)*rs.t, wy = a.y + (b.y-a.y)*rs.t;
   const [u,v] = rotF(wx/TILE, wy/TILE);
   const c = iso(u,v);
   const bob = Math.sin(gtime*12 + wk.phase)*1.1;
@@ -2279,8 +2282,11 @@ function draw(){
 
     // piétons
     for(const wk of walkers){
-      const a = wk.pts[wk.seg], b = wk.pts[Math.min(wk.seg+1, wk.pts.length-1)];
-      const wx = a.x + (b.x-a.x)*wk.t, wy = a.y + (b.y-a.y)*wk.t;
+      const rs = typeof mpWalkerRenderState === 'function' ? mpWalkerRenderState(wk) : wk;
+      if(!rs.pts || !rs.pts.length) continue;
+      const seg = Math.min(rs.seg, rs.pts.length-1);
+      const a = rs.pts[seg], b = rs.pts[Math.min(seg+1, rs.pts.length-1)];
+      const wx = a.x + (b.x-a.x)*rs.t, wy = a.y + (b.y-a.y)*rs.t;
       const [u,v] = rotF(wx/TILE, wy/TILE);
       sprites.push({ k:spriteDepthKey(u, v, 0.6), f:()=>drawWalker(wk) });
     }

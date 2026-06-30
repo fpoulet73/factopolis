@@ -328,6 +328,7 @@ function assignHomelessToHousing(owner){
       home.pending++;
       if(protectedResident) home.pendingProtected = (home.pendingProtected||0) + 1;
       walkers.push({
+        id: nextWalkerId++,
         pts:[
           { x:h.x, y:h.y },
           { x:(home.x+home.w/2)*TILE, y:(home.y+home.h/2)*TILE },
@@ -355,6 +356,7 @@ function routeUnhousedResidents(owner, residents){
     const exit = randomExitPoint();
     homeless.splice(i, 1);
     walkers.push({
+      id: nextWalkerId++,
       pts:[{ x:h.x, y:h.y }, exit],
       seg:0, t:0, target:null, leaving:true,
       col:h.col || playerColor(owner), phase:h.phase || Math.random()*7,

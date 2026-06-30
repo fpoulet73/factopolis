@@ -9,6 +9,7 @@ let focusVehicle = null;     // véhicule dont on affiche le trajet + focus cam�
 let camTracking = false;     // si vrai, la caméra suit focusVehicle en continu
 let vehicleListMode = null;  // 'road' | 'train' | null : filtre courant du panneau liste
 let nextTruckId = 0;
+let nextWalkerId = 0;
 let nextVehicleId = 0;
 let nextTrainStationId = 1;
 let towns = [];           // villages / villes
@@ -240,7 +241,7 @@ function genWorld(config){
   railBlockOccupancy = null;
   bgrid = new Array(N*N).fill(null);
   buildings = []; trucks = []; walkers = []; homeless = []; floats = [];
-  vehicles = []; vehicleRouteMode = null; selectedVehicle = null; focusVehicle = null; camTracking = false; vehicleListMode = null; nextTruckId = 0; nextVehicleId = 0; nextTrainStationId = 1;
+  vehicles = []; vehicleRouteMode = null; selectedVehicle = null; focusVehicle = null; camTracking = false; vehicleListMode = null; nextTruckId = 0; nextWalkerId = 0; nextVehicleId = 0; nextTrainStationId = 1;
   towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = []; trainDepotFlagHits = [];
   WALLETS = {}; gtime = 0;
   selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0; busStopTimer = 0; passengerCycleTimer = 0;
