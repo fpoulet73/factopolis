@@ -1799,14 +1799,34 @@ function drawExpansionBadges(){
 
 function draw(){
   drawFast = performance.now() < zoomActiveUntil || Math.abs(targetCam.z - cam.z) > 0.006;
-  // ciel
-  ctx.setTransform(DPR,0,0,DPR,0,0);
   const pack = graphicBasePack();
-  const sky = ctx.createLinearGradient(0,0,0,H);
-  sky.addColorStop(0, pack.sky[0]);
-  sky.addColorStop(1, pack.sky[1]);
-  ctx.fillStyle = sky;
-  ctx.fillRect(0,0,W,H);
+
+  // --- cache de la couche sol (ciel + terrain + routes + rails) ---
+  // Si caméra et terrain inchangés, on blitte le rendu mémorisé au lieu de
+  // redessiner toutes les tuiles. La clé inclut tout ce qui modifie ces pixels
+  // (position/zoom/rotation caméra, version du sol, taille canvas, survol/sélection
+  // d'expansion). En zoom actif (drawFast) on ne cache pas (détail réduit + caméra
+  // qui bouge). Les éléments dynamiques (feux, signaux) sont dessinés HORS cache.
+  const groundKey = drawFast ? null
+    : cam.x + '|' + cam.y + '|' + cam.z + '|' + rot + '|' + groundVersion + '|'
+      + cv.width + '|' + cv.height + '|'
+      + expansions.indexOf(hoveredExpansion) + '|' + expansions.indexOf(selectedExpansion);
+  const cacheReady = _groundKey !== null && groundCache.width === cv.width && groundCache.height === cv.height;
+  const groundDirty = drawFast || !cacheReady || groundKey !== _groundKey;
+
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  if(groundDirty){
+    // ciel (re-rendu)
+    const sky = ctx.createLinearGradient(0,0,0,H);
+    sky.addColorStop(0, pack.sky[0]);
+    sky.addColorStop(1, pack.sky[1]);
+    ctx.fillStyle = sky;
+    ctx.fillRect(0,0,W,H);
+  } else {
+    // blit du sol mis en cache (pixels bruts, repère écran)
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.drawImage(groundCache, 0, 0);
+  }
 
   const z = cam.z;
   ctx.setTransform(DPR*z,0,0,DPR*z, -cam.x*DPR*z, -cam.y*DPR*z);
@@ -1863,38 +1883,40 @@ function draw(){
     if(x<0||y<0||x>=N||y>=N) continue;
     const i = y*N+x, t = terrain[i];
 
-    // Tuiles hors zone jouable : zones d'expansion ou void
+    // Tuiles hors zone jouable : zones d'expansion ou void (sol → caché)
     const inPlay = !!mapMask && mapMask[i]===1;
     if(!inPlay){
-      const expZone = expansions.find(e=>e.inPiece(x,y));
-      if(!expZone) continue;
-      // Terrain dim + overlay sarcelle teinté par pièce
-      ctx.globalAlpha = 0.22;
-      ctx.fillStyle = packTerrain(t===T.WATER ? T.WATER : T.GRASS, x, y);
-      diamond(rx,ry); ctx.fill();
-      ctx.globalAlpha = 1;
-      const isHov = expZone === hoveredExpansion;
-      const isSel = expZone === selectedExpansion;
-      // Couleur légèrement différente par pièce pour distinguer visuellement
-      const PIECE_COLS = ['rgba(14,68,52,0.68)','rgba(20,82,62,0.68)','rgba(10,58,44,0.68)'];
-      const hovCol = isSel ? 'rgba(50,180,120,0.80)' : isHov ? 'rgba(38,150,105,0.75)' : PIECE_COLS[expZone.pieceIndex%3];
-      ctx.fillStyle = hovCol;
-      diamond(rx,ry); ctx.fill();
-      // Bordure lumineuse sur les tuiles adjacentes à la zone jouable
-      if(!drawFast){
-        const nextToMap = (x>0&&mapMask[i-1]===1)||(x<N-1&&mapMask[i+1]===1)
-                        ||(y>0&&mapMask[i-N]===1)||(y<N-1&&mapMask[i+N]===1);
-        if(nextToMap){
-          ctx.strokeStyle = isHov||isSel ? 'rgba(60,220,150,0.90)' : 'rgba(40,160,100,0.50)';
-          ctx.lineWidth = 1.5;
-          diamond(rx,ry); ctx.stroke();
+      if(groundDirty){
+        const expZone = expansions.find(e=>e.inPiece(x,y));
+        if(expZone){
+          // Terrain dim + overlay sarcelle teinté par pièce
+          ctx.globalAlpha = 0.22;
+          ctx.fillStyle = packTerrain(t===T.WATER ? T.WATER : T.GRASS, x, y);
+          diamond(rx,ry); ctx.fill();
+          ctx.globalAlpha = 1;
+          const isHov = expZone === hoveredExpansion;
+          const isSel = expZone === selectedExpansion;
+          // Couleur légèrement différente par pièce pour distinguer visuellement
+          const PIECE_COLS = ['rgba(14,68,52,0.68)','rgba(20,82,62,0.68)','rgba(10,58,44,0.68)'];
+          const hovCol = isSel ? 'rgba(50,180,120,0.80)' : isHov ? 'rgba(38,150,105,0.75)' : PIECE_COLS[expZone.pieceIndex%3];
+          ctx.fillStyle = hovCol;
+          diamond(rx,ry); ctx.fill();
+          // Bordure lumineuse sur les tuiles adjacentes à la zone jouable
+          if(!drawFast){
+            const nextToMap = (x>0&&mapMask[i-1]===1)||(x<N-1&&mapMask[i+1]===1)
+                            ||(y>0&&mapMask[i-N]===1)||(y<N-1&&mapMask[i+N]===1);
+            if(nextToMap){
+              ctx.strokeStyle = isHov||isSel ? 'rgba(60,220,150,0.90)' : 'rgba(40,160,100,0.50)';
+              ctx.lineWidth = 1.5;
+              diamond(rx,ry); ctx.stroke();
+            }
+          }
         }
-        // Distinguer les pièces voisines (via un stroke discret sur les tuiles de la "zone tab" centrale)
-        // La différence de couleur PIECE_COLS suffit ; pas de calcul coûteux ici
       }
       continue;
     }
 
+    if(groundDirty){
     if(t===T.WATER){
       ctx.fillStyle = packTerrain(T.WATER, x, y);
       diamond(rx,ry); ctx.fill();
@@ -1951,6 +1973,7 @@ function draw(){
       ctx.fillStyle = shade(cliff,-0.35);
       quad(Bb, Cc, [Cc[0],Cc[1]+D], [Bb[0],Bb[1]+D]);
     }
+    } // fin if(groundDirty) — dessin du sol
 
     // collecte des sprites (arbres / bâtiments) au passage
     if(!drawFast && t===T.TREE){
@@ -2150,40 +2173,58 @@ function draw(){
     }
     ctx.stroke();
   };
-  strokeSegments(roadSegments, roadWidth, pack.road, 'butt');
-  fillNodes(roadNodes, roadWidth*0.5, pack.road);
-  fillNodes(roadSingles, roadWidth*0.56, pack.road);
-
-  if(!drawFast){
-    strokeSegments(roadSegments, roadLineWidth, pack.roadLine, 'butt');
-    fillNodes(roadNodes, roadLineWidth*0.5, pack.roadLine);
-    strokeSegments(roadSegments, 1.4, 'rgba(200,206,214,.55)', 'butt');
-    fillNodes(roadSingles, roadLineWidth*0.56, pack.roadLine);
-    for(const tl of trafficLights) drawTrafficLight(tl.c, tl.approaches);
+  // Dessin du sol routes+rails : uniquement si le cache doit être (re)généré.
+  // La COLLECTE ci-dessus (segments, feux) tourne chaque frame pour que les feux
+  // dynamiques restent à jour ; seuls les tracés coûteux sont conditionnés.
+  if(groundDirty){
+    strokeSegments(roadSegments, roadWidth, pack.road, 'butt');
+    fillNodes(roadNodes, roadWidth*0.5, pack.road);
+    fillNodes(roadSingles, roadWidth*0.56, pack.road);
+    if(!drawFast){
+      strokeSegments(roadSegments, roadLineWidth, pack.roadLine, 'butt');
+      fillNodes(roadNodes, roadLineWidth*0.5, pack.roadLine);
+      strokeSegments(roadSegments, 1.4, 'rgba(200,206,214,.55)', 'butt');
+      fillNodes(roadSingles, roadLineWidth*0.56, pack.roadLine);
+    }
+    const railSingleCoords = railSingles.map(s=>s.c);
+    strokeRailBed(railSegments, 11, '#4f3925');
+    drawRailSleepers(railSegments, 4, 0.06, 16, 3.2, '#6a4a2b');
+    drawRailNodeSleepers(railNodeSleepers, 13, 3, '#6a4a2b');
+    fillNodes(railSingleCoords, railSleeperWidth*0.24, '#6a4a2b');
+    // Rails métalliques : couleur du joueur en multijoueur, gris sinon.
+    const railColorFor = owner => (owner != null && owner >= 0) ? playerColor(owner) : railColor;
+    const groupByColor = (items, get) => {
+      const map = new Map();
+      for(const it of items){
+        const col = railColorFor(it.owner);
+        let arr = map.get(col);
+        if(!arr){ arr = []; map.set(col, arr); }
+        arr.push(get(it));
+      }
+      return map;
+    };
+    for(const [col, segs] of groupByColor(railSegments, it=>it)) strokeRailPairs(segs, 4.2, 2.8, col);
+    for(const [col, coords] of groupByColor(railSingles, it=>it.c)) fillNodes(coords, 3.2, col);
+    if(!drawFast){
+      strokeRailPairs(railSegments, 4.2, 1.1, railLineColor);
+      fillNodes(railSingleCoords, 1.2, railLineColor);
+    }
   }
 
-  const railSingleCoords = railSingles.map(s=>s.c);
-  strokeRailBed(railSegments, 11, '#4f3925');
-  drawRailSleepers(railSegments, 4, 0.06, 16, 3.2, '#6a4a2b');
-  drawRailNodeSleepers(railNodeSleepers, 13, 3, '#6a4a2b');
-  fillNodes(railSingleCoords, railSleeperWidth*0.24, '#6a4a2b');
-  // Rails métalliques : couleur du joueur en multijoueur, gris sinon.
-  const railColorFor = owner => (owner != null && owner >= 0) ? playerColor(owner) : railColor;
-  const groupByColor = (items, get) => {
-    const map = new Map();
-    for(const it of items){
-      const col = railColorFor(it.owner);
-      let arr = map.get(col);
-      if(!arr){ arr = []; map.set(col, arr); }
-      arr.push(get(it));
+  // --- couture : mémoriser la couche sol rendue (ciel+terrain+routes+rails) ---
+  if(groundDirty && !drawFast){
+    if(groundCache.width !== cv.width || groundCache.height !== cv.height){
+      groundCache.width = cv.width; groundCache.height = cv.height;
     }
-    return map;
-  };
-  for(const [col, segs] of groupByColor(railSegments, it=>it)) strokeRailPairs(segs, 4.2, 2.8, col);
-  for(const [col, coords] of groupByColor(railSingles, it=>it.c)) fillNodes(coords, 3.2, col);
+    groundCacheCtx.setTransform(1,0,0,1,0,0);
+    groundCacheCtx.drawImage(cv, 0, 0);
+    _groundKey = groundKey;
+  }
+
+  // Éléments du sol DYNAMIQUES (hors cache) : feux de circulation et signaux
+  // ferroviaires changent de couleur en continu → dessinés chaque frame.
   if(!drawFast){
-    strokeRailPairs(railSegments, 4.2, 1.1, railLineColor);
-    fillNodes(railSingleCoords, 1.2, railLineColor);
+    for(const tl of trafficLights) drawTrafficLight(tl.c, tl.approaches);
   }
   if(railSignals){
     for(const sig of Object.values(railSignals)) drawRailSignal(sig);
@@ -2253,8 +2294,18 @@ function draw(){
 
   // camions
   if(!drawFast){
+    // Culling viewport des entités mobiles : seules celles dont la position iso px
+    // tombe dans la fenêtre visible (avec marge pour la hauteur des sprites) sont
+    // collectées/triées/dessinées. Coût ~constant quel que soit le nombre total.
+    // (u,v) = tuile tournée → px iso = ((u-v)*TW2, (u+v)*TH2).
+    const inViewIso = (u, v) => {
+      const px = (u - v) * TW2, py = (u + v) * TH2;
+      return px >= vx0 - 2 * TW && px <= vx1 + 2 * TW && py >= vy0 - 2 * TH && py <= vy1 + 2 * TH;
+    };
+
     for(const h of homeless){
       const [u,v] = rotF(h.x/TILE, h.y/TILE);
+      if(!inViewIso(u, v)) continue;
       sprites.push({ k:spriteDepthKey(u, v, 0.55), f:()=>drawHomeless(h) });
     }
 
@@ -2262,6 +2313,7 @@ function draw(){
       const rs = typeof mpTruckRenderState === 'function' ? mpTruckRenderState(tk) : tk;
       if(!rs.pts || !rs.pts.length) continue;
       const {u, v} = lanePose(rs.pts, rs.seg, rs.t, tk.overtaking ? -0.15 : 0.15);
+      if(!inViewIso(u, v)) continue;
       sprites.push({ k:spriteDepthKey(u, v, 0.5), f:()=>drawTruck(tk) });
     }
 
@@ -2269,14 +2321,18 @@ function draw(){
       const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
       if(veh.state === 'idle' || !rs.pts || !rs.pts.length) continue;
       if(veh.vtype === 'train'){
+        // Les trains sont longs et peu nombreux : on ne les culle pas (un wagon
+        // pourrait être visible alors que la loco ne l'est pas).
         for(let i = 0; i < (veh.wagons?.length || 0); i++){
           const wp = trainWagonPose(veh, i);
           if(wp) sprites.push({ k:spriteDepthKey(wp.u, wp.v, 0.52), f:((wi)=>()=>drawTrainWagon(veh, wi))(i) });
         }
+        const {u, v} = trainPose(veh);
+        sprites.push({ k:spriteDepthKey(u, v, 0.52), f:()=>drawVehicle(veh) });
+        continue;
       }
-      const {u, v} = veh.vtype === 'train'
-        ? trainPose(veh)
-        : lanePose(rs.pts, rs.seg, rs.t, veh.overtaking ? -0.17 : 0.17);
+      const {u, v} = lanePose(rs.pts, rs.seg, rs.t, veh.overtaking ? -0.17 : 0.17);
+      if(!inViewIso(u, v)) continue;
       sprites.push({ k:spriteDepthKey(u, v, 0.52), f:()=>drawVehicle(veh) });
     }
 
@@ -2288,6 +2344,7 @@ function draw(){
       const a = rs.pts[seg], b = rs.pts[Math.min(seg+1, rs.pts.length-1)];
       const wx = a.x + (b.x-a.x)*rs.t, wy = a.y + (b.y-a.y)*rs.t;
       const [u,v] = rotF(wx/TILE, wy/TILE);
+      if(!inViewIso(u, v)) continue;
       sprites.push({ k:spriteDepthKey(u, v, 0.6), f:()=>drawWalker(wk) });
     }
   }

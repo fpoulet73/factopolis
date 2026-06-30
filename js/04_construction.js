@@ -149,7 +149,7 @@ function railApplyMaskUpdates(updates, walletDelta = 0, walletTarget = myWallet(
     else if(wasEmpty) railOwner[i] = oid;
     changed = true;
   }
-  if(changed) rebuildRailBlocks();
+  if(changed){ rebuildRailBlocks(); markGroundDirty(); }
   if(walletDelta > 0) spendMoney(walletDelta, 'construction');
   else if(walletDelta < 0) earnMoney(-walletDelta, 'rembours', walletTarget);
   return changed;
@@ -631,14 +631,14 @@ function clickAt(x,y){
       setRailSignal(x, y, railSigDef.bit, false);
       earnMoney(Math.floor((BUILD.rail_signal?.cost||0) * 0.3), 'rembours');
     } else if(road[i]){
-      road[i] = 0; earnMoney(3, 'rembours');
+      road[i] = 0; earnMoney(3, 'rembours'); markGroundDirty();
     } else if(rail[i]){
       const occ = tileOccupiedByTrain(x, y);
       if(occ){ toast('⛔ Un train occupe cette voie','err'); return; }
       const { updates, refund } = collectRailRemovalUpdates(x, y);
       railApplyMaskUpdates(updates, -refund);
     } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON || terrain[i]===T.IRON || terrain[i]===T.COAL){
-      terrain[i] = T.GRASS; // l'envoi réseau est géré par clickFn (09_multiplayer.js)
+      terrain[i] = T.GRASS; markGroundDirty(); // l'envoi réseau est géré par clickFn (09_multiplayer.js)
     }
     return;
   }
@@ -648,7 +648,7 @@ function clickAt(x,y){
     const depot = terrassementNear(x, y, MP.myId ?? 1);
     if(!depot){ toast('⛔ Aucune usine de terrassement à portée avec '+FILL_WATER_COST+' terres','err'); return; }
     depot.storage['dirt'] = (depot.storage['dirt']||0) - FILL_WATER_COST;
-    terrain[i] = T.GRASS;
+    terrain[i] = T.GRASS; markGroundDirty();
     // netSend géré par l'intercept MP (09_multiplayer.js) pour éviter le double envoi
     return;
   }
@@ -696,7 +696,7 @@ function clickAt(x,y){
   }
   if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
   spendMoney(cost, 'construction');
-  if(tool==='road'){ road[i] = 1; return; }
+  if(tool==='road'){ road[i] = 1; markGroundDirty(); return; }
   const b = newBuilding(tool,x,y);
   b.owner = MP.myId;
   markStarterHomeIfNeeded(b);

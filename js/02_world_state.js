@@ -142,6 +142,17 @@ function resize(){
 }
 addEventListener('resize', resize); resize();
 
+// ---------- cache de la couche sol (terrain/eau/routes/rails) ----------
+// Cette couche est statique tant que la caméra et le terrain ne changent pas. On
+// la rend une fois dans un canvas offscreen et on la blitte chaque frame, ce qui
+// évite de redessiner des dizaines de milliers de tuiles caméra immobile (gros
+// gain sur grande carte dézoomée). Voir draw() dans 07_rendering.js.
+const groundCache = document.createElement('canvas');
+const groundCacheCtx = groundCache.getContext('2d');
+let _groundKey = null;          // signature du dernier rendu mis en cache
+let groundVersion = 0;          // incrémenté à chaque mutation du sol
+function markGroundDirty(){ groundVersion++; }
+
 // ---------- projection isométrique rotative ----------
 // indices de tuile : monde -> tourné
 function rotIdx(x,y){
@@ -273,6 +284,7 @@ function genWorld(config){
     const c = treeCandidates[i];
     terrain[c.y*N+c.x] = T.TREE;
   }
+  markGroundDirty(); // nouveau terrain → invalider le cache sol
   // champs et gisements en taches
   const placePatch = (type, count, opts={})=>{
     const minRadius = opts.minRadius ?? 1;
@@ -517,6 +529,7 @@ function buyExpansion(exp){
   }
 
   refreshExpansionSlots();
+  markGroundDirty(); // mapMask/zones d'expansion modifiés → invalider le cache sol
   selectedExpansion = null;
   hudTimer = 0;
   const dirLabel = {right:'droite',left:'gauche',bottom:'bas',top:'haut',

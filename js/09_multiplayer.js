@@ -1422,6 +1422,7 @@ function mpSenderControlsOwner(ownerId, msg){
 }
 
 function applySnapshot(d){
+  markGroundDirty(); // rechargement complet du monde → invalider le cache sol
   const hadTransient = Array.isArray(d.trucks) || Array.isArray(d.walkers) || Array.isArray(d.homeless);
   const prevSelectedRef = snapshotBuildingRef(selected);
   const prevSelectedVehicleId = selectedVehicle?.id ?? null;
@@ -1805,7 +1806,7 @@ function applyAction(msg){
   const validXY = (x,y) => Number.isInteger(x) && Number.isInteger(y) && inMap(x,y);
   switch(act.type){
     case 'road':
-      if(validIdx(act.i)) road[act.i] = 1;
+      if(validIdx(act.i)){ road[act.i] = 1; markGroundDirty(); }
       break;
     case 'rail_update':
       if(!validXY(act.x, act.y) || !Number.isInteger(act.mask) || act.mask < 0 || act.mask > 255) break;
@@ -1826,6 +1827,7 @@ function applyAction(msg){
         else if(wasEmpty) railOwner[ri] = (msg.from == null ? -1 : msg.from);
       }
       rebuildRailBlocks();
+      markGroundDirty();
       if(act.costDelta > 0){
         walletOf(msg.from).money -= act.costDelta;
         walletOf(msg.from).fin.construction += act.costDelta;
@@ -1845,17 +1847,17 @@ function applyAction(msg){
       }
       break;
     case 'bulldoze_road':
-      if(validIdx(act.i)){ road[act.i] = 0; earnMoney(3, 'rembours', walletOf(msg.from)); }
+      if(validIdx(act.i)){ road[act.i] = 0; earnMoney(3, 'rembours', walletOf(msg.from)); markGroundDirty(); }
       break;
     case 'bulldoze_tree':
-      if(validIdx(act.i)) terrain[act.i] = T.GRASS;
+      if(validIdx(act.i)){ terrain[act.i] = T.GRASS; markGroundDirty(); }
       break;
     case 'terraform':
-      if(validIdx(act.i)) terrain[act.i] = T.GRASS;
+      if(validIdx(act.i)){ terrain[act.i] = T.GRASS; markGroundDirty(); }
       break;
     case 'fill_water': {
       if(!validIdx(act.i) || !validXY(act.depotX, act.depotY)) break;
-      terrain[act.i] = T.GRASS;
+      terrain[act.i] = T.GRASS; markGroundDirty();
       const depot = bgrid[act.depotY*N+act.depotX];
       if(depot && depot.type === 'terrassement')
         depot.storage['dirt'] = Math.max(0, (depot.storage['dirt']||0) - FILL_WATER_COST);
@@ -1887,7 +1889,7 @@ function applyAction(msg){
       if(act.btype === 'road'){
         // rail[] autorisé : passage à niveau (route par-dessus un rail)
         if(bgrid[act.y*N+act.x] || road[act.y*N+act.x]) break;
-        road[act.y*N+act.x] = 1;
+        road[act.y*N+act.x] = 1; markGroundDirty();
         wSender.money -= cost; wSender.fin.construction += cost;
         break;
       }
