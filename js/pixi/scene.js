@@ -20,22 +20,33 @@ const PixiScene = (function(){
   const layers = {};         // sous-conteneurs par couche
   let debugG = null;
   const DEBUG = location.search.includes('pixidebug');
-  // Phase 2 (flag) : afficher le terrain (scroll-buffer groundCache) via Pixi et masquer #cv.
-  const PIXITERRAIN = location.search.includes('pixiterrain');
+  // Terrain sur Pixi : piloté par le flag global PIXI_TERRAIN (défini dans 07_rendering.js,
+  // activé par défaut, ?nopixiterrain pour forcer le Canvas2D). L'usage réel dans draw() est
+  // gaté sur PixiScene.ready → fallback Canvas2D automatique si Pixi n'initialise pas.
   let bgSky = null, bgTerrain = null, _skyKey = '', _bgTexW = 0, _bgTexH = 0, _bgTexVer = -1;
+  const wantTerrain = () => (typeof PIXI_TERRAIN !== 'undefined' && PIXI_TERRAIN);
 
   async function init(){
-    if(typeof PIXI === 'undefined'){ console.warn('[PixiScene] PIXI absent'); return; }
+    if(typeof PIXI === 'undefined'){ console.warn('[PixiScene] PIXI absent — fallback Canvas2D'); if(typeof PIXI_TERRAIN !== 'undefined') PIXI_TERRAIN = false; return; }
     app = new PIXI.Application();
-    await app.init({
-      canvas: document.getElementById('pixi'),
-      width: W, height: H,
-      resolution: DPR, autoDensity: true,
-      backgroundAlpha: 0,                 // transparent : le Canvas2D transparaît dessous
-      antialias: true,
-      powerPreference: 'high-performance',
-      autoStart: false,                   // on pilote app.render() depuis drawFn
-    });
+    try {
+      await app.init({
+        canvas: document.getElementById('pixi'),
+        width: W, height: H,
+        resolution: DPR, autoDensity: true,
+        backgroundAlpha: 0,                 // transparent : le Canvas2D transparaît dessous
+        antialias: true,
+        powerPreference: 'high-performance',
+        autoStart: false,                   // on pilote app.render() depuis drawFn
+      });
+    } catch(e){
+      // WebGL indisponible / init échouée → on désactive le terrain Pixi et on laisse
+      // le jeu tourner en Canvas2D (draw() gate sur PixiScene.ready, qui restera false).
+      console.warn('[PixiScene] init échouée — fallback Canvas2D:', e && e.message);
+      if(typeof PIXI_TERRAIN !== 'undefined') PIXI_TERRAIN = false;
+      app = null;
+      return;
+    }
 
     world = new PIXI.Container();
     world.sortableChildren = true;        // tri profondeur (zIndex = spriteDepthKey)
@@ -48,7 +59,7 @@ const PixiScene = (function(){
       world.addChild(c);
     }
 
-    if(PIXITERRAIN) setupPixiTerrain();
+    if(wantTerrain()) setupPixiTerrain();
     if(DEBUG) buildDebug();
     ready = true;
     // rendu initial immédiat
@@ -65,11 +76,11 @@ const PixiScene = (function(){
     bgTerrain = new PIXI.Sprite();
     app.stage.addChildAt(bgSky, 0);       // tout au fond
     app.stage.addChildAt(bgTerrain, 1);   // terrain au-dessus du ciel, sous le monde
-    // NE PAS masquer #cv : les handlers d'entrée (drag/molette) y sont attachés et un
-    // élément display:none ne reçoit plus d'événements. #cv reste dans le DOM (les
-    // événements traversent #pixi via pointer-events:none) et est recouvert visuellement
-    // par le ciel Pixi opaque. Son rendu Canvas2D continue (gaspillé, mais caché) —
-    // il sera retiré en Phase 4 quand les overlays du sol seront passés sur Pixi.
+    // #cv passe AU-DESSUS de #pixi : il ne dessine plus que les overlays dynamiques
+    // (transparent, cf. draw() en mode PIXI_TERRAIN). Il garde les handlers d'entrée
+    // (drag/molette) et, étant au-dessus, reçoit directement les événements.
+    const cvEl = document.getElementById('cv');
+    if(cvEl) cvEl.style.zIndex = '2'; // > #pixi (z-index 1)
   }
   function updatePixiTerrain(){
     // ciel (redessiné seulement si viewport/pack change)
@@ -149,7 +160,7 @@ const PixiScene = (function(){
   function render(){
     if(!ready) return;
     syncCamera();
-    if(PIXITERRAIN) updatePixiTerrain();
+    if(wantTerrain() && bgTerrain) updatePixiTerrain();
     for(const cb of frameCbs){ try { cb(); } catch(e){ console.error('[PixiScene] frameCb', e); } }
     if(DEBUG && debugG) redrawDebug(); // rot peut changer
     app.render();

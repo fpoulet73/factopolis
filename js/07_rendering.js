@@ -1998,7 +1998,10 @@ function drawExpansionBadges(){
 // Exposés pour la couche terrain PixiJS (Phase 2, flag ?pixiterrain) : offset de blit
 // du scroll-buffer + version incrémentée à chaque reconstruction (→ re-upload texture).
 let groundBlitSrcX = 0, groundBlitSrcY = 0, groundTexVersion = 0, cacheCamZ = 1;
-const PIXI_TERRAIN = typeof location !== 'undefined' && location.search.includes('pixiterrain');
+// Terrain sur Pixi ACTIVÉ PAR DÉFAUT. Trappe de secours : ?nopixiterrain force le Canvas2D.
+// L'usage réel est gaté sur PixiScene.ready (voir usePixiTerrain dans draw()) → si Pixi
+// n'initialise pas (WebGL indispo), on retombe automatiquement sur le rendu Canvas2D.
+let PIXI_TERRAIN = !(typeof location !== 'undefined' && location.search.includes('nopixiterrain'));
 
 function draw(){
   // Sécurité : si une frame précédente a jeté pendant le rendu du buffer-sol, `ctx`
@@ -2029,22 +2032,29 @@ function draw(){
     && _bufContentKey === contentKey
     && groundCache.width === bufW && groundCache.height === bufH
     && srcX >= 0 && srcX <= 2*M*DPR && srcY >= 0 && srcY <= 2*M*DPR;
+  // Terrain sur Pixi UNIQUEMENT si la scène Pixi est prête (sinon fallback Canvas2D).
+  const usePixiTerrain = PIXI_TERRAIN && typeof PixiScene !== 'undefined' && PixiScene.ready;
   // En mode Pixi-terrain, on reconstruit AUSSI pendant le zoom (drawFast) : le sol part
   // dans groundCache (au lieu de #cv, de toute façon caché) → terrain net et suivi au zoom.
   // Même coût de rendu qu'aujourd'hui (le drawFast re-rend le sol chaque frame), juste
-  // redirigé, + un re-upload de texture. Hors flag : comportement inchangé.
-  const rebuildBuffer = (!drawFast && !bufferReusable) || (drawFast && PIXI_TERRAIN);
+  // redirigé, + un re-upload de texture. Hors mode Pixi : comportement inchangé.
+  const rebuildBuffer = (!drawFast && !bufferReusable) || (drawFast && usePixiTerrain);
   const groundDirty = rebuildBuffer || drawFast; // exécuter les tracés coûteux du sol ?
 
-  // CIEL : toujours dessiné sur le canvas PRINCIPAL en repère écran, chaque frame.
-  // Il reste donc fixe à l'écran (il ne « scrolle » pas avec le pan) et le buffer du
-  // sol est rendu avec un fond TRANSPARENT (void) → le ciel transparaît au blit.
-  ctx.setTransform(DPR,0,0,DPR,0,0);
-  const sky = ctx.createLinearGradient(0,0,0,H);
-  sky.addColorStop(0, pack.sky[0]);
-  sky.addColorStop(1, pack.sky[1]);
-  ctx.fillStyle = sky;
-  ctx.fillRect(0,0,W,H);
+  // CIEL : en mode Pixi-terrain, ciel + sol sont sur Pixi ; #cv (au-dessus) ne porte
+  // QUE les overlays dynamiques (transparent) → on l'efface. Sinon, ciel repère écran.
+  if(usePixiTerrain){
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,cv.width,cv.height);
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  } else {
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    const sky = ctx.createLinearGradient(0,0,0,H);
+    sky.addColorStop(0, pack.sky[0]);
+    sky.addColorStop(1, pack.sky[1]);
+    ctx.fillStyle = sky;
+    ctx.fillRect(0,0,W,H);
+  }
 
   // Pendant une reconstruction, on dessine le sol DANS le buffer : on bascule le
   // global `ctx` vers groundCacheCtx (restauré plus bas). cacheCam = caméra courante.
@@ -2478,10 +2488,12 @@ function draw(){
     _bufContentKey = contentKey;
     groundTexVersion++; // contenu du groundCache changé → re-upload côté Pixi
   }
-  if(!drawFast){
+  if(!drawFast && !usePixiTerrain){
+    // Blit du sol sur #cv (mode Canvas2D). En mode Pixi-terrain, le sol est affiché
+    // par Pixi depuis groundCache → pas de blit ici (#cv ne porte que les overlays).
     ctx.setTransform(1,0,0,1,0,0);
     ctx.drawImage(groundCache, srcX, srcY, W*DPR, H*DPR, 0, 0, W*DPR, H*DPR);
-    groundBlitSrcX = srcX; groundBlitSrcY = srcY; // offset pour la couche terrain Pixi
+    groundBlitSrcX = srcX; groundBlitSrcY = srcY;
   }
   // Transform monde du canvas PRINCIPAL (vraie caméra, origine 0) pour la suite
   // (sprites + éléments dynamiques). Le blit l'avait remis en identité ; en drawFast
