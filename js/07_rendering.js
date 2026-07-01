@@ -15,6 +15,17 @@ function tileCenterIso(rx, ry, x, y){
   return liftedIso(rx + 0.5, ry + 0.5, terrainLiftPxAt(x, y));
 }
 
+// Altitude de rendu d'un rail : à plat sur le plancher du tunnel pour les bouches
+// et la galerie (sinon le rail épouserait la pente et semblerait monter/descendre
+// à l'entrée du tunnel), relief normal ailleurs.
+function railLiftPxAt(x, y){
+  const f = (typeof tunnelFloorPxAt === 'function') ? tunnelFloorPxAt(x, y) : -1;
+  return f >= 0 ? f : terrainLiftPxAt(x, y);
+}
+function railTileCenterIso(rx, ry, x, y){
+  return liftedIso(rx + 0.5, ry + 0.5, railLiftPxAt(x, y));
+}
+
 // Altitude d'un véhicule : à plat sur le plancher du tunnel quand il traverse une
 // bouche ou une galerie souterraine (sinon il grimperait sur la montagne percée),
 // relief normal partout ailleurs.
@@ -2533,6 +2544,7 @@ function draw(){
   const railSleeperWidth = 20;
   const railColor = '#6f747c';
   const railLineColor = '#c7ccd3';
+  if(typeof ensureTunnelFloors === 'function') ensureTunnelFloors(); // plancher tunnel à jour
   for(let ry=minRy-1; ry<=maxRy+1; ry++) for(let rx=minRx-1; rx<=maxRx+1; rx++){
     const [x,y] = invRotIdx(rx,ry);
     if(x<0||y<0||x>=N||y>=N) continue;
@@ -2566,7 +2578,9 @@ function draw(){
     }
 
     if(rail[i] && !(railTunnel && railTunnel[i])){
-      railNodes.push(c);
+      // Bouche de tunnel : rail rendu à plat sur le plancher du tunnel.
+      const cR = railTileCenterIso(rx, ry, x, y);
+      railNodes.push(cR);
       const mask = rail[i];
       const owner = railOwner ? railOwner[i] : -1;
       let links = 0;
@@ -2590,12 +2604,12 @@ function draw(){
         if(ny < y || (ny === y && nx < x)) continue;
         // Rail masks describe explicit edges. Do not hide a diagonal edge at a
         // junction merely because the tile also has an orthogonal connection.
-        railSegments.push({ a:c, b:liftedIso(rx+du+0.5, ry+dv+0.5, terrainLiftPxAt(nx, ny)), dir:[du, dv], owner });
+        railSegments.push({ a:cR, b:liftedIso(rx+du+0.5, ry+dv+0.5, railLiftPxAt(nx, ny)), dir:[du, dv], owner });
       }
       // Une bouche de tunnel sans autre voie ne doit PAS afficher de pastille de
       // rail isolé (le petit rond) : c'est l'arche qui matérialise l'extrémité.
-      if(!links && !isPortal) railSingles.push({ c, owner });
-      else if(links <= 2) railNodeSleepers.push({ center:c, dirs:railDirs });
+      if(!links && !isPortal) railSingles.push({ c:cR, owner });
+      else if(links <= 2) railNodeSleepers.push({ center:cR, dirs:railDirs });
     }
   }
 
