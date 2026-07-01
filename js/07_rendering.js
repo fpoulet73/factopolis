@@ -2060,6 +2060,7 @@ function draw(){
     r: fisherRadiusOf(selected),
   } : null;
   const visibleFish = [];
+  const bufferTrees = []; // arbres statiques à cuire dans le buffer sol (rebuild only)
 
   // --- passe 1 : sol (ordre ligne par ligne = peintre) ---
   for(let ry=minRy; ry<=maxRy; ry++) for(let rx=minRx; rx<=maxRx; rx++){
@@ -2178,9 +2179,11 @@ function draw(){
     drawWaterBankFaces(rx, ry, x, y, t, snowAmount);
     } // fin if(groundDirty) — dessin du sol
 
-    // collecte des sprites (arbres / bâtiments) au passage
-    if(!drawFast && t===T.TREE){
-      sprites.push({ k:spriteDepthKey(rx+0.5, ry+0.5), f:()=>drawTree(rx,ry,x,y) });
+    // Arbres : statiques → cuits dans la couche sol cachée (plus de milliers de
+    // sprites redessinés chaque frame). Collectés dans l'ordre du loop (= ordre
+    // peintre pour des tuiles alignées), uniquement en reconstruction du buffer.
+    if(rebuildBuffer && t===T.TREE){
+      bufferTrees.push({ rx, ry, x, y });
     }
     const b = bgrid[i];
     if(b){
@@ -2412,6 +2415,12 @@ function draw(){
       strokeRailPairs(railSegments, 4.2, 1.1, railLineColor);
       fillNodes(railSingleCoords, 1.2, railLineColor);
     }
+  }
+
+  // Arbres statiques cuits dans le buffer (au-dessus du terrain/routes/rails, sous les
+  // bâtiments et entités). Ordre de collecte = ordre peintre pour tuiles alignées.
+  if(rebuildBuffer){
+    for(const tr of bufferTrees) drawTree(tr.rx, tr.ry, tr.x, tr.y);
   }
 
   // Poissons : statiques (plus d'animation) → cuits dans la couche sol cachée, comme
