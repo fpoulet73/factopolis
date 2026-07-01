@@ -138,17 +138,29 @@ const PixiSprites = (function(){
         const nx = x + def.dx, ny = y + def.dy;
         if(!inMap(nx, ny) || !railTunnel[ny * N + nx]) continue;
         const [rx, ry] = rotIdx(x, y);
-        const [du, dv] = rotDir(def.dx, def.dy);
-        const [sx, sy] = iso(du, dv);
-        // Arête basse réelle : centre tuile plate (côté rail = -d) + demi-pas vers pente.
-        const fux = x - def.dx, fuy = y - def.dy;
+        let [du, dv] = rotDir(def.dx, def.dy);
+        let [sx, sy] = iso(du, dv);
         let px, py;
-        if(inMap(fux, fuy)){
-          const fc = tileCenterIso(rx - du, ry - dv, fux, fuy);
-          px = fc[0] + sx * 0.5; py = fc[1] + sy * 0.5;
-        } else {
+        if(sy > 0){
+          // Galerie orientée vers le bas de l'écran : le dôme (toujours dessiné
+          // vers le haut/arrière, ouverture face au joueur) laisserait sinon le
+          // rail de la tuile à découvert devant l'arche. On rend alors la bouche
+          // comme celles du bas — direction opposée pour le bake ET la position —
+          // : l'arche se pose sur l'arête basse (avant) de la tuile, le toit et le
+          // rail de galerie passent par-dessus la tuile (rail masqué, toit visible).
+          du = -du; dv = -dv; sx = -sx; sy = -sy;
           const c = tileCenterIso(rx, ry, x, y);
           px = c[0] - sx * 0.5; py = c[1] - sy * 0.5;
+        } else {
+          // Arête basse réelle : centre tuile plate (côté rail = -d) + demi-pas vers pente.
+          const fux = x - def.dx, fuy = y - def.dy;
+          if(inMap(fux, fuy)){
+            const fc = tileCenterIso(rx - du, ry - dv, fux, fuy);
+            px = fc[0] + sx * 0.5; py = fc[1] + sy * 0.5;
+          } else {
+            const c = tileCenterIso(rx, ry, x, y);
+            px = c[0] - sx * 0.5; py = c[1] - sy * 0.5;
+          }
         }
         const s = getPool(tunnelPool, n, layer);
         applyBaked(s, tunnelTexture(du, dv));
