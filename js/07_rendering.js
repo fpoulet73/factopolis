@@ -248,13 +248,22 @@ function spriteDepthKey(u,v,bias){
 }
 
 function buildingDepthKey(b){
+  // Les quais sont au niveau du sol. Les dessiner avant tous les véhicules
+  // empêche une extrémité de quai de masquer un train situé plus loin.
+  if(b.type === 'train_platform') return -1e12;
+  // Une gare multi-tuiles (plusieurs pièces 'train_station' groupées) est dessinée
+  // d'un bloc par sa première pièce, à la taille de tout le groupe (cf.
+  // drawTrainStationPiece). Trier sur la seule tuile de cette pièce sous-estimerait
+  // la profondeur du bâtiment côté opposé, le faisant passer derrière des bâtiments
+  // voisins (ex. entrepôt) qui devraient au contraire être masqués par lui.
+  if(b.type === 'train_station'){
+    const bounds = trainStationGroupBounds(b.stationGroupId, 'train_station');
+    if(bounds) return spriteDepthKey(bounds.rx0+bounds.rw*0.5, bounds.ry0+bounds.rh*0.5, 0.2);
+  }
   const [r1x,r1y] = rotIdx(b.x, b.y);
   const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
   const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
   const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
-  // Les quais sont au niveau du sol. Les dessiner avant tous les véhicules
-  // empêche une extrémité de quai de masquer un train situé plus loin.
-  if(b.type === 'train_platform') return -1e12;
   return spriteDepthKey(rx0+rw*0.5, ry0+rh*0.5, 0.2);
 }
 
