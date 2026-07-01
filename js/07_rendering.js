@@ -15,8 +15,53 @@ function tileCenterIso(rx, ry, x, y){
   return liftedIso(rx + 0.5, ry + 0.5, terrainLiftPxAt(x, y));
 }
 
+// Altitude d'un véhicule : à plat sur le plancher du tunnel quand il traverse une
+// bouche ou une galerie souterraine (sinon il grimperait sur la montagne percée),
+// relief normal partout ailleurs.
+function entityLiftPxAtRot(u, v){
+  if(tunnelFloorPx){
+    const [tx, ty] = invRotF(u, v);
+    const f = tunnelFloorPxAt(Math.floor(tx), Math.floor(ty));
+    if(f >= 0) return f;
+  }
+  return terrainLiftPxAtRot(u, v);
+}
+// Découpe géométrique d'un véhicule face au tunnel (pas de fondu d'opacité) :
+//  - null       : pleinement visible (en surface) ;
+//  - 'hidden'   : dans la galerie, entièrement masqué ;
+//  - { px,py,dirx,diry } : à une bouche → plan de coupe passant par (px,py) en
+//    espace iso véhicule, la normale (dirx,diry) pointant vers la galerie (côté
+//    coupé). Le sprite est tranché à ce seuil : le train s'enfonce donc dans le
+//    trou et disparaît morceau par morceau dès l'entrée de la bouche.
+function tunnelClipInfo(u, v){
+  if(typeof railTunnel === 'undefined' || !railTunnel || typeof rail === 'undefined') return null;
+  const [tx, ty] = invRotF(u, v);
+  const x = Math.floor(tx), y = Math.floor(ty);
+  if(x < 0 || y < 0 || x >= N || y >= N) return null;
+  const i = y * N + x;
+  if(railTunnel[i]) return 'hidden';       // pleine galerie
+  if(!rail[i]) return null;
+  // Bouche = tuile de rail (hors tunnel) reliée à une tuile de galerie.
+  let dx = 0, dy = 0, isMouth = false;
+  for(const def of RAIL_DIRS){
+    if(!(rail[i] & def.bit)) continue;
+    const ax = x + def.dx, ay = y + def.dy;
+    if(ax < 0 || ay < 0 || ax >= N || ay >= N || !railTunnel[ay * N + ax]) continue;
+    isMouth = true; dx += def.dx; dy += def.dy;
+  }
+  if(!isMouth || (!dx && !dy)) return null;
+  const [du, dv] = rotDir(dx, dy);
+  const [sdx, sdy] = iso(du, dv);          // pas écran d'une tuile vers la galerie
+  const slen = Math.hypot(sdx, sdy) || 1;
+  const [cu, cv] = rotF(x + 0.5, y + 0.5);
+  const c = iso(cu, cv);
+  const lift = tunnelFloorPxAt(x, y);
+  const L = lift >= 0 ? lift : terrainLiftPxAtRot(cu, cv);
+  // Seuil au bord d'entrée de la bouche (demi-tuile côté surface depuis le centre).
+  return { px: c[0] - sdx * 0.5, py: c[1] - sdy * 0.5 - L, dirx: sdx / slen, diry: sdy / slen };
+}
 function entityIso(u, v){
-  return liftedIso(u, v, terrainLiftPxAtRot(u, v));
+  return liftedIso(u, v, entityLiftPxAtRot(u, v));
 }
 
 // Bouche de tunnel = demi-cylindre. Dessine UNE bouche pour la tuile (0,0) plate,
@@ -1397,7 +1442,7 @@ function trainWagonPose(veh, wagonIndex){
 // Corps directionnel d'un wagon (ombre + 2 prismes). Source partagée rendu + baking.
 function drawWagonCore(u, v, du, dv, color){
   const c = entityIso(u, v);
-  const lift = terrainLiftPxAtRot(u, v);
+  const lift = entityLiftPxAtRot(u, v);
   const nd0 = Math.hypot(du, dv) || 1;
   const fn0 = du/nd0, fv0 = dv/nd0;
   const shadowAngle0 = Math.atan2((fn0+fv0)*TH2, (fn0-fv0)*TW2);
@@ -1474,6 +1519,7 @@ function emitTrainSmoke(veh){
   if(smoke.length > 140) return;
   const pose = trainPose(veh);
   if(!pose) return;
+  if(tunnelClipInfo(pose.u, pose.v)) return; // loco entrée dans la bouche : pas de fumée
   const [ix, iy] = entityIso(pose.u, pose.v);
   const life = 1.1 + Math.random() * 0.6;
   smoke.push({
@@ -2028,7 +2074,7 @@ function drawTrainDepotFlags(){
 // rendu + baking Pixi. (Les anneaux focus/sélection + label cargo sont des overlays.)
 function drawTrainLocoCore(u, v, du, dv, color){
   const c = entityIso(u, v);
-  const lift = terrainLiftPxAtRot(u, v);
+  const lift = entityLiftPxAtRot(u, v);
   const hl=0.34, hw=0.16, nd=Math.hypot(du,dv)||1;
   const fn_l=du/nd, fv_l=dv/nd;
   const shadowAngle_l = Math.atan2((fn_l+fv_l)*TH2, (fn_l-fv_l)*TW2);

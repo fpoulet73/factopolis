@@ -305,6 +305,93 @@ function buildingLiftPx(b){
   ));
 }
 
+// ---------- plancher de tunnel ----------
+// Une tuile de galerie souterraine (railTunnel) porte un relief de montagne : sans
+// correction, le train grimperait sur la montagne au lieu de filer tout droit dans
+// le tunnel. On précalcule l'altitude px du PLANCHER du tunnel (au niveau des
+// bouches, à l'opposé du sommet percé) pour chaque tuile de galerie ET chaque
+// bouche : les véhicules s'y posent à plat, puis sont masqués sous le relief entre
+// les deux bouches. Recalculé quand les rails/tunnels changent (railVersion).
+let tunnelFloorPx = null;        // Float32Array(N*N) : altitude px du plancher, -1 = hors tunnel
+let tunnelFloorVersion = -1;
+
+function rebuildTunnelFloors(){
+  if(!rail || !railTunnel || !terrainHeightMap){ tunnelFloorPx = null; return; }
+  const step = terrainReliefStepPx();
+  const floor = new Float32Array(N * N).fill(-1);
+  const seen = new Uint8Array(N * N);
+  const mouthLift = m => terrainLevelAt(m % N, (m / N) | 0) * step; // côté bas de la pente
+  for(let i = 0; i < N * N; i++){
+    if(!railTunnel[i] || seen[i]) continue;
+    // Composante connexe de tuiles souterraines reliées par le rail.
+    const comp = [];
+    const stack = [i]; seen[i] = 1;
+    const mouths = new Set();
+    while(stack.length){
+      const cur = stack.pop(); comp.push(cur);
+      const cx = cur % N, cy = (cur / N) | 0;
+      for(const def of RAIL_DIRS){
+        if(!(rail[cur] & def.bit)) continue;
+        const nx = cx + def.dx, ny = cy + def.dy;
+        if(nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        const ni = ny * N + nx;
+        if(!rail[ni] || !(rail[ni] & RAIL_DIRS[def.opposite].bit)) continue;
+        if(railTunnel[ni]){ if(!seen[ni]){ seen[ni] = 1; stack.push(ni); } }
+        else mouths.add(ni); // rail de surface relié = bouche du tunnel
+      }
+    }
+    const mouthArr = [...mouths];
+    if(mouthArr.length === 2){
+      // Plancher interpolé linéairement entre les altitudes des deux bouches,
+      // suivant la distance parcourue dans la galerie (tunnel qui relie deux
+      // niveaux de terrain différents → pente régulière).
+      const distFrom = (start)=>{
+        const d = new Map([[start, 0]]); const q = [start];
+        for(let qi = 0; qi < q.length; qi++){
+          const cur = q[qi], cx = cur % N, cy = (cur / N) | 0;
+          for(const def of RAIL_DIRS){
+            if(!(rail[cur] & def.bit)) continue;
+            const nx = cx + def.dx, ny = cy + def.dy;
+            if(nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+            const ni = ny * N + nx;
+            if(!railTunnel[ni] || d.has(ni)) continue;
+            if(!(rail[ni] & RAIL_DIRS[def.opposite].bit)) continue;
+            d.set(ni, d.get(cur) + 1); q.push(ni);
+          }
+        }
+        return d;
+      };
+      const [ma, mb] = mouthArr;
+      const La = mouthLift(ma), Lb = mouthLift(mb);
+      const da = distFrom(ma), db = distFrom(mb);
+      for(const t of comp){
+        const a = da.get(t) ?? 1, b = db.get(t) ?? 1;
+        floor[t] = La + (Lb - La) * (a / (a + b));
+      }
+      floor[ma] = La; floor[mb] = Lb;
+    } else {
+      // Géométrie atypique (0, 1 ou >2 bouches) : plancher plat au niveau le plus bas.
+      let base = Infinity;
+      for(const m of mouthArr) base = Math.min(base, mouthLift(m));
+      if(!isFinite(base)) base = 0;
+      for(const t of comp) floor[t] = base;
+      for(const m of mouthArr) floor[m] = base;
+    }
+  }
+  tunnelFloorPx = floor;
+}
+
+function ensureTunnelFloors(){
+  if(tunnelFloorVersion === railVersion) return;
+  rebuildTunnelFloors();
+  tunnelFloorVersion = railVersion;
+}
+
+function tunnelFloorPxAt(x, y){
+  if(!tunnelFloorPx || x < 0 || y < 0 || x >= N || y >= N) return -1;
+  return tunnelFloorPx[y * N + x];
+}
+
 function setMapSize(size){
   N = Math.max(32, Math.round(size));
   dist = new Int32Array(N*N);
