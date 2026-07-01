@@ -306,7 +306,10 @@ function setMapSize(size){
 
 // ---------- canvas ----------
 const cv = document.getElementById('cv');
-const ctx = cv.getContext('2d');
+// `ctx` est volontairement `let` : draw() le bascule temporairement vers le
+// contexte du buffer-sol pendant une reconstruction, puis le restaure. Toutes
+// les fonctions de dessin passent par ce global, donc la bascule les redirige.
+let ctx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1;
 function resize(){
   DPR = window.devicePixelRatio || 1;
@@ -316,13 +319,21 @@ function resize(){
 addEventListener('resize', resize); resize();
 
 // ---------- cache de la couche sol (terrain/eau/routes/rails) ----------
-// Cette couche est statique tant que la caméra et le terrain ne changent pas. On
-// la rend une fois dans un canvas offscreen et on la blitte chaque frame, ce qui
-// évite de redessiner des dizaines de milliers de tuiles caméra immobile (gros
-// gain sur grande carte dézoomée). Voir draw() dans 07_rendering.js.
+// Scroll-buffer à marge : on rend le sol dans un canvas offscreen PLUS GRAND que
+// le viewport (marge GROUND_BUFFER_MARGIN px CSS de chaque côté), centré sur la
+// caméra du moment. Tant que la caméra reste dans la marge (et que rien d'autre
+// n'a changé), on se contente de blitter le buffer décalé — zéro re-rendu du sol.
+// On ne reconstruit qu'en sortant de la marge, au zoom (z change), sur rotation
+// ou mutation du sol. Voir draw() dans 07_rendering.js.
+//
+// Mémoire : buffer ≈ (W+2M)·(H+2M)·DPR²·4 octets (dizaines de Mo en hi-DPI). M est
+// le curseur : plus grand = pan plus longtemps sans reconstruction, mais plus de
+// mémoire et reconstructions plus coûteuses.
+const GROUND_BUFFER_MARGIN = 320; // marge en px CSS
 const groundCache = document.createElement('canvas');
 const groundCacheCtx = groundCache.getContext('2d');
-let _groundKey = null;          // signature du dernier rendu mis en cache
+let _bufContentKey = null;      // signature du contenu du buffer (hors cam.x/cam.y)
+let cacheCamX = 0, cacheCamY = 0; // caméra à laquelle le buffer a été rendu
 let groundVersion = 0;          // incrémenté à chaque mutation du sol
 function markGroundDirty(){ groundVersion++; }
 

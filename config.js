@@ -358,7 +358,6 @@ const CONFIG = {
   lac: {
     poissonRayon:             4,    // distance max depuis la rive (Manhattan) pour placer des poissons
     poissonPct:               0.03, // fraction de tuiles de rive éligibles qui reçoivent des poissons
-    poissonAnimationZoomMin:  1.2,  // zoom minimal pour animer les poissons (en dessous ils restent statiques)
     sablePct:                 0.12, // fraction des tuiles de rive en herbe remplacées par du sable
     argilePct:                0.08, // fraction des tuiles de rive en herbe remplacées par de l'argile
   },

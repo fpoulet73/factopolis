@@ -115,37 +115,23 @@ function getFishTiles(){
   return _fishTilesCache;
 }
 
-function fishAnimationEnabled(){
-  const zoomMin = Math.max(0.35, CFG.lac?.poissonAnimationZoomMin ?? 1.2);
-  return (cam.z || 1) >= zoomMin;
-}
-
 function drawFishOnTile(rx, ry, x, y){
   const c = tileCenterIso(rx, ry, x, y);
   const hs = hash(x, y);
-  const animated = fishAnimationEnabled();
-  const now = animated ? performance.now() * 0.0012 : 0;
   ctx.save();
   for(let k = 0; k < 3; k++){
     const k5 = k * 5;
-    const swimBase = ((hs >> (k5+11)) & 31) * 0.23 + k * 0.7;
-    const swim = now + swimBase;
-    const px = c[0]
-      + (((hs >> k5)      & 15) / 15 * TW * 0.54 - TW * 0.27)
-      + (animated ? Math.sin(swim * 1.2) * TW * 0.055 : 0);
-    const py = c[1]
-      + (((hs >> (k5+4))  &  7) /  7 * TH * 0.50 - TH * 0.25)
-      + (animated ? Math.cos(swim * 1.6) * TH * 0.11 : 0);
+    const px = c[0] + (((hs >> k5)     & 15) / 15 * TW * 0.54 - TW * 0.27);
+    const py = c[1] + (((hs >> (k5+4)) &  7) /  7 * TH * 0.50 - TH * 0.25);
     const sz = 2.6 + ((hs >> (k5+8)) & 3) * 0.45;
-    const dir = animated ? (Math.sin(swim) >= 0 ? 1 : -1) : (((hs >> (k5+13)) & 1) ? 1 : -1);
-    const tailSwing = animated ? Math.sin(swim * 2.8) * sz * 0.22 : 0;
+    const dir = ((hs >> (k5+13)) & 1) ? 1 : -1;
 
     // queue
     ctx.fillStyle = 'rgba(150,205,240,0.80)';
     ctx.beginPath();
     ctx.moveTo(px - dir * sz * 0.85, py);
-    ctx.lineTo(px - dir * sz * 1.65, py - sz * 0.55 + tailSwing);
-    ctx.lineTo(px - dir * sz * 1.65, py + sz * 0.55 + tailSwing);
+    ctx.lineTo(px - dir * sz * 1.65, py - sz * 0.55);
+    ctx.lineTo(px - dir * sz * 1.65, py + sz * 0.55);
     ctx.closePath();
     ctx.fill();
 
@@ -1964,42 +1950,75 @@ function drawExpansionBadges(){
 }
 
 function draw(){
+  // Sécurité : si une frame précédente a jeté pendant le rendu du buffer-sol, `ctx`
+  // pourrait être resté pointé sur groundCacheCtx. getContext('2d') renvoie le contexte
+  // mémorisé du canvas principal → on repart toujours d'un état sain.
+  ctx = cv.getContext('2d');
   drawFast = performance.now() < zoomActiveUntil || Math.abs(targetCam.z - cam.z) > 0.006;
   const pack = graphicBasePack();
 
-  // --- cache de la couche sol (ciel + terrain + routes + rails) ---
-  // Si caméra et terrain inchangés, on blitte le rendu mémorisé au lieu de
-  // redessiner toutes les tuiles. La clé inclut tout ce qui modifie ces pixels
-  // (position/zoom/rotation caméra, version du sol, taille canvas, survol/sélection
-  // d'expansion). En zoom actif (drawFast) on ne cache pas (détail réduit + caméra
-  // qui bouge). Les éléments dynamiques (feux, signaux) sont dessinés HORS cache.
-  const groundKey = drawFast ? null
-    : cam.x + '|' + cam.y + '|' + cam.z + '|' + rot + '|' + groundVersion + '|'
-      + cv.width + '|' + cv.height + '|'
-      + expansions.indexOf(hoveredExpansion) + '|' + expansions.indexOf(selectedExpansion);
-  const cacheReady = _groundKey !== null && groundCache.width === cv.width && groundCache.height === cv.height;
-  const groundDirty = drawFast || !cacheReady || groundKey !== _groundKey;
+  // --- scroll-buffer de la couche sol (ciel + terrain + routes + rails) ---
+  // Le sol est rendu dans un buffer offscreen plus grand que le viewport (marge M).
+  // Tant que la caméra reste dans la marge et que rien d'autre n'a changé, on blitte
+  // le buffer décalé sans rien redessiner. La clé de CONTENU exclut cam.x/cam.y (gérés
+  // par l'offset de blit) et n'inclut que ce qui change réellement les pixels du sol.
+  // En zoom actif (drawFast) on bypasse le buffer : rendu direct sur le canvas
+  // principal comme avant. Les éléments dynamiques (feux, signaux) sont HORS buffer.
+  const z = cam.z;
+  const M = GROUND_BUFFER_MARGIN;
+  const contentKey = cam.z + '|' + rot + '|' + groundVersion + '|'
+    + cv.width + '|' + cv.height + '|'
+    + expansions.indexOf(hoveredExpansion) + '|' + expansions.indexOf(selectedExpansion);
+  const bufW = (W + 2*M) * DPR, bufH = (H + 2*M) * DPR;
+  // Offset de blit buffer→principal (en px device). Le buffer couvre une zone centrée
+  // sur cacheCam ; le viewport courant y pioche à srcX/srcY.
+  let srcX = ((cam.x - cacheCamX) * z + M) * DPR;
+  let srcY = ((cam.y - cacheCamY) * z + M) * DPR;
+  const bufferReusable = !drawFast
+    && _bufContentKey === contentKey
+    && groundCache.width === bufW && groundCache.height === bufH
+    && srcX >= 0 && srcX <= 2*M*DPR && srcY >= 0 && srcY <= 2*M*DPR;
+  const rebuildBuffer = !drawFast && !bufferReusable;
+  const groundDirty = rebuildBuffer || drawFast; // exécuter les tracés coûteux du sol ?
 
+  // CIEL : toujours dessiné sur le canvas PRINCIPAL en repère écran, chaque frame.
+  // Il reste donc fixe à l'écran (il ne « scrolle » pas avec le pan) et le buffer du
+  // sol est rendu avec un fond TRANSPARENT (void) → le ciel transparaît au blit.
   ctx.setTransform(DPR,0,0,DPR,0,0);
-  if(groundDirty){
-    // ciel (re-rendu)
-    const sky = ctx.createLinearGradient(0,0,0,H);
-    sky.addColorStop(0, pack.sky[0]);
-    sky.addColorStop(1, pack.sky[1]);
-    ctx.fillStyle = sky;
-    ctx.fillRect(0,0,W,H);
-  } else {
-    // blit du sol mis en cache (pixels bruts, repère écran)
-    ctx.setTransform(1,0,0,1,0,0);
-    ctx.drawImage(groundCache, 0, 0);
+  const sky = ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0, pack.sky[0]);
+  sky.addColorStop(1, pack.sky[1]);
+  ctx.fillStyle = sky;
+  ctx.fillRect(0,0,W,H);
+
+  // Pendant une reconstruction, on dessine le sol DANS le buffer : on bascule le
+  // global `ctx` vers groundCacheCtx (restauré plus bas). cacheCam = caméra courante.
+  const mainCtx = ctx;
+  if(rebuildBuffer){
+    if(groundCache.width !== bufW || groundCache.height !== bufH){
+      groundCache.width = bufW; groundCache.height = bufH; // redimensionner efface
+    } else {
+      groundCacheCtx.setTransform(1,0,0,1,0,0);
+      groundCacheCtx.clearRect(0,0,bufW,bufH); // void transparent (ciel transparaît)
+    }
+    cacheCamX = cam.x; cacheCamY = cam.y;
+    srcX = M * DPR; srcY = M * DPR; // cam == cacheCam → blit centré
+    ctx = groundCacheCtx;
   }
 
-  const z = cam.z;
-  ctx.setTransform(DPR*z,0,0,DPR*z, -cam.x*DPR*z, -cam.y*DPR*z);
+  // Origine du repère monde→pixels : décalée de la marge quand on rend dans le buffer.
+  const originX = rebuildBuffer ? M*DPR : 0;
+  const originY = rebuildBuffer ? M*DPR : 0;
+  const camX = rebuildBuffer ? cacheCamX : cam.x;
+  const camY = rebuildBuffer ? cacheCamY : cam.y;
 
-  // fenêtre visible en px iso
-  const vx0 = cam.x - TW, vx1 = cam.x + W/z + TW;
-  const vy0 = cam.y - TH*3 - 160, vy1 = cam.y + H/z + TH*2; // marge haute = gratte-ciel
+  ctx.setTransform(DPR*z,0,0,DPR*z, -camX*DPR*z + originX, -camY*DPR*z + originY);
+
+  // fenêtre visible en px iso. En reconstruction on l'élargit de la marge (M/z) pour
+  // peupler aussi la bordure du buffer.
+  const bufMarginWorld = rebuildBuffer ? M/z : 0;
+  const vx0 = camX - TW - bufMarginWorld, vx1 = camX + W/z + TW + bufMarginWorld;
+  const vy0 = camY - TH*3 - 160 - bufMarginWorld, vy1 = camY + H/z + TH*2 + bufMarginWorld; // marge haute = gratte-ciel
 
   const sprites = [];
 
@@ -2395,21 +2414,31 @@ function draw(){
     }
   }
 
-  // --- couture : mémoriser la couche sol rendue (ciel+terrain+routes+rails) ---
-  if(groundDirty && !drawFast){
-    if(groundCache.width !== cv.width || groundCache.height !== cv.height){
-      groundCache.width = cv.width; groundCache.height = cv.height;
-    }
-    groundCacheCtx.setTransform(1,0,0,1,0,0);
-    groundCacheCtx.drawImage(cv, 0, 0);
-    _groundKey = groundKey;
+  // Poissons : statiques (plus d'animation) → cuits dans la couche sol cachée, comme
+  // les décors de terrain. Dessinés ici (dans le buffer en reconstruction, sur le
+  // principal en drawFast), au-dessus de l'eau/berges, sous les bâtiments.
+  if(groundDirty){
+    for(const fish of visibleFish) drawFishOnTile(fish.rx, fish.ry, fish.x, fish.y);
   }
+
+  // --- restauration + blit : le sol vient d'être rendu dans le buffer (rebuild) ou
+  // est déjà à jour (réutilisation). On restaure `ctx` au canvas principal puis on
+  // blitte la portion visible du buffer. En drawFast le sol est déjà sur le principal.
+  if(rebuildBuffer){
+    ctx = mainCtx;
+    _bufContentKey = contentKey;
+  }
+  if(!drawFast){
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.drawImage(groundCache, srcX, srcY, W*DPR, H*DPR, 0, 0, W*DPR, H*DPR);
+  }
+  // Transform monde du canvas PRINCIPAL (vraie caméra, origine 0) pour la suite
+  // (sprites + éléments dynamiques). Le blit l'avait remis en identité ; en drawFast
+  // il est déjà correct.
+  ctx.setTransform(DPR*z,0,0,DPR*z, -cam.x*DPR*z, -cam.y*DPR*z);
 
   // Éléments du sol DYNAMIQUES (hors cache) : feux de circulation et signaux
   // ferroviaires changent de couleur en continu → dessinés chaque frame.
-  if(!drawFast){
-    for(const fish of visibleFish) drawFishOnTile(fish.rx, fish.ry, fish.x, fish.y);
-  }
   if(!drawFast){
     for(const tl of trafficLights) drawTrafficLight(tl.c, tl.approaches);
   }
