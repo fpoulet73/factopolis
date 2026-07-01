@@ -1995,6 +1995,10 @@ function drawExpansionBadges(){
   }
 }
 
+// Exposés pour la couche terrain PixiJS (Phase 2, flag ?pixiterrain) : offset de blit
+// du scroll-buffer + version incrémentée à chaque reconstruction (→ re-upload texture).
+let groundBlitSrcX = 0, groundBlitSrcY = 0, groundTexVersion = 0, cacheCamZ = 1;
+
 function draw(){
   // Sécurité : si une frame précédente a jeté pendant le rendu du buffer-sol, `ctx`
   // pourrait être resté pointé sur groundCacheCtx. getContext('2d') renvoie le contexte
@@ -2047,7 +2051,7 @@ function draw(){
       groundCacheCtx.setTransform(1,0,0,1,0,0);
       groundCacheCtx.clearRect(0,0,bufW,bufH); // void transparent (ciel transparaît)
     }
-    cacheCamX = cam.x; cacheCamY = cam.y;
+    cacheCamX = cam.x; cacheCamY = cam.y; cacheCamZ = cam.z; // zoom au moment du bake
     srcX = M * DPR; srcY = M * DPR; // cam == cacheCam → blit centré
     ctx = groundCacheCtx;
   }
@@ -2467,10 +2471,12 @@ function draw(){
   if(rebuildBuffer){
     ctx = mainCtx;
     _bufContentKey = contentKey;
+    groundTexVersion++; // contenu du groundCache changé → re-upload côté Pixi
   }
   if(!drawFast){
     ctx.setTransform(1,0,0,1,0,0);
     ctx.drawImage(groundCache, srcX, srcY, W*DPR, H*DPR, 0, 0, W*DPR, H*DPR);
+    groundBlitSrcX = srcX; groundBlitSrcY = srcY; // offset pour la couche terrain Pixi
   }
   // Transform monde du canvas PRINCIPAL (vraie caméra, origine 0) pour la suite
   // (sprites + éléments dynamiques). Le blit l'avait remis en identité ; en drawFast
