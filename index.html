@@ -9,6 +9,11 @@
     font-family:"Segoe UI",system-ui,sans-serif;user-select:none;
     -webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:none}
   #cv{display:block;width:100vw;height:100vh;cursor:crosshair;touch-action:none}
+  /* Migration PixiJS : canvas WebGL superposé au #cv Canvas2D. Transparent + pointer-events
+     none pour laisser les événements atteindre #cv (les handlers d'entrée restent sur #cv
+     pendant la migration). Retiré quand #cv disparaîtra en phase 4. */
+  #cv,#pixi{position:absolute;top:0;left:0}
+  #pixi{z-index:1;pointer-events:none}
   /* poignées de drag des panneaux : on capture le geste (pas de scroll natif) */
   .panel-head,.panel-head h3,.panel h2,.panel h3,.panel-drag-handle{touch-action:none}
   .panel{position:fixed;background:rgba(13,18,28,.92);border:1px solid #36465e;
@@ -315,6 +320,7 @@
 </head>
 <body>
 <canvas id="cv"></canvas>
+<canvas id="pixi"></canvas>
 
 <!-- ============================================================
      SPLASH — titre isométrique Tetris au démarrage
@@ -527,5 +533,10 @@
 <script src="js/08_ui_input_loop.js?v=13"></script>
 <script src="js/09_multiplayer.js?v=13"></script>
 <script src="js/10_saves_chat_console.js?v=13"></script>
+<!-- Migration PixiJS (Full Pixi) — chargé en dernier : PIXI global puis la scène qui
+     wrappe drawFn (après l'override multijoueur de 09). -->
+<script src="js/pixi/vendor/pixi.min.js?v=13"></script>
+<script src="js/pixi/scene.js?v=13"></script>
+<script src="js/pixi/sprites.js?v=13"></script>
 </body>
 </html>

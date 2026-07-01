@@ -419,6 +419,7 @@ function imageForSprite(sprite){
   if(!img){
     img = new Image();
     img.decoding = 'async';
+    img.onload = () => { GRAPHIC_PACK_IMAGES_GEN++; }; // signal re-bake Pixi
     img.onerror = () => console.warn('[graphics-pack] image introuvable ou invalide:', sprite.src);
     img.src = sprite.src;
     GRAPHIC_PACK_IMAGES[sprite.src] = img;
@@ -775,30 +776,17 @@ function drawTrainStationPiece(b){
   }
 }
 
-function drawBuilding(b){
+// Corps statique du bâtiment (sprite/prisme + toit + fenêtres + icône). Extrait de
+// drawBuilding pour être baké en texture Pixi (js/pixi/sprites.js). Retourne la
+// géométrie (tc = centre haut, empreinte tournée, lift) pour placer les overlays.
+function drawBuildingBody(b){
   const d = BUILD[b.type];
-  if(isTrainStationPiece(b)){
-    drawTrainStationPiece(b);
-    return;
-  }
   const [r1x,r1y] = rotIdx(b.x, b.y);
   const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
   const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
   // l'empreinte tournée échange largeur et profondeur selon l'orientation
   const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
   const lift = buildingLiftPx(b);
-  if(!drawFast && UI_OPTIONS.highlightUnderstaffedFactories){
-    drawBuildingLayerDiagnostic(b, rx0, ry0, rw, rh, lift);
-    if(b === selected || trainStationSelectionMatches(selected, b)){
-      ctx.save();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-      diamond(rx0, ry0, rw, rh, lift);
-      ctx.stroke();
-      ctx.restore();
-    }
-    return;
-  }
   // les sites industriels fusionnés gagnent en hauteur avec leur taille
   const hgt = d.ind ? d.hgt*(1+0.18*(Math.max(b.w,b.h)-1)) : d.hgt;
   const bCol = packBuildingColor(b, d);
@@ -851,7 +839,15 @@ function drawBuilding(b){
       ctx.fillText(d.ic, tc[0], tc[1]+1);
     }
   }
+  return { tc, rx0, ry0, rw, rh, lift, usedSprite };
+}
 
+// Overlays dynamiques du bâtiment (badge pausé, progression, labels, alertes,
+// contours propriétaire/sélection…). Réimplémentés en Pixi live
+// (js/pixi/sprites.js) ; ce code Canvas2D reste la référence / chemin de secours.
+function drawBuildingOverlays(b, g){
+  const d = BUILD[b.type];
+  const { tc, rx0, ry0, rw, rh, lift, usedSprite } = g;
   if(!drawFast && d.ind && b.paused){
     drawPausedBuildingBadge(tc, rw, rh);
   }
@@ -950,33 +946,60 @@ function drawBuilding(b){
   }
 }
 
-function drawWalker(wk){
-  const rs = typeof mpWalkerRenderState === 'function' ? mpWalkerRenderState(wk) : wk;
-  if(!rs.pts || !rs.pts.length) return;
-  const seg = Math.min(rs.seg, rs.pts.length-1);
-  const a = rs.pts[seg], b = rs.pts[Math.min(seg+1, rs.pts.length-1)];
-  const wx = a.x + (b.x-a.x)*rs.t, wy = a.y + (b.y-a.y)*rs.t;
-  const [u,v] = rotF(wx/TILE, wy/TILE);
-  const c = liftedIso(u, v, terrainLiftPxAtWorld(wx, wy));
-  const bob = Math.sin(gtime*12 + wk.phase)*1.1;
+function drawBuilding(b){
+  if(isTrainStationPiece(b)){ drawTrainStationPiece(b); return; }
+  const d = BUILD[b.type];
+  if(!drawFast && UI_OPTIONS.highlightUnderstaffedFactories){
+    const [r1x,r1y] = rotIdx(b.x, b.y);
+    const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
+    const rx0 = Math.min(r1x,r2x), ry0 = Math.min(r1y,r2y);
+    const rw = Math.abs(r1x-r2x)+1, rh = Math.abs(r1y-r2y)+1;
+    const lift = buildingLiftPx(b);
+    drawBuildingLayerDiagnostic(b, rx0, ry0, rw, rh, lift);
+    if(b === selected || trainStationSelectionMatches(selected, b)){
+      ctx.save();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      diamond(rx0, ry0, rw, rh, lift);
+      ctx.stroke();
+      ctx.restore();
+    }
+    return;
+  }
+  drawBuildingOverlays(b, drawBuildingBody(b));
+}
+
+// Petit personnage (piéton / sans-abri) dessiné autour d'un centre écran c, avec
+// un décalage vertical bob. Source partagée rendu + baking Pixi.
+function drawWalkerCore(c, col, bob){
   ctx.fillStyle = 'rgba(0,0,0,.18)';
   ctx.beginPath(); ctx.ellipse(c[0], c[1]+1, 3.2, 1.7, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = wk.col;                       // corps
+  ctx.fillStyle = col;                          // corps
   ctx.fillRect(c[0]-2, c[1]-8+bob, 4, 7);
   ctx.fillStyle = '#f0c8a0';                    // tête
   ctx.beginPath(); ctx.arc(c[0], c[1]-10+bob, 2.5, 0, 7); ctx.fill();
 }
+function walkerPose(wk){
+  const rs = typeof mpWalkerRenderState === 'function' ? mpWalkerRenderState(wk) : wk;
+  if(!rs.pts || !rs.pts.length) return null;
+  const seg = Math.min(rs.seg, rs.pts.length-1);
+  const a = rs.pts[seg], b = rs.pts[Math.min(seg+1, rs.pts.length-1)];
+  const wx = a.x + (b.x-a.x)*rs.t, wy = a.y + (b.y-a.y)*rs.t;
+  const [u,v] = rotF(wx/TILE, wy/TILE);
+  return { u, v, c: liftedIso(u, v, terrainLiftPxAtWorld(wx, wy)) };
+}
+function drawWalker(wk){
+  const p = walkerPose(wk); if(!p) return;
+  drawWalkerCore(p.c, wk.col, Math.sin(gtime*12 + wk.phase)*1.1);
+}
 
-function drawHomeless(h){
+function homelessPose(h){
   const [u,v] = rotF(h.x/TILE, h.y/TILE);
-  const c = liftedIso(u, v, terrainLiftPxAtWorld(h.x, h.y));
-  const bob = Math.sin(gtime*4 + h.phase)*0.7;
-  ctx.fillStyle = 'rgba(0,0,0,.18)';
-  ctx.beginPath(); ctx.ellipse(c[0], c[1]+1, 3.2, 1.7, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = h.col || playerColor(h.owner);
-  ctx.fillRect(c[0]-2, c[1]-8+bob, 4, 7);
-  ctx.fillStyle = '#f0c8a0';
-  ctx.beginPath(); ctx.arc(c[0], c[1]-10+bob, 2.5, 0, 7); ctx.fill();
+  return { u, v, c: liftedIso(u, v, terrainLiftPxAtWorld(h.x, h.y)) };
+}
+function drawHomeless(h){
+  const p = homelessPose(h);
+  drawWalkerCore(p.c, h.col || playerColor(h.owner), Math.sin(gtime*4 + h.phase)*0.7);
 }
 
 function drawWorkRadiusOverlay(center, radius, color, minRx, maxRx, minRy, maxRy){
@@ -1146,6 +1169,18 @@ function trainWagonPose(veh, wagonIndex){
   return { u, v, du, dv };
 }
 
+// Corps directionnel d'un wagon (ombre + 2 prismes). Source partagée rendu + baking.
+function drawWagonCore(u, v, du, dv, color){
+  const c = entityIso(u, v);
+  const lift = terrainLiftPxAtRot(u, v);
+  const nd0 = Math.hypot(du, dv) || 1;
+  const fn0 = du/nd0, fv0 = dv/nd0;
+  const shadowAngle0 = Math.atan2((fn0+fv0)*TH2, (fn0-fv0)*TW2);
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 11, 4.5, shadowAngle0, 0, Math.PI*2); ctx.fill();
+  trainPrism(u, v, du, dv, 0.30,      0.13,      5, '#252e38', lift);
+  trainPrism(u, v, du, dv, 0.30*0.82, 0.13*0.82, 7, color, lift + 4);
+}
 function drawTrainWagon(veh, wagonIndex){
   const pose = trainWagonPose(veh, wagonIndex);
   if(!pose) return;
@@ -1155,14 +1190,7 @@ function drawTrainWagon(veh, wagonIndex){
   if(!wtype) return;
   const selectedRes = trainWagonSelectedResource(wagon);
   const c = entityIso(u, v);
-  const lift = terrainLiftPxAtRot(u, v);
-  const nd0 = Math.hypot(du, dv) || 1;
-  const fn0 = du/nd0, fv0 = dv/nd0;
-  const shadowAngle0 = Math.atan2((fn0+fv0)*TH2, (fn0-fv0)*TW2);
-  ctx.fillStyle = 'rgba(0,0,0,.18)';
-  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 11, 4.5, shadowAngle0, 0, Math.PI*2); ctx.fill();
-  trainPrism(u, v, du, dv, 0.30,      0.13,      5, '#252e38', lift);
-  trainPrism(u, v, du, dv, 0.30*0.82, 0.13*0.82, 7, wtype.color, lift + 4);
+  drawWagonCore(u, v, du, dv, wtype.color);
   if(selectedRes && RES[selectedRes]?.ic){
     const label = RES[selectedRes].ic;
     ctx.save();
@@ -1248,12 +1276,19 @@ function drawSmoke(){
   ctx.globalAlpha = 1;
 }
 
-function drawTruck(tk){
+// Pose d'un camion (position tuile tournée + direction) depuis son état de
+// rendu (interpolé en MP). Réutilisé par le rendu ET le baking de textures Pixi.
+function truckPose(tk){
   const rs = typeof mpTruckRenderState === 'function' ? mpTruckRenderState(tk) : tk;
-  if(!rs.pts || !rs.pts.length) return;
+  if(!rs.pts || !rs.pts.length) return null;
   const {u, v} = lanePose(rs.pts, rs.seg, rs.t, tk.overtaking ? -0.15 : 0.15);
   const [bDx, bDy] = trainBlendedDir(rs.pts, rs.seg, rs.t);
   const [du, dv] = rotDir(bDx, bDy);
+  return { u, v, du, dv };
+}
+// Dessin d'un camion à une pose explicite. Source unique partagée par drawTruck
+// (Canvas2D) et le baker de textures directionnelles (js/pixi/sprites.js).
+function drawTruckCore(u, v, du, dv, col){
   const nd = Math.hypot(du, dv) || 1;
   const fn = du/nd, fv = dv/nd;
   const shadowAngle = Math.atan2((fn+fv)*TH2, (fn-fv)*TW2);
@@ -1262,7 +1297,12 @@ function drawTruck(tk){
   ctx.fillStyle = 'rgba(0,0,0,.20)';
   ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 9, 4, shadowAngle, 0, Math.PI*2); ctx.fill();
   trainPrism(u, v, du, dv, 0.21, 0.11, 4, '#39404c', lift);
-  trainPrism(u, v, du, dv, 0.21*0.72, 0.11*0.72, 6, RES[tk.res]?.c ?? '#aaa', lift + 4);
+  trainPrism(u, v, du, dv, 0.21*0.72, 0.11*0.72, 6, col, lift + 4);
+}
+function drawTruck(tk){
+  const p = truckPose(tk);
+  if(!p) return;
+  drawTruckCore(p.u, p.v, p.du, p.dv, RES[tk.res]?.c ?? '#aaa');
 }
 
 function drawVehicleRoute(veh){
@@ -1759,73 +1799,79 @@ function drawTrainDepotFlags(){
   ctx.restore();
 }
 
-function drawVehicle(veh){
-  const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
-  if(!rs.pts || !rs.pts.length) return;
-  if(veh.vtype === 'train'){
-    const {u, v, du, dv} = trainPose(veh);
-    const vt = VEHICLE_TYPES[veh.vtype];
-    const c = entityIso(u, v);
-    const lift = terrainLiftPxAtRot(u, v);
-    const hl=0.34, hw=0.16, nd=Math.hypot(du,dv)||1;
-    const fn_l=du/nd, fv_l=dv/nd;
-    const shadowAngle_l = Math.atan2((fn_l+fv_l)*TH2, (fn_l-fv_l)*TW2);
-    ctx.fillStyle = 'rgba(0,0,0,.22)';
-    ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 13, 5.5, shadowAngle_l, 0, Math.PI*2); ctx.fill();
-    const locoOwner = veh.garageRef?.owner ?? null;
-    const locoColor = locoOwner != null ? playerColor(locoOwner) : vt.color;
-    trainPrism(u, v, du, dv, hl,      hw,      6, '#2f3640', lift);
-    trainPrism(u, v, du, dv, hl*0.78, hw*0.78, 8, locoColor, lift + 5);
-    trainPrism(u+(du/nd)*0.06, v+(dv/nd)*0.06, du, dv, hl*0.28, hw, 10, '#92a2b4', lift + 8);
-    if(veh === focusVehicle){
-      const pu = 0.6 + 0.4*Math.sin(performance.now()/300);
-      ctx.save();
-      ctx.strokeStyle = '#4dd9ff'; ctx.lineWidth = 3; ctx.globalAlpha = 0.45 + 0.4*pu;
-      ctx.beginPath(); ctx.ellipse(c[0], c[1], 17 + 1.5*pu, 8, 0, 0, Math.PI*2); ctx.stroke();
-      ctx.restore();
-    }
-    if(veh === selectedVehicle){
-      ctx.save();
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.globalAlpha = 0.9;
-      ctx.beginPath(); ctx.ellipse(c[0], c[1], 15, 7, 0, 0, Math.PI*2); ctx.stroke();
-      ctx.restore();
-    }
-    return;
-  }
-  const {u, v} = lanePose(rs.pts, rs.seg, rs.t, veh.overtaking ? -0.17 : 0.17);
-  const [bDx, bDy] = trainBlendedDir(rs.pts, rs.seg, rs.t);
-  const [du, dv] = rotDir(bDx, bDy);
+// Corps directionnel (locomotive / voiture) : ombre + prismes. Source partagée
+// rendu + baking Pixi. (Les anneaux focus/sélection + label cargo sont des overlays.)
+function drawTrainLocoCore(u, v, du, dv, color){
+  const c = entityIso(u, v);
+  const lift = terrainLiftPxAtRot(u, v);
+  const hl=0.34, hw=0.16, nd=Math.hypot(du,dv)||1;
+  const fn_l=du/nd, fv_l=dv/nd;
+  const shadowAngle_l = Math.atan2((fn_l+fv_l)*TH2, (fn_l-fv_l)*TW2);
+  ctx.fillStyle = 'rgba(0,0,0,.22)';
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 13, 5.5, shadowAngle_l, 0, Math.PI*2); ctx.fill();
+  trainPrism(u, v, du, dv, hl,      hw,      6, '#2f3640', lift);
+  trainPrism(u, v, du, dv, hl*0.78, hw*0.78, 8, color, lift + 5);
+  trainPrism(u+(du/nd)*0.06, v+(dv/nd)*0.06, du, dv, hl*0.28, hw, 10, '#92a2b4', lift + 8);
+}
+function drawCarCore(u, v, du, dv, color){
+  const c = entityIso(u, v);
+  const lift = terrainLiftPxAtRot(u, v);
   const nd = Math.hypot(du, dv) || 1;
   const fn = du/nd, fv = dv/nd;
   const shadowAngle = Math.atan2((fn+fv)*TH2, (fn-fv)*TW2);
-  const vt = VEHICLE_TYPES[veh.vtype];
-  const c = entityIso(u, v);
-  const lift = terrainLiftPxAtRot(u, v);
   ctx.fillStyle = 'rgba(0,0,0,.20)';
   ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 10, 4.6, shadowAngle, 0, Math.PI*2); ctx.fill();
   trainPrism(u, v, du, dv, 0.23, 0.13, 5, '#39404c', lift);
-  trainPrism(u, v, du, dv, 0.23*0.72, 0.13*0.72, 7, vt.color, lift + 5);
-  if(!drawFast && veh.cargo > 0){
-    const label = vt.icone + ' ' + veh.cargo;
-    ctx.font = 'bold 10px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 2;
-    ctx.strokeText(label, c[0], c[1] - TH);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(label, c[0], c[1] - TH);
+  trainPrism(u, v, du, dv, 0.23*0.72, 0.13*0.72, 7, color, lift + 5);
+}
+function vehiclePose(veh){
+  const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
+  if(!rs.pts || !rs.pts.length) return null;
+  if(veh.vtype === 'train') return trainPose(veh);
+  const {u, v} = lanePose(rs.pts, rs.seg, rs.t, veh.overtaking ? -0.17 : 0.17);
+  const [bDx, bDy] = trainBlendedDir(rs.pts, rs.seg, rs.t);
+  const [du, dv] = rotDir(bDx, bDy);
+  return { u, v, du, dv };
+}
+function vehicleColor(veh){
+  const vt = VEHICLE_TYPES[veh.vtype];
+  if(veh.vtype === 'train'){
+    const o = veh.garageRef?.owner ?? null;
+    return o != null ? playerColor(o) : vt.color;
   }
+  return vt.color;
+}
+function drawVehicle(veh){
+  const p = vehiclePose(veh); if(!p) return;
+  const { u, v, du, dv } = p;
+  const c = entityIso(u, v);
+  const vt = VEHICLE_TYPES[veh.vtype];
+  if(veh.vtype === 'train'){
+    drawTrainLocoCore(u, v, du, dv, vehicleColor(veh));
+  } else {
+    drawCarCore(u, v, du, dv, vt.color);
+    if(!drawFast && veh.cargo > 0){
+      const label = vt.icone + ' ' + veh.cargo;
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 2;
+      ctx.strokeText(label, c[0], c[1] - TH);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, c[0], c[1] - TH);
+    }
+  }
+  const isTrain = veh.vtype === 'train';
   if(veh === focusVehicle){
     const pu = 0.6 + 0.4*Math.sin(performance.now()/300);
     ctx.save();
     ctx.strokeStyle = '#4dd9ff'; ctx.lineWidth = 3; ctx.globalAlpha = 0.45 + 0.4*pu;
-    ctx.beginPath(); ctx.ellipse(c[0], c[1], 15 + 1.5*pu, 7, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(c[0], c[1], (isTrain?17:15) + 1.5*pu, isTrain?8:7, 0, 0, Math.PI*2); ctx.stroke();
     ctx.restore();
   }
-  // Cercle blanc si sélectionné
   if(veh === selectedVehicle){
     ctx.save();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.globalAlpha = 0.9;
-    ctx.beginPath(); ctx.ellipse(c[0], c[1], 13, 6, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(c[0], c[1], isTrain?15:13, isTrain?7:6, 0, 0, Math.PI*2); ctx.stroke();
     ctx.restore();
   }
 }
@@ -2060,7 +2106,6 @@ function draw(){
     r: fisherRadiusOf(selected),
   } : null;
   const visibleFish = [];
-  const bufferTrees = []; // arbres statiques à cuire dans le buffer sol (rebuild only)
 
   // --- passe 1 : sol (ordre ligne par ligne = peintre) ---
   for(let ry=minRy; ry<=maxRy; ry++) for(let rx=minRx; rx<=maxRx; rx++){
@@ -2179,14 +2224,12 @@ function draw(){
     drawWaterBankFaces(rx, ry, x, y, t, snowAmount);
     } // fin if(groundDirty) — dessin du sol
 
-    // Arbres : statiques → cuits dans la couche sol cachée (plus de milliers de
-    // sprites redessinés chaque frame). Collectés dans l'ordre du loop (= ordre
-    // peintre pour des tuiles alignées), uniquement en reconstruction du buffer.
-    if(rebuildBuffer && t===T.TREE){
-      bufferTrees.push({ rx, ry, x, y });
-    }
+    // Arbres : rendus par la couche sprites PixiJS (js/pixi/sprites.js), plus par
+    // le Canvas2D. (Migration Full Pixi — Phase 1.)
+    // Bâtiments : rendus par la couche sprites PixiJS (js/pixi/sprites.js), SAUF les
+    // pièces de gare (encore Canvas2D). (Migration Full Pixi — Phase 1.)
     const b = bgrid[i];
-    if(b){
+    if(b && isTrainStationPiece(b)){
       const [r1x,r1y] = rotIdx(b.x, b.y);
       const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
       // dessiné une seule fois, depuis sa tuile la plus « en avant »
@@ -2417,11 +2460,7 @@ function draw(){
     }
   }
 
-  // Arbres statiques cuits dans le buffer (au-dessus du terrain/routes/rails, sous les
-  // bâtiments et entités). Ordre de collecte = ordre peintre pour tuiles alignées.
-  if(rebuildBuffer){
-    for(const tr of bufferTrees) drawTree(tr.rx, tr.ry, tr.x, tr.y);
-  }
+  // (Arbres déplacés vers la couche sprites PixiJS — voir js/pixi/sprites.js.)
 
   // Poissons : statiques (plus d'animation) → cuits dans la couche sol cachée, comme
   // les décors de terrain. Dessinés ici (dans le buffer en reconstruction, sur le
@@ -2517,62 +2556,8 @@ function draw(){
   if(fisherRadiusSel)
     drawFisherRadiusOverlay(fisherRadiusSel.center, fisherRadiusSel.r, minRx, maxRx, minRy, maxRy);
 
-  // camions
-  if(!drawFast){
-    // Culling viewport des entités mobiles : seules celles dont la position iso px
-    // tombe dans la fenêtre visible (avec marge pour la hauteur des sprites) sont
-    // collectées/triées/dessinées. Coût ~constant quel que soit le nombre total.
-    // (u,v) = tuile tournée → px iso = ((u-v)*TW2, (u+v)*TH2).
-    const inViewIso = (u, v) => {
-      const px = (u - v) * TW2, py = (u + v) * TH2;
-      return px >= vx0 - 2 * TW && px <= vx1 + 2 * TW && py >= vy0 - 2 * TH && py <= vy1 + 2 * TH;
-    };
-
-    for(const h of homeless){
-      const [u,v] = rotF(h.x/TILE, h.y/TILE);
-      if(!inViewIso(u, v)) continue;
-      sprites.push({ k:spriteDepthKey(u, v, 0.55), f:()=>drawHomeless(h) });
-    }
-
-    for(const tk of trucks){
-      const rs = typeof mpTruckRenderState === 'function' ? mpTruckRenderState(tk) : tk;
-      if(!rs.pts || !rs.pts.length) continue;
-      const {u, v} = lanePose(rs.pts, rs.seg, rs.t, tk.overtaking ? -0.15 : 0.15);
-      if(!inViewIso(u, v)) continue;
-      sprites.push({ k:spriteDepthKey(u, v, 0.5), f:()=>drawTruck(tk) });
-    }
-
-    for(const veh of vehicles){
-      const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
-      if(veh.state === 'idle' || !rs.pts || !rs.pts.length) continue;
-      if(veh.vtype === 'train'){
-        // Les trains sont longs et peu nombreux : on ne les culle pas (un wagon
-        // pourrait être visible alors que la loco ne l'est pas).
-        for(let i = 0; i < (veh.wagons?.length || 0); i++){
-          const wp = trainWagonPose(veh, i);
-          if(wp) sprites.push({ k:spriteDepthKey(wp.u, wp.v, 0.52), f:((wi)=>()=>drawTrainWagon(veh, wi))(i) });
-        }
-        const {u, v} = trainPose(veh);
-        sprites.push({ k:spriteDepthKey(u, v, 0.52), f:()=>drawVehicle(veh) });
-        continue;
-      }
-      const {u, v} = lanePose(rs.pts, rs.seg, rs.t, veh.overtaking ? -0.17 : 0.17);
-      if(!inViewIso(u, v)) continue;
-      sprites.push({ k:spriteDepthKey(u, v, 0.52), f:()=>drawVehicle(veh) });
-    }
-
-    // piétons
-    for(const wk of walkers){
-      const rs = typeof mpWalkerRenderState === 'function' ? mpWalkerRenderState(wk) : wk;
-      if(!rs.pts || !rs.pts.length) continue;
-      const seg = Math.min(rs.seg, rs.pts.length-1);
-      const a = rs.pts[seg], b = rs.pts[Math.min(seg+1, rs.pts.length-1)];
-      const wx = a.x + (b.x-a.x)*rs.t, wy = a.y + (b.y-a.y)*rs.t;
-      const [u,v] = rotF(wx/TILE, wy/TILE);
-      if(!inViewIso(u, v)) continue;
-      sprites.push({ k:spriteDepthKey(u, v, 0.6), f:()=>drawWalker(wk) });
-    }
-  }
+  // Entités mobiles (camions, voitures, trains+wagons, piétons, sans-abri) :
+  // rendues par la couche sprites PixiJS (js/pixi/sprites.js). (Full Pixi — Phase 1.)
 
   // --- passe 2 : sprites triés arrière → avant ---
   sprites.sort((a,b)=> a.k-b.k);

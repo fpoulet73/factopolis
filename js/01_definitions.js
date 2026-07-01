@@ -458,6 +458,9 @@ const GRAPHIC_PACKS = {
 
 const GRAPHIC_PACK_REGISTRY_URL = 'assets/graphic-packs/packs.json';
 const GRAPHIC_PACK_IMAGES = {};
+// Incrémenté à chaque chargement d'image de pack : sert de signal au rendu Pixi
+// pour re-baker les textures de bâtiments qui attendaient leur sprite.
+let GRAPHIC_PACK_IMAGES_GEN = 0;
 
 function joinAssetUrl(base, src){
   if(!src) return '';
