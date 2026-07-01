@@ -205,25 +205,24 @@ const PixiSprites = (function(){
   }
 
   let truckPool = [], carPool = [], locoPool = [], wagonPool = [];
-  // Masques de découpe des trains aux bouches de tunnel (un par sprite tranché).
-  let clipMaskPool = [];
-  function getClipMask(i, layer){
-    let g = clipMaskPool[i];
-    if(!g){ g = new PIXI.Graphics(); g.eventMode = 'none'; layer.addChild(g); clipMaskPool[i] = g; }
-    return g;
-  }
-  // Applique/retire la découpe au sprite selon l'info renvoyée par tunnelClipInfo.
-  // clip=null → plein cadre ; sinon on masque au-delà du seuil (côté galerie).
-  function applyTunnelClip(s, clip, layer, nmask){
-    if(!clip){ s.mask = null; return nmask; }
-    const g = getClipMask(nmask, layer);
+  // Découpe d'un train à une bouche de tunnel. Chaque sprite possède SON masque
+  // dédié (s.__clip) : indispensable car Pixi remet renderable=true sur le masque
+  // quand on fait `s.mask = null` — un pool partagé réassigné entre sprites ferait
+  // alors clignoter le polygone blanc plein écran. clip=null → on cache le masque.
+  function applyTunnelClip(s, clip, layer){
+    if(!clip){
+      if(s.mask) s.mask = null;      // Pixi remet s.__clip.renderable = true …
+      if(s.__clip) s.__clip.visible = false; // … donc on le cache explicitement.
+      return;
+    }
+    let g = s.__clip;
+    if(!g){ g = new PIXI.Graphics(); g.eventMode = 'none'; layer.addChild(g); s.__clip = g; }
     const { px, py, dirx, diry } = clip;
     const L = 8000, ax = -diry * L, ay = dirx * L, bx = -dirx * L, by = -diry * L;
     g.clear();
     g.poly([ px + ax, py + ay, px - ax, py - ay, px - ax + bx, py - ay + by, px + ax + bx, py + ay + by ]).fill(0xffffff);
     g.visible = true;
-    s.mask = g;
-    return nmask + 1;
+    if(s.mask !== g) s.mask = g;
   }
   function updateTrucks(layer){
     if(typeof trucks === 'undefined') return;
@@ -248,7 +247,7 @@ const PixiSprites = (function(){
   function updateVehicles(layer, ovLayer){
     if(typeof vehicles === 'undefined') return;
     if(typeof ensureTunnelFloors === 'function') ensureTunnelFloors();
-    let nc = 0, nl = 0, nw = 0, nov = 0, nmask = 0;
+    let nc = 0, nl = 0, nw = 0, nov = 0;
     for(const veh of vehicles){
       const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
       if(veh.state === 'idle' || !rs.pts || !rs.pts.length) continue;
@@ -259,7 +258,7 @@ const PixiSprites = (function(){
           const clip = tunnelClipInfo(wp.u, wp.v); if(clip === 'hidden') continue;
           const wagon = veh.wagons[i];
           nw = placeDir(wagonPool, nw, layer, 'wagon', drawWagonCore, trainWagonDef(wagon)?.color || '#888', wp.u, wp.v, wp.du, wp.dv, 0.52);
-          nmask = applyTunnelClip(wagonPool[nw-1], clip, layer, nmask);
+          applyTunnelClip(wagonPool[nw-1], clip, layer);
           // badge ressource sélectionnée (seulement hors bouche)
           const selRes = !clip && typeof trainWagonSelectedResource === 'function' ? trainWagonSelectedResource(wagon) : null;
           if(selRes && RES[selRes]?.ic){
@@ -271,7 +270,7 @@ const PixiSprites = (function(){
         const tp = trainPose(veh); if(!tp) continue;
         const clip = tunnelClipInfo(tp.u, tp.v); if(clip === 'hidden') continue; // loco masquée dans la galerie
         nl = placeDir(locoPool, nl, layer, 'loco', drawTrainLocoCore, vehicleColor(veh), tp.u, tp.v, tp.du, tp.dv, 0.52);
-        nmask = applyTunnelClip(locoPool[nl-1], clip, layer, nmask);
+        applyTunnelClip(locoPool[nl-1], clip, layer);
       } else {
         const p = vehiclePose(veh); if(!p) continue;
         const vt = VEHICLE_TYPES[veh.vtype];
@@ -283,7 +282,10 @@ const PixiSprites = (function(){
       }
     }
     hidePool(carPool, nc); hidePool(locoPool, nl); hidePool(wagonPool, nw);
-    for(let i = nmask; i < clipMaskPool.length; i++) clipMaskPool[i].visible = false;
+    // Sprites masqués mais rendus invisibles ce frame : neutraliser leur découpe
+    // (sinon un masque au renderable réactivé pourrait réapparaître plein écran).
+    for(let i = nl; i < locoPool.length; i++) if(locoPool[i].__clip) locoPool[i].__clip.visible = false;
+    for(let i = nw; i < wagonPool.length; i++) if(wagonPool[i].__clip) wagonPool[i].__clip.visible = false;
     for(let i = nov; i < vehOvPool.length; i++) vehOvPool[i].container.visible = false;
   }
 
