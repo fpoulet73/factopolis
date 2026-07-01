@@ -259,11 +259,17 @@ const PixiSprites = (function(){
     return { rx0, ry0, rw, rh, lift, hgt };
   }
 
-  // Signature de ce qui affecte le CORPS (pas les overlays dynamiques).
+  function diagMode(){ return typeof UI_OPTIONS !== 'undefined' && UI_OPTIONS.highlightUnderstaffedFactories; }
+  function bldSelected(b){ return b === selected || (typeof trainStationSelectionMatches === 'function' && trainStationSelectionMatches(selected, b)); }
+
+  // Signature de ce qui affecte le CORPS (pas les overlays dynamiques). En mode
+  // diagnostic, le corps EST le diagnostic (+ contour blanc si sélectionné) → on
+  // inclut ces états.
   function bldSig(b){
+    const diag = diagMode();
     return [b.type, b.w, b.h, b.ore||'', b.owner==null?'':b.owner, b.paused?1:0,
       rot, (typeof UI_OPTIONS!=='undefined' ? UI_OPTIONS.graphicPack : ''),
-      GRAPHIC_PACK_IMAGES_GEN].join('|');
+      GRAPHIC_PACK_IMAGES_GEN, diag?1:0, (diag && bldSelected(b))?1:0].join('|');
   }
 
   function bakeBuildingBody(b){
@@ -272,11 +278,56 @@ const PixiSprites = (function(){
     const w = leftE + gm.rw*TW2 + 30;
     const h = topE + (gm.rw+gm.rh)*TH2 + 12;
     const R = liftedIso(gm.rx0, gm.ry0, gm.lift);
+    const diag = diagMode();
     const savedFast = drawFast; drawFast = false; // baker en pleine résolution
     let geom = null;
-    const baked = bake(w, h, leftE, topE, R[0], R[1], () => { geom = drawBuildingBody(b); });
+    const baked = bake(w, h, leftE, topE, R[0], R[1], () => {
+      if(diag){
+        // mode "usines en sous-effectif" : le corps est remplacé par le diagnostic
+        drawBuildingLayerDiagnostic(b, gm.rx0, gm.ry0, gm.rw, gm.rh, gm.lift);
+        if(bldSelected(b)){ ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; diamond(gm.rx0, gm.ry0, gm.rw, gm.rh, gm.lift); ctx.stroke(); }
+        geom = { ...gm, diag:true };
+      } else {
+        geom = drawBuildingBody(b);
+      }
+    });
     drawFast = savedFast;
-    return { baked, geom: geom || gm };
+    return { baked, geom: geom || gm, diag };
+  }
+
+  // --- Pièces de gare (rendu GROUPE : bande de quai / prisme gare / contours) --
+  // On bake `drawTrainStationPiece(b)` tel quel (bande multi-tuiles, marqueurs de
+  // dalles manquantes, contours sélection/route — les pointillés fonctionnent en
+  // bake Canvas2D). Le corps dépend de tout le groupe → signature sur groundVersion
+  // (géométrie du groupe/tuiles/lift) + états dynamiques sélection/route.
+  function stationSig(b){
+    const routeState = (typeof vehicleRouteMode !== 'undefined' && vehicleRouteMode)
+      ? ((vehicleRouteMode.step||'') + '|' + (vehicleRouteMode.vehicle?.vtype||'')) : '';
+    return [b.type, b.owner==null?'':b.owner, rot, groundVersion,
+      bldSelected(b)?1:0, routeState,
+      (typeof UI_OPTIONS!=='undefined' ? UI_OPTIONS.graphicPack : ''), GRAPHIC_PACK_IMAGES_GEN].join('|');
+  }
+  function bakeStationPiece(b){
+    const [brx, bry] = rotIdx(b.x, b.y);
+    const lift = terrainLiftPxAt(b.x, b.y);
+    const R = liftedIso(brx, bry, lift);
+    // étendue écran du groupe (union des tuiles tournées), relative à iso(brx,bry)
+    let minRx=brx, minRy=bry, maxRx=brx, maxRy=bry;
+    for(const p of buildings){
+      if(p.dead || !isTrainStationPiece(p) || p.stationGroupId !== b.stationGroupId) continue;
+      const [prx, pry] = rotIdx(p.x, p.y);
+      if(prx<minRx)minRx=prx; if(prx>maxRx)maxRx=prx; if(pry<minRy)minRy=pry; if(pry>maxRy)maxRy=pry;
+    }
+    const baseX=(brx-bry)*TW2, baseY=(brx+bry)*TH2;
+    const cx=[(minRx-(maxRy+1))*TW2, ((maxRx+1)-minRy)*TW2, (minRx-minRy)*TW2, ((maxRx+1)-(maxRy+1))*TW2];
+    const cy=[(minRx+minRy)*TH2, ((maxRx+1)+(maxRy+1))*TH2, (minRx+(maxRy+1))*TH2, ((maxRx+1)+minRy)*TH2];
+    let minX=Math.min(...cx)-baseX-40, maxX=Math.max(...cx)-baseX+40;
+    let minY=Math.min(...cy)-baseY-80, maxY=Math.max(...cy)-baseY+44; // marges : prisme/emoji/lift/bande
+    const w=maxX-minX, h=maxY-minY, ax=-minX, ay=-minY;
+    const savedFast = drawFast; drawFast = false;
+    const baked = bake(w, h, ax, ay, R[0], R[1], () => drawTrainStationPiece(b));
+    drawFast = savedFast;
+    return { baked, geom:{ rx0:brx, ry0:bry, lift }, diag:false };
   }
 
   function mkOvText(size, fill, strokeW = 3){
@@ -379,22 +430,24 @@ const PixiSprites = (function(){
     const seen = new Set();
     let ovN = 0;
     for(const b of buildings){
-      if(b.dead || isTrainStationPiece(b)) continue; // gares : encore Canvas2D (TODO)
+      if(b.dead) continue;
       seen.add(b);
+      const station = isTrainStationPiece(b);
       let node = bldNodes.get(b);
-      const sig = bldSig(b);
+      const sig = station ? stationSig(b) : bldSig(b);
       if(!node){ node = { body:new PIXI.Sprite(), sig:null, geom:null };
                  node.body.scale.set(1/SS); sortLayer.addChild(node.body); bldNodes.set(b, node); }
       if(node.sig !== sig){
-        const { baked, geom } = bakeBuildingBody(b);
+        const { baked, geom, diag } = station ? bakeStationPiece(b) : bakeBuildingBody(b);
         applyBaked(node.body, baked);
-        node.geom = geom; node.sig = sig;
+        node.geom = geom; node.sig = sig; node.diag = diag; node.station = station;
         const R = liftedIso(geom.rx0, geom.ry0, geom.lift);
         node.body.position.set(R[0], R[1]);
         node.body.zIndex = buildingDepthKey(b);
       }
       node.body.visible = true;
-      ovN = drawBuildingOv(b, node.geom, ovLayer, ovN);
+      // Gares : contours/marqueurs déjà bakés. Sinon overlays live (sauf mode diagnostic).
+      if(!station && !node.diag) ovN = drawBuildingOv(b, node.geom, ovLayer, ovN);
     }
     for(const [b, node] of bldNodes){ if(!seen.has(b)) node.body.visible = false; }
     for(let i = ovN; i < bldOvPool.length; i++) bldOvPool[i].container.visible = false;

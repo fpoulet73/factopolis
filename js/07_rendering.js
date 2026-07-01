@@ -2226,16 +2226,8 @@ function draw(){
 
     // Arbres : rendus par la couche sprites PixiJS (js/pixi/sprites.js), plus par
     // le Canvas2D. (Migration Full Pixi — Phase 1.)
-    // Bâtiments : rendus par la couche sprites PixiJS (js/pixi/sprites.js), SAUF les
-    // pièces de gare (encore Canvas2D). (Migration Full Pixi — Phase 1.)
-    const b = bgrid[i];
-    if(b && isTrainStationPiece(b)){
-      const [r1x,r1y] = rotIdx(b.x, b.y);
-      const [r2x,r2y] = rotIdx(b.x+b.w-1, b.y+b.h-1);
-      // dessiné une seule fois, depuis sa tuile la plus « en avant »
-      if(rx===Math.max(r1x,r2x) && ry===Math.max(r1y,r2y))
-        sprites.push({ k:buildingDepthKey(b), f:()=>drawBuilding(b) });
-    }
+    // Bâtiments (gares incluses) : rendus par la couche sprites PixiJS
+    // (js/pixi/sprites.js). (Migration Full Pixi — Phase 1.)
   }
 
   // --- passe 2 : routes (après tout le terrain pour éviter que l'herbe écrase les gaps) ---
