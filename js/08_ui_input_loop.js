@@ -2268,6 +2268,9 @@ const BUILDING_TOOLBAR_TOOLS = ['house','plant','market'];
 let vehicleToolbarGroup = null;
 let vehicleToolbarMenu = null;
 const VEHICLE_TOOLBAR_TOOLS = ['road','bus_stop'];
+let terraformToolbarGroup = null;
+let terraformToolbarMenu = null;
+const TERRAFORM_TOOLBAR_TOOLS = ['terraform_dig','terraform_raise'];
 
 function closeResourceToolbarMenu(){
   if(!resourceToolbarGroup || !resourceToolbarMenu) return;
@@ -2311,6 +2314,13 @@ function closeTrainToolbarMenu(){
   syncToolbarState();
 }
 
+function closeTerraformToolbarMenu(){
+  if(!terraformToolbarGroup || !terraformToolbarMenu) return;
+  terraformToolbarGroup.classList.remove('open');
+  terraformToolbarMenu.classList.remove('open');
+  syncToolbarState();
+}
+
 function closeToolbarMenus(){
   closeDepotToolbarMenu();
   closeTrainToolbarMenu();
@@ -2318,6 +2328,7 @@ function closeToolbarMenus(){
   closeStorageToolbarMenu();
   closeBuildingToolbarMenu();
   closeVehicleToolbarMenu();
+  closeTerraformToolbarMenu();
 }
 
 function syncToolbarState(){
@@ -2393,6 +2404,20 @@ function syncToolbarState(){
       b.classList.toggle('on', b.dataset.vehicleTool === tool);
     });
   }
+  if(terraformToolbarGroup){
+    const active = TERRAFORM_TOOLBAR_TOOLS.includes(tool);
+    terraformToolbarGroup.classList.toggle('on', active);
+    const groupBtn = terraformToolbarGroup.querySelector('.tool-group-btn');
+    if(groupBtn) groupBtn.classList.toggle('on', active || terraformToolbarGroup.classList.contains('open'));
+  }
+  if(terraformToolbarMenu){
+    terraformToolbarMenu.querySelectorAll('[data-terraform-tool]').forEach(b=>{
+      b.classList.toggle('on', b.dataset.terraformTool === tool);
+    });
+    terraformToolbarMenu.querySelectorAll('[data-terraform-radius]').forEach(b=>{
+      b.classList.toggle('on', +b.dataset.terraformRadius === terraformRadius);
+    });
+  }
 }
 
 function buildToolbar(){
@@ -2410,6 +2435,8 @@ function buildToolbar(){
   buildingToolbarMenu = null;
   vehicleToolbarGroup = null;
   vehicleToolbarMenu = null;
+  terraformToolbarGroup = null;
+  terraformToolbarMenu = null;
   const depotItems = (DEPOT_TOOLBAR_ITEMS && DEPOT_TOOLBAR_ITEMS.length)
     ? DEPOT_TOOLBAR_ITEMS
     : [
@@ -2460,6 +2487,57 @@ function buildToolbar(){
     if(k === 'lumber' || k === 'fisher' || k === 'pump') continue; // regroupés sous "Ressources"
     if(k === 'tank') continue; // regroupé sous "Stockage"
     if(k === 'house' || k === 'market') continue; // regroupés sous "Bâtiments"
+    if(k === 'terraform_raise') continue; // regroupé sous "Terraforming"
+    if(k === 'terraform_dig'){
+      const group = document.createElement('div');
+      group.className = 'tool-group';
+      const btn = document.createElement('button');
+      btn.className = 'tool tool-group-btn';
+      btn.dataset.t = 'terraform_dig';
+      btn.title = 'Terraforming';
+      btn.innerHTML = '<span class="ic">⛰️</span><span>Terraforming</span><span class="hk">▾</span>';
+      const menu = document.createElement('div');
+      menu.className = 'tool-group-menu';
+      for(const toolKey of TERRAFORM_TOOLBAR_TOOLS){
+        const d = BUILD[toolKey];
+        if(!d) continue;
+        const choice = document.createElement('button');
+        choice.className = 'tool tool-group-item';
+        choice.dataset.terraformTool = toolKey;
+        choice.title = d.desc || '';
+        choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
+          + '<span class="cost">'+(d.cost ? d.cost+' $/tuile' : '&nbsp;')+'</span>';
+        choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
+        menu.appendChild(choice);
+      }
+      const radiusRow = document.createElement('div');
+      radiusRow.style.cssText = 'display:flex;gap:4px;margin-top:4px';
+      for(let r = 1; r <= 4; r++){
+        const rBtn = document.createElement('button');
+        rBtn.className = 'tool tool-group-item';
+        rBtn.dataset.terraformRadius = String(r);
+        rBtn.title = 'Zone d\'effet '+r+'×'+r;
+        rBtn.style.cssText = 'width:auto;flex:1;padding:5px 2px;text-align:center;align-items:center';
+        rBtn.textContent = r+'×'+r;
+        rBtn.onclick = e => { e.stopPropagation(); terraformRadius = r; syncToolbarState(); };
+        radiusRow.appendChild(rBtn);
+      }
+      menu.appendChild(radiusRow);
+      btn.onclick = e => {
+        e.stopPropagation();
+        const open = !group.classList.contains('open');
+        closeToolbarMenus();
+        group.classList.toggle('open', open);
+        menu.classList.toggle('open', open);
+        syncToolbarState();
+      };
+      group.appendChild(btn);
+      group.appendChild(menu);
+      bar.appendChild(group);
+      terraformToolbarGroup = group;
+      terraformToolbarMenu = menu;
+      continue;
+    }
     if(k === 'plant'){
       const group = document.createElement('div');
       group.className = 'tool-group';
@@ -3007,7 +3085,7 @@ function canvasLeftMove(x, y, shiftKey, oldTx, oldTy){
     updateZoneOverlay(x, y);
     return;
   }
-  if(mouse.lDown && (tool==='terraform'||tool==='fill_water') && (mouse.tx!==oldTx || mouse.ty!==oldTy))
+  if(mouse.lDown && (tool==='terraform'||tool==='fill_water'||tool==='terraform_dig'||tool==='terraform_raise') && (mouse.tx!==oldTx || mouse.ty!==oldTy))
     clickFn(mouse.tx, mouse.ty);
   if(mouse.lDown && (tool==='road' || tool==='rail') && roadDragStart && (mouse.tx!==oldTx || mouse.ty!==oldTy))
     roadPreviewTiles = tool === 'rail'
@@ -3297,6 +3375,7 @@ addEventListener('click', e=>{
   if(storageToolbarGroup && !storageToolbarGroup.contains(e.target)) closeStorageToolbarMenu();
   if(buildingToolbarGroup && !buildingToolbarGroup.contains(e.target)) closeBuildingToolbarMenu();
   if(vehicleToolbarGroup && !vehicleToolbarGroup.contains(e.target)) closeVehicleToolbarMenu();
+  if(terraformToolbarGroup && !terraformToolbarGroup.contains(e.target)) closeTerraformToolbarMenu();
 });
 addEventListener('keyup', e=>{
   keys.delete(e.code);

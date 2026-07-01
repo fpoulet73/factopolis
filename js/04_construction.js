@@ -436,6 +436,29 @@ function placeTrainStationTile(x, y, owner = MP.myId){
   return b;
 }
 
+// Calcule les tuiles du carré N×N (ancré en haut-à-gauche sur x,y) réellement
+// affectées par Creuser (dir<0) ou Remonter (dir>0) : tuiles d'herbe libres
+// (pas d'eau, bâtiment, route ou rail) dont le niveau reste dans [0, niveau max du relief].
+function terraformLevelTiles(t, x, y, radius){
+  const dir = t === 'terraform_raise' ? 1 : -1;
+  const maxLevel = reliefCfg().levels;
+  const tiles = [];
+  for(let dy = 0; dy < radius; dy++){
+    for(let dx = 0; dx < radius; dx++){
+      const tx = x + dx, ty = y + dy;
+      if(!inMap(tx, ty)) continue;
+      const i = ty * N + tx;
+      if(bgrid[i] || road[i] || rail[i]) continue;
+      if(terrain[i] !== T.GRASS) continue;
+      const lvl = terrainLevelAt(tx, ty);
+      if(dir < 0 && lvl <= 0) continue;
+      if(dir > 0 && lvl >= maxLevel) continue;
+      tiles.push(i);
+    }
+  }
+  return { tiles, dir };
+}
+
 function canPlace(t,x,y){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
@@ -445,6 +468,17 @@ function canPlace(t,x,y){
     if(!terrassementNear(x, y, MP.myId ?? 1)) return { ok:false, msg:'Aucune usine de terrassement à portée avec assez de terre ('+FILL_WATER_COST+' terres requises)' };
     return { ok:true };
   }
+  if(t==='terraform_dig' || t==='terraform_raise'){
+    if(!terraformLevelTiles(t, x, y, terraformRadius).tiles.length)
+      return { ok:false, msg: t==='terraform_dig' ? 'Aucune tuile creusable ici (niveau 0 ou tuile occupée)' : 'Aucune tuile remontable ici (niveau max atteint ou tuile occupée)' };
+    return { ok:true };
+  }
+  if(t==='rail_signal' || t==='rail_signal2'){
+    if(!rail[i]) return { ok:false, msg:'Place le signal sur une voie ferrée existante.' };
+    if(!chooseRailSignalDef(x, y)) return { ok:false, msg:'Aucun segment de rail valide à signaler.' };
+    return { ok:true };
+  }
+  if(!tileIsFlat(x, y)) return { ok:false, msg:'Terrain non plat : nivelez la case avant de construire' };
   if(t==='road'){
     if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
     if(rail[i]) return { ok:true }; // passage à niveau : route par-dessus un rail existant
@@ -457,11 +491,6 @@ function canPlace(t,x,y){
     if(road[i]) return { ok:true }; // passage à niveau : rail par-dessus une route existante
     if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
     if(ter!==T.GRASS) return { ok:false, msg:"Les rails se posent sur l'herbe (démolis les arbres ou champs)" };
-    return { ok:true };
-  }
-  if(t==='rail_signal' || t==='rail_signal2'){
-    if(!rail[i]) return { ok:false, msg:'Place le signal sur une voie ferrée existante.' };
-    if(!chooseRailSignalDef(x, y)) return { ok:false, msg:'Aucun segment de rail valide à signaler.' };
     return { ok:true };
   }
   if(t==='train_station') return trainStationPlacementInfo(x, y);
@@ -649,6 +678,20 @@ function clickAt(x,y){
     if(!depot){ toast('⛔ Aucune usine de terrassement à portée avec '+FILL_WATER_COST+' terres','err'); return; }
     depot.storage['dirt'] = (depot.storage['dirt']||0) - FILL_WATER_COST;
     terrain[i] = T.GRASS; rebuildWaterLevels(); markGroundDirty();
+    // netSend géré par l'intercept MP (09_multiplayer.js) pour éviter le double envoi
+    return;
+  }
+  if(tool==='terraform_dig' || tool==='terraform_raise'){
+    const { tiles, dir } = terraformLevelTiles(tool, x, y, terraformRadius);
+    if(!tiles.length){
+      toast(tool==='terraform_dig' ? 'Aucune tuile creusable ici (niveau 0 ou tuile occupée)' : 'Aucune tuile remontable ici (niveau max atteint ou tuile occupée)', 'err');
+      return;
+    }
+    const cost = tiles.length * TERRAFORM_LEVEL_COST;
+    if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
+    spendMoney(cost, 'construction');
+    for(const ti of tiles) terrainHeightMap[ti] += dir;
+    rebuildWaterLevels(); markGroundDirty();
     // netSend géré par l'intercept MP (09_multiplayer.js) pour éviter le double envoi
     return;
   }

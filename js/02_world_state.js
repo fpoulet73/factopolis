@@ -27,6 +27,7 @@ let hoveredExpansion = null;
 let selectedExpansion = null;
 let gtime = 0, eff = 1; // eff = snapshot du wallet courant, gardé pour statusOf
 let selected = null, tool = 'select';
+let terraformRadius = 1; // 1..4 : taille du carré N×N affecté par Creuser/Remonter
 let speed = 1, paused = false;
 let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0, passengerCycleTimer = 0;
 let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
@@ -228,6 +229,13 @@ function terrainTileCornerLevels(x, y){
     se: terrainCornerLevelAt(x + 1, y + 1),
     sw: terrainCornerLevelAt(x, y + 1),
   };
+}
+
+// Une tuile est "plate" si ses quatre coins sont au même niveau de relief
+// (pas de pente/falaise dessinée dessus) : seules ces tuiles sont constructibles.
+function tileIsFlat(x, y){
+  const c = terrainTileCornerLevels(x, y);
+  return c.nw === c.ne && c.ne === c.se && c.se === c.sw;
 }
 
 function terrainLevelAtFloat(tx, ty){

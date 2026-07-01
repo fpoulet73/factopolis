@@ -326,6 +326,7 @@ function resetTrainDepotDeparture(v){
 
 const GARAGE_COST = CFG.logistique?.garage?.cout ?? 1200;
 const BUS_STOP_COST = CFG.logistique?.arretBus?.cout ?? 250;
+const TERRAFORM_LEVEL_COST = 25; // $ par tuile impactée (creuser/remonter d'un palier)
 
 const RES = {
   iron:  { n:'Fer',                    c:'#d98a4f', ic:'🔩' },
@@ -689,6 +690,10 @@ const BUILD = {
              desc:'Accueille les passagers du quartier (rayon '+BUS_STOP_RADIUS+' cases). Les bus transportent les habitants entre arrêts.' },
   terraform:{ n:'Bulldozer',  ic:'🚜', hk:'B', desc:'Détruit routes, rails, bâtiments (30 % remboursés), arbres et champs, et rase les gisements (fer/charbon).' },
   fill_water:{ n:'Remblai',   ic:'🪣', hk:'', desc:'Comble une tuile d\'eau en terre (10 terres requises). Nécessite une usine de terrassement à portée.' },
+  terraform_dig:{ n:'Creuser', ic:'⛏️', hk:'', cost: TERRAFORM_LEVEL_COST,
+                  desc:'Baisse le niveau du terrain d\'un palier ('+TERRAFORM_LEVEL_COST+' $/tuile impactée). Nécessite un niveau > 0.' },
+  terraform_raise:{ n:'Remonter', ic:'⛰️', hk:'', cost: TERRAFORM_LEVEL_COST,
+                  desc:'Élève le niveau du terrain d\'un palier ('+TERRAFORM_LEVEL_COST+' $/tuile impactée).' },
   terrassement: { n:'Usine de terrassement', ic:'🏗️', hk:'', cost: CFG.production?.terrassement?.cout ?? 700,
                   workers:3, time:1, col:'#7a6a52', hgt:20, ind:true,
                   upkeep: CFG.production?.terrassement?.entretien ?? 1.5,
@@ -1252,5 +1257,5 @@ function tryMergeDepot(){
   if(bats.citerne?.cout        != null) BUILD.tank.cost   = bats.citerne.cout;
 })();
 
-const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','terraform','fill_water'];
+const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','terraform','fill_water','terraform_dig','terraform_raise'];
 const MILESTONES = [25, 50, 100, 200, 400];

@@ -1904,6 +1904,29 @@ function applyAction(msg){
         depot.storage['dirt'] = Math.max(0, (depot.storage['dirt']||0) - FILL_WATER_COST);
       break;
     }
+    case 'terraform_level': {
+      if(!Array.isArray(act.tiles) || !act.tiles.length || (act.dir !== 1 && act.dir !== -1)) break;
+      const maxLevel = reliefCfg().levels;
+      let applied = 0;
+      for(const i of act.tiles){
+        if(!validIdx(i)) continue;
+        if(bgrid[i] || road[i] || rail[i] || terrain[i] !== T.GRASS) continue;
+        const lvl = terrainHeightMap[i] || 0;
+        if(act.dir < 0 && lvl <= 0) continue;
+        if(act.dir > 0 && lvl >= maxLevel) continue;
+        terrainHeightMap[i] = lvl + act.dir;
+        applied++;
+      }
+      if(applied){
+        const cost = applied * TERRAFORM_LEVEL_COST;
+        const wSender = walletOf(msg.from);
+        wSender.money -= cost;
+        wSender.fin.construction += cost;
+        rebuildWaterLevels();
+        markGroundDirty();
+      }
+      break;
+    }
     case 'bulldoze_bld': {
       if(!validXY(act.bx, act.by)) break;
       const b = bgrid[act.by*N+act.bx];
@@ -2669,6 +2692,12 @@ clickFn = function(x,y){
         clickAt(x,y); // affiche le message d'erreur
       }
     }
+    return;
+  }
+  if(tool==='terraform_dig' || tool==='terraform_raise'){
+    const { tiles, dir } = terraformLevelTiles(tool, x, y, terraformRadius);
+    if(tiles.length) netSend({ type:'terraform_level', tiles, dir });
+    clickAt(x,y); // applique localement (sans re-envoyer), affiche l'erreur si aucune tuile valide
     return;
   }
   if(tool==='rail'){

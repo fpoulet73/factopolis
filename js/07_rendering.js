@@ -2602,7 +2602,17 @@ function draw(){
   }
 
   // fantôme de placement
-  if(tool!=='select' && inMap(mouse.tx,mouse.ty)){
+  if((tool==='terraform_dig' || tool==='terraform_raise') && inMap(mouse.tx,mouse.ty)){
+    const { tiles } = terraformLevelTiles(tool, mouse.tx, mouse.ty, terraformRadius);
+    const impacted = new Set(tiles);
+    for(let dy = 0; dy < terraformRadius; dy++) for(let dx = 0; dx < terraformRadius; dx++){
+      const tx = mouse.tx + dx, ty = mouse.ty + dy;
+      if(!inMap(tx, ty)) continue;
+      const [rx, ry] = rotIdx(tx, ty);
+      ctx.fillStyle = impacted.has(ty*N+tx) ? 'rgba(110,230,120,.4)' : 'rgba(235,80,80,.35)';
+      tilePolygon(rx, ry, tx, ty); ctx.fill();
+    }
+  } else if(tool!=='select' && inMap(mouse.tx,mouse.ty)){
     const va = canPlace(tool, mouse.tx, mouse.ty);
     const [grx,gry] = rotIdx(mouse.tx, mouse.ty);
     ctx.fillStyle = va.ok ? 'rgba(110,230,120,.4)' : 'rgba(235,80,80,.4)';
