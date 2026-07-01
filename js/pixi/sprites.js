@@ -98,17 +98,26 @@ const PixiSprites = (function(){
   // Une bouche par arête rail↔tunnel. Texture bakée par direction écran (dirIndex)
   // via drawTunnelPortalCore ; sprite posé sur l'arête basse réelle (niveau tuile
   // plate). zIndex biaisé au-dessus des trains → un train « disparaît » sous l'arche.
-  const TUN = { w:104, h:88, ax:52, ay:58 };
+  const TUN = { w:128, h:112, ax:64, ay:70 };
   const tunnelTexCache = new Map(); // dirIndex -> baked
   let tunnelPool = [];
-  let tunnelBuiltVersion = -1, tunnelBuiltRot = -1, tunnelBuiltN = -1;
+  let tunnelBuiltVersion = -1, tunnelBuiltRot = -1, tunnelBuiltN = -1, tunnelBuiltPack = '';
+  function tunnelStyle(){
+    const grass = graphicBasePack()?.grass || [];
+    return {
+      opening: '#13181d',
+      roof: grass[Math.min(1, Math.max(0, grass.length - 1))] || grass[0] || '#6fa44a',
+      stone: '#6f7780',
+    };
+  }
   function tunnelTexture(du, dv){
-    const key = dirIndex(du, dv);
+    const style = tunnelStyle();
+    const key = [dirIndex(du, dv), style.roof, style.stone].join(':');
     let t = tunnelTexCache.get(key);
     if(t) return t;
     const [cx, cy] = tunnelPortalAnchor(du, dv);
     t = bake(TUN.w, TUN.h, TUN.ax, TUN.ay, cx, cy,
-             () => drawTunnelPortalCore(du, dv, '#161b1f', '#767d85', '#5a636b'));
+             () => drawTunnelPortalCore(du, dv, style.opening, style.roof, style.stone));
     tunnelTexCache.set(key, t);
     return t;
   }
@@ -116,8 +125,9 @@ const PixiSprites = (function(){
     if(typeof rail === 'undefined' || typeof railTunnel === 'undefined' || !railTunnel){
       hidePool(tunnelPool, 0); return;
     }
+    const packKey = UI_OPTIONS?.graphicPack || 'classic';
     // Portails statiques, dépendent des rails : ne re-scanner que si rail/rotation change.
-    if(tunnelBuiltVersion === railVersion && tunnelBuiltRot === rot && tunnelBuiltN === N) return;
+    if(tunnelBuiltVersion === railVersion && tunnelBuiltRot === rot && tunnelBuiltN === N && tunnelBuiltPack === packKey) return;
     let n = 0;
     for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
       const i = y * N + x;
@@ -149,7 +159,7 @@ const PixiSprites = (function(){
       }
     }
     hidePool(tunnelPool, n);
-    tunnelBuiltVersion = railVersion; tunnelBuiltRot = rot; tunnelBuiltN = N;
+    tunnelBuiltVersion = railVersion; tunnelBuiltRot = rot; tunnelBuiltN = N; tunnelBuiltPack = packKey;
   }
 
   // --- Entités directionnelles (camions / voitures / locos / wagons) ------

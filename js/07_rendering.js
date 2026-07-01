@@ -25,11 +25,32 @@ function entityIso(u, v){
 // portail). L'ancre = milieu de l'arête basse (bx,by) : le sprite se place ensuite
 // sur l'arête réelle (au niveau de la tuile plate).
 // - demi-cercle noir dressé VERTICALEMENT (90° / tuile plate), base sur l'arête ;
-// - toit gris en « voile » qui se pince aux deux pieds (disparaît dans la pente).
+// - talus herbeux + parement pierre qui repartent dans la pente vers le relief.
 function tunnelPortalAnchor(du, dv){
   const [sx, sy] = iso(du, dv);
   const c0 = tileCenterIso(0, 0, 0, 0);
   return [c0[0] - sx * 0.5, c0[1] - sy * 0.5];
+}
+function tunnelArchPoints(bx, by, pex, pey, w, h, steps){
+  const pts = [], weights = [];
+  for(let k = 0; k <= steps; k++){
+    const th = Math.PI * k / steps;
+    const ct = Math.cos(th) * w, st = Math.sin(th);
+    pts.push([bx + ct * pex, by + ct * pey - st * h]);
+    weights.push(st);
+  }
+  return { pts, weights };
+}
+function tunnelPortalMouthPoint(rx, ry, x, y, dx, dy){
+  const [du, dv] = rotDir(dx, dy);
+  const [sx, sy] = iso(du, dv);
+  const fux = x - dx, fuy = y - dy;
+  if(inMap(fux, fuy)){
+    const fc = tileCenterIso(rx - du, ry - dv, fux, fuy);
+    return [fc[0] + sx * 0.5, fc[1] + sy * 0.5];
+  }
+  const c = tileCenterIso(rx, ry, x, y);
+  return [c[0] - sx * 0.5, c[1] - sy * 0.5];
 }
 function drawTunnelPortalCore(du, dv, color, roofColor, rimColor){
   const [sx, sy] = iso(du, dv);
@@ -39,51 +60,194 @@ function drawTunnelPortalCore(du, dv, color, roofColor, rimColor){
   const [ex, ey] = iso(-dv, du);                 // arête au sol (diamètre de l'arche)
   const elen = Math.hypot(ex, ey) || 1;
   const pex = ex / elen, pey = ey / elen;
+  const dirx = sx / slen, diry = sy / slen;
   const R = Math.hypot(TW2, TH2) / 2;
-  const W = slen * 0.40;      // demi-largeur de la base
-  const H = R * 0.82;         // hauteur du dôme (montant tout droit)
-  // Axe du toit forcé vers le haut de l'écran (il s'enfonce dans la pente).
-  const upx = sx, upy = -Math.abs(sy);
-  const uplen = Math.hypot(upx, upy) || slen;
-  const tubeLen = slen * 0.50; // tuile (0,0) plate → distance à l'arête haute = slen
-  const offx = (upx / uplen) * tubeLen, offy = (upy / uplen) * tubeLen;
-  const near = [], wgt = [];
-  for(let k = 0; k <= 24; k++){
-    const th = Math.PI * k / 24;
-    const ct = Math.cos(th) * W, st = Math.sin(th);
-    near.push([bx + ct * pex, by + ct * pey - st * H]);
-    wgt.push(st);
-  }
-  // Toit gris (voile qui se pince aux pieds).
+  const W = slen * 0.31;         // demi-largeur de la bouche visible
+  const H = R * 0.74;            // hauteur du vide intérieur
+  const faceW = W * 1.22;        // parement pierre un peu plus large
+  const faceH = H * 1.13;
+  // Le remblai doit repartir vers le relief réel, mais rester sous l'arête haute
+  // de la tuile en pente.
+  const embankLen = slen * 0.72;
+  const crestLift = faceH * 0.15;
+  const outer = tunnelArchPoints(bx, by, pex, pey, faceW, faceH, 28);
+  const inner = tunnelArchPoints(bx, by, pex, pey, W, H, 28);
+  const roofBack = outer.pts.map((p, k)=>{
+    const w = Math.pow(outer.weights[k], 0.86);
+    return [
+      p[0] + dirx * embankLen * w,
+      p[1] + diry * embankLen * w - crestLift * w,
+    ];
+  });
+  const poly = (pts)=>{
+    if(!pts.length) return;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for(let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+  };
+  const faceColor = shade(rimColor, 0.38);
+  const stoneHi = shade(faceColor, 0.18);
+  const soilColor = shade('#6f5236', -0.08);
+  const shoulderColor = shade(roofColor, -0.16);
+  const lipColor = shade(roofColor, 0.12);
+
+  // Dessous de talus : légère terre visible sous l'herbe.
   ctx.beginPath();
-  ctx.moveTo(near[0][0], near[0][1]);
-  for(let k = 1; k < near.length; k++) ctx.lineTo(near[k][0], near[k][1]);
-  for(let k = near.length - 1; k >= 0; k--) ctx.lineTo(near[k][0] + offx * wgt[k], near[k][1] + offy * wgt[k]);
+  ctx.moveTo(outer.pts[0][0], outer.pts[0][1]);
+  for(let k = 1; k < outer.pts.length; k++) ctx.lineTo(outer.pts[k][0], outer.pts[k][1]);
+  for(let k = roofBack.length - 1; k >= 0; k--) ctx.lineTo(roofBack[k][0], roofBack[k][1]);
+  ctx.closePath();
+  ctx.fillStyle = soilColor; ctx.fill();
+
+  // Talus herbeux principal.
+  ctx.beginPath();
+  ctx.moveTo(outer.pts[0][0], outer.pts[0][1]);
+  for(let k = 1; k < outer.pts.length; k++) ctx.lineTo(outer.pts[k][0], outer.pts[k][1]);
+  for(let k = roofBack.length - 1; k >= 0; k--) ctx.lineTo(roofBack[k][0], roofBack[k][1] - faceH * 0.10 * outer.weights[k]);
   ctx.closePath();
   ctx.fillStyle = roofColor; ctx.fill();
-  ctx.strokeStyle = rimColor; ctx.lineWidth = 0.2; ctx.stroke();
-  // Bouche sombre (demi-cercle avant) par-dessus.
+
+  // Joues du talus, plus sombres, pour retrouver un volume proche du modèle cible.
+  const shoulderSpan = 7;
+  const leftShoulder = outer.pts.slice(0, shoulderSpan).concat(roofBack.slice(0, shoulderSpan).reverse());
+  poly(leftShoulder);
+  ctx.fillStyle = shoulderColor; ctx.fill();
+  const rightShoulder = outer.pts.slice(-shoulderSpan).concat(roofBack.slice(-shoulderSpan).reverse());
+  poly(rightShoulder);
+  ctx.fillStyle = shoulderColor; ctx.fill();
+
+  // Lèvre supérieure d'herbe au-dessus de l'arche.
+  const lipStart = 9, lipEnd = outer.pts.length - 9;
+  const lipFront = outer.pts.slice(lipStart, lipEnd);
+  const lipBack = roofBack.slice(lipStart, lipEnd).reverse();
+  poly(lipFront.concat(lipBack));
+  ctx.fillStyle = lipColor; ctx.fill();
+
+  // Parement pierre de la bouche.
+  poly(outer.pts);
+  ctx.fillStyle = faceColor; ctx.fill();
+  ctx.strokeStyle = shade(rimColor, -0.08);
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+
+  // Petit biseau clair sur l'extrados pour casser l'effet "autocollant".
+  const crown = outer.pts.slice(10, outer.pts.length - 10);
   ctx.beginPath();
-  ctx.moveTo(near[0][0], near[0][1]);
-  for(let k = 1; k < near.length; k++) ctx.lineTo(near[k][0], near[k][1]);
+  ctx.moveTo(crown[0][0], crown[0][1]);
+  for(let i = 1; i < crown.length; i++) ctx.lineTo(crown[i][0], crown[i][1]);
+  ctx.strokeStyle = stoneHi;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Ombre intérieure : donne de la profondeur avant le vide noir.
+  ctx.beginPath();
+  ctx.moveTo(inner.pts[0][0], inner.pts[0][1]);
+  for(let k = 1; k < inner.pts.length; k++) ctx.lineTo(inner.pts[k][0], inner.pts[k][1]);
+  for(let k = inner.pts.length - 1; k >= 0; k--){
+    const w = Math.pow(inner.weights[k], 1.1);
+    ctx.lineTo(
+      inner.pts[k][0] + dirx * embankLen * 0.16 * w,
+      inner.pts[k][1] + diry * embankLen * 0.16 * w - H * 0.08 * w
+    );
+  }
   ctx.closePath();
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.fill();
+
+  // Bouche sombre (demi-cercle avant) par-dessus.
+  poly(inner.pts);
   ctx.fillStyle = color; ctx.fill();
-  ctx.strokeStyle = rimColor; ctx.lineWidth = 0.2; ctx.stroke();
+  ctx.strokeStyle = shade(faceColor, -0.18);
+  ctx.lineWidth = 0.6;
+  ctx.stroke();
+
+  // Voie bien visible dans la galerie, pour que la continuité du tunnel soit explicite.
+  ctx.save();
+  poly(inner.pts);
+  ctx.clip();
+  const nearGauge = Math.max(2.2, W * 0.16);
+  const farGauge = nearGauge * 0.42;
+  const inStart = [bx + dirx * 0.35, by + diry * 0.35];
+  const inEnd = [bx + dirx * (W * 1.26), by + diry * (W * 1.26) - H * 0.09];
+  const nearL = [inStart[0] - pex * nearGauge, inStart[1] - pey * nearGauge];
+  const nearR = [inStart[0] + pex * nearGauge, inStart[1] + pey * nearGauge];
+  const farL = [inEnd[0] - pex * farGauge, inEnd[1] - pey * farGauge];
+  const farR = [inEnd[0] + pex * farGauge, inEnd[1] + pey * farGauge];
+
+  ctx.beginPath();
+  ctx.moveTo(nearL[0], nearL[1]);
+  ctx.lineTo(nearR[0], nearR[1]);
+  ctx.lineTo(farR[0], farR[1]);
+  ctx.lineTo(farL[0], farL[1]);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(58,46,34,0.78)';
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(84,62,40,0.82)';
+  ctx.lineWidth = 2.8;
+  ctx.beginPath();
+  ctx.moveTo(inStart[0], inStart[1]);
+  ctx.lineTo(inEnd[0], inEnd[1]);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(130,98,60,0.82)';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  for(let k = 0; k < 5; k++){
+    const t = 0.12 + k * 0.15;
+    const cx = inStart[0] + (inEnd[0] - inStart[0]) * t;
+    const cy = inStart[1] + (inEnd[1] - inStart[1]) * t;
+    const half = Math.max(1.4, (1 - t * 0.6) * faceW * 0.11);
+    ctx.moveTo(cx - pex * half, cy - pey * half);
+    ctx.lineTo(cx + pex * half, cy + pey * half);
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(224,230,236,0.98)';
+  ctx.lineWidth = 1.55;
+  ctx.beginPath();
+  ctx.moveTo(nearL[0], nearL[1]);
+  ctx.lineTo(farL[0], farL[1]);
+  ctx.moveTo(nearR[0], nearR[1]);
+  ctx.lineTo(farR[0], farR[1]);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.26)';
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  ctx.moveTo(nearL[0] + pex * 0.4, nearL[1] + pey * 0.4);
+  ctx.lineTo(farL[0] + pex * 0.2, farL[1] + pey * 0.2);
+  ctx.moveTo(nearR[0] - pex * 0.4, nearR[1] - pey * 0.4);
+  ctx.lineTo(farR[0] - pex * 0.2, farR[1] - pey * 0.2);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function terrainTilePoints(rx, ry, x, y){
-  const h = terrain[y * N + x] === T.WATER
-    ? (() => {
-        const wl = waterLevelAt(x, y);
-        return { nw:wl, ne:wl, se:wl, sw:wl };
-      })()
-    : terrainTileCornerLevels(x, y);
   const step = terrainReliefStepPx();
+  // Une tuile d'eau est plate au niveau du plan d'eau.
+  if(terrain[y * N + x] === T.WATER){
+    const wl = waterLevelAt(x, y) * step;
+    return {
+      A: liftedIso(rx, ry, wl),
+      B: liftedIso(rx + 1, ry, wl),
+      C: liftedIso(rx + 1, ry + 1, wl),
+      D: liftedIso(rx, ry + 1, wl),
+    };
+  }
+  // Les coins écran (rx,ry)… sont en espace TOURNÉ : la hauteur de chaque coin doit
+  // venir du point-grille MONDE correspondant (invRotF), sinon les arêtes partagées
+  // ne coïncident plus après rotation et le fond apparaît entre les tuiles.
+  const cornerLift = (gu, gv) => {
+    const [gx, gy] = invRotF(gu, gv);
+    return terrainCornerLevelAt(Math.round(gx), Math.round(gy)) * step;
+  };
   return {
-    A: liftedIso(rx, ry, h.nw * step),
-    B: liftedIso(rx + 1, ry, h.ne * step),
-    C: liftedIso(rx + 1, ry + 1, h.se * step),
-    D: liftedIso(rx, ry + 1, h.sw * step),
+    A: liftedIso(rx, ry, cornerLift(rx, ry)),
+    B: liftedIso(rx + 1, ry, cornerLift(rx + 1, ry)),
+    C: liftedIso(rx + 1, ry + 1, cornerLift(rx + 1, ry + 1)),
+    D: liftedIso(rx, ry + 1, cornerLift(rx, ry + 1)),
   };
 }
 
@@ -2366,15 +2530,16 @@ function draw(){
         if(!(mask & def.bit)) continue;
         const nx = x+def.dx, ny = y+def.dy;
         if(!inMap(nx,ny)) continue;
+        const [du,dv] = rotDir(def.dx, def.dy);
         // Bouche de tunnel : cette tuile de rail (entrée/sortie, en pente) se
         // connecte à une tuile souterraine masquée → on ne trace ni traverse ni
-        // rail vers elle (elle est invisible), seulement l'arche d'entrée.
+        // rail complet vers elle : la continuité est rendue directement dans le
+        // sprite de la bouche pour éviter les artefacts de superposition.
         if(railTunnel && railTunnel[ny*N+nx]){
           isPortal = true; // bouche → sprite Pixi (PixiSprites.updateTunnels)
           continue;
         }
         links++;
-        const [du,dv] = rotDir(def.dx, def.dy);
         railDirs.push([du, dv]);
         if(ny < y || (ny === y && nx < x)) continue;
         // Rail masks describe explicit edges. Do not hide a diagonal edge at a

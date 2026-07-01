@@ -570,7 +570,7 @@ function railNextSignalAllowsDirection(x, y, def){
     const inDx = -RAIL_DIRS[cur.incoming].dx, inDy = -RAIL_DIRS[cur.incoming].dy;
     for(const forward of railConnectedDefsAt(cur.x, cur.y)){
       if(forward.bit === RAIL_DIRS[cur.incoming]?.bit) continue;
-      if(!railTurnAllowed(inDx, inDy, forward.dx, forward.dy)) continue;
+      if(!railTurnAllowedAtTile(cur.x, cur.y, inDx, inDy, forward.dx, forward.dy)) continue;
       const nx = cur.x + forward.dx, ny = cur.y + forward.dy;
       if(!inMap(nx, ny)) continue;
       const ni = ny * N + nx;
@@ -594,6 +594,19 @@ function railNextSignalAllowsDirection(x, y, def){
   return !foundSignal;
 }
 
+function railTurnAllowedAtTile(x, y, inDx, inDy, outDx, outDy){
+  if(railTurnAllowed(inDx, inDy, outDx, outDy)) return true;
+  if(!inMap(x, y) || !rail?.[y * N + x] || !railTunnel) return false;
+  // Exception locale pour les bouches de tunnel : la pente peut imposer un raccord
+  // plus serré entre la voie de surface et la voie souterraine. On ne relâche la
+  // contrainte que si l'entrée ou la sortie touche une tuile de tunnel masquée.
+  const px = x - inDx, py = y - inDy;
+  const nx = x + outDx, ny = y + outDy;
+  const prevTunnel = inMap(px, py) && !!railTunnel[py * N + px];
+  const nextTunnel = inMap(nx, ny) && !!railTunnel[ny * N + nx];
+  return prevTunnel || nextTunnel;
+}
+
 // Une tuile est un aiguillage si, en excluant le retour vers `previousTile`,
 // elle offre plus d'une sortie franchissable. Utilisé aussi bien pour la tuile
 // courante du train que pour une tuile en aval (pré-décision d'itinéraire).
@@ -606,7 +619,7 @@ function railTileIsJunction(tile, previousTile){
   for(const def of railConnectedDefsAt(x, y)){
     const nx = x + def.dx, ny = y + def.dy;
     if(!inMap(nx, ny) || ny * N + nx === previousTile) continue;
-    if(!railTurnAllowed(inDx, inDy, def.dx, def.dy)) continue;
+    if(!railTurnAllowedAtTile(x, y, inDx, inDy, def.dx, def.dy)) continue;
     const ni = ny * N + nx;
     if(!rail[ni] || !(rail[ni] & RAIL_DIRS[def.opposite].bit)) continue;
     if(!railEdgeDirectionAllowedForPath(x, y, def)) continue;
@@ -744,7 +757,7 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=nul
     }
     for(const def of RAIL_DIRS){
       if(!(mask & def.bit)) continue;
-      if(!railTurnAllowed(inDx, inDy, def.dx, def.dy)) continue;
+      if(!railTurnAllowedAtTile(cx, cy, inDx, inDy, def.dx, def.dy)) continue;
       if(!railEdgeDirectionAllowedForPath(cx, cy, def)) continue;
       if(firstHop && !skipFirstSignalCheck && !railNextSignalAllowsDirection(cx, cy, def)) continue;
       const nx = cx + def.dx, ny = cy + def.dy;
@@ -805,7 +818,7 @@ function findRailPathFromDecision(v, targetB, curTile, previousTile=null){
   let best = null;
   for(const def of RAIL_DIRS){
     if(!((rail[curTile] || 0) & def.bit)) continue;
-    if(!railTurnAllowed(inDx, inDy, def.dx, def.dy)) continue;
+    if(!railTurnAllowedAtTile(cx, cy, inDx, inDy, def.dx, def.dy)) continue;
     if(!railEdgeDirectionAllowedForPath(cx, cy, def)) continue;
     const nx = cx + def.dx, ny = cy + def.dy;
     if(!inMap(nx, ny)) continue;
@@ -1033,7 +1046,7 @@ function railJunctionDownstreamClear(sig){
     const inDx = -RAIL_DIRS[cur.incoming].dx, inDy = -RAIL_DIRS[cur.incoming].dy;
     for(const forward of railConnectedDefsAt(cur.x, cur.y)){
       if(forward.bit === RAIL_DIRS[cur.incoming]?.bit) continue;
-      if(!railTurnAllowed(inDx, inDy, forward.dx, forward.dy)) continue;
+      if(!railTurnAllowedAtTile(cur.x, cur.y, inDx, inDy, forward.dx, forward.dy)) continue;
       const nx = cur.x + forward.dx, ny = cur.y + forward.dy;
       if(!inMap(nx, ny)) continue;
       const ni = ny * N + nx;
