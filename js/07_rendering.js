@@ -2085,8 +2085,6 @@ function draw(){
   const vx0 = camX - TW - bufMarginWorld, vx1 = camX + W/z + TW + bufMarginWorld;
   const vy0 = camY - TH*3 - 160 - bufMarginWorld, vy1 = camY + H/z + TH*2 + bufMarginWorld; // marge haute = gratte-ciel
 
-  const sprites = [];
-
   const isoToTile = (px,py)=> [ (px/TW2 + py/TH2)/2, (py/TH2 - px/TW2)/2 ];
   const viewCorners = [
     isoToTile(vx0-TW, vy0-TH),
@@ -2571,12 +2569,8 @@ function draw(){
   if(fisherRadiusSel)
     drawFisherRadiusOverlay(fisherRadiusSel.center, fisherRadiusSel.r, minRx, maxRx, minRy, maxRy);
 
-  // Entités mobiles (camions, voitures, trains+wagons, piétons, sans-abri) :
-  // rendues par la couche sprites PixiJS (js/pixi/sprites.js). (Full Pixi — Phase 1.)
-
-  // --- passe 2 : sprites triés arrière → avant ---
-  sprites.sort((a,b)=> a.k-b.k);
-  for(const s of sprites) s.f();
+  // Sprites triés (arbres, bâtiments, entités) : entièrement migrés sur la couche
+  // PixiJS (js/pixi/sprites.js). L'ancienne passe de tri Canvas2D est supprimée.
 
   // Parcours du véhicule sélectionné (style Transport Tycoon)
   if(selectedVehicle && !selectedVehicle.garageRef?.dead)
