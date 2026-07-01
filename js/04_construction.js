@@ -97,7 +97,51 @@ function sanitizeRailSignals(){
   }
 }
 
+// Répare les tunnels des sauvegardes construites avant le raccord automatique des
+// bouches (cf. tunnelMaskUpdates) : la bouche, posée sur une pente, ne pointait que
+// vers le souterrain et n'était pas reliée au rail de surface qui l'aborde → le
+// train restait bloqué devant le portail. Pour chaque bouche (tuile de rail hors
+// tunnel voisine d'une tuile souterraine), on la relie aux rails de surface situés
+// du côté opposé au souterrain. Idempotent : sans raccord manquant, ne touche rien.
+function sanitizeTunnelMouths(){
+  if(!railTunnel) return false;
+  let changed = false;
+  const linkTiles = (ax, ay, bx, by)=>{
+    const def = railDirDef(bx - ax, by - ay);
+    if(!def) return;
+    const other = RAIL_DIRS[def.opposite];
+    const ai = ay * N + ax, bi = by * N + bx;
+    if((rail[ai] & def.bit) && (rail[bi] & other.bit)) return; // déjà relié
+    rail[ai] |= def.bit;
+    rail[bi] |= other.bit;
+    changed = true;
+  };
+  for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+    const i = y * N + x;
+    if(!rail[i] || railTunnel[i]) continue; // on part des bouches de surface
+    let inx = 0, iny = 0, touchesTunnel = false; // direction moyenne du souterrain adjacent
+    for(const def of RAIL_DIRS){
+      if(!(rail[i] & def.bit)) continue;
+      const nx = x + def.dx, ny = y + def.dy;
+      if(!inMap(nx, ny) || !railTunnel[ny * N + nx]) continue;
+      touchesTunnel = true; inx += def.dx; iny += def.dy;
+    }
+    if(!touchesTunnel || (!inx && !iny)) continue; // pas une bouche, ou souterrain des 2 côtés
+    for(const def of RAIL_DIRS){
+      if(def.dx * inx + def.dy * iny >= 0) continue; // côté souterrain / perpendiculaire
+      const sx = x + def.dx, sy = y + def.dy;
+      if(!inMap(sx, sy)) continue;
+      const si = sy * N + sx;
+      if(!rail[si] || railTunnel[si]) continue; // rail de surface uniquement
+      linkTiles(x, y, sx, sy);
+    }
+  }
+  if(changed) markRailDirty();
+  return changed;
+}
+
 function rebuildRailBlocks(){
+  sanitizeTunnelMouths();
   sanitizeRailSignals();
   const blockByTile = new Int32Array(N*N).fill(-1);
   let nextBlockId = 0;
@@ -533,6 +577,26 @@ function tunnelMaskUpdates(path){
     touched.add(ai); touched.add(bi);
   };
   for(let i = 1; i < path.length; i++) connect(path[i-1].x, path[i-1].y, path[i].x, path[i].y);
+  // Raccorde chaque bouche (entrée/sortie) au rail de surface qui l'aborde. La
+  // bouche est posée sur une tuile en pente, tandis que le rail de surface s'arrête
+  // sur la dernière tuile plate en contrebas : sans ce raccord, la bouche ne pointe
+  // que vers le souterrain et le rail de surface reste déconnecté → le train se
+  // retrouve bloqué devant le tunnel. On relie donc la bouche aux rails existants
+  // situés du côté surface (à l'opposé du souterrain), abords à 45° compris.
+  const linkMouthToSurface = (mouth, inner)=>{
+    if(!mouth || !inner) return;
+    const inx = inner.x - mouth.x, iny = inner.y - mouth.y; // direction du souterrain
+    for(const def of RAIL_DIRS){
+      if(def.dx * inx + def.dy * iny >= 0) continue; // côté souterrain ou perpendiculaire
+      const sx = mouth.x + def.dx, sy = mouth.y + def.dy;
+      if(!inMap(sx, sy)) continue;
+      const si = sy * N + sx;
+      if(!rail[si] || (railTunnel && railTunnel[si])) continue; // rail de surface uniquement
+      connect(mouth.x, mouth.y, sx, sy);
+    }
+  };
+  linkMouthToSurface(path[0], path[1]);
+  linkMouthToSurface(path[path.length - 1], path[path.length - 2]);
   const updates = [];
   for(const i of touched){
     const before = rail[i] || 0, after = draft[i] || 0;
