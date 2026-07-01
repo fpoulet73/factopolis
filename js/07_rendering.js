@@ -1998,6 +1998,7 @@ function drawExpansionBadges(){
 // Exposés pour la couche terrain PixiJS (Phase 2, flag ?pixiterrain) : offset de blit
 // du scroll-buffer + version incrémentée à chaque reconstruction (→ re-upload texture).
 let groundBlitSrcX = 0, groundBlitSrcY = 0, groundTexVersion = 0, cacheCamZ = 1;
+const PIXI_TERRAIN = typeof location !== 'undefined' && location.search.includes('pixiterrain');
 
 function draw(){
   // Sécurité : si une frame précédente a jeté pendant le rendu du buffer-sol, `ctx`
@@ -2028,7 +2029,11 @@ function draw(){
     && _bufContentKey === contentKey
     && groundCache.width === bufW && groundCache.height === bufH
     && srcX >= 0 && srcX <= 2*M*DPR && srcY >= 0 && srcY <= 2*M*DPR;
-  const rebuildBuffer = !drawFast && !bufferReusable;
+  // En mode Pixi-terrain, on reconstruit AUSSI pendant le zoom (drawFast) : le sol part
+  // dans groundCache (au lieu de #cv, de toute façon caché) → terrain net et suivi au zoom.
+  // Même coût de rendu qu'aujourd'hui (le drawFast re-rend le sol chaque frame), juste
+  // redirigé, + un re-upload de texture. Hors flag : comportement inchangé.
+  const rebuildBuffer = (!drawFast && !bufferReusable) || (drawFast && PIXI_TERRAIN);
   const groundDirty = rebuildBuffer || drawFast; // exécuter les tracés coûteux du sol ?
 
   // CIEL : toujours dessiné sur le canvas PRINCIPAL en repère écran, chaque frame.
