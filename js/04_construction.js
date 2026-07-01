@@ -149,7 +149,7 @@ function railApplyMaskUpdates(updates, walletDelta = 0, walletTarget = myWallet(
     else if(wasEmpty) railOwner[i] = oid;
     changed = true;
   }
-  if(changed){ rebuildRailBlocks(); markGroundDirty(); }
+  if(changed){ rebuildRailBlocks(); markRailDirty(); }
   if(walletDelta > 0) spendMoney(walletDelta, 'construction');
   else if(walletDelta < 0) earnMoney(-walletDelta, 'rembours', walletTarget);
   return changed;
@@ -459,6 +459,89 @@ function terraformLevelTiles(t, x, y, radius){
   return { tiles, dir };
 }
 
+// Recherche automatique d'un tracé de tunnel depuis une tuile en pente (x0,y0) :
+// on part de la tuile non-plate cliquée (toujours le côté bas d'une transition de
+// relief, cf. tileIsFlat), on remonte dans la direction du voisin le plus haut, puis
+// on continue tout droit jusqu'à retomber sur une tuile plate d'un niveau inférieur
+// au sommet traversé : la dernière tuile non-plate avant cet atterrissage est la sortie.
+// Uniquement dans les 4 directions cardinales (comme Transport Tycoon) : ça garde le
+// tracé aligné sur la grille et permet un raccord net entrée/sortie ↔ rail de surface.
+function findTunnelPath(x0, y0){
+  if(!inMap(x0, y0) || tileIsFlat(x0, y0)) return null;
+  const h0 = terrainLevelAt(x0, y0);
+  let dir = null, peak = h0;
+  for(const [dx, dy] of DIRS){
+    const nx = x0 + dx, ny = y0 + dy;
+    if(!inMap(nx, ny)) continue;
+    const h = terrainLevelAt(nx, ny);
+    if(h > peak){ peak = h; dir = [dx, dy]; }
+  }
+  if(!dir) return null; // aucun voisin plus haut : pas une entrée de pente valable
+  const [dx, dy] = dir;
+  const path = [{ x:x0, y:y0 }];
+  let x = x0, y = y0;
+  for(let step = 0; step < TUNNEL_MAX_LENGTH; step++){
+    x += dx; y += dy;
+    if(!inMap(x, y)) return null;
+    path.push({ x, y });
+    const h = terrainLevelAt(x, y);
+    if(h > peak) peak = h;
+    if(tileIsFlat(x, y) && h < peak){
+      const exit = path[path.length - 2];
+      path.pop(); // retire la tuile plate d'atterrissage, hors tunnel
+      // Il faut au moins une tuile creusée entre l'entrée et la sortie : sinon ce
+      // n'est qu'une simple crête d'une tuile, pas un vrai tunnel souterrain.
+      if(path.length < 3) return null;
+      return { path, entrance:{ x:x0, y:y0 }, exit };
+    }
+  }
+  return null; // aucune sortie trouvée dans la limite de recherche
+}
+
+// Vérifie qu'aucun bâtiment n'occupe le tracé, que l'entrée/la sortie peuvent
+// accueillir un rail en surface (herbe libre, ou jonction avec un rail/route existant),
+// et qu'aucune tuile du tracé n'appartient déjà à un tunnel existant (un même relief
+// percé depuis les deux côtés donnerait deux fois le même tunnel et corromprait les
+// bouches déjà posées).
+function tunnelPathBlocked(path){
+  for(let k = 0; k < path.length; k++){
+    const t = path[k];
+    if(!inMap(t.x, t.y)) return true;
+    const i = t.y * N + t.x;
+    if(bgrid[i]) return true;
+    if(railTunnel && railTunnel[i]) return true;
+    if(k === 0 || k === path.length - 1){
+      if(!rail[i] && !road[i] && terrain[i] !== T.GRASS) return true;
+    }
+  }
+  return false;
+}
+
+// Construit les mises à jour de masque de rail pour un tracé de tunnel en ligne
+// droite (variante de collectRailUpdates sans la contrainte "herbe uniquement" sur
+// les tuiles intérieures, puisqu'elles sont creusées sous le relief).
+function tunnelMaskUpdates(path){
+  const draft = Uint8Array.from(rail);
+  const touched = new Set();
+  const connect = (ax, ay, bx, by)=>{
+    const def = railDirDef(bx - ax, by - ay);
+    if(!def) return;
+    const other = RAIL_DIRS[def.opposite];
+    const ai = ay * N + ax, bi = by * N + bx;
+    draft[ai] |= def.bit;
+    draft[bi] |= other.bit;
+    touched.add(ai); touched.add(bi);
+  };
+  for(let i = 1; i < path.length; i++) connect(path[i-1].x, path[i-1].y, path[i].x, path[i].y);
+  const updates = [];
+  for(const i of touched){
+    const before = rail[i] || 0, after = draft[i] || 0;
+    if(before === after) continue;
+    updates.push({ x:i % N, y:(i / N) | 0, mask:after });
+  }
+  return updates;
+}
+
 function canPlace(t,x,y){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
@@ -473,9 +556,21 @@ function canPlace(t,x,y){
       return { ok:false, msg: t==='terraform_dig' ? 'Aucune tuile creusable ici (niveau 0 ou tuile occupée)' : 'Aucune tuile remontable ici (niveau max atteint ou tuile occupée)' };
     return { ok:true };
   }
+  if(t==='tunnel'){
+    if(bgrid[i]) return { ok:false, msg:'Case occupée' };
+    if(tileIsFlat(x, y)) return { ok:false, msg:'Sélectionne une tuile en pente pour créer une entrée de tunnel.' };
+    if(!rail[i] && !road[i] && ter !== T.GRASS) return { ok:false, msg:'Le tunnel doit démarrer sur l\'herbe' };
+    return { ok:true };
+  }
   if(t==='rail_signal' || t==='rail_signal2'){
     if(!rail[i]) return { ok:false, msg:'Place le signal sur une voie ferrée existante.' };
     if(!chooseRailSignalDef(x, y)) return { ok:false, msg:'Aucun segment de rail valide à signaler.' };
+    return { ok:true };
+  }
+  // Bouche de tunnel existante (tuile en pente déjà reliée à un tracé souterrain) :
+  // on autorise d'y raccorder un rail de surface, avant/après le tunnel.
+  if(t==='rail' && rail[i] && !tileIsFlat(x, y)){
+    if(bgrid[i]) return { ok:false, msg:'Case occupée' };
     return { ok:true };
   }
   if(!tileIsFlat(x, y)) return { ok:false, msg:'Terrain non plat : nivelez la case avant de construire' };
@@ -667,7 +762,7 @@ function clickAt(x,y){
       const { updates, refund } = collectRailRemovalUpdates(x, y);
       railApplyMaskUpdates(updates, -refund);
     } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON || terrain[i]===T.IRON || terrain[i]===T.COAL || terrain[i]===T.SAND || terrain[i]===T.CLAY){
-      terrain[i] = T.GRASS; markGroundDirty(); // l'envoi réseau est géré par clickFn (09_multiplayer.js)
+      terrain[i] = T.GRASS; markTerrainDirty(); // l'envoi réseau est géré par clickFn (09_multiplayer.js)
     }
     return;
   }
@@ -677,7 +772,7 @@ function clickAt(x,y){
     const depot = terrassementNear(x, y, MP.myId ?? 1);
     if(!depot){ toast('⛔ Aucune usine de terrassement à portée avec '+FILL_WATER_COST+' terres','err'); return; }
     depot.storage['dirt'] = (depot.storage['dirt']||0) - FILL_WATER_COST;
-    terrain[i] = T.GRASS; rebuildWaterLevels(); markGroundDirty();
+    terrain[i] = T.GRASS; rebuildWaterLevels(); markTerrainDirty();
     // netSend géré par l'intercept MP (09_multiplayer.js) pour éviter le double envoi
     return;
   }
@@ -691,7 +786,7 @@ function clickAt(x,y){
     if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
     spendMoney(cost, 'construction');
     for(const ti of tiles) terrainHeightMap[ti] += dir;
-    rebuildWaterLevels(); markGroundDirty();
+    rebuildWaterLevels(); markTerrainDirty();
     // netSend géré par l'intercept MP (09_multiplayer.js) pour éviter le double envoi
     return;
   }

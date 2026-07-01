@@ -327,6 +327,8 @@ function resetTrainDepotDeparture(v){
 const GARAGE_COST = CFG.logistique?.garage?.cout ?? 1200;
 const BUS_STOP_COST = CFG.logistique?.arretBus?.cout ?? 250;
 const TERRAFORM_LEVEL_COST = 25; // $ par tuile impactée (creuser/remonter d'un palier)
+const TUNNEL_COST_PER_TILE = 60; // $ par tuile creusée pour un tunnel ferroviaire
+const TUNNEL_MAX_LENGTH = 32;    // longueur max (tuiles) recherchée pour une sortie de tunnel
 
 const RES = {
   iron:  { n:'Fer',                    c:'#d98a4f', ic:'🔩' },
@@ -608,6 +610,10 @@ const BUILD = {
   train_platform:{ n:'Quai', ic:'▥', hk:'', cost: CFG.batiments?.gare?.cout ?? 100,
                    col:'#a98963', hgt:3,
                    desc:'Quai ferroviaire rattaché à une gare.' },
+  tunnel:  { n:'Tunnel', ic:'🚇', hk:'', cost: TUNNEL_COST_PER_TILE,
+             desc:'Sélectionne une tuile en pente : elle devient l\'entrée du tunnel. La sortie et le tracé '
+               + 'sont calculés automatiquement de l\'autre côté du relief et affichés en surbrillance, puis '
+               + 'une confirmation indique le coût total ('+TUNNEL_COST_PER_TILE+' $/tuile creusée).' },
   mine:    { n:'Mine',      ic:'⛏️', hk:'3', cost: CFG.production?.mine?.cout     ?? 450,
              workers:3, time:2.2, col:'#7d6457', hgt:16, ind:true,
              upkeep: CFG.production?.mine?.entretien     ?? 2,

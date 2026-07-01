@@ -1,7 +1,7 @@
 const COLORS = ['#e25e4c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#f0a040','#40d0c0','#e0e0e0'];
 
 // ---------- état ----------
-let terrain, terrainHeightMap, waterHeightMap, road, rail, railOwner, railSignals, railBlocks, railBlockOccupancy, bgrid, buildings, trucks, walkers, homeless, floats;
+let terrain, terrainHeightMap, waterHeightMap, road, rail, railOwner, railSignals, railBlocks, railBlockOccupancy, railTunnel, bgrid, buildings, trucks, walkers, homeless, floats;
 let smoke = [];  // particules de fumée (locomotives) — purement cosmétique, transitoire
 let vehicles = [];        // véhicules persistants
 let vehicleRouteMode = null; // { vehicle, step:'source'|'dest' } ou null
@@ -342,8 +342,15 @@ const groundCache = document.createElement('canvas');
 const groundCacheCtx = groundCache.getContext('2d');
 let _bufContentKey = null;      // signature du contenu du buffer (hors cam.x/cam.y)
 let cacheCamX = 0, cacheCamY = 0; // caméra à laquelle le buffer a été rendu
-let groundVersion = 0;          // incrémenté à chaque mutation du sol
+let groundVersion = 0;          // incrémenté à chaque mutation du sol (buffer sol)
+// Versions plus fines pour éviter les rescans plein-carte O(N²) inutiles : le décor
+// de terrain (arbres, poissons) ne dépend QUE du terrain/mapMask, et les bouches de
+// tunnel QUE des rails. Poser une route/un rail ne doit donc pas les recalculer.
+let terrainVersion = 0;         // terrain, eau/relief, mapMask (zones)
+let railVersion = 0;            // masques rail + tuiles de tunnel
 function markGroundDirty(){ groundVersion++; }
+function markTerrainDirty(){ terrainVersion++; groundVersion++; } // terrain → + sol
+function markRailDirty(){ railVersion++; groundVersion++; }       // rail → + sol
 
 // ---------- projection isométrique rotative ----------
 // indices de tuile : monde -> tourné
@@ -590,6 +597,7 @@ function genWorld(config){
   railSignals = Object.create(null);
   railBlocks = null;
   railBlockOccupancy = null;
+  railTunnel = new Uint8Array(N*N);
   bgrid = new Array(N*N).fill(null);
   buildings = []; trucks = []; walkers = []; homeless = []; floats = []; smoke = [];
   vehicles = []; vehicleRouteMode = null; selectedVehicle = null; focusVehicle = null; camTracking = false; vehicleListMode = null; nextTruckId = 0; nextWalkerId = 0; nextVehicleId = 0; nextTrainStationId = 1;
@@ -620,7 +628,7 @@ function genWorld(config){
     const c = treeCandidates[i];
     terrain[c.y*N+c.x] = T.TREE;
   }
-  markGroundDirty(); // nouveau terrain → invalider le cache sol
+  markTerrainDirty(); // nouveau terrain → invalider cache sol + décor (arbres/poissons)
   // champs et gisements en taches
   const placePatch = (type, count, opts={})=>{
     const minRadius = opts.minRadius ?? 1;
@@ -645,7 +653,7 @@ function genWorld(config){
   placePatch(T.IRON, patchCount(WORLD.resources.iron));
   placePatch(T.COAL, patchCount(WORLD.resources.coal));
   applyShoreResources(tn, (x, y) => !!mapMask[y*N+x]);
-  markGroundDirty();
+  markTerrainDirty();
 
   // caméra : centrée sur une zone d'herbe proche du milieu de la zone jouable
   const mcx = (mapBounds.x0+mapBounds.x1)>>1, mcy = (mapBounds.y0+mapBounds.y1)>>1;
@@ -749,7 +757,7 @@ function generateExpansionTerrain(){
   pp(T.COAL, cnt(WORLD.resources?.coal??10));
   applyShoreResources(tn, (x, y) => !inPlay(x, y));
   rebuildWaterLevels();
-  markGroundDirty();
+  markTerrainDirty();
 }
 
 // Coût d'une tuile selon son terrain (prix de base au niveau 0)
@@ -868,7 +876,7 @@ function buyExpansion(exp){
   }
 
   refreshExpansionSlots();
-  markGroundDirty(); // mapMask/zones d'expansion modifiés → invalider le cache sol
+  markTerrainDirty(); // mapMask/zones modifiés → cache sol + décor (arbres révélés)
   selectedExpansion = null;
   hudTimer = 0;
   const dirLabel = {right:'droite',left:'gauche',bottom:'bas',top:'haut',

@@ -1317,6 +1317,7 @@ function serializeState(opts = {}){
       rail:    Array.from(rail),
       railOwner: railOwner ? Array.from(railOwner) : null,
       railSignals: Object.values(railSignals || {}),
+      railTunnel: railTunnel ? Array.from(railTunnel) : null,
     });
   }
   return out;
@@ -1431,7 +1432,8 @@ function mpSenderControlsOwner(ownerId, msg){
 }
 
 function applySnapshot(d){
-  markGroundDirty(); // rechargement complet du monde → invalider le cache sol
+  // Rechargement complet du monde → tout invalider (sol + décor terrain + tunnels).
+  markTerrainDirty(); markRailDirty();
   const hadTransient = Array.isArray(d.trucks) || Array.isArray(d.walkers) || Array.isArray(d.homeless);
   const prevSelectedRef = snapshotBuildingRef(selected);
   const prevSelectedVehicleId = selectedVehicle?.id ?? null;
@@ -1455,6 +1457,7 @@ function applySnapshot(d){
     road    = Uint8Array.from(d.road);
     rail    = d.rail ? normalizeLegacyRailGrid(d.rail) : new Uint8Array((d.size || N) * (d.size || N));
     railOwner = (d.railOwner && d.railOwner.length === N*N) ? Int16Array.from(d.railOwner) : new Int16Array(N*N).fill(-1);
+    railTunnel = (d.railTunnel && d.railTunnel.length === N*N) ? Uint8Array.from(d.railTunnel) : new Uint8Array(N*N);
     railSignals = Object.create(null);
     mapBounds = { ...d.mapBounds };
     expansionLevels = d.expansionLevels || { left:0, right:0, top:0, bottom:0 };
@@ -1499,6 +1502,7 @@ function applySnapshot(d){
     road    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     rail    = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     railOwner = new Int16Array(N_FULL_MAP * N_FULL_MAP).fill(-1);
+    railTunnel = new Uint8Array(N_FULL_MAP * N_FULL_MAP);
     railSignals = Object.create(null);
     for(let y=0; y<N_PLAY; y++) for(let x=0; x<N_PLAY; x++){
       terrain[(y+EXP_MARGIN)*N_FULL_MAP+(x+EXP_MARGIN)] = oldTerrain[y*N_PLAY+x];
@@ -1866,7 +1870,7 @@ function applyAction(msg){
         else if(wasEmpty) railOwner[ri] = (msg.from == null ? -1 : msg.from);
       }
       rebuildRailBlocks();
-      markGroundDirty();
+      markRailDirty();
       if(act.costDelta > 0){
         walletOf(msg.from).money -= act.costDelta;
         walletOf(msg.from).fin.construction += act.costDelta;
@@ -1885,20 +1889,47 @@ function applyAction(msg){
         earnMoney(-act.costDelta, 'rembours', walletOf(msg.from));
       }
       break;
+    case 'tunnel_build': {
+      if(!Array.isArray(act.updates) || !Array.isArray(act.tunnelTiles)) break;
+      if(msg.fromUsername) walletOf(msg.from).username = msg.fromUsername;
+      let changed = false;
+      for(const u of act.updates){
+        if(!validXY(u.x, u.y) || !Number.isInteger(u.mask) || u.mask < 0 || u.mask > 255) continue;
+        const ri = u.y*N+u.x;
+        const wasEmpty = !rail[ri];
+        rail[ri] = u.mask;
+        if(!u.mask) railOwner[ri] = -1;
+        else if(wasEmpty) railOwner[ri] = (msg.from == null ? -1 : msg.from);
+        changed = true;
+      }
+      for(const t of act.tunnelTiles){
+        if(!validXY(t.x, t.y)) continue;
+        railTunnel[t.y*N+t.x] = 1;
+      }
+      if(changed) rebuildRailBlocks();
+      markRailDirty();
+      if(act.costDelta > 0){
+        walletOf(msg.from).money -= act.costDelta;
+        walletOf(msg.from).fin.construction += act.costDelta;
+      } else if(act.costDelta < 0){
+        earnMoney(-act.costDelta, 'rembours', walletOf(msg.from));
+      }
+      break;
+    }
     case 'bulldoze_road':
       if(validIdx(act.i)){ road[act.i] = 0; earnMoney(3, 'rembours', walletOf(msg.from)); markGroundDirty(); }
       break;
     case 'bulldoze_tree':
-      if(validIdx(act.i)){ terrain[act.i] = T.GRASS; markGroundDirty(); }
+      if(validIdx(act.i)){ terrain[act.i] = T.GRASS; markTerrainDirty(); }
       break;
     case 'terraform':
-      if(validIdx(act.i)){ terrain[act.i] = T.GRASS; markGroundDirty(); }
+      if(validIdx(act.i)){ terrain[act.i] = T.GRASS; markTerrainDirty(); }
       break;
     case 'fill_water': {
       if(!validIdx(act.i) || !validXY(act.depotX, act.depotY)) break;
       terrain[act.i] = T.GRASS;
       rebuildWaterLevels();
-      markGroundDirty();
+      markTerrainDirty();
       const depot = bgrid[act.depotY*N+act.depotX];
       if(depot && depot.type === 'terrassement')
         depot.storage['dirt'] = Math.max(0, (depot.storage['dirt']||0) - FILL_WATER_COST);
@@ -1923,7 +1954,7 @@ function applyAction(msg){
         wSender.money -= cost;
         wSender.fin.construction += cost;
         rebuildWaterLevels();
-        markGroundDirty();
+        markTerrainDirty();
       }
       break;
     }

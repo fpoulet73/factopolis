@@ -19,6 +19,58 @@ function entityIso(u, v){
   return liftedIso(u, v, terrainLiftPxAtRot(u, v));
 }
 
+// Bouche de tunnel = demi-cylindre. Dessine UNE bouche pour la tuile (0,0) plate,
+// orientée par la direction TOURNÉE (du,dv) vers la montagne. Sert de générateur de
+// texture pour la couche sprites Pixi (baké par direction puis posé sur chaque
+// portail). L'ancre = milieu de l'arête basse (bx,by) : le sprite se place ensuite
+// sur l'arête réelle (au niveau de la tuile plate).
+// - demi-cercle noir dressé VERTICALEMENT (90° / tuile plate), base sur l'arête ;
+// - toit gris en « voile » qui se pince aux deux pieds (disparaît dans la pente).
+function tunnelPortalAnchor(du, dv){
+  const [sx, sy] = iso(du, dv);
+  const c0 = tileCenterIso(0, 0, 0, 0);
+  return [c0[0] - sx * 0.5, c0[1] - sy * 0.5];
+}
+function drawTunnelPortalCore(du, dv, color, roofColor, rimColor){
+  const [sx, sy] = iso(du, dv);
+  const slen = Math.hypot(sx, sy);
+  if(slen < 0.001) return;
+  const [bx, by] = tunnelPortalAnchor(du, dv);   // milieu de l'arête basse (tuile 0,0)
+  const [ex, ey] = iso(-dv, du);                 // arête au sol (diamètre de l'arche)
+  const elen = Math.hypot(ex, ey) || 1;
+  const pex = ex / elen, pey = ey / elen;
+  const R = Math.hypot(TW2, TH2) / 2;
+  const W = slen * 0.40;      // demi-largeur de la base
+  const H = R * 0.82;         // hauteur du dôme (montant tout droit)
+  // Axe du toit forcé vers le haut de l'écran (il s'enfonce dans la pente).
+  const upx = sx, upy = -Math.abs(sy);
+  const uplen = Math.hypot(upx, upy) || slen;
+  const tubeLen = slen * 0.50; // tuile (0,0) plate → distance à l'arête haute = slen
+  const offx = (upx / uplen) * tubeLen, offy = (upy / uplen) * tubeLen;
+  const near = [], wgt = [];
+  for(let k = 0; k <= 24; k++){
+    const th = Math.PI * k / 24;
+    const ct = Math.cos(th) * W, st = Math.sin(th);
+    near.push([bx + ct * pex, by + ct * pey - st * H]);
+    wgt.push(st);
+  }
+  // Toit gris (voile qui se pince aux pieds).
+  ctx.beginPath();
+  ctx.moveTo(near[0][0], near[0][1]);
+  for(let k = 1; k < near.length; k++) ctx.lineTo(near[k][0], near[k][1]);
+  for(let k = near.length - 1; k >= 0; k--) ctx.lineTo(near[k][0] + offx * wgt[k], near[k][1] + offy * wgt[k]);
+  ctx.closePath();
+  ctx.fillStyle = roofColor; ctx.fill();
+  ctx.strokeStyle = rimColor; ctx.lineWidth = 0.2; ctx.stroke();
+  // Bouche sombre (demi-cercle avant) par-dessus.
+  ctx.beginPath();
+  ctx.moveTo(near[0][0], near[0][1]);
+  for(let k = 1; k < near.length; k++) ctx.lineTo(near[k][0], near[k][1]);
+  ctx.closePath();
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = rimColor; ctx.lineWidth = 0.2; ctx.stroke();
+}
+
 function terrainTilePoints(rx, ry, x, y){
   const h = terrain[y * N + x] === T.WATER
     ? (() => {
@@ -82,7 +134,7 @@ function drawWaterBankFaces(rx, ry, x, y, t, snowAmount){
 }
 
 // --- Poissons dans les lacs ---
-let _fishTilesCache = null, _fishTerrainRef = null, _fishGroundVersion = -1;
+let _fishTilesCache = null, _fishTerrainRef = null, _fishTerrainVersion = -1;
 
 function computeFishTiles(){
   const SHORE_MAX = (CFG.lac?.poissonRayon ?? 4) | 0;
@@ -107,10 +159,10 @@ function computeFishTiles(){
 }
 
 function getFishTiles(){
-  if(_fishTerrainRef !== terrain || _fishGroundVersion !== groundVersion){
+  if(_fishTerrainRef !== terrain || _fishTerrainVersion !== terrainVersion){
     _fishTilesCache = computeFishTiles();
     _fishTerrainRef = terrain;
-    _fishGroundVersion = groundVersion;
+    _fishTerrainVersion = terrainVersion;
   }
   return _fishTilesCache;
 }
@@ -2303,16 +2355,24 @@ function draw(){
       }
     }
 
-    if(rail[i]){
+    if(rail[i] && !(railTunnel && railTunnel[i])){
       railNodes.push(c);
       const mask = rail[i];
       const owner = railOwner ? railOwner[i] : -1;
       let links = 0;
+      let isPortal = false;
       const railDirs = [];
       for(const def of RAIL_DIRS){
         if(!(mask & def.bit)) continue;
         const nx = x+def.dx, ny = y+def.dy;
         if(!inMap(nx,ny)) continue;
+        // Bouche de tunnel : cette tuile de rail (entrée/sortie, en pente) se
+        // connecte à une tuile souterraine masquée → on ne trace ni traverse ni
+        // rail vers elle (elle est invisible), seulement l'arche d'entrée.
+        if(railTunnel && railTunnel[ny*N+nx]){
+          isPortal = true; // bouche → sprite Pixi (PixiSprites.updateTunnels)
+          continue;
+        }
         links++;
         const [du,dv] = rotDir(def.dx, def.dy);
         railDirs.push([du, dv]);
@@ -2321,7 +2381,9 @@ function draw(){
         // junction merely because the tile also has an orthogonal connection.
         railSegments.push({ a:c, b:liftedIso(rx+du+0.5, ry+dv+0.5, terrainLiftPxAt(nx, ny)), dir:[du, dv], owner });
       }
-      if(!links) railSingles.push({ c, owner });
+      // Une bouche de tunnel sans autre voie ne doit PAS afficher de pastille de
+      // rail isolé (le petit rond) : c'est l'arche qui matérialise l'extrémité.
+      if(!links && !isPortal) railSingles.push({ c, owner });
       else if(links <= 2) railNodeSleepers.push({ center:c, dirs:railDirs });
     }
   }
@@ -2440,6 +2502,8 @@ function draw(){
     }
     ctx.stroke();
   };
+  // Bouches de tunnel : déléguées à la couche sprites PixiJS (demi-cylindre baké par
+  // direction, cf. drawTunnelPortalCore + PixiSprites.updateTunnels).
   // Dessin du sol routes+rails : uniquement si le cache doit être (re)généré.
   // La COLLECTE ci-dessus (segments, feux) tourne chaque frame pour que les feux
   // dynamiques restent à jour ; seuls les tracés coûteux sont conditionnés.
@@ -2598,6 +2662,18 @@ function draw(){
       const [rx, ry] = rotIdx(t.x, t.y);
       ctx.fillStyle = canPlace(tool, t.x, t.y).ok ? 'rgba(110,230,120,.55)' : 'rgba(200,200,200,.2)';
       tilePolygon(rx, ry, t.x, t.y); ctx.fill();
+    }
+  }
+
+  // aperçu du tracé de tunnel (entrée → sortie), affiché en surbrillance pendant la confirmation
+  if(tunnelPreview && tunnelPreview.path.length){
+    for(const t of tunnelPreview.path){
+      if(!inMap(t.x, t.y)) continue;
+      const [rx, ry] = rotIdx(t.x, t.y);
+      ctx.fillStyle = 'rgba(255,196,0,.5)';
+      tilePolygon(rx, ry, t.x, t.y); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,196,0,.9)'; ctx.lineWidth = 1;
+      tilePolygon(rx, ry, t.x, t.y); ctx.stroke();
     }
   }
 

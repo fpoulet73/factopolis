@@ -50,6 +50,8 @@ const PixiSprites = (function(){
   const TREE_W = 36, TREE_H = 48, TREE_AX = 18, TREE_AY = 40;
   let treeTex = null;
   let treePool = [];
+  // Les arbres ne dépendent QUE du terrain/mapMask → gate sur terrainVersion (pas
+  // groundVersion) pour ne PAS rescanner toute la carte à chaque pose de route/rail.
   let treeBuiltVersion = -1, treeBuiltRot = -1, treeBuiltN = -1;
 
   function bakeTrees(){
@@ -83,13 +85,71 @@ const PixiSprites = (function(){
       n++;
     }
     for(let i = n; i < treePool.length; i++) treePool[i].visible = false;
-    treeBuiltVersion = groundVersion; treeBuiltRot = rot; treeBuiltN = N;
+    treeBuiltVersion = terrainVersion; treeBuiltRot = rot; treeBuiltN = N;
   }
 
   function updateTrees(layer){
     if(!treeTex) bakeTrees();
-    if(treeBuiltVersion !== groundVersion || treeBuiltRot !== rot || treeBuiltN !== N)
+    if(treeBuiltVersion !== terrainVersion || treeBuiltRot !== rot || treeBuiltN !== N)
       rebuildTrees(layer);
+  }
+
+  // --- Bouches de tunnel (demi-cylindre baké par direction) ---------------
+  // Une bouche par arête rail↔tunnel. Texture bakée par direction écran (dirIndex)
+  // via drawTunnelPortalCore ; sprite posé sur l'arête basse réelle (niveau tuile
+  // plate). zIndex biaisé au-dessus des trains → un train « disparaît » sous l'arche.
+  const TUN = { w:104, h:88, ax:52, ay:58 };
+  const tunnelTexCache = new Map(); // dirIndex -> baked
+  let tunnelPool = [];
+  let tunnelBuiltVersion = -1, tunnelBuiltRot = -1, tunnelBuiltN = -1;
+  function tunnelTexture(du, dv){
+    const key = dirIndex(du, dv);
+    let t = tunnelTexCache.get(key);
+    if(t) return t;
+    const [cx, cy] = tunnelPortalAnchor(du, dv);
+    t = bake(TUN.w, TUN.h, TUN.ax, TUN.ay, cx, cy,
+             () => drawTunnelPortalCore(du, dv, '#161b1f', '#767d85', '#5a636b'));
+    tunnelTexCache.set(key, t);
+    return t;
+  }
+  function updateTunnels(layer){
+    if(typeof rail === 'undefined' || typeof railTunnel === 'undefined' || !railTunnel){
+      hidePool(tunnelPool, 0); return;
+    }
+    // Portails statiques, dépendent des rails : ne re-scanner que si rail/rotation change.
+    if(tunnelBuiltVersion === railVersion && tunnelBuiltRot === rot && tunnelBuiltN === N) return;
+    let n = 0;
+    for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+      const i = y * N + x;
+      if(!rail[i] || railTunnel[i]) continue;
+      const mask = rail[i];
+      for(const def of RAIL_DIRS){
+        if(!(mask & def.bit)) continue;
+        const nx = x + def.dx, ny = y + def.dy;
+        if(!inMap(nx, ny) || !railTunnel[ny * N + nx]) continue;
+        const [rx, ry] = rotIdx(x, y);
+        const [du, dv] = rotDir(def.dx, def.dy);
+        const [sx, sy] = iso(du, dv);
+        // Arête basse réelle : centre tuile plate (côté rail = -d) + demi-pas vers pente.
+        const fux = x - def.dx, fuy = y - def.dy;
+        let px, py;
+        if(inMap(fux, fuy)){
+          const fc = tileCenterIso(rx - du, ry - dv, fux, fuy);
+          px = fc[0] + sx * 0.5; py = fc[1] + sy * 0.5;
+        } else {
+          const c = tileCenterIso(rx, ry, x, y);
+          px = c[0] - sx * 0.5; py = c[1] - sy * 0.5;
+        }
+        const s = getPool(tunnelPool, n, layer);
+        applyBaked(s, tunnelTexture(du, dv));
+        s.visible = true;
+        s.position.set(px, py);
+        s.zIndex = spriteDepthKey(rx + 0.5, ry + 0.5, 0.6);
+        n++;
+      }
+    }
+    hidePool(tunnelPool, n);
+    tunnelBuiltVersion = railVersion; tunnelBuiltRot = rot; tunnelBuiltN = N;
   }
 
   // --- Entités directionnelles (camions / voitures / locos / wagons) ------
@@ -298,12 +358,13 @@ const PixiSprites = (function(){
   // --- Pièces de gare (rendu GROUPE : bande de quai / prisme gare / contours) --
   // On bake `drawTrainStationPiece(b)` tel quel (bande multi-tuiles, marqueurs de
   // dalles manquantes, contours sélection/route — les pointillés fonctionnent en
-  // bake Canvas2D). Le corps dépend de tout le groupe → signature sur groundVersion
-  // (géométrie du groupe/tuiles/lift) + états dynamiques sélection/route.
+  // bake Canvas2D). Le corps dépend du terrain (géométrie/lift du groupe) et des
+  // rails (raccords/quais), PAS des routes → signature sur terrain+railVersion (et
+  // non groundVersion) pour ne pas re-baker toutes les gares à chaque pose de route.
   function stationSig(b){
     const routeState = (typeof vehicleRouteMode !== 'undefined' && vehicleRouteMode)
       ? ((vehicleRouteMode.step||'') + '|' + (vehicleRouteMode.vehicle?.vtype||'')) : '';
-    return [b.type, b.owner==null?'':b.owner, rot, groundVersion,
+    return [b.type, b.owner==null?'':b.owner, rot, terrainVersion + '.' + railVersion,
       bldSelected(b)?1:0, routeState,
       (typeof UI_OPTIONS!=='undefined' ? UI_OPTIONS.graphicPack : ''), GRAPHIC_PACK_IMAGES_GEN].join('|');
   }
@@ -459,6 +520,7 @@ const PixiSprites = (function(){
     const ov = PixiScene.layers.overlaysOver;
     if(!layer || typeof terrain === 'undefined') return;
     updateTrees(layer);
+    updateTunnels(layer);
     updateBuildings(layer, ov);
     updateTrucks(layer);
     updateVehicles(layer, ov);

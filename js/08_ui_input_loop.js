@@ -2350,7 +2350,7 @@ function syncToolbarState(){
     });
   }
   if(trainToolbarGroup){
-    const active = ['rail','rail_signal','rail_signal2','train_station'].includes(tool);
+    const active = ['rail','rail_signal','rail_signal2','train_station','tunnel'].includes(tool);
     trainToolbarGroup.classList.toggle('on', active);
     const groupBtn = trainToolbarGroup.querySelector('.tool-group-btn');
     if(groupBtn) groupBtn.classList.toggle('on', active || trainToolbarGroup.classList.contains('open'));
@@ -2659,7 +2659,7 @@ function buildToolbar(){
       btn.innerHTML = '<span class="ic">🚂</span><span>Train</span><span class="hk">▾</span>';
       const menu = document.createElement('div');
       menu.className = 'tool-group-menu';
-      for(const toolKey of ['rail','rail_signal','rail_signal2','train_station']){
+      for(const toolKey of ['rail','rail_signal','rail_signal2','train_station','tunnel']){
         const d = BUILD[toolKey];
         const choice = document.createElement('button');
         choice.className = 'tool tool-group-item';
@@ -2741,7 +2741,7 @@ function buildToolbar(){
 }
 function setTool(k){
   tool = k;
-  roadDragStart = null; roadPreviewTiles = [];
+  roadDragStart = null; roadPreviewTiles = []; tunnelPreview = null;
   shiftToggle = false;
   const cs = $('ctxShift'); if(cs) cs.classList.remove('on');
   closeToolbarMenus();
@@ -2977,6 +2977,7 @@ function updateZoneOverlay(mouseX, mouseY){
 // ---------- tracé de route deux-points ----------
 let roadDragStart = null;   // {x,y} tuile de départ
 let roadPreviewTiles = [];  // [{x,y}] tuiles de l'aperçu
+let tunnelPreview = null;   // { path, cost } affiché en surbrillance pendant la confirmation
 
 // Trace une route entre deux tuiles en 8-directions (Bresenham octagonal).
 // Shift forcé = segment à angle droit, sinon ligne droite 8-dir.
@@ -3075,6 +3076,8 @@ function canvasLeftDown(x, y, shiftKey){
     roadPreviewTiles = tool === 'rail'
       ? computeRailPreview(anchor.x, anchor.y, anchor.x, anchor.y)
       : computeRoadPreview(mouse.tx, mouse.ty, mouse.tx, mouse.ty, shiftKey);
+  } else if(tool === 'tunnel'){
+    startTunnelBuild(mouse.tx, mouse.ty);
   } else {
     clickFn(mouse.tx, mouse.ty);
   }
@@ -3120,6 +3123,41 @@ function canvasLeftUp(){
     roadDragStart = null; roadPreviewTiles = [];
   }
   mouse.lDown = false;
+}
+// Clic sur l'outil Tunnel : (x,y) doit être une tuile en pente. Calcule automatiquement
+// la sortie et le tracé de l'autre côté du relief, les affiche en surbrillance (tunnelPreview,
+// dessiné dans draw()) puis demande confirmation du coût avant de creuser.
+async function startTunnelBuild(x, y){
+  const v = canPlace('tunnel', x, y);
+  if(!v.ok){ if(v.msg) toast(v.msg, 'err'); return; }
+  const result = findTunnelPath(x, y);
+  if(!result || tunnelPathBlocked(result.path)){
+    toast('⛔ Impossible de creuser un tunnel ici : aucune sortie valide de l\'autre côté du relief.', 'err');
+    return;
+  }
+  const { path } = result;
+  const cost = path.length * TUNNEL_COST_PER_TILE;
+  tunnelPreview = { path, cost };
+  if(myWallet().money < cost){
+    toast('Fonds insuffisants ('+cost+' $)', 'err');
+    tunnelPreview = null;
+    return;
+  }
+  const ok = await confirmAction(
+    'Construire un tunnel de '+path.length+' tuiles pour '+cost+' $ ?',
+    { title:'Tunnel ferroviaire', okText:'Construire' }
+  );
+  tunnelPreview = null;
+  if(!ok) return;
+  if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
+  const updates = tunnelMaskUpdates(path);
+  if(!updates.length){ toast('⛔ Ce tracé de tunnel existe déjà.', 'err'); return; }
+  railApplyMaskUpdates(updates, cost);
+  const tunnelTiles = path.slice(1, -1);
+  for(const t of tunnelTiles) railTunnel[t.y*N + t.x] = 1;
+  markRailDirty();
+  if(MP.connected) netSend({ type:'tunnel_build', updates, tunnelTiles, costDelta:cost });
+  toast('🚇 Tunnel construit ('+path.length+' tuiles, '+cost+' $)', 'win');
 }
 function cancelPlacementInProgress(){
   mouse.lDown = false;

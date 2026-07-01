@@ -458,7 +458,7 @@ function sanitizeWorldConfig(config = {}) {
 }
 
 const ALLOWED_ACTIONS = new Set([
-  'road', 'bulldoze_road', 'rail_update', 'rail_signal_update', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
+  'road', 'bulldoze_road', 'rail_update', 'rail_signal_update', 'tunnel_build', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
   'build', 'toggle_bld_pause', 'toggle_out_block', 'toggle_resid_upgrade_pause', 'clear_bld_stock', 'upgrade_plant',
   'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'pin_vehicle_res', 'configure_train', 'merge_towns',
   'zone_reassign', 'rename_bus_stop', 'owner_remap', 'depot_departure_flag', 'pause', 'speed',
@@ -512,6 +512,22 @@ function sanitizeAction(client, msg) {
       if (typeof act.present !== 'boolean') return null;
       if (act.costDelta != null && !numInRange(act.costDelta, -100000, 100000)) return null;
       Object.assign(out, { x:act.x, y:act.y, bit:act.bit, present:act.present, costDelta: act.costDelta || 0 }); break;
+    case 'tunnel_build': {
+      if (!Array.isArray(act.updates) || act.updates.length > 200) return null;
+      const updates = [];
+      for (const u of act.updates) {
+        if (!u || !intInRange(u.x) || !intInRange(u.y) || !intInRange(u.mask, 0, 255)) return null;
+        updates.push({ x:u.x, y:u.y, mask:u.mask });
+      }
+      if (!Array.isArray(act.tunnelTiles) || act.tunnelTiles.length > 200) return null;
+      const tunnelTiles = [];
+      for (const t of act.tunnelTiles) {
+        if (!t || !intInRange(t.x) || !intInRange(t.y)) return null;
+        tunnelTiles.push({ x:t.x, y:t.y });
+      }
+      if (act.costDelta != null && !numInRange(act.costDelta, -100000, 100000)) return null;
+      Object.assign(out, { updates, tunnelTiles, costDelta: act.costDelta || 0 }); break;
+    }
     case 'fill_water':
       if (!validTileIndex(act.i) || !intInRange(act.depotX) || !intInRange(act.depotY)) return null;
       Object.assign(out, { i: act.i, depotX: act.depotX, depotY: act.depotY }); break;
