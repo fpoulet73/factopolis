@@ -23,7 +23,7 @@ const PixiScene = (function(){
   // Terrain sur Pixi : piloté par le flag global PIXI_TERRAIN (défini dans 07_rendering.js,
   // activé par défaut, ?nopixiterrain pour forcer le Canvas2D). L'usage réel dans draw() est
   // gaté sur PixiScene.ready → fallback Canvas2D automatique si Pixi n'initialise pas.
-  let bgSky = null, bgTerrain = null, _bgSource = null, _skyKey = '', _bgTexW = 0, _bgTexH = 0, _bgTexVer = -1, _bgUploadTTL = 0;
+  let bgSky = null, bgTerrain = null, _bgSource = null, _skyKey = '', _bgTexW = 0, _bgTexH = 0, _bgTexVer = -1, _bgUploadUntil = 0, _bgLastUpload = 0;
   const wantTerrain = () => (typeof PIXI_TERRAIN !== 'undefined' && PIXI_TERRAIN);
 
   async function init(){
@@ -81,6 +81,26 @@ const PixiScene = (function(){
     // (drag/molette) et, étant au-dessus, reçoit directement les événements.
     const cvEl = document.getElementById('cv');
     if(cvEl) cvEl.style.zIndex = '2'; // > #pixi (z-index 1)
+    // Perte/restauration du contexte WebGL — cause n°1 de l'écran-titre « sapins sans
+    // sol » : au démarrage (surtout Firefox/Windows, GPU hybride qui bascule à cause de
+    // powerPreference, reset driver) le contexte GL est perdu puis restauré. À la
+    // restauration, Pixi recrée les textures des SPRITES (arbres, bâtiments) et re-rend
+    // le ciel (vecteur) — mais PAS notre terrain : il n'est uploadé qu'une fois (gaté sur
+    // groundTexVersion), donc sur une scène statique il resterait vide.
+    // On force donc sa reconstruction : (1) via le runner interne contextChange de Pixi
+    // (fiable, émis à chaque restauration), et (2) via l'évènement DOM en secours.
+    if(app.renderer && app.renderer.runners && app.renderer.runners.contextChange){
+      app.renderer.runners.contextChange.add({ contextChange(){ bgForceReupload(); } });
+    }
+    const glEl = document.getElementById('pixi');
+    if(glEl) glEl.addEventListener('webglcontextrestored', bgForceReupload);
+  }
+  // Force la reconstruction complète de la texture terrain + ré-upload continu pendant
+  // une fenêtre (le contexte peut encore vaciller juste après). Appelé à chaque
+  // (re)création de contexte GL.
+  function bgForceReupload(){
+    _bgSource = null; _bgTexW = 0; _bgTexH = 0; _bgTexVer = -1; _skyKey = '';
+    _bgUploadUntil = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 4000;
   }
   function updatePixiTerrain(){
     // ciel (redessiné seulement si viewport/pack change)
@@ -100,6 +120,22 @@ const PixiScene = (function(){
     // renvoyer une source figée à 300×150 → terrain échantillonné sur un coin minuscule
     // = écran noir aléatoire, persistant même après chargement d'une partie. On crée donc
     // une CanvasSource explicite qu'on RESIZE (resolution 1 : le buffer est déjà en px device).
+    // Anti-écran-noir. Un upload unique de la texture peut tomber pendant que le contexte
+    // WebGL vacille au démarrage (Firefox/Windows, GPU hybride) : le binding GL de la
+    // source est alors invalidé et un simple update() NE rétablit PAS l'affichage — seule
+    // une source NEUVE le fait (cf. récupération après restauration de contexte). Comme la
+    // scène est statique (écran-titre), groundTexVersion ne rebouge plus → terrain figé en
+    // noir (« on ne voit que les sapins »). On maintient donc une FENÊTRE de robustesse
+    // (démarrage + après chaque (re)création de contexte, cf. bgForceReupload) pendant
+    // laquelle on RECRÉE périodiquement la source, throttlé, jusqu'à ce que le contexte se
+    // stabilise. Hors fenêtre : upload uniquement sur changement réel → aucun coût au repos.
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if(_bgUploadUntil === 0) _bgUploadUntil = now + 4000; // fenêtre initiale au 1er passage
+    if(_bgSource && now < _bgUploadUntil && now - _bgLastUpload > 200){
+      const old = bgTerrain.texture;
+      _bgSource = null;
+      if(old && old !== PIXI.Texture.EMPTY){ try { old.destroy(true); } catch(e){} }
+    }
     let needUpload = false;
     if(!_bgSource){
       _bgSource = new PIXI.CanvasSource({ resource: groundCache, resolution: 1 });
@@ -111,15 +147,7 @@ const PixiScene = (function(){
       _bgTexW = groundCache.width; _bgTexH = groundCache.height; needUpload = true;
     }
     if(_bgTexVer !== groundTexVersion){ _bgTexVer = groundTexVersion; needUpload = true; }
-    // Filet de sécurité anti-écran-noir : après tout changement (init Pixi, resize,
-    // nouveau contenu de sol), on ré-uploade la texture pendant QUELQUES frames au lieu
-    // d'un seul upload. Sur GPU réel, un upload unique peut tomber sur une frame où le
-    // contexte WebGL ou le backing-store du canvas 2D `groundCache` n'est pas encore prêt
-    // → terrain noir figé, car groundTexVersion ne rebouge plus tant que la scène est
-    // statique (écran-titre). Non reproductible en headless (swiftshader upload sync).
-    // Le TTL garantit plusieurs tentatives puis s'éteint → aucun coût au repos.
-    if(needUpload) _bgUploadTTL = 8;
-    if(_bgUploadTTL > 0){ _bgSource.update(); _bgUploadTTL--; }
+    if(needUpload){ _bgSource.update(); _bgLastUpload = now; }
     // Placement du buffer (repère écran) selon la caméra COURANTE, y compris zoom.
     // Le buffer a été baké à cacheCam (cacheCamX/Y) et cacheCamZ, avec marge M et un
     // suréchantillonnage DPR. Un point monde P → pixel buffer (P-cacheCam)*cacheCamZ*DPR+M*DPR,
