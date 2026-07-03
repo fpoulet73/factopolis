@@ -118,9 +118,11 @@ function drawTunnelPortalCore(du, dv, color, roofColor, rimColor, backView = fal
   const pex = ex / elen, pey = ey / elen;
   const dirx = sx / slen, diry = sy / slen;
   const R = Math.hypot(TW2, TH2) / 2;
-  const W = slen * 0.31;         // demi-largeur de la bouche visible
-  const H = R * 0.74;            // hauteur du vide intérieur
-  const faceW = W * 1.22;        // parement pierre un peu plus large
+  const mouthScale = backView ? 1 : 1.20;
+  const mouthHeightScale = backView ? 1 : 1.20;
+  const W = slen * 0.35 * mouthScale; // demi-largeur de la bouche visible
+  const H = R * 0.84 * mouthHeightScale; // hauteur du vide intérieur
+  const faceW = W * 1.50;        // parement pierre un peu plus large
   const faceH = H * 1.13;
   // Le remblai doit repartir vers le relief réel, mais rester sous l'arête haute
   // de la tuile en pente.
