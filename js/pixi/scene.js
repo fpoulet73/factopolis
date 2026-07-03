@@ -23,7 +23,7 @@ const PixiScene = (function(){
   // Terrain sur Pixi : piloté par le flag global PIXI_TERRAIN (défini dans 07_rendering.js,
   // activé par défaut, ?nopixiterrain pour forcer le Canvas2D). L'usage réel dans draw() est
   // gaté sur PixiScene.ready → fallback Canvas2D automatique si Pixi n'initialise pas.
-  let bgSky = null, bgTerrain = null, _skyKey = '', _bgTexW = 0, _bgTexH = 0, _bgTexVer = -1;
+  let bgSky = null, bgTerrain = null, _bgSource = null, _skyKey = '', _bgTexW = 0, _bgTexH = 0, _bgTexVer = -1, _bgUploadTTL = 0;
   const wantTerrain = () => (typeof PIXI_TERRAIN !== 'undefined' && PIXI_TERRAIN);
 
   async function init(){
@@ -92,13 +92,34 @@ const PixiScene = (function(){
       grad.addColorStop(0, pack.sky[0]); grad.addColorStop(1, pack.sky[1]);
       bgSky.clear(); bgSky.rect(0, 0, W, H).fill(grad);
     }
-    // terrain : texture = groundCache (recréée si dimensions changent, re-upload si version change)
-    if(!bgTerrain.texture || bgTerrain.texture === PIXI.Texture.EMPTY
-       || groundCache.width !== _bgTexW || groundCache.height !== _bgTexH){
-      bgTerrain.texture = PIXI.Texture.from(groundCache);
-      _bgTexW = groundCache.width; _bgTexH = groundCache.height; _bgTexVer = -1;
+    // Terrain : le sprite affiche le scroll-buffer Canvas2D `groundCache`. On gère la
+    // source WebGL nous-mêmes plutôt que via PIXI.Texture.from(canvas) : ce dernier met
+    // la source EN CACHE par élément canvas et NE la redimensionne PAS quand le canvas
+    // change de taille. Or groundCache passe de 300×150 (canvas par défaut) à (W+2M)*DPR
+    // au 1er bake ; selon l'ordre init-Pixi ↔ 1er bake (course), Texture.from() pouvait
+    // renvoyer une source figée à 300×150 → terrain échantillonné sur un coin minuscule
+    // = écran noir aléatoire, persistant même après chargement d'une partie. On crée donc
+    // une CanvasSource explicite qu'on RESIZE (resolution 1 : le buffer est déjà en px device).
+    let needUpload = false;
+    if(!_bgSource){
+      _bgSource = new PIXI.CanvasSource({ resource: groundCache, resolution: 1 });
+      bgTerrain.texture = new PIXI.Texture({ source: _bgSource });
+      _bgTexW = groundCache.width; _bgTexH = groundCache.height; needUpload = true;
     }
-    if(_bgTexVer !== groundTexVersion){ bgTerrain.texture.source.update(); _bgTexVer = groundTexVersion; }
+    if(groundCache.width !== _bgTexW || groundCache.height !== _bgTexH){
+      _bgSource.resize(groundCache.width, groundCache.height, 1);
+      _bgTexW = groundCache.width; _bgTexH = groundCache.height; needUpload = true;
+    }
+    if(_bgTexVer !== groundTexVersion){ _bgTexVer = groundTexVersion; needUpload = true; }
+    // Filet de sécurité anti-écran-noir : après tout changement (init Pixi, resize,
+    // nouveau contenu de sol), on ré-uploade la texture pendant QUELQUES frames au lieu
+    // d'un seul upload. Sur GPU réel, un upload unique peut tomber sur une frame où le
+    // contexte WebGL ou le backing-store du canvas 2D `groundCache` n'est pas encore prêt
+    // → terrain noir figé, car groundTexVersion ne rebouge plus tant que la scène est
+    // statique (écran-titre). Non reproductible en headless (swiftshader upload sync).
+    // Le TTL garantit plusieurs tentatives puis s'éteint → aucun coût au repos.
+    if(needUpload) _bgUploadTTL = 8;
+    if(_bgUploadTTL > 0){ _bgSource.update(); _bgUploadTTL--; }
     // Placement du buffer (repère écran) selon la caméra COURANTE, y compris zoom.
     // Le buffer a été baké à cacheCam (cacheCamX/Y) et cacheCamZ, avec marge M et un
     // suréchantillonnage DPR. Un point monde P → pixel buffer (P-cacheCam)*cacheCamZ*DPR+M*DPR,
