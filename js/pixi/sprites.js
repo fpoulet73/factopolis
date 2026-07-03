@@ -110,14 +110,14 @@ const PixiSprites = (function(){
       stone: '#6f7780',
     };
   }
-  function tunnelTexture(du, dv){
+  function tunnelTexture(du, dv, backView = false){
     const style = tunnelStyle();
-    const key = [dirIndex(du, dv), style.roof, style.stone].join(':');
+    const key = [dirIndex(du, dv), backView ? 'back' : 'front', style.roof, style.stone].join(':');
     let t = tunnelTexCache.get(key);
     if(t) return t;
     const [cx, cy] = tunnelPortalAnchor(du, dv);
     t = bake(TUN.w, TUN.h, TUN.ax, TUN.ay, cx, cy,
-             () => drawTunnelPortalCore(du, dv, style.opening, style.roof, style.stone));
+             () => drawTunnelPortalCore(du, dv, style.opening, style.roof, style.stone, backView));
     tunnelTexCache.set(key, t);
     return t;
   }
@@ -140,6 +140,7 @@ const PixiSprites = (function(){
         const [rx, ry] = rotIdx(x, y);
         let [du, dv] = rotDir(def.dx, def.dy);
         let [sx, sy] = iso(du, dv);
+        const backView = sy < 0;
         let px, py;
         if(sy > 0){
           // Galerie orientée vers le bas de l'écran : le dôme (toujours dessiné
@@ -163,7 +164,7 @@ const PixiSprites = (function(){
           }
         }
         const s = getPool(tunnelPool, n, layer);
-        applyBaked(s, tunnelTexture(du, dv));
+        applyBaked(s, tunnelTexture(du, dv, backView));
         s.visible = true;
         s.position.set(px, py);
         s.zIndex = spriteDepthKey(rx + 0.5, ry + 0.5, 0.6);

@@ -108,7 +108,7 @@ function tunnelPortalMouthPoint(rx, ry, x, y, dx, dy){
   const c = tileCenterIso(rx, ry, x, y);
   return [c[0] - sx * 0.5, c[1] - sy * 0.5];
 }
-function drawTunnelPortalCore(du, dv, color, roofColor, rimColor){
+function drawTunnelPortalCore(du, dv, color, roofColor, rimColor, backView = false){
   const [sx, sy] = iso(du, dv);
   const slen = Math.hypot(sx, sy);
   if(slen < 0.001) return;
@@ -179,6 +179,25 @@ function drawTunnelPortalCore(du, dv, color, roofColor, rimColor){
   const lipBack = roofBack.slice(lipStart, lipEnd).reverse();
   poly(lipFront.concat(lipBack));
   ctx.fillStyle = lipColor; ctx.fill();
+
+  // Vue arrière : la crête herbeuse masque l'ouverture. On ne dessine donc pas
+  // la bouche noire ni les rails intérieurs, seulement un léger pli de relief.
+  if(backView){
+    ctx.beginPath();
+    ctx.moveTo(lipFront[0][0], lipFront[0][1]);
+    for(let i = 1; i < lipFront.length; i++) ctx.lineTo(lipFront[i][0], lipFront[i][1]);
+    ctx.strokeStyle = shade(roofColor, -0.22);
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(outer.pts[0][0], outer.pts[0][1]);
+    for(let i = 1; i < outer.pts.length; i++) ctx.lineTo(outer.pts[i][0], outer.pts[i][1]);
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+    return;
+  }
 
   // Parement pierre de la bouche.
   poly(outer.pts);
