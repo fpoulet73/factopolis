@@ -108,6 +108,25 @@ function tunnelPortalMouthPoint(rx, ry, x, y, dx, dy){
   const c = tileCenterIso(rx, ry, x, y);
   return [c[0] - sx * 0.5, c[1] - sy * 0.5];
 }
+// Pose écran d'une bouche de tunnel. On distingue seulement 2 cas visuels :
+// - vue avant : la galerie part vers le haut de l'écran → ouverture visible ;
+// - vue arrière : la galerie part vers le bas → on voit surtout le talus arrière.
+// Le helper retourne la direction de dessin, le point d'ancrage et le mode visuel.
+function tunnelPortalPose(rx, ry, x, y, dx, dy){
+  const [gdu, gdv] = rotDir(dx, dy);
+  const [gsx, gsy] = iso(gdu, gdv);
+  if(gsy < 0){
+    const [px, py] = tunnelPortalMouthPoint(rx, ry, x, y, dx, dy);
+    return { du:gdu, dv:gdv, px, py, backView:false };
+  }
+  const c = tileCenterIso(rx, ry, x, y);
+  return {
+    du:-gdu, dv:-gdv,
+    px:c[0] + gsx * 0.5,
+    py:c[1] + gsy * 0.5,
+    backView:true,
+  };
+}
 function drawTunnelPortalCore(du, dv, color, roofColor, rimColor, backView = false){
   const [sx, sy] = iso(du, dv);
   const slen = Math.hypot(sx, sy);
@@ -118,8 +137,8 @@ function drawTunnelPortalCore(du, dv, color, roofColor, rimColor, backView = fal
   const pex = ex / elen, pey = ey / elen;
   const dirx = sx / slen, diry = sy / slen;
   const R = Math.hypot(TW2, TH2) / 2;
-  const mouthScale = backView ? 1 : 1.20;
-  const mouthHeightScale = backView ? 1 : 1.20;
+  const mouthScale = backView ? 1.00 : 1.20;
+  const mouthHeightScale = backView ? 1.00 : 1.20;
   const W = slen * 0.35 * mouthScale; // demi-largeur de la bouche visible
   const H = R * 0.84 * mouthHeightScale; // hauteur du vide intérieur
   const faceW = W * 1.50;        // parement pierre un peu plus large
@@ -177,25 +196,29 @@ function drawTunnelPortalCore(du, dv, color, roofColor, rimColor, backView = fal
 
   // Lèvre supérieure d'herbe au-dessus de l'arche.
   const lipStart = 9, lipEnd = outer.pts.length - 9;
-  const lipFront = outer.pts.slice(lipStart, lipEnd);
-  const lipBack = roofBack.slice(lipStart, lipEnd).reverse();
-  poly(lipFront.concat(lipBack));
+  const roofLip = roofBack.map((p, k)=> [p[0], p[1] - faceH * 0.10 * outer.weights[k]]);
+  const lipNear = (backView ? roofLip : outer.pts).slice(lipStart, lipEnd);
+  const lipFar = roofBack.slice(lipStart, lipEnd).reverse();
+  poly(lipNear.concat(lipFar));
   ctx.fillStyle = lipColor; ctx.fill();
 
   // Vue arrière : la crête herbeuse masque l'ouverture. On ne dessine donc pas
   // la bouche noire ni les rails intérieurs, seulement un léger pli de relief.
   if(backView){
+    const rearCrown = roofLip.slice(lipStart, lipEnd);
     ctx.beginPath();
-    ctx.moveTo(lipFront[0][0], lipFront[0][1]);
-    for(let i = 1; i < lipFront.length; i++) ctx.lineTo(lipFront[i][0], lipFront[i][1]);
+    ctx.moveTo(rearCrown[0][0], rearCrown[0][1]);
+    for(let i = 1; i < rearCrown.length; i++) ctx.lineTo(rearCrown[i][0], rearCrown[i][1]);
     ctx.strokeStyle = shade(roofColor, -0.22);
-    ctx.lineWidth = 1.1;
+    ctx.lineWidth = 1.25;
     ctx.stroke();
 
     ctx.beginPath();
     ctx.moveTo(outer.pts[0][0], outer.pts[0][1]);
-    for(let i = 1; i < outer.pts.length; i++) ctx.lineTo(outer.pts[i][0], outer.pts[i][1]);
-    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.lineTo(roofLip[0][0], roofLip[0][1]);
+    ctx.moveTo(outer.pts[outer.pts.length - 1][0], outer.pts[outer.pts.length - 1][1]);
+    ctx.lineTo(roofLip[roofLip.length - 1][0], roofLip[roofLip.length - 1][1]);
+    ctx.strokeStyle = 'rgba(0,0,0,0.16)';
     ctx.lineWidth = 0.9;
     ctx.stroke();
     return;

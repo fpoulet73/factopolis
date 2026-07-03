@@ -138,35 +138,11 @@ const PixiSprites = (function(){
         const nx = x + def.dx, ny = y + def.dy;
         if(!inMap(nx, ny) || !railTunnel[ny * N + nx]) continue;
         const [rx, ry] = rotIdx(x, y);
-        let [du, dv] = rotDir(def.dx, def.dy);
-        let [sx, sy] = iso(du, dv);
-        let backView = sy < 0;
-        let px, py;
-        if(sy > 0){
-          // Galerie orientée vers le bas de l'écran : le dôme (toujours dessiné
-          // vers le haut/arrière, ouverture face au joueur) laisserait sinon le
-          // rail de la tuile à découvert devant l'arche. On rend alors la bouche
-          // sur l'arête avant, mais vue de dos : depuis cette perspective, on doit
-          // surtout voir le talus qui remonte vers le relief, pas l'ouverture noire.
-          du = -du; dv = -dv; sx = -sx; sy = -sy;
-          backView = true;
-          const c = tileCenterIso(rx, ry, x, y);
-          px = c[0] - sx * 0.5; py = c[1] - sy * 0.5;
-        } else {
-          // Arête basse réelle : centre tuile plate (côté rail = -d) + demi-pas vers pente.
-          const fux = x - def.dx, fuy = y - def.dy;
-          if(inMap(fux, fuy)){
-            const fc = tileCenterIso(rx - du, ry - dv, fux, fuy);
-            px = fc[0] + sx * 0.5; py = fc[1] + sy * 0.5;
-          } else {
-            const c = tileCenterIso(rx, ry, x, y);
-            px = c[0] - sx * 0.5; py = c[1] - sy * 0.5;
-          }
-        }
+        const pose = tunnelPortalPose(rx, ry, x, y, def.dx, def.dy);
         const s = getPool(tunnelPool, n, layer);
-        applyBaked(s, tunnelTexture(du, dv, backView));
+        applyBaked(s, tunnelTexture(pose.du, pose.dv, pose.backView));
         s.visible = true;
-        s.position.set(px, py);
+        s.position.set(pose.px, pose.py);
         s.zIndex = spriteDepthKey(rx + 0.5, ry + 0.5, 0.6);
         n++;
       }
