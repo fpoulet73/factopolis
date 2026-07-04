@@ -105,9 +105,9 @@ const PixiSprites = (function(){
   function tunnelStyle(){
     const grass = graphicBasePack()?.grass || [];
     return {
-      opening: '#13181d',
+      opening: '#0d1116',
       roof: grass[Math.min(1, Math.max(0, grass.length - 1))] || grass[0] || '#6fa44a',
-      stone: '#6f7780',
+      stone: '#9aa1ab',
     };
   }
   function tunnelTexture(du, dv, backView = false){

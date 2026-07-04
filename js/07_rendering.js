@@ -135,10 +135,14 @@ function drawTunnelPortalCore(du, dv, color, roofColor, rimColor, backView = fal
   const [ex, ey] = iso(-dv, du);                 // arête au sol (diamètre de l'arche)
   const elen = Math.hypot(ex, ey) || 1;
   const pex = ex / elen, pey = ey / elen;
-  const dirx = sx / slen, diry = sy / slen;
+  // Back view : la base reste à l'arête (bord galerie), mais le talus doit
+  // grimper la pente (vers la colline) et non déborder sur la tuile plate.
+  // On inverse donc la direction d'extension du talus pour ce cas.
+  const dsign = backView ? -1 : 1;
+  const dirx = dsign * sx / slen, diry = dsign * sy / slen;
   const R = Math.hypot(TW2, TH2) / 2;
-  const mouthScale = backView ? 1.00 : 1.20;
-  const mouthHeightScale = backView ? 1.00 : 1.20;
+  const mouthScale = 1.20;
+  const mouthHeightScale = 1.20;
   const W = slen * 0.35 * mouthScale; // demi-largeur de la bouche visible
   const H = R * 0.84 * mouthHeightScale; // hauteur du vide intérieur
   const faceW = W * 1.50;        // parement pierre un peu plus large
@@ -168,6 +172,7 @@ function drawTunnelPortalCore(du, dv, color, roofColor, rimColor, backView = fal
   const soilColor = shade('#6f5236', -0.08);
   const shoulderColor = shade(roofColor, -0.16);
   const lipColor = shade(roofColor, 0.12);
+  const roofLip = roofBack.map((p, k)=> [p[0], p[1] - faceH * 0.10 * outer.weights[k]]);
 
   // Dessous de talus : légère terre visible sous l'herbe.
   ctx.beginPath();
@@ -181,48 +186,30 @@ function drawTunnelPortalCore(du, dv, color, roofColor, rimColor, backView = fal
   ctx.beginPath();
   ctx.moveTo(outer.pts[0][0], outer.pts[0][1]);
   for(let k = 1; k < outer.pts.length; k++) ctx.lineTo(outer.pts[k][0], outer.pts[k][1]);
-  for(let k = roofBack.length - 1; k >= 0; k--) ctx.lineTo(roofBack[k][0], roofBack[k][1] - faceH * 0.10 * outer.weights[k]);
+  for(let k = roofLip.length - 1; k >= 0; k--) ctx.lineTo(roofLip[k][0], roofLip[k][1]);
   ctx.closePath();
   ctx.fillStyle = roofColor; ctx.fill();
 
   // Joues du talus, plus sombres, pour retrouver un volume proche du modèle cible.
   const shoulderSpan = 7;
-  const leftShoulder = outer.pts.slice(0, shoulderSpan).concat(roofBack.slice(0, shoulderSpan).reverse());
+  const leftShoulder = outer.pts.slice(0, shoulderSpan).concat(roofLip.slice(0, shoulderSpan).reverse());
   poly(leftShoulder);
   ctx.fillStyle = shoulderColor; ctx.fill();
-  const rightShoulder = outer.pts.slice(-shoulderSpan).concat(roofBack.slice(-shoulderSpan).reverse());
+  const rightShoulder = outer.pts.slice(-shoulderSpan).concat(roofLip.slice(-shoulderSpan).reverse());
   poly(rightShoulder);
   ctx.fillStyle = shoulderColor; ctx.fill();
 
   // Lèvre supérieure d'herbe au-dessus de l'arche.
   const lipStart = 9, lipEnd = outer.pts.length - 9;
-  const roofLip = roofBack.map((p, k)=> [p[0], p[1] - faceH * 0.10 * outer.weights[k]]);
-  const lipNear = (backView ? roofLip : outer.pts).slice(lipStart, lipEnd);
+  const lipNear = outer.pts.slice(lipStart, lipEnd);
   const lipFar = roofBack.slice(lipStart, lipEnd).reverse();
   poly(lipNear.concat(lipFar));
   ctx.fillStyle = lipColor; ctx.fill();
 
-  // Vue arrière : la crête herbeuse masque l'ouverture. On ne dessine donc pas
-  // la bouche noire ni les rails intérieurs, seulement un léger pli de relief.
-  if(backView){
-    const rearCrown = roofLip.slice(lipStart, lipEnd);
-    ctx.beginPath();
-    ctx.moveTo(rearCrown[0][0], rearCrown[0][1]);
-    for(let i = 1; i < rearCrown.length; i++) ctx.lineTo(rearCrown[i][0], rearCrown[i][1]);
-    ctx.strokeStyle = shade(roofColor, -0.22);
-    ctx.lineWidth = 1.25;
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(outer.pts[0][0], outer.pts[0][1]);
-    ctx.lineTo(roofLip[0][0], roofLip[0][1]);
-    ctx.moveTo(outer.pts[outer.pts.length - 1][0], outer.pts[outer.pts.length - 1][1]);
-    ctx.lineTo(roofLip[roofLip.length - 1][0], roofLip[roofLip.length - 1][1]);
-    ctx.strokeStyle = 'rgba(0,0,0,0.16)';
-    ctx.lineWidth = 0.9;
-    ctx.stroke();
-    return;
-  }
+  // Vue arrière : on voit le dos du talus (colline herbeuse), pas l'entrée de
+  // la galerie — la bouche est masquée par la perspective. On s'arrête ici,
+  // avant le parement pierre et la bouche sombre.
+  if(backView) return;
 
   // Parement pierre de la bouche.
   poly(outer.pts);
