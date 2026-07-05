@@ -75,28 +75,6 @@ function entityIso(u, v){
   return liftedIso(u, v, entityLiftPxAtRot(u, v));
 }
 
-// Bouche de tunnel = demi-cylindre. Dessine UNE bouche pour la tuile (0,0) plate,
-// orientée par la direction TOURNÉE (du,dv) vers la montagne. Sert de générateur de
-// texture pour la couche sprites Pixi (baké par direction puis posé sur chaque
-// portail). L'ancre = milieu de l'arête basse (bx,by) : le sprite se place ensuite
-// sur l'arête réelle (au niveau de la tuile plate).
-// - demi-cercle noir dressé VERTICALEMENT (90° / tuile plate), base sur l'arête ;
-// - talus herbeux + parement pierre qui repartent dans la pente vers le relief.
-function tunnelPortalAnchor(du, dv){
-  const [sx, sy] = iso(du, dv);
-  const c0 = tileCenterIso(0, 0, 0, 0);
-  return [c0[0] - sx * 0.5, c0[1] - sy * 0.5];
-}
-function tunnelArchPoints(bx, by, pex, pey, w, h, steps){
-  const pts = [], weights = [];
-  for(let k = 0; k <= steps; k++){
-    const th = Math.PI * k / steps;
-    const ct = Math.cos(th) * w, st = Math.sin(th);
-    pts.push([bx + ct * pex, by + ct * pey - st * h]);
-    weights.push(st);
-  }
-  return { pts, weights };
-}
 function tunnelPortalMouthPoint(rx, ry, x, y, dx, dy){
   const [du, dv] = rotDir(dx, dy);
   const [sx, sy] = iso(du, dv);
@@ -127,190 +105,21 @@ function tunnelPortalPose(rx, ry, x, y, dx, dy){
     backView:true,
   };
 }
-function drawTunnelPortalCore(du, dv, color, roofColor, rimColor, backView = false){
-  const [sx, sy] = iso(du, dv);
-  const slen = Math.hypot(sx, sy);
-  if(slen < 0.001) return;
-  const [bx, by] = tunnelPortalAnchor(du, dv);   // milieu de l'arête basse (tuile 0,0)
-  const [ex, ey] = iso(-dv, du);                 // arête au sol (diamètre de l'arche)
-  const elen = Math.hypot(ex, ey) || 1;
-  const pex = ex / elen, pey = ey / elen;
-  // Back view : la base reste à l'arête (bord galerie), mais le talus doit
-  // grimper la pente (vers la colline) et non déborder sur la tuile plate.
-  // On inverse donc la direction d'extension du talus pour ce cas.
-  const dsign = backView ? -1 : 1;
-  const dirx = dsign * sx / slen, diry = dsign * sy / slen;
-  const R = Math.hypot(TW2, TH2) / 2;
-  const mouthScale = 1.20;
-  const mouthHeightScale = 1.20;
-  const W = slen * 0.35 * mouthScale; // demi-largeur de la bouche visible
-  const H = R * 0.84 * mouthHeightScale; // hauteur du vide intérieur
-  const faceW = W * 1.50;        // parement pierre un peu plus large
-  const faceH = H * 1.13;
-  // Le remblai doit repartir vers le relief réel, mais rester sous l'arête haute
-  // de la tuile en pente.
-  const embankLen = slen * 0.72;
-  const crestLift = faceH * 0.15;
-  const outer = tunnelArchPoints(bx, by, pex, pey, faceW, faceH, 28);
-  const inner = tunnelArchPoints(bx, by, pex, pey, W, H, 28);
-  const roofBack = outer.pts.map((p, k)=>{
-    const w = Math.pow(outer.weights[k], 0.86);
-    return [
-      p[0] + dirx * embankLen * w,
-      p[1] + diry * embankLen * w - crestLift * w,
-    ];
-  });
-  const poly = (pts)=>{
-    if(!pts.length) return;
-    ctx.beginPath();
-    ctx.moveTo(pts[0][0], pts[0][1]);
-    for(let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-    ctx.closePath();
-  };
-  const faceColor = shade(rimColor, 0.38);
-  const stoneHi = shade(faceColor, 0.18);
-  const soilColor = shade('#6f5236', -0.08);
-  const shoulderColor = shade(roofColor, -0.16);
-  const lipColor = shade(roofColor, 0.12);
-  const roofLip = roofBack.map((p, k)=> [p[0], p[1] - faceH * 0.10 * outer.weights[k]]);
-
-  // Dessous de talus : légère terre visible sous l'herbe.
-  ctx.beginPath();
-  ctx.moveTo(outer.pts[0][0], outer.pts[0][1]);
-  for(let k = 1; k < outer.pts.length; k++) ctx.lineTo(outer.pts[k][0], outer.pts[k][1]);
-  for(let k = roofBack.length - 1; k >= 0; k--) ctx.lineTo(roofBack[k][0], roofBack[k][1]);
-  ctx.closePath();
-  ctx.fillStyle = soilColor; ctx.fill();
-
-  // Talus herbeux principal.
-  ctx.beginPath();
-  ctx.moveTo(outer.pts[0][0], outer.pts[0][1]);
-  for(let k = 1; k < outer.pts.length; k++) ctx.lineTo(outer.pts[k][0], outer.pts[k][1]);
-  for(let k = roofLip.length - 1; k >= 0; k--) ctx.lineTo(roofLip[k][0], roofLip[k][1]);
-  ctx.closePath();
-  ctx.fillStyle = roofColor; ctx.fill();
-
-  // Joues du talus, plus sombres, pour retrouver un volume proche du modèle cible.
-  const shoulderSpan = 7;
-  const leftShoulder = outer.pts.slice(0, shoulderSpan).concat(roofLip.slice(0, shoulderSpan).reverse());
-  poly(leftShoulder);
-  ctx.fillStyle = shoulderColor; ctx.fill();
-  const rightShoulder = outer.pts.slice(-shoulderSpan).concat(roofLip.slice(-shoulderSpan).reverse());
-  poly(rightShoulder);
-  ctx.fillStyle = shoulderColor; ctx.fill();
-
-  // Lèvre supérieure d'herbe au-dessus de l'arche.
-  const lipStart = 9, lipEnd = outer.pts.length - 9;
-  const lipNear = outer.pts.slice(lipStart, lipEnd);
-  const lipFar = roofBack.slice(lipStart, lipEnd).reverse();
-  poly(lipNear.concat(lipFar));
-  ctx.fillStyle = lipColor; ctx.fill();
-
-  // Vue arrière : on voit le dos du talus (colline herbeuse), pas l'entrée de
-  // la galerie — la bouche est masquée par la perspective. On s'arrête ici,
-  // avant le parement pierre et la bouche sombre.
-  if(backView) return;
-
-  // Parement pierre de la bouche.
-  poly(outer.pts);
-  ctx.fillStyle = faceColor; ctx.fill();
-  ctx.strokeStyle = shade(rimColor, -0.08);
-  ctx.lineWidth = 0.7;
-  ctx.stroke();
-
-  // Petit biseau clair sur l'extrados pour casser l'effet "autocollant".
-  const crown = outer.pts.slice(10, outer.pts.length - 10);
-  ctx.beginPath();
-  ctx.moveTo(crown[0][0], crown[0][1]);
-  for(let i = 1; i < crown.length; i++) ctx.lineTo(crown[i][0], crown[i][1]);
-  ctx.strokeStyle = stoneHi;
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Ombre intérieure : donne de la profondeur avant le vide noir.
-  ctx.beginPath();
-  ctx.moveTo(inner.pts[0][0], inner.pts[0][1]);
-  for(let k = 1; k < inner.pts.length; k++) ctx.lineTo(inner.pts[k][0], inner.pts[k][1]);
-  for(let k = inner.pts.length - 1; k >= 0; k--){
-    const w = Math.pow(inner.weights[k], 1.1);
-    ctx.lineTo(
-      inner.pts[k][0] + dirx * embankLen * 0.16 * w,
-      inner.pts[k][1] + diry * embankLen * 0.16 * w - H * 0.08 * w
-    );
+// Bouche de tunnel = tuile de rail (en pente) hors galerie, reliée à au moins
+// une tuile souterraine. Aucune voie n'y est tracée sur le Canvas : le portail
+// PNG (couche sprites) matérialise l'entrée et la voie y est déjà représentée.
+function railTileIsMouth(x, y){
+  if(typeof rail === 'undefined' || typeof railTunnel === 'undefined' || !railTunnel) return false;
+  const i = y * N + x;
+  if(!rail[i] || railTunnel[i]) return false;
+  for(const def of RAIL_DIRS){
+    if(!(rail[i] & def.bit)) continue;
+    const nx = x + def.dx, ny = y + def.dy;
+    if(nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+    if(railTunnel[ny * N + nx]) return true;
   }
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(0,0,0,0.22)';
-  ctx.fill();
-
-  // Bouche sombre (demi-cercle avant) par-dessus.
-  poly(inner.pts);
-  ctx.fillStyle = color; ctx.fill();
-  ctx.strokeStyle = shade(faceColor, -0.18);
-  ctx.lineWidth = 0.6;
-  ctx.stroke();
-
-  // Voie bien visible dans la galerie, pour que la continuité du tunnel soit explicite.
-  ctx.save();
-  poly(inner.pts);
-  ctx.clip();
-  const nearGauge = Math.max(2.2, W * 0.16);
-  const farGauge = nearGauge * 0.42;
-  const inStart = [bx + dirx * 0.35, by + diry * 0.35];
-  const inEnd = [bx + dirx * (W * 1.26), by + diry * (W * 1.26) - H * 0.09];
-  const nearL = [inStart[0] - pex * nearGauge, inStart[1] - pey * nearGauge];
-  const nearR = [inStart[0] + pex * nearGauge, inStart[1] + pey * nearGauge];
-  const farL = [inEnd[0] - pex * farGauge, inEnd[1] - pey * farGauge];
-  const farR = [inEnd[0] + pex * farGauge, inEnd[1] + pey * farGauge];
-
-  ctx.beginPath();
-  ctx.moveTo(nearL[0], nearL[1]);
-  ctx.lineTo(nearR[0], nearR[1]);
-  ctx.lineTo(farR[0], farR[1]);
-  ctx.lineTo(farL[0], farL[1]);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(58,46,34,0.78)';
-  ctx.fill();
-
-  ctx.strokeStyle = 'rgba(84,62,40,0.82)';
-  ctx.lineWidth = 2.8;
-  ctx.beginPath();
-  ctx.moveTo(inStart[0], inStart[1]);
-  ctx.lineTo(inEnd[0], inEnd[1]);
-  ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(130,98,60,0.82)';
-  ctx.lineWidth = 1.6;
-  ctx.beginPath();
-  for(let k = 0; k < 5; k++){
-    const t = 0.12 + k * 0.15;
-    const cx = inStart[0] + (inEnd[0] - inStart[0]) * t;
-    const cy = inStart[1] + (inEnd[1] - inStart[1]) * t;
-    const half = Math.max(1.4, (1 - t * 0.6) * faceW * 0.11);
-    ctx.moveTo(cx - pex * half, cy - pey * half);
-    ctx.lineTo(cx + pex * half, cy + pey * half);
-  }
-  ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(224,230,236,0.98)';
-  ctx.lineWidth = 1.55;
-  ctx.beginPath();
-  ctx.moveTo(nearL[0], nearL[1]);
-  ctx.lineTo(farL[0], farL[1]);
-  ctx.moveTo(nearR[0], nearR[1]);
-  ctx.lineTo(farR[0], farR[1]);
-  ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(255,255,255,0.26)';
-  ctx.lineWidth = 0.6;
-  ctx.beginPath();
-  ctx.moveTo(nearL[0] + pex * 0.4, nearL[1] + pey * 0.4);
-  ctx.lineTo(farL[0] + pex * 0.2, farL[1] + pey * 0.2);
-  ctx.moveTo(nearR[0] - pex * 0.4, nearR[1] - pey * 0.4);
-  ctx.lineTo(farR[0] - pex * 0.2, farR[1] - pey * 0.2);
-  ctx.stroke();
-  ctx.restore();
+  return false;
 }
-
 function terrainTilePoints(rx, ry, x, y){
   const step = terrainReliefStepPx();
   // Une tuile d'eau est plate au niveau du plan d'eau.
@@ -2609,37 +2418,36 @@ function draw(){
     }
 
     if(rail[i] && !(railTunnel && railTunnel[i])){
-      // Bouche de tunnel : rail rendu à plat sur le plancher du tunnel.
+      // Bouche de tunnel (tuile-pente) : aucun rail dessiné sur le Canvas — le
+      // portail PNG (couche sprites) gère l'entrée et la voie y est intégrée.
+      if(railTileIsMouth(x, y)) continue;
       const cR = railTileCenterIso(rx, ry, x, y);
       railNodes.push(cR);
       const mask = rail[i];
       const owner = railOwner ? railOwner[i] : -1;
       let links = 0;
-      let isPortal = false;
       const railDirs = [];
       for(const def of RAIL_DIRS){
         if(!(mask & def.bit)) continue;
         const nx = x+def.dx, ny = y+def.dy;
         if(!inMap(nx,ny)) continue;
         const [du,dv] = rotDir(def.dx, def.dy);
-        // Bouche de tunnel : cette tuile de rail (entrée/sortie, en pente) se
-        // connecte à une tuile souterraine masquée → on ne trace ni traverse ni
-        // rail complet vers elle : la continuité est rendue directement dans le
-        // sprite de la bouche pour éviter les artefacts de superposition.
-        if(railTunnel && railTunnel[ny*N+nx]){
-          isPortal = true; // bouche → sprite Pixi (PixiSprites.updateTunnels)
-          continue;
-        }
         links++;
         railDirs.push([du, dv]);
         if(ny < y || (ny === y && nx < x)) continue;
         // Rail masks describe explicit edges. Do not hide a diagonal edge at a
         // junction merely because the tile also has an orthogonal connection.
-        railSegments.push({ a:cR, b:liftedIso(rx+du+0.5, ry+dv+0.5, railLiftPxAt(nx, ny)), dir:[du, dv], owner });
+        // Voisine = bouche de tunnel : on arrête le rail à l'arête partagée
+        // (base du portail) pour qu'il ne déborde pas sur la tuile-pente.
+        let b;
+        if(railTileIsMouth(nx, ny)){
+          b = liftedIso(rx+du*0.5+0.5, ry+dv*0.5+0.5, railLiftPxAt(x, y));
+        } else {
+          b = liftedIso(rx+du+0.5, ry+dv+0.5, railLiftPxAt(nx, ny));
+        }
+        railSegments.push({ a:cR, b, dir:[du, dv], owner });
       }
-      // Une bouche de tunnel sans autre voie ne doit PAS afficher de pastille de
-      // rail isolé (le petit rond) : c'est l'arche qui matérialise l'extrémité.
-      if(!links && !isPortal) railSingles.push({ c:cR, owner });
+      if(!links) railSingles.push({ c:cR, owner });
       else if(links <= 2) railNodeSleepers.push({ center:cR, dirs:railDirs });
     }
   }
@@ -2758,8 +2566,8 @@ function draw(){
     }
     ctx.stroke();
   };
-  // Bouches de tunnel : déléguées à la couche sprites PixiJS (demi-cylindre baké par
-  // direction, cf. drawTunnelPortalCore + PixiSprites.updateTunnels).
+  // Bouches de tunnel : déléguées à la couche sprites PixiJS (PNG par direction,
+  // cf. PixiSprites.updateTunnels).
   // Dessin du sol routes+rails : uniquement si le cache doit être (re)généré.
   // La COLLECTE ci-dessus (segments, feux) tourne chaque frame pour que les feux
   // dynamiques restent à jour ; seuls les tracés coûteux sont conditionnés.

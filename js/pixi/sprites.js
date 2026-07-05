@@ -94,30 +94,32 @@ const PixiSprites = (function(){
       rebuildTrees(layer);
   }
 
-  // --- Bouches de tunnel (demi-cylindre baké par direction) ---------------
-  // Une bouche par arête rail↔tunnel. Texture bakée par direction écran (dirIndex)
-  // via drawTunnelPortalCore ; sprite posé sur l'arête basse réelle (niveau tuile
-  // plate). zIndex biaisé au-dessus des trains → un train « disparaît » sous l'arche.
+  // --- Bouches de tunnel (PNG par direction) ------------------------------
+  // Une bouche par arête rail↔tunnel. Texture PNG par direction écran (dirIndex)
+  // ; sprite posé sur l'arête basse réelle (niveau tuile plate). zIndex biaisé
+  // au-dessus des trains → un train « disparaît » sous l'arche.
+  // Les galeries étant toujours cardinales, dirIndex ∈ {12, 18} après retournement
+  // back/front (12 = dir (-1,0), 18 = dir (0,-1)) → 4 PNG suffisent.
+  // PNG 256×224 = TUN(128×112) × SS(2) : même ancre normalisée (0.5, 0.625).
   const TUN = { w:128, h:112, ax:64, ay:70 };
-  const tunnelTexCache = new Map(); // dirIndex -> baked
+  const TUN_PNG_DIR = { 12:'12', 18:'18' };
+  const tunnelTexCache = new Map(); // "dir-back/front" -> { texture, ax, ay, w, h }
   let tunnelPool = [];
   let tunnelBuiltVersion = -1, tunnelBuiltRot = -1, tunnelBuiltN = -1, tunnelBuiltPack = '';
-  function tunnelStyle(){
-    const grass = graphicBasePack()?.grass || [];
-    return {
-      opening: '#0d1116',
-      roof: grass[Math.min(1, Math.max(0, grass.length - 1))] || grass[0] || '#6fa44a',
-      stone: '#9aa1ab',
-    };
-  }
+  // Précharge les 4 PNG pour éviter le pop au 1er portal.
+  for(const num of Object.values(TUN_PNG_DIR))
+    for(const side of ['front','back'])
+      PIXI.Assets.load('assets/tunnels/portal-' + num + '-' + side + '.png')
+        .then(() => {}, () => {});
   function tunnelTexture(du, dv, backView = false){
-    const style = tunnelStyle();
-    const key = [dirIndex(du, dv), backView ? 'back' : 'front', style.roof, style.stone].join(':');
+    const idx = dirIndex(du, dv);
+    const num = TUN_PNG_DIR[idx] || '18'; // tolérant : défaut 18
+    const side = backView ? 'back' : 'front';
+    const key = num + '-' + side;
     let t = tunnelTexCache.get(key);
     if(t) return t;
-    const [cx, cy] = tunnelPortalAnchor(du, dv);
-    t = bake(TUN.w, TUN.h, TUN.ax, TUN.ay, cx, cy,
-             () => drawTunnelPortalCore(du, dv, style.opening, style.roof, style.stone, backView));
+    const url = 'assets/tunnels/portal-' + key + '.png';
+    t = { texture: PIXI.Texture.from(url), ax: TUN.ax, ay: TUN.ay, w: TUN.w, h: TUN.h };
     tunnelTexCache.set(key, t);
     return t;
   }
