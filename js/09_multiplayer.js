@@ -2916,13 +2916,17 @@ function mpInjectUI(){
   </button>
   <div id="mpNewContent" style="display:none">
     <label style="display:block;color:#8fa3bf;font-size:11px">Taille de carte</label>
-    <input id="mpWorldSize" type="number" min="32" max="128" step="8" style="${INP}">
-    <label style="display:block;color:#8fa3bf;font-size:11px">Joueurs max</label>
-    <input id="mpMaxPlayers" type="number" min="1" max="32" step="1" style="${INP}">
+    <select id="mpWorldSize" style="${INP}">
+      <option value="128">128×128</option>
+      <option value="192">192×192</option>
+      <option value="256">256×256</option>
+    </select>
     <label style="display:block;color:#8fa3bf;font-size:11px">Montagnes (% de la carte)</label>
     <input id="mpMountainPct" type="number" min="0" max="80" step="1" style="${INP}">
     <label style="display:block;color:#8fa3bf;font-size:11px">Hauteur max des montagnes (tuiles)</label>
     <input id="mpMountainMaxHeight" type="number" min="1" max="12" step="1" style="${INP}">
+    <label style="display:block;color:#8fa3bf;font-size:11px">Ressources (% des valeurs par défaut)</label>
+    <input id="mpResourceFactor" type="number" min="10" max="300" step="10" style="${INP}">
     <button class="tbtn" id="mpBtnNewWorld" style="width:100%">Créer la carte</button>
     <div id="mpWorldErr" style="color:#ff9a8a;font-size:11px;min-height:14px;margin-top:4px"></div>
   </div>
@@ -3021,9 +3025,9 @@ function mpInjectUI(){
     })) return;
     const config = normalizeWorldConfig({
       size: $('mpWorldSize').value,
-      maxPlayers: $('mpMaxPlayers').value,
       mountainPct: $('mpMountainPct').value,
       mountainMaxHeight: $('mpMountainMaxHeight').value,
+      resourceFactor: Number($('mpResourceFactor').value) / 100,
     });
     genWorld(config);
     MP.ws.send(JSON.stringify({ type:'new_world', config, state:serializeState() }));
@@ -3114,9 +3118,9 @@ function mpRenderNewCollapse(){
 function mpSyncWorldInputs(){
   if(!$('mpWorldSize')) return;
   $('mpWorldSize').value = WORLD.size;
-  $('mpMaxPlayers').value = WORLD.maxPlayers;
   $('mpMountainPct').value = WORLD.mountainPct;
   $('mpMountainMaxHeight').value = WORLD.mountainMaxHeight;
+  $('mpResourceFactor').value = Math.round((WORLD.resourceFactor ?? 1) * 100);
 }
 
 function mpShowAuthError(msg){

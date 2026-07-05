@@ -229,7 +229,8 @@ const httpServer = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server: httpServer });
 
 // ---- état global ----
-const DEFAULT_WORLD_CONFIG = { size: 64, maxPlayers: 8, reliefEnabled: true, mountainPct: 15, mountainMaxHeight: 6, resources: { tree: 8, wheat: 4, cotton: 1, iron: 2, coal: 2 } };
+const MAP_SIZE_OPTIONS = [128, 192, 256];
+const DEFAULT_WORLD_CONFIG = { size: 128, maxPlayers: 8, reliefEnabled: true, mountainPct: 15, mountainMaxHeight: 6, resourceFactor: 1, resources: { tree: 8, wheat: 4, cotton: 1, iron: 2, coal: 2 } };
 let nextId = 1;
 let nextRoomId = 1;
 let allClients = [];   // tous les clients (lobby + rooms)
@@ -439,22 +440,38 @@ function clampPercent(v, def) {
   if (!Number.isFinite(v)) return def;
   return Math.max(0, Math.min(40, Math.round(v * 10) / 10));
 }
+function clampFloat(v, min, max, def) {
+  v = Number(v);
+  if (!Number.isFinite(v)) return def;
+  return Math.max(min, Math.min(max, v));
+}
+function snapMapSize(v, def) {
+  v = Number(v);
+  if (!Number.isFinite(v)) return def;
+  let best = MAP_SIZE_OPTIONS[0], bestDiff = Infinity;
+  for (const opt of MAP_SIZE_OPTIONS) {
+    const diff = Math.abs(opt - v);
+    if (diff < bestDiff) { bestDiff = diff; best = opt; }
+  }
+  return best;
+}
 function sanitizeWorldConfig(config = {}) {
   const base = DEFAULT_WORLD_CONFIG;
-  const resources = config.resources || {};
   const baseRes = base.resources;
+  const resourceFactor = clampFloat(config.resourceFactor, 0.1, 3, base.resourceFactor);
   return {
-    size:       clampInt(config.size, 32, 128, base.size),
+    size:       snapMapSize(config.size, base.size),
     maxPlayers: clampInt(config.maxPlayers, 1, 32, base.maxPlayers),
     reliefEnabled: config.reliefEnabled !== false,
     mountainPct:       clampInt(config.mountainPct, 0, 80, base.mountainPct),
     mountainMaxHeight: clampInt(config.mountainMaxHeight, 1, 12, base.mountainMaxHeight),
+    resourceFactor,
     resources: {
-      tree:   clampPercent(resources.tree,   baseRes.tree),
-      wheat:  clampPercent(resources.wheat,  baseRes.wheat),
-      cotton: clampPercent(resources.cotton, baseRes.cotton),
-      iron:   clampPercent(resources.iron,   baseRes.iron),
-      coal:   clampPercent(resources.coal,   baseRes.coal),
+      tree:   clampPercent(baseRes.tree   * resourceFactor, baseRes.tree),
+      wheat:  clampPercent(baseRes.wheat  * resourceFactor, baseRes.wheat),
+      cotton: clampPercent(baseRes.cotton * resourceFactor, baseRes.cotton),
+      iron:   clampPercent(baseRes.iron   * resourceFactor, baseRes.iron),
+      coal:   clampPercent(baseRes.coal   * resourceFactor, baseRes.coal),
     },
   };
 }

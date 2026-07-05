@@ -61,9 +61,9 @@ const CONFIG = {
     },
     ressources: {
       tree:   4,
-      wheat:  0.05,
-      cotton: 0.04,
-      iron:   0.05,
+      wheat:  0.09,
+      cotton: 0.05,
+      iron:   0.1,
       coal:   0.1,
     },
   },

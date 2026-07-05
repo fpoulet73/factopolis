@@ -146,16 +146,29 @@ function clampNum(v, min, max, def){
   return Math.max(min, Math.min(max, v));
 }
 
+const MAP_SIZE_OPTIONS = [128, 192, 256];
+function snapMapSize(v, def){
+  v = Number(v);
+  if(!Number.isFinite(v)) return def;
+  let best = MAP_SIZE_OPTIONS[0], bestDiff = Infinity;
+  for(const opt of MAP_SIZE_OPTIONS){
+    const diff = Math.abs(opt - v);
+    if(diff < bestDiff){ bestDiff = diff; best = opt; }
+  }
+  return best;
+}
+
 function worldDefaultsFromConfig(){
   const worldCfg = CFG.monde || {};
   const resourcesCfg = worldCfg.ressources || {};
   return {
-    size: Math.round(clampNum(worldCfg.taille, 32, 128, 64)),
+    size: snapMapSize(worldCfg.taille, 128),
     maxPlayers: Math.round(clampNum(worldCfg.joueursMax, 1, 32, 8)),
     waterPct: clampNum(worldCfg.eauPct, 0, 100, 40),
     reliefEnabled: worldCfg.reliefEnabled !== false,
     mountainPct: clampNum(worldCfg.montagnePct, 0, 80, 15),
     mountainMaxHeight: Math.round(clampNum(worldCfg.montagneHauteurMax, 1, 12, 6)),
+    resourceFactor: 1,
     resources: {
       tree: clampNum(resourcesCfg.tree, 0, 100, 8),
       wheat: clampNum(resourcesCfg.wheat, 0, 100, 4),
@@ -171,14 +184,23 @@ let WORLD = normalizeWorldConfig(WORLD_DEFAULTS);
 
 function normalizeWorldConfig(config){
   const c = config || {};
+  const resourceFactor = clampNum(c.resourceFactor, 0.1, 3, WORLD_DEFAULTS.resourceFactor);
+  const baseRes = WORLD_DEFAULTS.resources;
   return {
-    size: Math.round(clampNum(c.size, 32, 128, WORLD_DEFAULTS.size)),
+    size: snapMapSize(c.size, WORLD_DEFAULTS.size),
     maxPlayers: Math.round(clampNum(c.maxPlayers, 1, 32, WORLD_DEFAULTS.maxPlayers)),
     waterPct: WORLD_DEFAULTS.waterPct,
     reliefEnabled: c.reliefEnabled !== false,
     mountainPct: clampNum(c.mountainPct, 0, 80, WORLD_DEFAULTS.mountainPct),
     mountainMaxHeight: Math.round(clampNum(c.mountainMaxHeight, 1, 12, WORLD_DEFAULTS.mountainMaxHeight)),
-    resources: { ...WORLD_DEFAULTS.resources },
+    resourceFactor,
+    resources: {
+      tree: clampNum(baseRes.tree * resourceFactor, 0, 100, baseRes.tree),
+      wheat: clampNum(baseRes.wheat * resourceFactor, 0, 100, baseRes.wheat),
+      cotton: clampNum(baseRes.cotton * resourceFactor, 0, 100, baseRes.cotton),
+      iron: clampNum(baseRes.iron * resourceFactor, 0, 100, baseRes.iron),
+      coal: clampNum(baseRes.coal * resourceFactor, 0, 100, baseRes.coal),
+    },
   };
 }
 
