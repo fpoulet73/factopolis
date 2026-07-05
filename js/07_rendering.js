@@ -25,6 +25,19 @@ function railLiftPxAt(x, y){
 function railTileCenterIso(rx, ry, x, y){
   return liftedIso(rx + 0.5, ry + 0.5, railLiftPxAt(x, y));
 }
+// Altitude (px) du milieu de l'arête de la tuile (x,y) dans la direction cardinale
+// (dx,dy) = moyenne des 2 coins encadrant l'arête. Sert à tracer les rails bord→bord
+// pour qu'ils restent parallèles aux arêtes iso sur les pentes (la lift au centre
+// d'une tuile en pente moyenne la pente et rend le rail trop plat). Diagonale → centre.
+function railEdgeLiftPx(x, y, dx, dy){
+  let c1 = 0, c2 = 0;
+  if(dx === 1){ c1 = terrainCornerLevelAt(x+1, y); c2 = terrainCornerLevelAt(x+1, y+1); }
+  else if(dx === -1){ c1 = terrainCornerLevelAt(x, y); c2 = terrainCornerLevelAt(x, y+1); }
+  else if(dy === 1){ c1 = terrainCornerLevelAt(x, y+1); c2 = terrainCornerLevelAt(x+1, y+1); }
+  else if(dy === -1){ c1 = terrainCornerLevelAt(x, y); c2 = terrainCornerLevelAt(x+1, y); }
+  else { return terrainLevelAtFloat(x+0.5, y+0.5) * terrainReliefStepPx(); }
+  return ((c1 + c2) * 0.5) * terrainReliefStepPx();
+}
 
 // Altitude d'un véhicule : à plat sur le plancher du tunnel quand il traverse une
 // bouche ou une galerie souterraine (sinon il grimperait sur la montagne percée),
@@ -2418,8 +2431,7 @@ function draw(){
     }
 
     if(rail[i] && !(railTunnel && railTunnel[i])){
-      // Bouche de tunnel (tuile-pente) : aucun rail dessiné sur le Canvas — le
-      // portail PNG (couche sprites) gère l'entrée et la voie y est intégrée.
+      // Bouche de tunnel : aucun rail dessiné sur le Canvas (portail PNG).
       if(railTileIsMouth(x, y)) continue;
       const cR = railTileCenterIso(rx, ry, x, y);
       railNodes.push(cR);
@@ -2427,24 +2439,39 @@ function draw(){
       const owner = railOwner ? railOwner[i] : -1;
       let links = 0;
       const railDirs = [];
+      const handled = new Set();
+      // Axes cardinaux rectilignes : un segment bord→bord par tuile, hauteurs
+      // prises aux coins de l'arête (railEdgeLiftPx). Ainsi le rail suit la
+      // surface et reste PARALLÈLE aux arêtes iso même sur les pentes à 45°.
+      // Sur tuile plate, bord→bord est collinéaire à centre→centre (rendu
+      // inchangé). La tuile voisine relie ses propres bords au même point
+      // d'arête partagée → pas de chevauchement ni de trou.
+      for(const [dx,dy,bf,bb] of [[1,0,1,2],[0,1,4,8]]){
+        if(!((mask & bf) && (mask & bb))) continue;
+        const fx=x+dx, fy=y+dy, bx=x-dx, by=y-dy;
+        if(!inMap(fx,fy) || !rail[fy*N+fx] || (railTunnel && railTunnel[fy*N+fx])) continue;
+        if(!inMap(bx,by) || !rail[by*N+bx] || (railTunnel && railTunnel[by*N+bx])) continue;
+        const [du,dv] = rotDir(dx,dy);
+        const a = liftedIso(rx+0.5-du*0.5, ry+0.5-dv*0.5, railEdgeLiftPx(x,y,-dx,-dy));
+        const b = liftedIso(rx+0.5+du*0.5, ry+0.5+dv*0.5, railEdgeLiftPx(x,y,dx,dy));
+        railSegments.push({ a, b, dir:[du,dv], owner });
+        handled.add(bf); handled.add(bb);
+        links += 2; railDirs.push([du,dv],[-du,-dv]);
+      }
+      // Autres directions (virages, branches, diagonales, impasses) : demi-
+      // segment centre→bord, raccordé au même point d'arête que le voisin.
       for(const def of RAIL_DIRS){
-        if(!(mask & def.bit)) continue;
+        if(!(mask & def.bit) || handled.has(def.bit)) continue;
         const nx = x+def.dx, ny = y+def.dy;
-        if(!inMap(nx,ny)) continue;
         const [du,dv] = rotDir(def.dx, def.dy);
-        links++;
-        railDirs.push([du, dv]);
-        if(ny < y || (ny === y && nx < x)) continue;
-        // Rail masks describe explicit edges. Do not hide a diagonal edge at a
-        // junction merely because the tile also has an orthogonal connection.
-        // Voisine = bouche de tunnel : on arrête le rail à l'arête partagée
-        // (base du portail) pour qu'il ne déborde pas sur la tuile-pente.
+        links++; railDirs.push([du, dv]);
+        if(!inMap(nx,ny)) continue;
         let b;
         if(railTileIsMouth(nx, ny)){
           b = liftedIso(rx+du*0.5+0.5, ry+dv*0.5+0.5, railLiftPxAt(x, y));
-        } else {
-          b = liftedIso(rx+du+0.5, ry+dv+0.5, railLiftPxAt(nx, ny));
-        }
+        } else if(rail[ny*N+nx] && !(railTunnel && railTunnel[ny*N+nx])){
+          b = liftedIso(rx+du*0.5+0.5, ry+dv*0.5+0.5, railEdgeLiftPx(x,y,def.dx,def.dy));
+        } else continue;
         railSegments.push({ a:cR, b, dir:[du, dv], owner });
       }
       if(!links) railSingles.push({ c:cR, owner });
