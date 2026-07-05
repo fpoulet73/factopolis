@@ -229,7 +229,7 @@ const httpServer = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server: httpServer });
 
 // ---- état global ----
-const DEFAULT_WORLD_CONFIG = { size: 64, maxPlayers: 8, reliefEnabled: true, resources: { tree: 8, wheat: 4, cotton: 1, iron: 2, coal: 2 } };
+const DEFAULT_WORLD_CONFIG = { size: 64, maxPlayers: 8, reliefEnabled: true, mountainPct: 15, mountainMaxHeight: 6, resources: { tree: 8, wheat: 4, cotton: 1, iron: 2, coal: 2 } };
 let nextId = 1;
 let nextRoomId = 1;
 let allClients = [];   // tous les clients (lobby + rooms)
@@ -447,6 +447,8 @@ function sanitizeWorldConfig(config = {}) {
     size:       clampInt(config.size, 32, 128, base.size),
     maxPlayers: clampInt(config.maxPlayers, 1, 32, base.maxPlayers),
     reliefEnabled: config.reliefEnabled !== false,
+    mountainPct:       clampInt(config.mountainPct, 0, 80, base.mountainPct),
+    mountainMaxHeight: clampInt(config.mountainMaxHeight, 1, 12, base.mountainMaxHeight),
     resources: {
       tree:   clampPercent(resources.tree,   baseRes.tree),
       wheat:  clampPercent(resources.wheat,  baseRes.wheat),

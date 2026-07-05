@@ -2919,6 +2919,10 @@ function mpInjectUI(){
     <input id="mpWorldSize" type="number" min="32" max="128" step="8" style="${INP}">
     <label style="display:block;color:#8fa3bf;font-size:11px">Joueurs max</label>
     <input id="mpMaxPlayers" type="number" min="1" max="32" step="1" style="${INP}">
+    <label style="display:block;color:#8fa3bf;font-size:11px">Montagnes (% de la carte)</label>
+    <input id="mpMountainPct" type="number" min="0" max="80" step="1" style="${INP}">
+    <label style="display:block;color:#8fa3bf;font-size:11px">Hauteur max des montagnes (tuiles)</label>
+    <input id="mpMountainMaxHeight" type="number" min="1" max="12" step="1" style="${INP}">
     <button class="tbtn" id="mpBtnNewWorld" style="width:100%">Créer la carte</button>
     <div id="mpWorldErr" style="color:#ff9a8a;font-size:11px;min-height:14px;margin-top:4px"></div>
   </div>
@@ -3018,6 +3022,8 @@ function mpInjectUI(){
     const config = normalizeWorldConfig({
       size: $('mpWorldSize').value,
       maxPlayers: $('mpMaxPlayers').value,
+      mountainPct: $('mpMountainPct').value,
+      mountainMaxHeight: $('mpMountainMaxHeight').value,
     });
     genWorld(config);
     MP.ws.send(JSON.stringify({ type:'new_world', config, state:serializeState() }));
@@ -3109,6 +3115,8 @@ function mpSyncWorldInputs(){
   if(!$('mpWorldSize')) return;
   $('mpWorldSize').value = WORLD.size;
   $('mpMaxPlayers').value = WORLD.maxPlayers;
+  $('mpMountainPct').value = WORLD.mountainPct;
+  $('mpMountainMaxHeight').value = WORLD.mountainMaxHeight;
 }
 
 function mpShowAuthError(msg){

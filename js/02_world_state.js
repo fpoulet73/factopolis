@@ -154,6 +154,8 @@ function worldDefaultsFromConfig(){
     maxPlayers: Math.round(clampNum(worldCfg.joueursMax, 1, 32, 8)),
     waterPct: clampNum(worldCfg.eauPct, 0, 100, 40),
     reliefEnabled: worldCfg.reliefEnabled !== false,
+    mountainPct: clampNum(worldCfg.montagnePct, 0, 80, 15),
+    mountainMaxHeight: Math.round(clampNum(worldCfg.montagneHauteurMax, 1, 12, 6)),
     resources: {
       tree: clampNum(resourcesCfg.tree, 0, 100, 8),
       wheat: clampNum(resourcesCfg.wheat, 0, 100, 4),
@@ -174,13 +176,15 @@ function normalizeWorldConfig(config){
     maxPlayers: Math.round(clampNum(c.maxPlayers, 1, 32, WORLD_DEFAULTS.maxPlayers)),
     waterPct: WORLD_DEFAULTS.waterPct,
     reliefEnabled: c.reliefEnabled !== false,
+    mountainPct: clampNum(c.mountainPct, 0, 80, WORLD_DEFAULTS.mountainPct),
+    mountainMaxHeight: Math.round(clampNum(c.mountainMaxHeight, 1, 12, WORLD_DEFAULTS.mountainMaxHeight)),
     resources: { ...WORLD_DEFAULTS.resources },
   };
 }
 
 function reliefCfg(){
   const src = CFG.monde?.relief || {};
-  const levels = Math.max(0, Math.min(12, Math.round(src.niveaux ?? 6)));
+  const levels = Math.max(0, Math.min(12, Math.round(WORLD?.mountainMaxHeight ?? src.niveaux ?? 6)));
   return {
     enabled: levels > 0 && WORLD?.reliefEnabled !== false,
     levels,
@@ -645,6 +649,8 @@ function applyBaseTerrain(noiseA, noiseB, noiseC, waterPct, inScope){
   const cfg = reliefCfg();
   const ridgeNoise = valueNoise(21);
   const plateauNoise = valueNoise(5);
+  const mountainNoise = valueNoise(26);
+  const mountainPct = clampNum(WORLD?.mountainPct, 0, 80, 15);
   const candidates = [];
   for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
     if(inScope && !inScope(x, y)) continue;
@@ -652,7 +658,8 @@ function applyBaseTerrain(noiseA, noiseB, noiseC, waterPct, inScope){
     const base = terrainNoiseScore(noiseA, noiseB, noiseC, x, y);
     const ridge = 1 - Math.abs(ridgeNoise(x, y) * 2 - 1);
     const plateau = (plateauNoise(x, y) - 0.5) * cfg.plateauNoise;
-    candidates.push({ i, x, y, water: base, land: base * 0.7 + ridge * 0.3 + plateau });
+    const mountain = mountainNoise(x, y) * 0.7 + ridge * 0.3;
+    candidates.push({ i, x, y, water: base, land: base * 0.7 + ridge * 0.3 + plateau, mountain });
   }
   if(!candidates.length) return;
   const waterTiles = Math.min(candidates.length, Math.max(0, Math.round(candidates.length * waterPct / 100)));
@@ -660,6 +667,12 @@ function applyBaseTerrain(noiseA, noiseB, noiseC, waterPct, inScope){
   const waterSet = new Set(sorted.slice(0, waterTiles).map(c => c.i));
   const waterThreshold = waterTiles > 0 ? sorted[Math.max(0, waterTiles - 1)].water : 0;
   const den = Math.max(0.001, 1 - waterThreshold);
+  // Zone de montagne : un sous-ensemble contigu (choisi par bruit) des tuiles
+  // de terre ; le reste de la carte reste plus ou moins plat (relief léger).
+  const landCandidates = candidates.filter(c => !waterSet.has(c.i));
+  const mountainTiles = Math.min(landCandidates.length, Math.max(0, Math.round(landCandidates.length * mountainPct / 100)));
+  const sortedByMountain = landCandidates.slice().sort((a, b) => b.mountain - a.mountain);
+  const mountainSet = new Set(sortedByMountain.slice(0, mountainTiles).map(c => c.i));
   for(const entry of candidates){
     if(waterSet.has(entry.i)){
       terrain[entry.i] = T.WATER;
@@ -671,10 +684,17 @@ function applyBaseTerrain(noiseA, noiseB, noiseC, waterPct, inScope){
       terrainHeightMap[entry.i] = 0;
       continue;
     }
-    const normalized = Math.max(0, Math.min(1, (entry.land - waterThreshold) / den));
-    const terraces = Math.pow(normalized, 0.82);
     const jitter = (pseudoNoise(entry.x, entry.y, 0.31, 0.19, 91) - 0.5) * cfg.roughness;
-    const level = 1 + Math.round(Math.max(0, Math.min(1, terraces + jitter)) * Math.max(0, cfg.levels - 1));
+    let level;
+    if(mountainSet.has(entry.i)){
+      const normalized = Math.max(0, Math.min(1, (entry.land - waterThreshold) / den));
+      const terraces = Math.pow(normalized, 0.82);
+      level = 1 + Math.round(Math.max(0, Math.min(1, terraces + jitter)) * Math.max(0, cfg.levels - 1));
+    } else {
+      // Plaine : quasi plate, avec juste un léger vallonnement occasionnel.
+      const flatBump = plateauNoise(entry.x, entry.y) > 0.8 ? 1 : 0;
+      level = 1 + flatBump;
+    }
     terrainHeightMap[entry.i] = Math.max(1, Math.min(cfg.levels, level));
   }
   smoothTerrainHeights(inScope);
@@ -750,6 +770,26 @@ function genWorld(config){
   placePatch(T.COTTON, patchCount(WORLD.resources.cotton), { maxRadius:1, fillChance:0.65 });
   placePatch(T.IRON, patchCount(WORLD.resources.iron));
   placePatch(T.COAL, patchCount(WORLD.resources.coal));
+  // Garantit une zone de chaque ressource indispensable dans la zone jouable initiale
+  // (les taches ci-dessus peuvent toutes tomber dans la marge d'expansion non achetée)
+  const ensureResourceZoneInPlayArea = (type) => {
+    for(let y=mapBounds.y0; y<mapBounds.y1; y++)
+      for(let x=mapBounds.x0; x<mapBounds.x1; x++)
+        if(terrain[y*N+x] === type) return;
+    const spots = [];
+    for(let y=mapBounds.y0; y<mapBounds.y1; y++)
+      for(let x=mapBounds.x0; x<mapBounds.x1; x++)
+        if(terrain[y*N+x] === T.GRASS) spots.push(y*N+x);
+    if(!spots.length) return;
+    const idx = spots[(Math.random()*spots.length)|0];
+    const cx = idx % N, cy = (idx / N) | 0;
+    for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++){
+      const x = cx+dx, y = cy+dy;
+      if(x<mapBounds.x0||y<mapBounds.y0||x>=mapBounds.x1||y>=mapBounds.y1) continue;
+      if(terrain[y*N+x] === T.GRASS) terrain[y*N+x] = type;
+    }
+  };
+  [T.TREE, T.WHEAT, T.COTTON, T.IRON, T.COAL].forEach(ensureResourceZoneInPlayArea);
   applyShoreResources(tn, (x, y) => !!mapMask[y*N+x]);
   markTerrainDirty();
 
