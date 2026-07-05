@@ -26,10 +26,11 @@ function railTileCenterIso(rx, ry, x, y){
   return liftedIso(rx + 0.5, ry + 0.5, railLiftPxAt(x, y));
 }
 // Altitude (px) du milieu de l'arête de la tuile (x,y) dans la direction cardinale
-// (dx,dy) = moyenne des 2 coins encadrant l'arête. Sert à tracer les rails bord→bord
-// pour qu'ils restent parallèles aux arêtes iso sur les pentes (la lift au centre
-// d'une tuile en pente moyenne la pente et rend le rail trop plat). Diagonale → centre.
-function railEdgeLiftPx(x, y, dx, dy){
+// (dx,dy) = moyenne des 2 coins encadrant l'arête. Sert à tracer rails ET routes
+// bord→bord pour qu'ils restent parallèles aux arêtes iso sur les pentes (la lift
+// au centre d'une tuile en pente moyenne la pente et rend le tracé trop plat).
+// Diagonale → centre (pas de vraie arête à moyenner).
+function tileEdgeLiftPx(x, y, dx, dy){
   let c1 = 0, c2 = 0;
   if(dx === 1){ c1 = terrainCornerLevelAt(x+1, y); c2 = terrainCornerLevelAt(x+1, y+1); }
   else if(dx === -1){ c1 = terrainCornerLevelAt(x, y); c2 = terrainCornerLevelAt(x, y+1); }
@@ -2405,15 +2406,29 @@ function draw(){
     const c = tileCenterIso(rx, ry, x, y);
     if(road[i]){
       roadNodes.push(c);
+      const roadNeighbor = (dx,dy)=>{ const nx=x+dx, ny=y+dy; return inMap(nx,ny) && !!road[ny*N+nx]; };
       let links = 0;
-      for(const [dx,dy] of DIRS8){
-        const nx = x+dx, ny = y+dy;
-        if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
-        links++;
-        if(ny < y || (ny === y && nx < x)) continue;
-        if(dx !== 0 && dy !== 0 && (road[y*N+nx] || road[ny*N+x])) continue;
+      for(const [dx,dy] of DIRS8) if(roadNeighbor(dx,dy)) links++;
+      // Même logique que le rail (tileEdgeLiftPx) : un axe cardinal traversant
+      // trace un seul segment bord→bord par tuile, les autres cas (virages,
+      // diagonales, impasses) un demi-segment centre→bord. La tuile voisine
+      // calcule exactement le même point d'arête, donc pas de recouvrement ni
+      // de trou même si la route grimpe une pente.
+      const handled = new Set();
+      for(const [dx,dy] of [[1,0],[0,1]]){
+        if(!(roadNeighbor(dx,dy) && roadNeighbor(-dx,-dy))) continue;
         const [du,dv] = rotDir(dx,dy);
-        roadSegments.push([c, liftedIso(rx+du+0.5, ry+dv+0.5, terrainLiftPxAt(nx, ny))]);
+        const a = liftedIso(rx+0.5-du*0.5, ry+0.5-dv*0.5, tileEdgeLiftPx(x,y,-dx,-dy));
+        const b = liftedIso(rx+0.5+du*0.5, ry+0.5+dv*0.5, tileEdgeLiftPx(x,y,dx,dy));
+        roadSegments.push([a, b]);
+        handled.add(dx+','+dy); handled.add((-dx)+','+(-dy));
+      }
+      for(const [dx,dy] of DIRS8){
+        const key = dx+','+dy;
+        if(handled.has(key) || !roadNeighbor(dx,dy)) continue;
+        if(dx !== 0 && dy !== 0 && (roadNeighbor(dx,0) || roadNeighbor(0,dy))) continue;
+        const [du,dv] = rotDir(dx,dy);
+        roadSegments.push([c, liftedIso(rx+du*0.5+0.5, ry+dv*0.5+0.5, tileEdgeLiftPx(x,y,dx,dy))]);
       }
       if(!links) roadSingles.push(c);
       else if(!UI_OPTIONS.disableTrafficLights && isTrafficIntersectionTile({ x, y, i })){
@@ -2441,7 +2456,7 @@ function draw(){
       const railDirs = [];
       const handled = new Set();
       // Axes cardinaux rectilignes : un segment bord→bord par tuile, hauteurs
-      // prises aux coins de l'arête (railEdgeLiftPx). Ainsi le rail suit la
+      // prises aux coins de l'arête (tileEdgeLiftPx). Ainsi le rail suit la
       // surface et reste PARALLÈLE aux arêtes iso même sur les pentes à 45°.
       // Sur tuile plate, bord→bord est collinéaire à centre→centre (rendu
       // inchangé). La tuile voisine relie ses propres bords au même point
@@ -2452,8 +2467,8 @@ function draw(){
         if(!inMap(fx,fy) || !rail[fy*N+fx] || (railTunnel && railTunnel[fy*N+fx])) continue;
         if(!inMap(bx,by) || !rail[by*N+bx] || (railTunnel && railTunnel[by*N+bx])) continue;
         const [du,dv] = rotDir(dx,dy);
-        const a = liftedIso(rx+0.5-du*0.5, ry+0.5-dv*0.5, railEdgeLiftPx(x,y,-dx,-dy));
-        const b = liftedIso(rx+0.5+du*0.5, ry+0.5+dv*0.5, railEdgeLiftPx(x,y,dx,dy));
+        const a = liftedIso(rx+0.5-du*0.5, ry+0.5-dv*0.5, tileEdgeLiftPx(x,y,-dx,-dy));
+        const b = liftedIso(rx+0.5+du*0.5, ry+0.5+dv*0.5, tileEdgeLiftPx(x,y,dx,dy));
         railSegments.push({ a, b, dir:[du,dv], owner });
         handled.add(bf); handled.add(bb);
         links += 2; railDirs.push([du,dv],[-du,-dv]);
@@ -2470,7 +2485,7 @@ function draw(){
         if(railTileIsMouth(nx, ny)){
           b = liftedIso(rx+du*0.5+0.5, ry+dv*0.5+0.5, railLiftPxAt(x, y));
         } else if(rail[ny*N+nx] && !(railTunnel && railTunnel[ny*N+nx])){
-          b = liftedIso(rx+du*0.5+0.5, ry+dv*0.5+0.5, railEdgeLiftPx(x,y,def.dx,def.dy));
+          b = liftedIso(rx+du*0.5+0.5, ry+dv*0.5+0.5, tileEdgeLiftPx(x,y,def.dx,def.dy));
         } else continue;
         railSegments.push({ a:cR, b, dir:[du, dv], owner });
       }
@@ -2599,12 +2614,22 @@ function draw(){
   // La COLLECTE ci-dessus (segments, feux) tourne chaque frame pour que les feux
   // dynamiques restent à jour ; seuls les tracés coûteux sont conditionnés.
   if(groundDirty){
+    // Chaque segment est tracé indépendamment avec des bouts 'butt' : sur une
+    // tuile plate les segments voisins sont colinéaires donc ça ne se voit pas,
+    // mais sur une pente le segment change de direction à la jointure (arête
+    // partagée) et les bouts plats laissent un triangle non peint dans l'angle.
+    // On rebouche ces jointures avec un disque, comme le fait déjà roadNodes
+    // au centre de chaque tuile.
+    const roadJoints = [];
+    for(const [a,b] of roadSegments){ roadJoints.push(a,b); }
     strokeSegments(roadSegments, roadWidth, pack.road, 'butt');
     fillNodes(roadNodes, roadWidth*0.5, pack.road);
+    fillNodes(roadJoints, roadWidth*0.5, pack.road);
     fillNodes(roadSingles, roadWidth*0.56, pack.road);
     if(!drawFast){
       strokeSegments(roadSegments, roadLineWidth, pack.roadLine, 'butt');
       fillNodes(roadNodes, roadLineWidth*0.5, pack.roadLine);
+      fillNodes(roadJoints, roadLineWidth*0.5, pack.roadLine);
       strokeSegments(roadSegments, 1.4, 'rgba(200,206,214,.55)', 'butt');
       fillNodes(roadSingles, roadLineWidth*0.56, pack.roadLine);
     }

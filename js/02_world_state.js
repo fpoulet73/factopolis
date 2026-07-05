@@ -238,6 +238,17 @@ function tileIsFlat(x, y){
   return c.nw === c.ne && c.ne === c.se && c.se === c.sw;
 }
 
+// Une tuile est une rampe simple à 45° si un côté (nord ou ouest) est à un
+// niveau et le côté opposé exactement un niveau plus haut/bas — c'est la seule
+// pente franchissable par une route (les coins/falaises à 3 niveaux ou en
+// diagonale ne le sont pas).
+function tileIsSlope45(x, y){
+  const c = terrainTileCornerLevels(x, y);
+  if(c.nw === c.ne && c.sw === c.se) return Math.abs(c.nw - c.sw) === 1;
+  if(c.nw === c.sw && c.ne === c.se) return Math.abs(c.nw - c.ne) === 1;
+  return false;
+}
+
 function terrainLevelAtFloat(tx, ty){
   if(!terrainHeightMap) return 0;
   const x0 = Math.max(0, Math.min(N - 1, Math.floor(tx)));

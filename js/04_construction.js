@@ -637,7 +637,11 @@ function canPlace(t,x,y){
     if(bgrid[i]) return { ok:false, msg:'Case occupée' };
     return { ok:true };
   }
-  if(!tileIsFlat(x, y)) return { ok:false, msg:'Terrain non plat : nivelez la case avant de construire' };
+  // Route sur pente : seule une rampe simple à 45° est franchissable (coins et
+  // falaises restent bloqués, comme les autres constructions).
+  if(!tileIsFlat(x, y) && !(t==='road' && tileIsSlope45(x, y))){
+    return { ok:false, msg: t==='road' ? 'Route : seules les pentes à 45° sont franchissables' : 'Terrain non plat : nivelez la case avant de construire' };
+  }
   if(t==='road'){
     if(road[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
     if(rail[i]) return { ok:true }; // passage à niveau : route par-dessus un rail existant
