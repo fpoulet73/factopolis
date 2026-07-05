@@ -1814,6 +1814,118 @@ function drawRailSignal(sig){
   ctx.restore();
 }
 
+// ---- Panneaux de ressources (visibles uniquement en fort dézoom) ----
+// Les tuiles de gisement (fer, charbon, blé, coton, sable, argile) sont regroupées
+// en clusters (flood-fill avec voisinage élargi pour fusionner les patches proches),
+// recalculés seulement quand terrainVersion change.
+const RES_SIGN_DEFS = {
+  [T.IRON]:   { n: RES.iron.n,   ic: RES.iron.ic,   col:'#d98a4f' },
+  [T.COAL]:   { n: RES.coal.n,   ic: RES.coal.ic,   col:'#9aa0ad' },
+  [T.WHEAT]:  { n: RES.wheat.n,  ic: RES.wheat.ic,  col:'#d7b348' },
+  [T.COTTON]: { n: RES.cotton.n, ic: RES.cotton.ic, col:'#e8e4d2' },
+  [T.SAND]:   { n:'Sable',       ic:'🏖️',           col:'#e8d28a' },
+  [T.CLAY]:   { n:'Argile',      ic:'🧱',           col:'#c07a50' },
+};
+const RES_SIGN_ZOOM_HI = 0.58; // début d'apparition (fondu)
+const RES_SIGN_ZOOM_LO = 0.45; // opacité pleine en dessous
+let resourceSignClusters = null;
+let resourceSignVersion = -1;
+
+function rebuildResourceSigns(){
+  resourceSignVersion = terrainVersion;
+  resourceSignClusters = [];
+  if(!terrain) return;
+  const seen = new Uint8Array(N*N);
+  const R = 2; // rayon de fusion : deux patches à ≤2 tuiles partagent un panneau
+  const stack = [];
+  for(let i=0; i<N*N; i++){
+    if(seen[i]) continue;
+    const t = terrain[i];
+    if(!RES_SIGN_DEFS[t]) continue;
+    if(mapMask && !mapMask[i]) continue; // hors zone jouable
+    seen[i] = 1;
+    stack.length = 0; stack.push(i);
+    let sx = 0, sy = 0, count = 0;
+    while(stack.length){
+      const j = stack.pop();
+      const jx = j % N, jy = (j / N) | 0;
+      sx += jx; sy += jy; count++;
+      for(let dy=-R; dy<=R; dy++){
+        const ny = jy + dy;
+        if(ny < 0 || ny >= N) continue;
+        for(let dx=-R; dx<=R; dx++){
+          const nx = jx + dx;
+          if(nx < 0 || nx >= N) continue;
+          const k = ny*N + nx;
+          if(seen[k] || terrain[k] !== t) continue;
+          if(mapMask && !mapMask[k]) continue;
+          seen[k] = 1; stack.push(k);
+        }
+      }
+    }
+    if(count >= 2)
+      resourceSignClusters.push({ t, cx: sx/count + 0.5, cy: sy/count + 0.5, count });
+  }
+}
+
+function drawResourceSigns(){
+  const z = cam.z;
+  if(z >= RES_SIGN_ZOOM_HI) return;
+  if(!resourceSignClusters || resourceSignVersion !== terrainVersion) rebuildResourceSigns();
+  if(!resourceSignClusters.length) return;
+  const alpha = z <= RES_SIGN_ZOOM_LO ? 1
+    : (RES_SIGN_ZOOM_HI - z) / (RES_SIGN_ZOOM_HI - RES_SIGN_ZOOM_LO);
+
+  ctx.save();
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 11px "Segoe UI Emoji","Segoe UI",sans-serif';
+  for(const c of resourceSignClusters){
+    const def = RES_SIGN_DEFS[c.t];
+    const [ru, rv] = rotF(c.cx, c.cy);
+    const [ix, iy] = liftedIso(ru, rv, terrainLiftPxAtRot(ru, rv));
+    const cssX = (ix - cam.x) * z;
+    const cssY = (iy - cam.y) * z;
+    if(cssX < -80 || cssX > W + 80 || cssY < -50 || cssY > H + 50) continue;
+
+    const label = def.ic + ' ' + def.n;
+    const tw = ctx.measureText(label).width;
+    const pw = tw + 14, ph = 18;
+    const by = cssY - 26; // panneau au-dessus du point d'ancrage
+    const bx = cssX - pw/2;
+
+    // mât reliant le panneau au sol
+    ctx.globalAlpha = 0.75 * alpha;
+    ctx.strokeStyle = '#0c1a2b';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cssX, cssY);
+    ctx.lineTo(cssX, by + ph);
+    ctx.stroke();
+
+    // fond du panneau
+    ctx.globalAlpha = 0.88 * alpha;
+    ctx.fillStyle = '#0c1a2b';
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(bx, by, pw, ph, 4);
+    else ctx.rect(bx, by, pw, ph);
+    ctx.fill();
+
+    // liseré à la couleur de la ressource
+    ctx.globalAlpha = 0.9 * alpha;
+    ctx.strokeStyle = def.col;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // texte
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#f2ecd8';
+    ctx.fillText(label, cssX, by + ph/2 + 0.5);
+  }
+  ctx.restore();
+}
+
 function drawTownLabels(){
   townLabelHits = [];
   if(!towns.length) return;
@@ -2767,6 +2879,8 @@ function draw(){
   if(focusVehicle && focusVehicle !== selectedVehicle && !focusVehicle.garageRef?.dead)
     drawVehicleRoute(focusVehicle);
 
+  // Panneaux de ressources en fort dézoom, sous les labels de villes
+  drawResourceSigns();
   // Noms des villages au centre de chaque groupe de maisons
   drawTownLabels();
   drawTrainDepotFlags();
