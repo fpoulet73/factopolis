@@ -201,6 +201,10 @@ function normalizeWorldConfig(config){
       iron: clampNum(baseRes.iron * resourceFactor, 0, 100, baseRes.iron),
       coal: clampNum(baseRes.coal * resourceFactor, 0, 100, baseRes.coal),
     },
+    seed: Number.isFinite(c.seed) ? c.seed : Math.floor(Math.random() * 2 ** 31),
+    // Décalage cumulé de l'origine de la grille (growMap) — repère absolu du bruit
+    noiseOx: Number.isFinite(c.noiseOx) ? c.noiseOx : 0,
+    noiseOy: Number.isFinite(c.noiseOy) ? c.noiseOy : 0,
   };
 }
 
@@ -436,6 +440,148 @@ function setMapSize(size){
   mapMask = new Uint8Array(N*N);
 }
 
+// Décale toutes les collections vivantes portant des coordonnées absolues de (dx,dy) tuiles.
+// Utilisé par growMap() quand la grille grandit vers la gauche/le haut (copie décalée dans le
+// tableau réalloué). Les champs dérivés d'une référence d'objet vivant (garageRef/source/dest/
+// target sur trucks/vehicles) n'ont besoin d'aucun traitement : ils sont recalculés depuis
+// l'objet référencé (building), lui-même déjà décalé ici.
+function shiftWorldOrigin(dx, dy){
+  if(!dx && !dy) return;
+  for(const b of buildings){ b.x += dx; b.y += dy; }
+  for(const t of towns){ t.cx += dx; t.cy += dy; }
+  const shiftPts = pts => { if(Array.isArray(pts)) for(const p of pts){ p.x += dx*TILE; p.y += dy*TILE; } };
+  for(const tk of trucks) shiftPts(tk.pts);
+  for(const wk of walkers) shiftPts(wk.pts);
+  for(const v of vehicles){ shiftPts(v.pts); shiftPts(v.railTrail); }
+  for(const h of homeless){ h.x += dx*TILE; h.y += dy*TILE; }
+  for(const f of floats){ f.x += dx*TILE; f.y += dy*TILE; }
+  cam.x += dx*TILE; cam.y += dy*TILE;
+  targetCam.x += dx*TILE; targetCam.y += dy*TILE;
+  if(railSignals){
+    const shifted = Object.create(null);
+    for(const key in railSignals){
+      const sig = railSignals[key];
+      sig.x += dx; sig.y += dy;
+      shifted[railSignalKey(sig.x, sig.y, sig.bit)] = sig;
+    }
+    railSignals = shifted;
+  }
+}
+
+// Agrandit la grille N×N en cours de partie. `need` = tuiles manquantes par côté
+// ({left,right,top,bottom}, >=0). Grandit par paliers de GROW_CHUNK pour limiter la
+// fréquence des réallocations O(N²). Retourne {dx,dy} (décalage appliqué à l'origine)
+// si la grille a grandi, false sinon (rien à faire, ou plafond MAP_MAX_N atteint).
+// ATTENTION : tout changement de N invalide les index plats y*N+x (le stride change),
+// même sans décalage (dx=dy=0) — d'où le ré-encodage systématique des pathTiles etc.
+function growMap(need){
+  const chunk = s => Math.ceil(Math.max(0, need?.[s] || 0) / GROW_CHUNK) * GROW_CHUNK;
+  let addL = chunk('left'), addR = chunk('right'), addT = chunk('top'), addB = chunk('bottom');
+  if(!addL && !addR && !addT && !addB) return false;
+  const oldN = N;
+  let newN = oldN + addL + addR;
+  const newNy = oldN + addT + addB;
+  // Grille carrée : on grandit du même total sur les deux axes (l'excédent va côté droit/bas,
+  // append-only, sans décalage). MAP_MAX_N = plafond de sécurité (coût pathfinding O(N²)/tick).
+  if(newNy > newN){ addR += newNy - newN; newN = newNy; }
+  else if(newN > newNy){ addB += newN - newNy; }
+  if(newN > MAP_MAX_N) return false;
+  const dx = addL, dy = addT;
+
+  // Centre de vue actuel (repère monde AVANT décalage), pour recentrer après coup :
+  // les transformations de rotation (rotIdx/rotF) dépendent de N via N-1-x, donc toute
+  // vue tournée "saute" au changement de N — absorbé par un recentrage caméra explicite.
+  const viewCenter = (typeof screenCenterWorldPx === 'function') ? screenCenterWorldPx() : null;
+
+  const oldTerrain = terrain, oldHeights = terrainHeightMap, oldWater = waterHeightMap;
+  const oldRoad = road, oldRail = rail, oldRailOwner = railOwner, oldRailTunnel = railTunnel;
+  const oldMask = mapMask;
+  setMapSize(newN); // met à jour N, réalloue dist/prev/mapMask (mapMask à zéro)
+  terrain = new Uint8Array(N*N);
+  terrainHeightMap = new Uint8Array(N*N);
+  waterHeightMap = new Uint8Array(N*N);
+  road = new Uint8Array(N*N);
+  rail = new Uint8Array(N*N);
+  railOwner = new Int16Array(N*N).fill(-1);
+  railTunnel = new Uint8Array(N*N);
+  for(let y=0; y<oldN; y++){
+    const src = y*oldN, dst = (y+dy)*N + dx;
+    terrain.set(oldTerrain.subarray(src, src+oldN), dst);
+    terrainHeightMap.set(oldHeights.subarray(src, src+oldN), dst);
+    waterHeightMap.set(oldWater.subarray(src, src+oldN), dst);
+    road.set(oldRoad.subarray(src, src+oldN), dst);
+    rail.set(oldRail.subarray(src, src+oldN), dst);
+    railOwner.set(oldRailOwner.subarray(src, src+oldN), dst);
+    railTunnel.set(oldRailTunnel.subarray(src, src+oldN), dst);
+    if(oldMask) mapMask.set(oldMask.subarray(src, src+oldN), dst);
+  }
+
+  // Coordonnées absolues des entités vivantes (+ signaux, caméra)
+  shiftWorldOrigin(dx, dy);
+  mapBounds.x0 += dx; mapBounds.x1 += dx;
+  mapBounds.y0 += dy; mapBounds.y1 += dy;
+
+  // Index plats y*N+x des trains : stride changé → décoder (oldN), décaler, ré-encoder (N)
+  const remapTile = t => {
+    if(!Number.isInteger(t) || t < 0) return t;
+    const x = t % oldN + dx, y = ((t / oldN) | 0) + dy;
+    return y*N + x;
+  };
+  for(const v of vehicles){
+    if(Array.isArray(v.pathTiles)) v.pathTiles = v.pathTiles.map(remapTile);
+    if(v.railContinueTile != null) v.railContinueTile = remapTile(v.railContinueTile);
+    if(v.railPreviousTile != null) v.railPreviousTile = remapTile(v.railPreviousTile);
+    if(v.railPathEntryFromTile != null) v.railPathEntryFromTile = remapTile(v.railPathEntryFromTile);
+    // currentRailBlock : ids recalculés par rebuildRailBlocks/rebuildRailBlockOccupancy ci-dessous
+  }
+
+  // Terrain des tuiles réellement nouvelles uniquement. noiseOx/noiseOy AVANT la
+  // génération : les closures valueNoise doivent échantillonner le repère absolu décalé.
+  WORLD.noiseOx = (WORLD.noiseOx || 0) + dx;
+  WORLD.noiseOy = (WORLD.noiseOy || 0) + dy;
+  generateNewMapRegion(oldN, dx, dy);
+
+  // Grille d'occupation des bâtiments
+  bgrid = new Array(N*N).fill(null);
+  for(const b of buildings) if(!b.dead) setGrid(b, b);
+
+  // Cantons ferroviaires (ids par tuile) + occupation
+  rebuildRailBlocks();
+  if(typeof rebuildRailBlockOccupancy === 'function') rebuildRailBlockOccupancy();
+
+  // États transitoires dépendants de N / de la projection iso
+  smoke.length = 0;
+  if(typeof roadDragStart !== 'undefined'){ roadDragStart = null; roadPreviewTiles = []; tunnelPreview = null; }
+
+  markTerrainDirty();
+  markRailDirty();
+  if(viewCenter) centerOn(viewCenter[0] + dx*TILE, viewCenter[1] + dy*TILE);
+  return { dx, dy };
+}
+
+// Fait grandir la grille si la PROCHAINE bande d'expansion (EXP_DEPTH tuiles) d'un côté
+// quelconque déborderait. Appelé après chaque extension de mapBounds (buyExpansion), pour
+// que refreshExpansionSlots trouve toujours du terrain réel à tarifer sur les offres.
+// Côté hôte / solo uniquement : en multijoueur les invités reçoivent la grille agrandie
+// via le snapshot complet de l'hôte. Retourne le résultat de growMap ({dx,dy} ou false).
+function ensureMapCapacityForNextBand(){
+  if(typeof MP !== 'undefined' && MP.connected && MP.role !== 'host') return false;
+  const need = {
+    left:   Math.max(0, EXP_DEPTH - mapBounds.x0),
+    right:  Math.max(0, mapBounds.x1 + EXP_DEPTH - N),
+    top:    Math.max(0, EXP_DEPTH - mapBounds.y0),
+    bottom: Math.max(0, mapBounds.y1 + EXP_DEPTH - N),
+  };
+  const grown = growMap(need);
+  if(grown && typeof MP !== 'undefined' && MP.connected && MP.role === 'host'
+     && typeof mpForceFullSnapshot === 'function'){
+    // Snapshot complet immédiat : sans lui, les invités décoderaient les pathTiles des
+    // trains avec un N obsolète pendant jusqu'à ~1s (timer normal de sync monde).
+    mpForceFullSnapshot();
+  }
+  return grown;
+}
+
 // ---------- canvas ----------
 const cv = document.getElementById('cv');
 // `ctx` est volontairement `let` : draw() le bascule temporairement vers le
@@ -554,17 +700,34 @@ function rotate(d){
 }
 
 // ---------- génération du monde ----------
+// Hash entier déterministe : ne dépend que de (seed, cell, col, row), jamais de N/gs.
+// Permet à valueNoise() de rejouer exactement le même champ de bruit à des instants
+// différents (ex: generateNewMapRegion appelé après une croissance de la grille),
+// pour éviter toute couture visible entre le terrain existant et le terrain nouvellement généré.
+function noiseLatticeHash(seed, cell, col, row){
+  let h = (seed ^ Math.imul(cell, 374761393) ^ Math.imul(col, 668265263) ^ Math.imul(row, 2147483647)) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 3266489917);
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967295;
+}
+
 function valueNoise(cell){
-  const gs = Math.floor(N/cell)+3;
-  const g = new Float32Array(gs*gs);
-  for(let i=0;i<g.length;i++) g[i] = Math.random();
+  const seed = (WORLD && Number.isFinite(WORLD.seed)) ? WORLD.seed : 0;
+  // Repère ABSOLU : growMap décale l'origine de la grille (dx,dy) quand la carte grandit
+  // vers la gauche/le haut ; noiseOx/noiseOy accumulent ce décalage pour que chaque tuile
+  // garde la même valeur de bruit quelle que soit sa coordonnée de grille actuelle.
+  const ox = (WORLD && Number.isFinite(WORLD.noiseOx)) ? WORLD.noiseOx : 0;
+  const oy = (WORLD && Number.isFinite(WORLD.noiseOy)) ? WORLD.noiseOy : 0;
   const sm = t => t*t*(3-2*t);
   return (x,y)=>{
-    const gx = x/cell, gy = y/cell;
+    const gx = (x - ox)/cell, gy = (y - oy)/cell;
     const x0 = Math.floor(gx), y0 = Math.floor(gy);
     const fx = sm(gx-x0), fy = sm(gy-y0);
-    const a = g[y0*gs+x0],     b = g[y0*gs+x0+1];
-    const c = g[(y0+1)*gs+x0], d = g[(y0+1)*gs+x0+1];
+    const a = noiseLatticeHash(seed, cell, x0,   y0);
+    const b = noiseLatticeHash(seed, cell, x0+1, y0);
+    const c = noiseLatticeHash(seed, cell, x0,   y0+1);
+    const d = noiseLatticeHash(seed, cell, x0+1, y0+1);
     return a + (b-a)*fx + (c-a)*fy + (a-b-c+d)*fx*fy;
   };
 }
@@ -920,6 +1083,74 @@ function generateExpansionTerrain(){
   markTerrainDirty();
 }
 
+// Génère le terrain uniquement dans les tuiles réellement nouvelles après un growMap(oldN,dx,dy).
+// Variante scoped de generateExpansionTerrain(): ne touche jamais une tuile déjà générée
+// (même si encore hors mapBounds), pour ne pas faire "sauter" une marge déjà vue par le joueur.
+function generateNewMapRegion(oldN, dx, dy){
+  const n1=valueNoise(16),n2=valueNoise(7),n3=valueNoise(3),tn=valueNoise(9);
+  const oldX0=dx, oldX1=dx+oldN, oldY0=dy, oldY1=dy+oldN;
+  const isNew=(x,y)=> x<oldX0||y<oldY0||x>=oldX1||y>=oldY1;
+
+  // Rectangles couvrant exactement la zone neuve (cadre autour de l'ancienne grille décalée) :
+  // tirage direct des centres de gisements dedans, plutôt qu'un rejet uniforme sur tout N×N
+  // (la zone neuve peut être une fine bande sur une très grande grille).
+  const rects=[];
+  if(oldY0>0) rects.push({x0:0,y0:0,x1:N,y1:oldY0});           // bande du haut
+  if(oldY1<N) rects.push({x0:0,y0:oldY1,x1:N,y1:N});           // bande du bas
+  if(oldX0>0) rects.push({x0:0,y0:oldY0,x1:oldX0,y1:oldY1});   // bande gauche (hauteur ancienne)
+  if(oldX1<N) rects.push({x0:oldX1,y0:oldY0,x1:N,y1:oldY1});   // bande droite (hauteur ancienne)
+  const rectArea=r=>Math.max(0,r.x1-r.x0)*Math.max(0,r.y1-r.y0);
+  const totalArea=rects.reduce((s,r)=>s+rectArea(r),0);
+  const pickCell=()=>{
+    if(totalArea<=0) return null;
+    let t=Math.random()*totalArea;
+    for(const r of rects){
+      const a=rectArea(r);
+      if(t<a) return {x:(r.x0+Math.random()*(r.x1-r.x0))|0, y:(r.y0+Math.random()*(r.y1-r.y0))|0};
+      t-=a;
+    }
+    return null;
+  };
+
+  // Eau / herbe de base
+  applyBaseTerrain(n1, n2, n3, WORLD.waterPct, isNew);
+  // Arbres
+  const tc=[];
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    if(isNew(x,y)&&terrain[y*N+x]===T.GRASS) tc.push({x,y,s:tn(x,y)+Math.random()*0.25});
+  }
+  tc.sort((a,b)=>b.s-a.s);
+  const mTiles=totalArea;
+  for(let i=0,lim=Math.round(mTiles*(WORLD.resources?.tree??20)/100);i<lim&&i<tc.length;i++)
+    terrain[tc[i].y*N+tc[i].x]=T.TREE;
+  // Gisements et champs
+  const pp=(type,count,opts={})=>{
+    const minRadius=opts.minRadius??1,maxRadius=opts.maxRadius??2,fillChance=opts.fillChance??0.85;
+    for(let k=0;k<count;k++){
+      let c=null,tries=0;
+      do{c=pickCell();tries++;}
+      while(c&&terrain[c.y*N+c.x]===T.WATER&&tries<20);
+      if(!c||terrain[c.y*N+c.x]===T.WATER)continue;
+      const cx=c.x,cy=c.y;
+      const r=minRadius+(Math.random()*(maxRadius-minRadius+1))|0;
+      for(let ddy=-r;ddy<=r;ddy++)for(let ddx=-r;ddx<=r;ddx++){
+        const px=cx+ddx,py=cy+ddy;
+        if(px<0||py<0||px>=N||py>=N||!isNew(px,py))continue;
+        if(ddx*ddx+ddy*ddy>r*r+0.5)continue;
+        if(terrain[py*N+px]!==T.WATER&&Math.random()<fillChance)terrain[py*N+px]=type;
+      }
+    }
+  };
+  const cnt=pct=>Math.round(mTiles*pct/100/8);
+  pp(T.WHEAT,cnt(WORLD.resources?.wheat??8));
+  pp(T.COTTON,cnt(WORLD.resources?.cotton??2),{maxRadius:1,fillChance:0.65});
+  pp(T.IRON, cnt(WORLD.resources?.iron??10));
+  pp(T.COAL, cnt(WORLD.resources?.coal??10));
+  applyShoreResources(tn, isNew);
+  rebuildWaterLevels();
+  markTerrainDirty();
+}
+
 // Coût d'une tuile selon son terrain (prix de base au niveau 0)
 function expTileCost(t){
   if(t===T.WATER) return  600;  // pas constructible, moins cher
@@ -1034,6 +1265,12 @@ function buyExpansion(exp){
     mapBounds.x1 = Math.max(mapBounds.x1, exp.x1);
     mapBounds.y1 = Math.max(mapBounds.y1, exp.y1);
   }
+
+  // Si la prochaine bande d'un côté déborderait la grille, agrandir maintenant
+  // (expansion "infinie" — jusqu'au plafond MAP_MAX_N). Décale exp.cx/cy si l'origine
+  // a bougé, pour que le float 🧩 s'affiche au bon endroit.
+  const grown = ensureMapCapacityForNextBand();
+  if(grown){ exp.cx += grown.dx; exp.cy += grown.dy; }
 
   refreshExpansionSlots();
   markTerrainDirty(); // mapMask/zones modifiés → cache sol + décor (arbres révélés)

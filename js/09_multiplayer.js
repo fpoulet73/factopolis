@@ -1207,6 +1207,21 @@ function mpMaybeBroadcastState(dt){
   }
 }
 
+// Snapshot complet (monde inclus) poussé immédiatement à tous les invités, hors du
+// timer normal. Utilisé après growMap() : sans lui, les invités décoderaient les
+// pathTiles des trains avec un N obsolète (le stride y*N+x a changé) pendant
+// jusqu'à ~1s. Transite par 'state_sync' (broadcast serveur sans gating, contrairement
+// à 'snapshot' qui est réservé au flux pendingSnapshots de connexion).
+function mpForceFullSnapshot(){
+  if(!MP.connected || MP.role !== 'host' || !MP.ws) return;
+  mpWorldSyncTimer = 0;
+  mpStateSyncTimer = 0;
+  MP.ws.send(JSON.stringify({
+    type:'state_sync',
+    state: serializeState({ includeTransient:true, includeWorld:true }),
+  }));
+}
+
 // Flux « mouvement » : uniquement ce qui doit bouger de façon fluide. Les chemins
 // (pts/pathTiles/railTrail) des véhicules persistants ne sont émis QU'AU
 // changement (l'invité les met en cache par id) — c'est ~65 % du payload véhicule
@@ -2403,7 +2418,15 @@ function mpConnect(url){
       // N'alimente PAS le tampon de rendu (c'est le rôle du flux mouvement).
       case 'state_sync':
         if(MP.role === 'guest' && !MP.awaitingSnapshot && msg.state){
-          applyStateSync(msg.state);
+          if(msg.state.terrain && msg.state.mapBounds){
+            // État complet forcé (mpForceFullSnapshot après growMap) : la grille a
+            // changé de taille, il faut tout ré-appliquer, pas juste le flux monde.
+            mpResetGuestSnapshotBuffer();
+            applySnapshot(msg.state);
+            mpRefreshVehPathCache();
+          } else {
+            applyStateSync(msg.state);
+          }
         }
         break;
 

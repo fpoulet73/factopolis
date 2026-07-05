@@ -123,7 +123,9 @@ const GAME_HOURS_PER_SEC = CFG.jeu?.heuresParSeconde ?? 1;
 const GAME_EPOCH_MS      = Date.UTC(1970, 0, 1); // 1er janvier 1970 00:00 UTC
 const TOWN_RADIUS        = 20;  // cases — rayon d'appartenance à un village
 const EXP_DEPTH  = 16;   // profondeur d'une tranche d'expansion (tuiles)
-const EXP_MARGIN = 48;   // marge pré-générée de chaque côté (max 3 expansions / bord)
+const EXP_MARGIN = 48;   // marge pré-générée de chaque côté à la création du monde
+const GROW_CHUNK = EXP_MARGIN; // tuiles ajoutées d'un coup quand la grille doit grandir (voir growMap)
+const MAP_MAX_N  = 1024; // plafond de sécurité absolu sur la taille de grille (coût pathfinding O(N²)/tick)
 
 // ---------- véhicules persistants ----------
 const BUS_STOP_RADIUS      = CFG.logistique?.arretBus?.rayon         ?? 8;
