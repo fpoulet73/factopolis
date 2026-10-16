@@ -1522,6 +1522,7 @@ function emitChimneySmoke(px, py, dark){
 // de jeu) : la fumée vit aussi chez les invités, qui ne simulent pas.
 let _smokeLast = 0;
 function stepSmoke(){
+  if(qualityLow()){ if(smoke.length) smoke.length = 0; return; } // qualité basse : pas de fumée
   const now = performance.now();
   let dt = _smokeLast ? (now - _smokeLast) / 1000 : 0;
   _smokeLast = now;
@@ -2623,6 +2624,7 @@ function drawGroundTileBase(rx, ry, x, y, t, pack){
   if(!drawFast){
     // Masque les fines coutures anti-aliasées entre tuiles voisines.
     ctx.strokeStyle = col; ctx.lineWidth = 0.7; ctx.stroke();
+    if(qualityLow()) return p; // qualité basse : sol sans écume, reflets ni touffes (reconstruction ~2× plus rapide)
     if(t === T.WATER){
       // Écume le long des rives (arêtes partagées avec une tuile de terre).
       const edges = [[0, -1, 'A', 'B'], [1, 0, 'B', 'C'], [0, 1, 'C', 'D'], [-1, 0, 'D', 'A']];

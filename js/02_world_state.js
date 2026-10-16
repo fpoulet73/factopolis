@@ -54,6 +54,9 @@ const UI_OPTIONS = (() => {
     panelEvents: saved.panelEvents ?? false,
     panelMinimap: saved.panelMinimap ?? true,
     panelObjectives: saved.panelObjectives ?? true,
+    // Qualité graphique : auto (baisse la résolution si le jeu rame), haute (résolution
+    // native de l'écran), basse (résolution 1×, sans fumée) — pour les machines modestes.
+    quality: ['auto','high','low'].includes(saved.quality) ? saved.quality : 'auto',
   };
 })();
 function saveUIOptions(){ localStorage.setItem('factopolis_ui_options', JSON.stringify(UI_OPTIONS)); }
@@ -603,10 +606,22 @@ const cv = document.getElementById('cv');
 // les fonctions de dessin passent par ce global, donc la bascule les redirige.
 let ctx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1;
+// Qualité : en « basse » (ou « auto » après détection d'une machine lente) on rend
+// à la résolution CSS (1 pixel par pixel logique) au lieu de la résolution physique de
+// l'écran : sur un écran à mise à l'échelle 150–200 %, c'est 2 à 4 fois moins de pixels
+// pour le sol, les sprites et la couche 2D.
+let qualityAutoLowered = false;
+const qualityLow = () => UI_OPTIONS.quality === 'low' || (UI_OPTIONS.quality === 'auto' && qualityAutoLowered);
 function resize(){
-  DPR = window.devicePixelRatio || 1;
+  DPR = qualityLow() ? 1 : (window.devicePixelRatio || 1);
   W = innerWidth; H = innerHeight;
   cv.width = W*DPR; cv.height = H*DPR;
+}
+// Changement de qualité à chaud : recalcule DPR, redimensionne #cv et la scène Pixi.
+function applyQuality(){
+  resize();
+  if(typeof PixiScene !== 'undefined' && PixiScene.resize) PixiScene.resize();
+  if(typeof markGroundDirty === 'function') markGroundDirty();
 }
 addEventListener('resize', resize); resize();
 

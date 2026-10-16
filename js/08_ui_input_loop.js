@@ -3864,6 +3864,18 @@ languageSelect.onchange = e => {
   toast(t('settings.languageChanged', { language: t('language.' + UI_OPTIONS.language) }));
 };
 
+const qualitySelect = $('qualitySelect');
+if(qualitySelect){
+  qualitySelect.value = UI_OPTIONS.quality;
+  qualitySelect.onchange = e => {
+    e.stopPropagation();
+    UI_OPTIONS.quality = qualitySelect.value;
+    qualityAutoLowered = false; _qMon = { start: 0, n: 0, sum: 0, skip: 0 };
+    saveUIOptions();
+    applyQuality();
+    toast('⚙️ Qualité graphique : ' + qualitySelect.options[qualitySelect.selectedIndex].text);
+  };
+}
 graphicPackSelect.onchange = e => {
   e.stopPropagation();
   UI_OPTIONS.graphicPack = graphicPackSelect.value;
@@ -3899,7 +3911,27 @@ let drawFn = draw;
 // pilotée par une horloge indépendante (voir simStep / startSimClock plus bas).
 let last = performance.now();
 let lastFrameAt = 0; // dernier passage de la boucle de rendu (horloge sim : voir simStep)
+// Détection automatique d'une machine lente (qualité « auto ») : 4 s après le
+// démarrage, si 90 images successives durent en moyenne plus de 24 ms, on passe en
+// qualité basse (résolution 1×, sans fumée). Une seule bascule par session.
+let _qMon = { start: 0, n: 0, sum: 0, skip: 0 };
+function qualityMonitor(now, dtMs){
+  if(UI_OPTIONS.quality !== 'auto' || qualityAutoLowered || document.hidden) return;
+  if(!_qMon.start) _qMon.start = now;
+  if(now - _qMon.start < 4000) return;
+  if(dtMs > 250){ _qMon.n = 0; _qMon.sum = 0; return; } // pause / onglet rendormi : on ignore
+  _qMon.n++; _qMon.sum += dtMs;
+  if(_qMon.n < 90) return;
+  const avg = _qMon.sum / _qMon.n;
+  _qMon.n = 0; _qMon.sum = 0;
+  if(avg > 24){
+    qualityAutoLowered = true;
+    applyQuality();
+    toast('⚙️ Machine lente détectée : qualité graphique réduite (réglable dans ⚙️ Options)');
+  }
+}
 function frame(now){
+  qualityMonitor(now, now - last);
   const rdt = Math.min(0.05, (now-last)/1000);
   const gdt = paused ? 0 : rdt * speed;
   last = now;

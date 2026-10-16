@@ -217,12 +217,12 @@ const PixiScene = (function(){
 
   function resize(){
     if(!ready) return;
-    app.renderer.resize(W, H);
+    app.renderer.resize(W, H, DPR);
     render();
   }
   addEventListener('resize', resize);
 
-  return { init, render, onFrame, get app(){ return app; }, get layers(){ return layers; },
+  return { init, render, resize, onFrame, get app(){ return app; }, get layers(){ return layers; },
            get world(){ return world; }, get ready(){ return ready; } };
 })();
 
