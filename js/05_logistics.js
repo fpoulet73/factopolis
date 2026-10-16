@@ -27,8 +27,20 @@ function roadDegreeAt(x, y){
   return n;
 }
 
+// Degré d'une case de route mis en cache (invalidé par version du sol / terrain) :
+// le test « carrefour à feux » était refait (8 voisins + tableaux) à chaque pas
+// de chaque véhicule.
+let _degKey = '', _deg = null;
+function roadDegreeCached(x, y){
+  const key = groundVersion + '|' + terrainVersion + '|' + N;
+  if(_degKey !== key || !_deg){ _degKey = key; _deg = new Int8Array(N * N).fill(-1); }
+  const i = y * N + x;
+  let d = _deg[i];
+  if(d < 0){ d = roadDegreeAt(x, y); _deg[i] = d; }
+  return d;
+}
 function isTrafficIntersectionTile(tile){
-  return !!tile && roadDegreeAt(tile.x, tile.y) >= 4;
+  return !!tile && roadDegreeCached(tile.x, tile.y) >= 4;
 }
 
 function trafficAxisForMove(from, to){
@@ -36,9 +48,10 @@ function trafficAxisForMove(from, to){
   return Math.abs(dx) >= Math.abs(dy) ? 'ew' : 'ns';
 }
 
-function trafficGreenAxis(tile){
+function trafficGreenAxis(tile){ return trafficGreenAxisXY(tile.x, tile.y); }
+function trafficGreenAxisXY(tx, ty){
   const cycle = TRAFFIC_LIGHT_GREEN * 2 + TRAFFIC_LIGHT_ALL_RED * 2;
-  const offset = ((tile.x * 7 + tile.y * 11) % 5) * 0.35;
+  const offset = ((tx * 7 + ty * 11) % 5) * 0.35;
   const t = (gtime + offset) % cycle;
   if(t < TRAFFIC_LIGHT_GREEN) return 'ew';
   if(t < TRAFFIC_LIGHT_GREEN + TRAFFIC_LIGHT_ALL_RED) return 'none';
@@ -48,11 +61,13 @@ function trafficGreenAxis(tile){
 
 function trafficLightAllows(fromPoint, toPoint){
   if(UI_OPTIONS.disableTrafficLights) return true;
-  const from = roadTileFromPoint(fromPoint), to = roadTileFromPoint(toPoint);
-  if(!from || !to || !isTrafficIntersectionTile(to)) return true;
-  const dx = to.x - from.x, dy = to.y - from.y;
+  const fx = Math.floor(fromPoint.x / TILE), fy = Math.floor(fromPoint.y / TILE);
+  const tx = Math.floor(toPoint.x / TILE), ty = Math.floor(toPoint.y / TILE);
+  if(!inMap(fx, fy) || !road[fy*N+fx] || !inMap(tx, ty) || !road[ty*N+tx]) return true;
+  if(roadDegreeCached(tx, ty) < 4) return true;
+  const dx = tx - fx, dy = ty - fy;
   if(Math.abs(dx) + Math.abs(dy) !== 1) return true;  // approche diagonale : pas de feu sur sa voie
-  return trafficGreenAxis(to) === trafficAxisForMove(from, to);
+  return trafficGreenAxisXY(tx, ty) === (Math.abs(dx) >= Math.abs(dy) ? 'ew' : 'ns');
 }
 
 function segmentKey(pts, seg){
@@ -67,32 +82,222 @@ function reverseSegmentKey(pts, seg){
   return Math.round(b.x)+','+Math.round(b.y)+'>'+Math.round(a.x)+','+Math.round(a.y);
 }
 
+// Clés du segment courant d'un véhicule routier, MÉMORISÉES sur l'objet (recalculées
+// seulement quand il change de segment ou de chemin) : le trafic comparait des
+// chaînes recréées pour chaque paire de véhicules, à chaque pas (1er poste CPU
+// des villes animées, rédhibitoire sur les machines modestes).
+function unitSegKey(u){
+  const pts = u.pts, seg = u.seg;
+  if(u._skPts !== pts || u._skSeg !== seg){
+    u._skPts = pts; u._skSeg = seg;
+    u._sk = segmentKey(pts, seg);
+    u._rsk = reverseSegmentKey(pts, seg);
+  }
+  return u._sk;
+}
+function unitReverseSegKey(u){ unitSegKey(u); return u._rsk; }
+
 // Vrai s'il n'y a aucun véhicule venant en sens inverse sur le segment seg (et seg+1)
 function noOncoming(unit, seg){
-  const rKey = reverseSegmentKey(unit.pts, seg);
+  const rKey = seg === unit.seg ? unitReverseSegKey(unit) : reverseSegmentKey(unit.pts, seg);
   if(!rKey) return true;
-  for(const other of movingRoadUnits(unit)){
-    if(segmentKey(other.pts, other.seg) === rKey) return false;
+  const bucket = roadBucket(rKey);
+  for(let i = 0; i < bucket.length; i++){
+    const other = bucket[i];
+    if(other === unit || !roadUnitMoving(other)) continue;
+    if(unitSegKey(other) === rKey) return false;
   }
   return true;
 }
 
+// Candidats au trafic routier (camions + véhicules routiers), listés UNE fois par
+// pas de simulation (roadTick incrémenté par update()). Les conditions dynamiques
+// (état, fin de trajet, camion livré) sont revérifiées à chaque lecture.
+let roadTick = 0, _roadCandTick = -1, _roadCand = [], _roadBuckets = new Map();
+const _NO_UNITS = [];
+function roadUnitCandidates(){
+  if(_roadCandTick === roadTick) return _roadCand;
+  _roadCandTick = roadTick;
+  const out = _roadCand = [];
+  const buckets = _roadBuckets = new Map();
+  const add = u => {
+    out.push(u);
+    if(!roadUnitMoving(u)) return;
+    const k = unitSegKey(u);
+    if(!k) return;
+    const b = buckets.get(k);
+    if(b) b.push(u); else buckets.set(k, [u]);
+  };
+  for(const tk of trucks) add(tk);
+  for(const v of vehicles){
+    if(v.vtype === 'train' || vehicleMode(v) !== 'road') continue; // bateaux/avions : hors trafic routier
+    add(v);
+  }
+  return out;
+}
+// Véhicules routiers sur un segment donné (index construit avec la liste du pas ;
+// un véhicule qui change de segment s'y inscrit via roadBucketAdd, les entrées
+// périmées sont filtrées à la lecture en revérifiant la clé).
+function roadBucket(key){
+  roadUnitCandidates();
+  return _roadBuckets.get(key) || _NO_UNITS;
+}
+function roadBucketAdd(u){
+  const k = unitSegKey(u);
+  if(!k) return;
+  roadUnitCandidates();
+  const b = _roadBuckets.get(k);
+  if(b){ if(b.indexOf(u) < 0) b.push(u); } else _roadBuckets.set(k, [u]);
+}
+function roadUnitMoving(o){
+  if(o.gone || !o.pts || o.seg >= o.pts.length-1) return false;
+  return o.vtype === undefined || o.state !== 'idle'; // camion : toujours ; véhicule : s'il roule
+}
+
+// (conservé pour les appels externes éventuels)
 function movingRoadUnits(except){
   const out = [];
-  for(const tk of trucks) if(tk !== except && tk.pts && tk.seg < tk.pts.length-1) out.push(tk);
-  for(const v of vehicles) if(v !== except && v.state !== 'idle' && v.pts && v.seg < v.pts.length-1) out.push(v);
+  for(const o of roadUnitCandidates()) if(o !== except && roadUnitMoving(o)) out.push(o);
   return out;
 }
 
+// ---------- bateaux et avions ----------
+// Mode de déplacement d'un véhicule : road | rail | water | air.
+function vehicleMode(v){ return VEHICLE_TYPES[v?.vtype]?.mode || 'road'; }
+
+// Tuiles d'eau touchant un bâtiment (8-voisinage) : quais d'un port.
+function waterTilesAround(b){
+  const out = [];
+  if(!b) return out;
+  for(let y = b.y - 1; y <= b.y + (b.h || 1); y++) for(let x = b.x - 1; x <= b.x + (b.w || 1); x++){
+    if(!inMap(x, y)) continue;
+    if(x >= b.x && x < b.x + (b.w || 1) && y >= b.y && y < b.y + (b.h || 1)) continue;
+    if(terrain[y * N + x] === T.WATER) out.push(y * N + x);
+  }
+  return out;
+}
+
+// Itinéraire maritime entre deux ports : BFS sur l'eau en 8 directions, sans
+// couper un coin de terre en diagonale.
+function findWaterPath(fromB, toB){
+  const starts = waterTilesAround(fromB);
+  const targets = new Set(waterTilesAround(toB));
+  if(!starts.length || !targets.size) return null;
+  dist.fill(-1);
+  const q = [];
+  for(const s of starts){ dist[s] = 0; prev[s] = -1; q.push(s); }
+  let found = -1;
+  for(let qi = 0; qi < q.length; qi++){
+    const c = q[qi];
+    if(targets.has(c)){ found = c; break; }
+    const cx = c % N, cy = (c / N) | 0;
+    for(const [dx, dy] of DIRS8){
+      const x = cx + dx, y = cy + dy;
+      if(!inMap(x, y)) continue;
+      const ni = y * N + x;
+      if(terrain[ni] !== T.WATER || dist[ni] >= 0) continue;
+      if(dx && dy && (terrain[cy * N + x] !== T.WATER || terrain[y * N + cx] !== T.WATER)) continue;
+      dist[ni] = dist[c] + 1; prev[ni] = c; q.push(ni);
+    }
+  }
+  if(found < 0) return null;
+  const path = [];
+  for(let t = found; t !== -1; t = prev[t]) path.push(t);
+  path.reverse();
+  return path.map(i => ({ x:(i % N) * TILE + TILE / 2, y:((i / N) | 0) * TILE + TILE / 2 }));
+}
+
+// Vol direct entre deux aéroports (points intermédiaires pour l'altitude et
+// l'interpolation multijoueur).
+function findAirPath(fromB, toB){
+  if(!fromB || !toB) return null;
+  const ax = (fromB.x + (fromB.w || 1) / 2) * TILE, ay = (fromB.y + (fromB.h || 1) / 2) * TILE;
+  const bx = (toB.x + (toB.w || 1) / 2) * TILE, by = (toB.y + (toB.h || 1) / 2) * TILE;
+  const d = Math.hypot(bx - ax, by - ay);
+  if(d < 1) return [{ x:ax, y:ay }];
+  const n = Math.max(2, Math.ceil(d / (TILE * 2)));
+  const pts = [];
+  for(let i = 0; i <= n; i++) pts.push({ x:ax + (bx - ax) * i / n, y:ay + (by - ay) * i / n });
+  return pts;
+}
+
+// Itinéraire entre deux bâtiments selon le mode du véhicule.
+function vehiclePathBetween(v, a, b){
+  const mode = vehicleMode(v);
+  if(mode === 'water') return findWaterPath(a, b);
+  if(mode === 'air') return findAirPath(a, b);
+  return findRoadPath(a, b);
+}
+
+// Avance sans trafic (bateaux, avions) : ni feux, ni files d'attente.
+function advanceFreeUnit(unit, move){
+  while(move > 0 && unit.seg < unit.pts.length - 1){
+    const a = unit.pts[unit.seg], b = unit.pts[unit.seg + 1];
+    const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const remain = (1 - unit.t) * d;
+    if(move < remain){ unit.t += move / d; return; }
+    move -= remain; unit.seg++; unit.t = 0;
+  }
+}
+
+// Entrepôt de fret d'une escale de bateau : entrepôt collé au port.
+function portFreightHub(b){
+  if(!b || b.dead || b.type !== 'boat_depot') return null;
+  return buildings.find(o => !o.dead && isStorageDepot(o) && buildingEdgeGap(b, o) === 0) || null;
+}
+
+// Escale d'un bateau ou d'un avion : voyageurs (ferry, avion) ou fret (cargo).
+function transportStopProcess(v, stopB, nextB){
+  const vt = VEHICLE_TYPES[v.vtype];
+  if(!vt || !stopB || stopB.dead) return;
+  if(typeof newsOnArrival === 'function') newsOnArrival(v, stopB);
+  const wallet = walletOf(v.garageRef?.owner ?? null);
+  if(vt.passengers){
+    if(v.cargo > 0 && v.passengerBoardStop && !v.passengerBoardStop.dead && v.passengerBoardStop !== stopB){
+      const from = v.passengerBoardStop;
+      const d = Math.max(1, Math.round(Math.hypot((stopB.x - from.x), (stopB.y - from.y))));
+      const fare = vehicleMode(v) === 'air' ? PLANE_FARE_FACTOR : SHIP_FARE_FACTOR;
+      const revenue = Math.round(v.cargo * d * fare);
+      if(revenue > 0){
+        earnMoney(revenue, 'vehicules', wallet);
+        recordVente(wallet, 'veh', v.vtype, revenue);
+        addFloat(stopB.x + ((stopB.w || 1) - 1) / 2, stopB.y, '+' + revenue + ' $ ' + vt.icone, '#7fd8ff');
+      }
+      stopB.passagersSortant = (stopB.passagersSortant || 0) + v.cargo;
+    }
+    v.cargo = 0; v.res = null; v.passengerBoardStop = null;
+    const waiting = Math.floor(stopB.passengersEntrant || 0);
+    const take = nextB ? Math.min(vt.capacite, waiting) : 0;
+    if(take > 0){
+      stopB.passengersEntrant = Math.max(0, (stopB.passengersEntrant || 0) - take);
+      v.cargo = take;
+      v.passengerBoardStop = stopB;
+    }
+    return;
+  }
+  // Fret : même logique que les trains (entrepôt lié, commerce inter-joueurs,
+  // marchandises déjà livrées non repayées), revenu versé immédiatement.
+  trainProcessStop(v, stopB, nextB);
+  if(v.pendingFreightRevenue > 0){
+    earnMoney(v.pendingFreightRevenue, 'vehicules', wallet);
+    recordVente(wallet, 'veh', v.vtype, v.pendingFreightRevenue);
+    addFloat(stopB.x + ((stopB.w || 1) - 1) / 2, stopB.y, '+' + v.pendingFreightRevenue + ' $ ' + vt.icone, '#35ff64');
+    v.pendingFreightRevenue = 0;
+  }
+}
+
 function limitByTrafficAhead(unit, desiredT){
-  const key = segmentKey(unit.pts, unit.seg);
+  const key = unitSegKey(unit);
   if(!key) return desiredT;
   const a = unit.pts[unit.seg], b = unit.pts[unit.seg+1];
   const len = Math.hypot(b.x-a.x, b.y-a.y) || 1;
   let maxT = desiredT;
   let wouldBlock = false;
-  for(const other of movingRoadUnits(unit)){
-    if(segmentKey(other.pts, other.seg) !== key) continue;
+  const bucket = roadBucket(key);
+  for(let bi = 0; bi < bucket.length; bi++){
+    const other = bucket[bi];
+    if(other === unit || !roadUnitMoving(other)) continue;
+    if(unitSegKey(other) !== key) continue;
     if(other.t <= unit.t) continue;
     const allowed = other.t - VEHICLE_FOLLOW_GAP / len;
     if(allowed < desiredT - 1e-6) wouldBlock = true;
@@ -114,8 +319,11 @@ function nextSegmentIsBlocked(unit){
   if(!key) return false;
   const a = unit.pts[nextSeg], b = unit.pts[nextSeg+1];
   const len = Math.hypot(b.x-a.x, b.y-a.y) || 1;
-  for(const other of movingRoadUnits(unit)){
-    if(segmentKey(other.pts, other.seg) !== key) continue;
+  const bucket = roadBucket(key);
+  for(let bi = 0; bi < bucket.length; bi++){
+    const other = bucket[bi];
+    if(other === unit || !roadUnitMoving(other)) continue;
+    if(unitSegKey(other) !== key) continue;
     if(other.t * len < VEHICLE_FOLLOW_GAP) return true;
   }
   // Si en cours de dépassement, bloquer si trafic en sens inverse sur le segment suivant
@@ -151,6 +359,7 @@ function advanceRoadUnit(unit, move){
     unit.seg++;
     unit.t = 0;
     unit.overtaking = false; // réévaluer sur chaque nouveau segment
+    roadBucketAdd(unit);
   }
 }
 
@@ -224,7 +433,12 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
     const distScore = bt >= 0 ? bd : Math.round(Math.hypot(
       centerOfBuilding(c).x - senderCenter.x,
       centerOfBuilding(c).y - senderCenter.y));
-    const score = distScore + (isStorageHub(c) ? 500 : 0) + (full ? 200 : 0) + stockRatio * 150;
+    let score = distScore + (isStorageHub(c) ? 500 : 0) + (full ? 200 : 0) + stockRatio * 150;
+    // Ressource de fusion (outils) : la concentrer sur les logements pleins les
+    // plus avancés — une maison vide ne peut pas fusionner, et répartir le quota
+    // sur toute la ville retarderait la première fusion de plusieurs dizaines de minutes.
+    if(rcc && !residConsumesResource(c, res) && residUpgradeTargetOf(c, res) > 0)
+      score = distScore + (full ? 0 : 300) + (1 - Math.min(1, residSupplyRatio(c, res))) * 80;
 
     if(score < bestScore){
       bestScore = score;
@@ -311,6 +525,7 @@ function updateTrucks(dt){
         // camion redirigé — reste dans trucks[], trucksOut inchangé
       } else {
         if(!tk.from.dead) tk.from.trucksOut--;
+        tk.gone = true; // sorti du trafic (la liste des candidats du pas peut encore le contenir)
         trucks.splice(i,1);
       }
     }
@@ -721,7 +936,32 @@ function railReachableExits(tile, vehicle=null){
   return n;
 }
 
+// Tampons BFS ferroviaires réutilisés (évite d'allouer un Int32Array(N*N) à
+// chaque recherche d'itinéraire) : une tuile n'est « visitée » que si son tampon
+// porte la génération courante.
+let _railBfsPrev = null, _railBfsStamp = null, _railBfsGen = 0;
+function railBfsBuffers(){
+  if(!_railBfsPrev || _railBfsPrev.length !== N * N){
+    _railBfsPrev = new Int32Array(N * N);
+    _railBfsStamp = new Uint32Array(N * N);
+    _railBfsGen = 0;
+  }
+  if(++_railBfsGen >= 0xffffffff){ _railBfsStamp.fill(0); _railBfsGen = 1; }
+  return _railBfsGen;
+}
+
+// Itinéraire ferroviaire. Au départ, on préfère une sortie dont le premier feu
+// est vert ; si AUCUNE sortie n'est verte, on garde quand même l'itinéraire : le
+// train avancera jusqu'au feu rouge et y attendra (signalisation par cantons).
+// Sans ce repli, un feu rouge quelconque devant un dépôt ou une gare rendait le
+// trajet « impossible » (drapeau de départ refusé, train bloqué en gare).
 function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=null, blockedFirstTiles=null, skipFirstSignalCheck=false){
+  const path = findRailPathCore(fromB, toB, startTile, vehicle, previousTile, blockedFirstTiles, skipFirstSignalCheck);
+  if(path || skipFirstSignalCheck) return path;
+  return findRailPathCore(fromB, toB, startTile, vehicle, previousTile, blockedFirstTiles, true);
+}
+
+function findRailPathCore(fromB, toB, startTile=null, vehicle=null, previousTile=null, blockedFirstTiles=null, skipFirstSignalCheck=false){
   const starts = startTile != null ? [startTile] : adjRailTiles(fromB);
   let targetTiles = isTrainStationPiece(toB) ? trainStationStopTiles(toB, fromB, startTile) : adjRailTiles(toB);
   if(isTrainStationPiece(toB)){
@@ -733,11 +973,17 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=nul
   }
   const targets = new Set(targetTiles);
   if(!starts.length || !targets.size) return null;
-  const prevRail = new Int32Array(N * N).fill(-2);
+  const gen = railBfsBuffers();
+  const stamp = _railBfsStamp, prevBuf = _railBfsPrev;
+  // Équivalent de l'ancien tableau rempli à -2 : -2 = non visité.
+  const prevRail = {
+    get: i => stamp[i] === gen ? prevBuf[i] : -2,
+    set: (i, val) => { stamp[i] = gen; prevBuf[i] = val; },
+  };
   const q = [];
   for(const s of starts){
     if(!rail[s]) continue;
-    prevRail[s] = -1;
+    prevRail.set(s, -1);
     q.push(s);
   }
   let found = -1;
@@ -746,12 +992,13 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=nul
     if(targets.has(cur)){ found = cur; break; }
     const cx = cur % N, cy = (cur / N) | 0;
     const mask = rail[cur] || 0;
-    const firstHop = prevRail[cur] === -1;
+    const parent = prevRail.get(cur);
+    const firstHop = parent === -1;
     // Sens d'arrivée sur `cur` pour interdire les virages > 45°. Connu via le
     // parent BFS, ou via `previousTile` pour la toute première tuile.
     let inDx = 0, inDy = 0;
-    if(prevRail[cur] >= 0){
-      inDx = cx - (prevRail[cur] % N); inDy = cy - ((prevRail[cur] / N) | 0);
+    if(parent >= 0){
+      inDx = cx - (parent % N); inDy = cy - ((parent / N) | 0);
     } else if(startTile != null && cur === startTile && previousTile != null){
       inDx = cx - (previousTile % N); inDy = cy - ((previousTile / N) | 0);
     }
@@ -766,14 +1013,14 @@ function findRailPath(fromB, toB, startTile=null, vehicle=null, previousTile=nul
       if(startTile != null && cur === startTile && previousTile != null && ni === previousTile) continue;
       if(startTile != null && cur === startTile && blockedFirstTiles?.has(ni)) continue;
       const other = RAIL_DIRS[def.opposite];
-      if(!rail[ni] || !(rail[ni] & other.bit) || prevRail[ni] !== -2) continue;
-      prevRail[ni] = cur;
+      if(!rail[ni] || !(rail[ni] & other.bit) || prevRail.get(ni) !== -2) continue;
+      prevRail.set(ni, cur);
       q.push(ni);
     }
   }
   if(found < 0) return null;
   const tiles = [];
-  for(let t = found; t !== -1; t = prevRail[t]) tiles.push(t);
+  for(let t = found; t !== -1; t = prevRail.get(t)) tiles.push(t);
   tiles.reverse();
   const pts = tiles.map(idx => ({ x:(idx % N) * TILE + TILE / 2, y:((idx / N) | 0) * TILE + TILE / 2 }));
   return { tiles, pts };
@@ -984,7 +1231,8 @@ function rebuildRailBlockOccupancy(){
   // pour que la queue garde le feu rouge tant qu'elle n'a pas libéré le canton.
   const occ = new Int16Array(railBlocks.count);
   for(const v of vehicles){
-    if(v.vtype !== 'train' || v.state === 'idle') continue;
+    if(v.vtype !== 'train') continue;
+    if(v.state === 'idle'){ v.currentRailBlock = -1; continue; }
     const tile = trainTileIndex(v);
     const blockId = tile >= 0 ? (railBlocks.blockByTile?.[tile] ?? -1) : -1;
     v.currentRailBlock = blockId;
@@ -998,6 +1246,50 @@ function rebuildRailBlockOccupancy(){
 // occupant du canton qu'il va franchir (loco déjà entrée ou queue de wagons).
 // Aspect « canton » d'un feu : rouge si forcé manuellement ou si un train occupe
 // le canton protégé. C'est le comportement commun à TOUS les feux.
+// Index des cantons couverts par l'empreinte de chaque train (loco + wagons).
+// Reconstruit au plus une fois par pas de simulation (gtime change) puis tenu à
+// jour INCRÉMENTALEMENT à chaque tuile franchie / départ / retour au dépôt : un
+// train qui vient d'entrer dans un canton le rend aussitôt rouge pour les trains
+// traités après lui dans la même boucle (pas de double entrée dans un canton).
+let _trainFootprintIndex = null;
+function trainFootprintBlockSet(v){
+  const out = new Set();
+  if(v?.vtype !== 'train' || v.state === 'idle') return out;
+  const byTile = railBlocks?.blockByTile;
+  if(!byTile) return out;
+  for(const tile of trainBlockFootprintTiles(v)){
+    const blk = byTile[tile] ?? -1;
+    if(blk >= 0) out.add(blk);
+  }
+  return out;
+}
+function trainFootprintIndex(){
+  const idx = _trainFootprintIndex;
+  if(idx && idx.gtime === gtime && idx.blocks === railBlocks && idx.vehicles === vehicles) return idx;
+  const byVehicle = new Map();
+  for(const v of (vehicles ?? [])){
+    if(v.vtype !== 'train' || v.state === 'idle') continue;
+    byVehicle.set(v, trainFootprintBlockSet(v));
+  }
+  return (_trainFootprintIndex = { gtime, blocks:railBlocks, vehicles, byVehicle });
+}
+// À appeler dès qu'un train change de tuile, part ou rentre au dépôt.
+function trainFootprintTouch(v){
+  if(!v || v.vtype !== 'train') return;
+  const idx = _trainFootprintIndex;
+  if(!idx || idx.gtime !== gtime || idx.blocks !== railBlocks || idx.vehicles !== vehicles) return; // sera reconstruit
+  if(v.state === 'idle') idx.byVehicle.delete(v);
+  else idx.byVehicle.set(v, trainFootprintBlockSet(v));
+}
+// Un AUTRE train (loco ou wagons) occupe-t-il ce canton ?
+function railBlockOccupiedByOtherTrain(blockId, exceptVehicle=null){
+  if(blockId == null || blockId < 0) return false;
+  for(const [v, set] of trainFootprintIndex().byVehicle){
+    if(v !== exceptVehicle && set.has(blockId)) return true;
+  }
+  return false;
+}
+
 function railBlockSignalClear(sig, ignoreVehicle=null){
   // Feu rouge forcé manuellement par le joueur : toujours rouge (arrêt).
   if(sig.forcedRed) return false;
@@ -1012,14 +1304,7 @@ function railBlockSignalClear(sig, ignoreVehicle=null){
   // des wagons), fiable même à l'arrêt en gare (pathTiles=1 tuile) ou après un
   // recalcul d'itinéraire, et SANS le nez flottant qui déborderait sur le canton
   // suivant et rendrait le feu rouge à tort devant un train arrêté.
-  for(const v of (vehicles ?? [])){
-    if(v === ignoreVehicle) continue;
-    if(v.vtype !== 'train' || v.state === 'idle') continue;
-    for(const tile of trainBlockFootprintTiles(v)){
-      if((railBlocks?.blockByTile?.[tile] ?? -1) === guardedBlock) return false;
-    }
-  }
-  return true;
+  return !railBlockOccupiedByOtherTrain(guardedBlock, ignoreVehicle);
 }
 
 // Feu de jonction (2 lentilles) : vrai si AU MOINS une voie suivante est libre,
@@ -1094,6 +1379,36 @@ function railSignalAspect(sig, ignoreVehicle=null){
   return true;
 }
 
+// Tuiles occupées par le train dans l'ordre loco → dernier wagon.
+function trainFootprintOrdered(v){
+  return [...trainBlockFootprintTiles(v)];
+}
+
+// Retournement façon Transport Tycoon : quand le train repart dans le sens
+// inverse (terminus en cul-de-sac, retour au dépôt depuis la ligne…), le convoi
+// entier se retourne sur place. La tête du train devient l'ancienne queue et les
+// wagons s'alignent derrière elle, vers l'ancienne position de la loco. Sans ça,
+// la loco repartirait À TRAVERS ses propres wagons (rendu replié sur lui-même).
+// Retourne { startTile, previousTile, trail } ou null si inutile/impossible.
+function trainReversalPlan(v, locoTile){
+  if(v?.vtype !== 'train' || !(v.wagons?.length > 0) || locoTile == null || locoTile < 0) return null;
+  const tiles = trainFootprintOrdered(v);
+  if(tiles.length < 2 || tiles[0] !== locoTile) return null;
+  // Les tuiles doivent former une chaîne ferroviaire continue (sinon trail incohérent).
+  for(let i = 1; i < tiles.length; i++){
+    const a = tiles[i - 1], b = tiles[i];
+    const def = railDirDef((b % N) - (a % N), ((b / N) | 0) - ((a / N) | 0));
+    if(!def || !(rail[a] & def.bit)) return null;
+  }
+  const tail = tiles[tiles.length - 1];
+  return {
+    startTile: tail,
+    previousTile: tiles[tiles.length - 2],
+    // Plus ancien → plus récent : de l'ancienne loco vers la nouvelle tête.
+    trail: tiles.map(trainTrailPoint),
+  };
+}
+
 function prepareRailTrip(v, fromB, toB, startTile=null, previousTile=null, skipFirstSignalCheck=false){
   let path = findRailPath(fromB, toB, startTile, v, previousTile, null, skipFirstSignalCheck);
   let decisionPreviousTile = previousTile;
@@ -1106,6 +1421,23 @@ function prepareRailTrip(v, fromB, toB, startTile=null, previousTile=null, skipF
     decisionPreviousTile = null;
   }
   if(!path) return false;
+  // Demi-tour détecté (la 1re tuile du trajet est celle d'où vient le train, ou
+  // celle qu'occupe son premier wagon) : retourner le convoi.
+  if(v?.vtype === 'train' && startTile != null && path.tiles.length >= 2){
+    const behind = trainFootprintOrdered(v)[1] ?? previousTile;
+    if(behind != null && path.tiles[1] === behind){
+      const plan = trainReversalPlan(v, startTile);
+      if(plan){
+        const flipped = findRailPath(fromB, toB, plan.startTile, v, plan.previousTile, null, skipFirstSignalCheck);
+        if(flipped){
+          path = flipped;
+          decisionPreviousTile = plan.previousTile;
+          previousTile = plan.previousTile;
+          v.railTrail = plan.trail;
+        }
+      }
+    }
+  }
   v.pts = path.pts;
   v.pathTiles = path.tiles;
   v.seg = 0;
@@ -1196,6 +1528,24 @@ function seedTrainTrail(v, pathTiles, previousTile=null){
   v.railTrail = backwards.reverse().map(trainTrailPoint);
 }
 
+// Sortie de dépôt : la voie s'arrête au bâtiment, il n'y a donc pas de rail
+// « derrière » la loco pour y aligner les wagons (ils s'empilaient en bout de
+// voie). On prolonge l'historique en ligne droite À TRAVERS le dépôt : les wagons
+// sortent du bâtiment un par un (ceux encore à l'intérieur sont masqués au rendu).
+function seedTrainTrailFromDepot(v){
+  const g = v?.garageRef;
+  const start = v?.pathTiles?.[0];
+  if(!g || g.dead || start == null || start < 0) return;
+  const s = trainTrailPoint(start);
+  const gx = (g.x + (g.w || 1) / 2) * TILE, gy = (g.y + (g.h || 1) / 2) * TILE;
+  let dx = gx - s.x, dy = gy - s.y;
+  const len = Math.hypot(dx, dy);
+  if(len < 1) return;
+  dx /= len; dy /= len;
+  const total = ((v.wagons?.length || 0) + 2) * TILE * 0.80 + TILE;
+  v.railTrail = [{ x:s.x + dx * total, y:s.y + dy * total }, { x:s.x, y:s.y }];
+}
+
 function ensureTrainTrail(v){
   if(Array.isArray(v.railTrail) && v.railTrail.length >= 2) return;
   if(!v.pathTiles?.length) return;
@@ -1230,7 +1580,9 @@ function trainCanLeaveDepotNow(v){
   if(!path?.tiles?.length) return { ok:false, reason:'no_path' };
   const firstTile = path.tiles[0];
   const firstBlock = railBlocks?.blockByTile?.[firstTile] ?? -1;
-  if(firstBlock >= 0 && (railBlockOccupancy?.[firstBlock] ?? 0) > 0)
+  // Empreinte complète (loco + wagons) : une queue de train encore dans le canton
+  // de sortie suffit à retenir le départ, sinon les deux convois se chevauchent.
+  if(firstBlock >= 0 && railBlockOccupiedByOtherTrain(firstBlock, v))
     return { ok:false, reason:'occupied', path, firstTile, firstBlock };
   return { ok:true, path, firstTile, firstBlock };
 }
@@ -1240,7 +1592,7 @@ function roadCanLeaveDepotNow(v){
   if(!vehiclePresentAtDepot(v)) return { ok:false, reason:'not_in_depot' };
   if(!v.source || !v.dest || v.source.dead || v.dest.dead || !vehicleCanServeRoute(v))
     return { ok:false, reason:'route_missing' };
-  const path = findRoadPath(v.garageRef, v.source);
+  const path = vehiclePathBetween(v, v.garageRef, v.source);
   if(!path?.length) return { ok:false, reason:'no_path' };
   return { ok:true, path };
 }
@@ -1364,6 +1716,7 @@ function applyInterPlayerTrade(buyerOwner, sellerOwner, res, qty){
 
 function trainProcessStop(v, stopB, nextStop){
   if(!v || !stopB || stopB.dead) return;
+  if(v.vtype === 'train' && typeof newsOnArrival === 'function') newsOnArrival(v, stopB);
 
   // --- passagers ---
   const passCap = trainPassengerCapacity(v);
@@ -1411,7 +1764,8 @@ function trainProcessStop(v, stopB, nextStop){
   const directDepot = (!linkedDepot && isTrainStationPiece(stopB))
     ? buildings.find(b => !b.dead && isStorageDepot(b) && buildingEdgeGap(stopB, b) === 0)
     : null;
-  const freightHub = linkedDepot || directDepot || (isStorageHub(stopB) ? stopB : null);
+  const freightHub = linkedDepot || directDepot || portFreightHub(stopB) || (isStorageHub(stopB) ? stopB : null);
+  const freightFactor = vehicleMode(v) === 'water' ? SHIP_FREIGHT_FACTOR : TRAIN_FREIGHT_FACTOR;
 
   let unloadedRes = null;
   if(canUnload && v.cargo > 0 && v.res && freightHub){
@@ -1424,22 +1778,30 @@ function trainProcessStop(v, stopB, nextStop){
     if(interPlayer) deposit = applyInterPlayerTrade(hubOwner, trainOwner, v.res, deposit);
     if(deposit > 0){
       freightHub.storage[v.res] = (freightHub.storage[v.res]||0) + deposit;
+      // Marchandise déposée par un train : si elle repart en train, ce transport
+      // ne sera pas payé une 2e fois (sinon un train faisant la navette A↔B avec
+      // le même stock générait de l'argent à l'infini).
+      const received = freightHub.trainReceived || (freightHub.trainReceived = {});
+      received[v.res] = (received[v.res] || 0) + deposit;
       unloadedRes = v.res;
+      const freshAboard = Math.max(0, v.cargoFresh ?? v.cargo);
+      const fresh = Math.min(deposit, freshAboard);
+      v.cargoFresh = freshAboard - fresh;
       if(!interPlayer){
         // Revenu de fret (même propriétaire) : différé à mi-temps d'arrêt (voir updateTrainVehicle)
         const loadB = v.cargoLoadStop;
-        if(loadB && loadB !== stopB){
+        if(loadB && loadB !== stopB && fresh > 0){
           const cx = stopB.x + (stopB.w||1)/2, cy = stopB.y + (stopB.h||1)/2;
           const lx = loadB.x + (loadB.w||1)/2,  ly = loadB.y + (loadB.h||1)/2;
           const dist = Math.max(1, Math.round(Math.abs(cx - lx) + Math.abs(cy - ly)));
-          const revenue = Math.round(deposit * (TRADE_PRICES[v.res] || 1) * dist * TRAIN_FREIGHT_FACTOR);
+          const revenue = Math.round(fresh * (TRADE_PRICES[v.res] || 1) * dist * freightFactor);
           if(revenue > 0)
             v.pendingFreightRevenue = (v.pendingFreightRevenue || 0) + revenue;
         }
       }
     }
     v.cargo -= deposit;
-    if(v.cargo <= 0){ v.cargo = 0; v.res = null; v.cargoLoadStop = null; }
+    if(v.cargo <= 0){ v.cargo = 0; v.res = null; v.cargoLoadStop = null; v.cargoFresh = 0; }
     else if(deposit > 0){ v.cargoLoadStop = stopB; } // déchargement partiel : le reste repart de cette gare
   }
   if(!nextStop || !canLoad || !freightHub) return;
@@ -1464,10 +1826,17 @@ function trainProcessStop(v, stopB, nextStop){
     // Commerce inter-joueurs : le propriétaire du train achète la ressource chargée.
     const take = interPlayer ? applyInterPlayerTrade(trainOwner, hubOwner, bestRes, bestAmt) : bestAmt;
     if(take > 0){
+      // Part du stock déjà livrée par train (non rémunérée à nouveau) : chargée en premier.
+      const received = freightHub.trainReceived || (freightHub.trainReceived = {});
+      const unpaid = Math.min(received[bestRes] || 0, freightHub.storage[bestRes] || 0);
+      const fromUnpaid = Math.min(take, unpaid);
+      received[bestRes] = unpaid - fromUnpaid;
       freightHub.storage[bestRes] -= take;
+      const sameRes = v.res === bestRes && v.cargo > 0;
       // Mémoriser l'origine du chargement (seulement si le train était vide avant)
-      if(v.cargo === 0 || v.res !== bestRes) v.cargoLoadStop = stopB;
-      v.cargo = (v.res === bestRes ? v.cargo : 0) + take;
+      if(!sameRes) v.cargoLoadStop = stopB;
+      v.cargoFresh = (sameRes ? Math.max(0, v.cargoFresh ?? v.cargo) : 0) + (take - fromUnpaid);
+      v.cargo = (sameRes ? v.cargo : 0) + take;
       v.res = bestRes;
     }
   }
@@ -1569,6 +1938,11 @@ function advanceRailVehicle(v, move){
     v.railPlannedJunctionTile = -1;
     v.railDecisionPreviousTile = null;
     v.railPredecidedJunctionTile = -1;
+    if(v.rerouteAtNextTile){
+      // Ordres modifiés en route : nouvel itinéraire depuis cette tuile.
+      v.rerouteAtNextTile = false;
+      replanTrainAtSignal(v);
+    }
     const tile = v.pathTiles[v.seg] ?? -1;
     // Péage rails : compter chaque tuile empruntée appartenant à un autre joueur.
     if(tile >= 0 && railOwner){
@@ -1839,6 +2213,26 @@ function syncTrainOrders(v){
   return !!(v.source && v.dest);
 }
 
+// Applique de nouveaux ordres à un train EN CIRCULATION : il repart vers le 1er
+// arrêt du nouveau circuit depuis sa position. À quai, le départ suivant prend la
+// nouvelle destination ; en marche, l'itinéraire est recalculé à la prochaine
+// tuile (cf. advanceRailVehicle, drapeau rerouteAtNextTile).
+function trainApplyOrdersLive(v){
+  if(v?.vtype !== 'train') return false;
+  v.orderIndex = 0;
+  if(!syncTrainOrders(v) || !vehicleCanServeRoute(v)) return false;
+  const viz = [];
+  for(let i = 0; i < v.orders.length; i++){
+    const leg = findRailPath(v.orders[i], v.orders[(i + 1) % v.orders.length]);
+    if(leg?.pts?.length) viz.push(...leg.pts);
+  }
+  v.vizRoute = { fwd: viz, bwd: [] };
+  if(v.state === 'idle') return true; // au dépôt : le drapeau donnera le départ
+  v.state = 'to_source';
+  if(!(v.waitTimer > 0)) v.rerouteAtNextTile = true;
+  return true;
+}
+
 function trainStopLabel(b){
   if(!b || b.dead) return '—';
   if(isTrainStationPiece(b)) return b.name || 'Gare';
@@ -1900,6 +2294,9 @@ function vehicleRouteEndpointOk(b, vtype_override, ownerOverride){
   if(!canUseBuilding(b, routeOwner)) return false;
   if(vt === 'bus') return b?.type === 'bus_stop' || b?.type === 'train_station' || b?.type === 'train_platform';
   if(vt === 'train') return b?.type === 'train_depot' || isTrainStationPiece(b);
+  const mode = VEHICLE_TYPES[vt]?.mode;
+  if(mode === 'water') return b?.type === 'boat_depot';
+  if(mode === 'air') return b?.type === 'plane_depot';
   return isStorageHub(b);
 }
 
@@ -2038,6 +2435,7 @@ function startVehicleRoute(v){
       v.state = 'idle';
       return false;
     }
+    seedTrainTrailFromDepot(v);
   v.state = 'to_source';
   v.waitTimer = 0;
   v.currentBuilding = null;
@@ -2050,10 +2448,10 @@ function startVehicleRoute(v){
     return true;
   }
   // Cache la route complète pour la visualisation (style Transport Tycoon)
-  const fwd = findRoadPath(v.source, v.dest);
-  const bwd = findRoadPath(v.dest, v.source);
+  const fwd = vehiclePathBetween(v, v.source, v.dest);
+  const bwd = vehiclePathBetween(v, v.dest, v.source);
   v.vizRoute = { fwd: fwd || [], bwd: bwd || [] };
-  const pts = findRoadPath(v.garageRef, v.source);
+  const pts = vehiclePathBetween(v, v.garageRef, v.source);
   if(!pts){ v.waitTimer = 0; v.currentBuilding = v.garageRef; return false; }
   v.state = 'to_source';
   v.waitTimer = 0;
@@ -2098,7 +2496,7 @@ function returnToGarage(v){
   v.source = null; v.dest = null;
   v.vizRoute = null;
   v.cargo = 0; v.res = null;
-  const pts = findRoadPath(from, v.garageRef);
+  const pts = vehiclePathBetween(v, from, v.garageRef);
   if(pts){
     v.state = 'returning';
     v.pts = pts; v.seg = 0; v.t = 0;
@@ -2146,6 +2544,15 @@ function updateVehicles(dt){
     }
     if(v.vtype === 'train'){
       updateTrainVehicle(v, dt);
+      // Empreinte à jour AVANT le train suivant : un départ de dépôt ou une
+      // entrée de canton dans ce même pas rend aussitôt le canton occupé.
+      trainFootprintTouch(v);
+      const blk = v.state === 'idle' ? -1 : (railBlocks?.blockByTile?.[trainTileIndex(v)] ?? -1);
+      if(railBlockOccupancy && blk !== (v.currentRailBlock ?? -1)){
+        if((v.currentRailBlock ?? -1) >= 0) railBlockOccupancy[v.currentRailBlock] = Math.max(0, railBlockOccupancy[v.currentRailBlock] - 1);
+        if(blk >= 0) railBlockOccupancy[blk]++;
+      }
+      v.currentRailBlock = blk;
       continue;
     }
     if(v.state !== 'returning' && (!v.source || v.source.dead || !v.dest || v.dest.dead)){
@@ -2161,7 +2568,7 @@ function updateVehicles(dt){
       } else {
         const from = v.currentBuilding || v.garageRef;
         const to = v.state === 'to_source' ? v.source : v.dest;
-        const pts = findRoadPath(from, to);
+        const pts = vehiclePathBetween(v, from, to);
         if(!pts){ v.waitTimer = 5; continue; }
         v.pts = pts; v.seg = 0; v.t = 0;
       }
@@ -2169,14 +2576,30 @@ function updateVehicles(dt){
     }
     if(!v.pts || !v.pts.length){ v.waitTimer = 5; continue; }
     const vt = VEHICLE_TYPES[v.vtype];
+    const mode = vt.mode || 'road';
     let move = vt.speed * TILE * dt;
-    advanceRoadUnit(v, move);
+    if(mode === 'road') advanceRoadUnit(v, move);
+    else advanceFreeUnit(v, move);
     if(v.seg >= v.pts.length-1){
       if(v.state === 'returning'){
         v.state = 'idle'; v.pts = [];
         v.currentBuilding = v.garageRef;
         v.atDepot = true;
         resetVehicleDepotDeparture(v);
+        continue;
+      }
+      if(mode !== 'road'){
+        // Bateau / avion : à chaque escale, on décharge PUIS on recharge pour le
+        // trajet retour (lignes à double sens), puis départ vers l'autre escale.
+        const stopB = v.state === 'to_source' ? v.source : v.dest;
+        const nextB = v.state === 'to_source' ? v.dest : v.source;
+        v.currentBuilding = stopB;
+        transportStopProcess(v, stopB, nextB);
+        const pts = vehiclePathBetween(v, stopB, nextB);
+        if(!pts){ v.waitTimer = 5; continue; }
+        v.state = v.state === 'to_source' ? 'to_dest' : 'to_source';
+        v.pts = pts; v.seg = 0; v.t = 0;
+        v.waitTimer = VEHICLE_DWELL_TIME; v.busReady = true;
         continue;
       }
       if(v.state === 'to_source'){
@@ -2229,8 +2652,17 @@ function updateVehicles(dt){
         // Charger la ressource
         const src = v.source;
         const isInterPlayer = src.owner != null && src.owner !== (v.garageRef.owner ?? null);
+        // Reliquat non livré au voyage précédent (destination pleine) : on le
+        // rend à l'entrepôt source s'il est à nous et qu'il a la place.
+        if(v.cargo > 0 && v.res && !isInterPlayer && accepts(src, v.res)){
+          const back = depositResourceIntoBuilding(src, v.res, v.cargo);
+          v.cargo = Math.max(0, v.cargo - back);
+          if(v.cargo <= 0){ v.cargo = 0; v.res = null; }
+        }
+        const carried = v.cargo > 0 && v.res ? v.res : null;
         let res = null, maxAmt = 0;
-        const resourcesToTry = v.pinnedRes && vt.resources.includes(v.pinnedRes) ? [v.pinnedRes] : vt.resources;
+        const resourcesToTry = carried ? [carried]
+          : (v.pinnedRes && vt.resources.includes(v.pinnedRes) ? [v.pinnedRes] : vt.resources);
         for(const r of resourcesToTry){
           // Respecter le seuil minimum de vente si c'est un commerce inter-joueurs
           const minStock = isInterPlayer ? (src.sellMin?.[r] || 0) : 0;
@@ -2241,7 +2673,7 @@ function updateVehicles(dt){
           if(!vehicleCanServeRoute(v, res)){
             v.cargo = 0; v.res = null; v.waitTimer = 5; continue;
           }
-          const take = Math.min(vt.capacite, maxAmt);
+          const take = Math.min(vt.capacite - (carried ? v.cargo : 0), maxAmt);
           // Commerce inter-joueurs : paiement si la source appartient à un autre joueur
           if(src.owner != null && src.owner !== (v.garageRef.owner ?? null)){
             const cost = take * (TRADE_PRICES[res] || 0);
@@ -2258,8 +2690,8 @@ function updateVehicles(dt){
             recordVente(sellerWallet, 'res', res, cost);
           }
           src.storage[res] -= take;
-          v.cargo = take; v.res = res;
-        } else {
+          v.cargo = (carried ? v.cargo : 0) + take; v.res = res;
+        } else if(!carried){
           v.cargo = 0; v.res = null;
         }
         const pts = findRoadPath(v.source, v.dest);
@@ -2315,14 +2747,16 @@ function updateVehicles(dt){
           v.waitTimer = BUS_DWELL_TIME; v.busReady = true; // arrêt passager
           continue;
         }
-        // Décharger la cargaison
+        // Décharger la cargaison. Ce qui ne rentre pas (destination pleine) reste
+        // à bord et repart avec le camion au lieu d'être détruit.
         if(v.cargo > 0 && v.res){
           const dst = v.dest;
           const canDeposit = accepts(dst, v.res)
             && vehicleCanServeRoute(v, v.res)
             && !(v.res === 'water' && v.source?.type === 'pump' && dst.type === 'bakery');
-          if(canDeposit) depositResourceIntoBuilding(dst, v.res, v.cargo);
-          v.cargo = 0; v.res = null;
+          const delivered = canDeposit ? depositResourceIntoBuilding(dst, v.res, v.cargo) : 0;
+          v.cargo = Math.max(0, v.cargo - delivered);
+          if(v.cargo <= 0){ v.cargo = 0; v.res = null; }
         }
         const pts = findRoadPath(v.dest, v.source);
         if(!pts){ v.waitTimer = 5; continue; }

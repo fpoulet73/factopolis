@@ -47,12 +47,89 @@ function settleRailToll(v, payerId, fx, fy){
     addFloat(fx, fy - 0.7, '−'+(Math.round(totalPaid*10)/10)+' $ 🛤️', '#ff8c42');
 }
 
+// ---------- objectifs (progression guidée) ----------
+// Fil d'objectifs par joueur, du premier logement aux trains/ports/aéroports,
+// chacun récompensé d'une prime. Vérifié par la simulation autoritaire (solo ou
+// hôte) ; l'avancement voyage dans le portefeuille (wallet.objIndex).
+const countOwned = (o, pred) => buildings.reduce((n, b) => n + (!b.dead && ownedBy(b, o) && pred(b) ? 1 : 0), 0);
+const OBJECTIVES = [
+  { ic:'🏠', txt:'Construis ta première maison', reward:300, check:o => countOwned(o, b => BUILD[b.type].resid) >= 1 },
+  { ic:'🛣️', txt:'Relie une maison à une route', reward:200, check:o => buildings.some(b => !b.dead && ownedBy(b, o) && BUILD[b.type].resid && adjRoadTiles(b).length > 0) },
+  { ic:'🎣', txt:'Construis une cabane de pêcheur au bord de l’eau', reward:300, check:o => countOwned(o, b => b.type === 'fisher') >= 1 },
+  { ic:'🐟', txt:'Transforme une usine abandonnée en poissonnerie', reward:400, check:o => countOwned(o, b => b.type === 'fishery') >= 1 },
+  { ic:'👥', txt:'Atteins 25 habitants', reward:800, check:o => popTotal(o) >= 25 },
+  { ic:'🔥', txt:'Produis de l’acier : mines de fer et de charbon + aciérie', reward:1200, check:o => countOwned(o, b => b.type === 'smelter') >= 1 },
+  { ic:'🔧', txt:'Fabrique des outils : bûcheron + usine d’outils', reward:1500, check:o => countOwned(o, b => b.type === 'factory') >= 1 },
+  { ic:'🏡', txt:'Fais fusionner des maisons pleines (outils livrés)', reward:2000, check:o => countOwned(o, b => BUILD[b.type].resid && b.type !== 'house') >= 1 },
+  { ic:'🚚', txt:'Achète un camion ou un bus (dépôt de véhicules)', reward:1000, check:o => vehicles.some(v => VEHICLE_TYPES[v.vtype]?.mode === 'road' && v.garageRef && ownedBy(v.garageRef, o)) },
+  { ic:'🏙️', txt:'Atteins 100 habitants', reward:3000, check:o => popTotal(o) >= 100 },
+  { ic:'🚉', txt:'Construis un dépôt de train et deux gares', reward:5000, check:o => countOwned(o, b => b.type === 'train_depot') >= 1
+      && new Set(buildings.filter(b => !b.dead && b.type === 'train_station' && ownedBy(b, o)).map(b => b.stationGroupId)).size >= 2 },
+  { ic:'🚂', txt:'Mets un train en circulation', reward:8000, check:o => vehicles.some(v => v.vtype === 'train' && v.state !== 'idle' && v.garageRef && ownedBy(v.garageRef, o)) },
+  { ic:'⚓', txt:'Ouvre un port ou un aéroport', reward:5000, check:o => countOwned(o, b => b.type === 'boat_depot' || b.type === 'plane_depot') >= 1 },
+  { ic:'🌆', txt:'Atteins 400 habitants', reward:20000, check:o => popTotal(o) >= 400 },
+];
+let objectivesTimer = 0;
+function updateObjectives(){
+  for(const k in WALLETS){
+    const w = WALLETS[k], o = walletOwnerOf(k);
+    if(w.objIndex == null){
+      // Première vérification (nouvelle partie ou ancienne sauvegarde) : les
+      // objectifs déjà remplis sont validés sans prime.
+      let i = 0;
+      while(i < OBJECTIVES.length && OBJECTIVES[i].check(o)) i++;
+      w.objIndex = i;
+      continue;
+    }
+    const obj = OBJECTIVES[w.objIndex];
+    if(!obj || !obj.check(o)) continue;
+    earnMoney(obj.reward, 'primes', w);
+    w.objIndex++;
+  }
+}
+
+// Expédition d'un bâtiment (camions automatiques) — cf. boucle répartie dans update().
+let dispatchCursor = 0, dispatchBudget = 0;
+function dispatchBuilding(b){
+  if(!b || b.dead) return;
+  const maxTrucks = isStorageHub(b)
+    ? 4 + b.w * b.h          // entrepôt : plus de camions pour servir plusieurs destinations
+    : 2 + ((b.w*b.h)>>1);    // production : limite standard
+  if(b.trucksOut >= maxTrucks) return;
+  const r = recipeOf(b);
+
+  if(isStorageHub(b)){
+    // entrepôt : dispatcher toutes les ressources avec demande, seuil = 1 unité
+    for(const k in b.storage){
+      if(b.trucksOut >= maxTrucks) break;
+      if((b.storage[k]||0) < 1) continue;
+      if(b.allow?.[k] === false) continue;
+      tryDispatch(b, k);
+    }
+  } else if(BUILD[b.type]?.resid || b.type === 'terrassement'){
+    // logements et puits purs : ne ré-expédient jamais leur stock
+  } else {
+    // bâtiment de production : tenter un dispatch pour chaque ressource éligible
+    // (indépendamment — une sortie bloquée ne bloque pas les autres)
+    for(const k in b.storage){
+      if(b.trucksOut >= maxTrucks) break;
+      if(b.storage[k] < 10) continue;
+      const inRecipeOut = r && k in r.out;
+      const isByproduct  = !r || !(k in r.in);
+      if(inRecipeOut || isByproduct) tryDispatch(b, k, 10);
+    }
+  }
+}
+
 function update(dt){
   gtime += dt;
+  roadTick++; // nouveau pas : la liste des véhicules routiers est reconstruite à la demande
+  objectivesTimer += dt;
+  if(objectivesTimer >= 1){ objectivesTimer = 0; updateObjectives(); if(typeof updateNews === 'function') updateNews(); }
   let starved = null;
 
   ensureAllStarterProtections();
-  refreshWorkerAllocation();
+  refreshWorkerAllocationIfNeeded();
   syncIncomingReservations();
   syncResidentReservations();
   // eff du joueur courant (pour statusOf)
@@ -60,13 +137,24 @@ function update(dt){
 
   for(const b of buildings){
     const w = walletOf(b.owner); // wallet du propriétaire du bâtiment
+    // Stock « livré par train » jamais supérieur au stock réel (les camions ont pu
+    // en sortir) : sinon une nouvelle production serait prise pour du déjà-payé.
+    if(b.trainReceived){
+      for(const k in b.trainReceived){
+        const s = b.storage[k] || 0;
+        if(b.trainReceived[k] > s) b.trainReceived[k] = s;
+      }
+    }
     const r = recipeOf(b);
     if(r && !b.paused){
       let outOK = true, inOK = true;
       const activeOuts = Object.keys(r.out).filter(k => !b.blockedOut?.[k]);
       // si tous les outputs sont bloqués, stopper la production pour ne pas consommer les inputs
       if(Object.keys(r.out).length > 0 && activeOuts.length === 0) outOK = false;
-      for(const k of activeOuts)       if((b.storage[k]||0) >= capOf(b,k)) outOK = false;
+      // La production ne s'arrête que si TOUTES les sorties sont pleines : un
+      // sous-produit sans débouché (huile de la poissonnerie…) ne doit pas bloquer
+      // le produit principal. L'excédent d'une sortie pleine est simplement perdu.
+      else if(activeOuts.length && activeOuts.every(k => (b.storage[k]||0) >= capOf(b,k))) outOK = false;
       for(const k in r.in)             if((b.storage[k]||0) <  r.in[k]) inOK = false;
       if(outOK && inOK){
         b.prog += dt * (workersRequiredOf(b) ? workersAllocatedOf(b) / workersRequiredOf(b) : w.eff);
@@ -74,7 +162,7 @@ function update(dt){
           b.prog = 0;
           for(const k in r.in)  b.storage[k] -= r.in[k];
           const outBonus = b.type === 'fisher' ? fisherFishBonus(b) : 0;
-          for(const k of activeOuts) b.storage[k] = (b.storage[k]||0) + r.out[k] + outBonus;
+          for(const k of activeOuts) b.storage[k] = Math.min(capOf(b,k), (b.storage[k]||0) + r.out[k] + outBonus);
           // 2% de chance d'extraire de la terre en plus lors d'un cycle de mine
           if(b.type === 'mine' && Math.random() < 0.02 && !b.blockedOut?.['dirt']){
             b.storage['dirt'] = (b.storage['dirt']||0) + 1;
@@ -156,38 +244,18 @@ function update(dt){
   mergeTimer += dt;
   if(mergeTimer >= 1){ mergeTimer = 0; tryMerge(); tryMergeInd(); tryMergeDepot(); tryMergeTrainStations(); }
 
+  // Expédition automatique : TOUS les bâtiments étaient traités d'un coup toutes les
+  // 0,7 s (une recherche de route par ressource) → une image longue à chaque cycle,
+  // perçue comme un bond des trains. Le travail est désormais réparti : chaque pas
+  // traite la part de bâtiments correspondant à son temps (un cycle complet reste
+  // de 0,7 s de jeu, mais sans pic).
   dispatchTimer += dt;
-  if(dispatchTimer >= 0.7){
-    dispatchTimer = 0;
-    for(const b of buildings){
-      const maxTrucks = isStorageHub(b)
-        ? 4 + b.w * b.h          // entrepôt : plus de camions pour servir plusieurs destinations
-        : 2 + ((b.w*b.h)>>1);    // production : limite standard
-      if(b.trucksOut >= maxTrucks) continue;
-      const r = recipeOf(b);
-
-      if(isStorageHub(b)){
-        // entrepôt : dispatcher toutes les ressources avec demande, seuil = 1 unité
-        for(const k in b.storage){
-          if(b.trucksOut >= maxTrucks) break;
-          if((b.storage[k]||0) < 1) continue;
-          if(b.allow?.[k] === false) continue;
-          tryDispatch(b, k);
-        }
-      } else if(BUILD[b.type]?.resid || b.type === 'terrassement'){
-        // logements et puits purs : ne ré-expédient jamais leur stock
-      } else {
-        // bâtiment de production : tenter un dispatch pour chaque ressource éligible
-        // (indépendamment — une sortie bloquée ne bloque pas les autres)
-        for(const k in b.storage){
-          if(b.trucksOut >= maxTrucks) break;
-          if(b.storage[k] < 10) continue;
-          const inRecipeOut = r && k in r.out;
-          const isByproduct  = !r || !(k in r.in);
-          if(inRecipeOut || isByproduct) tryDispatch(b, k, 10);
-        }
-      }
-    }
+  dispatchBudget += buildings.length * dt / 0.7;
+  let dispatchN = Math.min(buildings.length, Math.floor(dispatchBudget));
+  dispatchBudget -= dispatchN;
+  while(dispatchN-- > 0 && buildings.length){
+    if(dispatchCursor >= buildings.length) dispatchCursor = 0;
+    dispatchBuilding(buildings[dispatchCursor++]);
   }
 
   updateTrucks(dt);
@@ -198,6 +266,8 @@ function update(dt){
   // de bus fusionné (notamment dans les sauvegardes créées avant cette règle).
   for(const b of buildings){
     if(b.dead || b.type !== 'bus_stop') continue;
+    // (avant : recherche de gare liée sur TOUS les bâtiments, pour chaque arrêt, à chaque pas)
+    if(!((b.passengersEntrant || 0) > 0 || (b.passagersSortant || 0) > 0)) continue;
     const station = trainStationLinkedRepresentative(b);
     if(!station) continue;
     if((b.passengersEntrant || 0) > 0){
@@ -225,7 +295,7 @@ function update(dt){
     taxTimer = 0;
     // taxes par wallet : taux plein si l'habitant travaille, /3 sinon
     for(const k in WALLETS){
-      const oid = +k;
+      const oid = walletOwnerOf(k);
       const w = WALLETS[k];
       // Travailleurs effectivement actifs (industrie non pausée et stock de sortie non plein)
       let activeWorkers = 0;
@@ -310,12 +380,12 @@ function update(dt){
 
   // milestones par wallet
   for(const k in WALLETS){
-    const oid = +k;
+    const oid = walletOwnerOf(k);
     const w = WALLETS[k];
     if(w.mi == null) w.mi = 0;
     // n'afficher le toast que si c'est le joueur courant
     if(w.mi < MILESTONES.length && popTotal(oid) >= MILESTONES[w.mi]){
-      if(+k === MP.myId)
+      if(oid === myOwner())
         toast('🎉 '+MILESTONES[w.mi]+' habitants ! Ta ville prospère.','win');
       w.mi++;
     }
@@ -326,14 +396,7 @@ function update(dt){
     if(floats[i].life <= 0) floats.splice(i,1);
   }
 
-  for(let i=smoke.length-1;i>=0;i--){
-    const s = smoke[i];
-    s.life -= dt;
-    if(s.life <= 0){ smoke.splice(i,1); continue; }
-    s.x += s.vx * dt;
-    s.y += s.vy * dt;
-    s.r += s.grow * dt;
-  }
+  // (fumée : animée par la boucle de rendu, cf. stepSmoke dans 07_rendering.js)
 
   // Arrêts de bus / gares : mise à jour des max toutes les 3s
   // Somme par ville = habitants sans travail, répartis sur les arrêts/gares proches des habitations.
@@ -372,7 +435,7 @@ function update(dt){
 
   // Gares : génération de passagers entrants depuis les habitants sans travail de la ville (continu, 3 jours)
   for(const b of buildings){
-    if(b.dead || b.type !== 'train_station') continue;
+    if(b.dead || (b.type !== 'train_station' && b.type !== 'boat_depot' && b.type !== 'plane_depot')) continue;
     if(b.passengersEntrant == null){ b.passengersEntrant = 0; b.passengersEntrantMax = 0; b.passagersSortant = 0; }
     const maxE = b.passengersEntrantMax || 0;
     if(resetPassengerCycle || b.passengersEntrantQuota == null) b.passengersEntrantQuota = maxE;
@@ -396,11 +459,13 @@ function update(dt){
 // petits → fusion en bâtiment de niveau supérieur
 function checkRect(x,y,w,h,targetLevel=null){
   const area = w*h, set = [];
+  const owner = bgrid[y*N+x]?.owner ?? null;
   for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++){
     const b = bgrid[yy*N+xx];
     if(!b) return null;
     const rc = BUILD[b.type].resid;
     if(!rc) return null;                                        // pas un logement
+    if((b.owner ?? null) !== owner) return null;                // jamais entre deux joueurs
     if(b.w*b.h >= area) return null;                            // pas plus petit
     if(b.x<x || b.y<y || b.x+b.w>x+w || b.y+b.h>y+h) return null; // déborde du rectangle
     if(b.pop < rc.popCap) return null;                          // pas plein
@@ -420,6 +485,7 @@ function checkRectInd(x,y,w,h){
   for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++){
     const b = bgrid[yy*N+xx];
     if(!b || b.type!==type || b.paused) return null;
+    if((b.owner ?? null) !== (first.owner ?? null)) return null; // jamais entre deux joueurs
     if(b.w*b.h >= area) return null;
     if(b.x<x || b.y<y || b.x+b.w>x+w || b.y+b.h>y+h) return null;
     if(type==='mine' && b.ore!==ore) return null;
@@ -429,8 +495,11 @@ function checkRectInd(x,y,w,h){
 }
 
 function tryMergeInd(){
+  const anchors = mergeAnchors(b => !!BUILD[b.type]?.ind && !b.paused);
+  if(anchors.length < 2) return false;
   for(const [w,h] of IND_SHAPES_ALL){
-    for(let y=0; y<=N-h; y++) for(let x=0; x<=N-w; x++){
+    for(const [x, y] of anchors){
+      if(x > N-w || y > N-h) continue;
       const set = checkRectInd(x,y,w,h);
       if(!set) continue;
       const type = set[0].type, ore = set[0].ore, owner = set[0].owner||null;
@@ -460,9 +529,13 @@ function tryMergeInd(){
 }
 
 function tryMerge(){
+  // Seuls les logements pleins peuvent fusionner : origines candidates = ceux-là.
+  const anchors = mergeAnchors(b => !!BUILD[b.type]?.resid && b.pop >= BUILD[b.type].resid.popCap);
+  if(anchors.length < 2) return;
   for(const L of MERGE_ORDER){
     for(const [w,h] of L.shapes){
-      for(let y=0; y<=N-h; y++) for(let x=0; x<=N-w; x++){
+      for(const [x, y] of anchors){
+        if(x > N-w || y > N-h) continue;
         const set = checkRect(x,y,w,h,L);
         if(!set) continue;
         const d = BUILD[L.key];
@@ -491,6 +564,15 @@ function tryMerge(){
         setGrid(t,t);
         if(wasSel) selected = t;
         toast('🏗️ '+set.length+' logements pleins → '+d.n+' ('+w+'×'+h+') !','win', eventTargetForBuilding(t));
+        // grands paliers d'urbanisme à la une de la Gazette (une fois par partie)
+        const NEWS_LEVELS = { tower:['🏢','Le premier immeuble sort de terre','Les grues ont disparu : la ville prend de la hauteur.'],
+          tower3:['🏙️','Une tour domine désormais l’horizon','Les citadins se pressent aux fenêtres du dernier étage.'],
+          sky:['🌆','Le premier gratte-ciel touche les nuages !','Une prouesse d’ingénierie : la région entre dans la cour des grandes métropoles.'] };
+        const nl = NEWS_LEVELS[L.key];
+        if(nl && typeof publishNews === 'function'){
+          const town = typeof newsTownName === 'function' ? newsTownName(t) : '';
+          publishNews('niveau:' + L.key, nl[0], nl[1] + (town ? ' à ' + town : '') + ' !', nl[2], eventTargetForBuilding(t));
+        }
         return; // une fusion à la fois : la liste vient d'être modifiée
       }
     }

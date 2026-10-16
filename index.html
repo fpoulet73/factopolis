@@ -26,10 +26,9 @@
     -webkit-overflow-scrolling:touch;scrollbar-width:none}
   #topbar::-webkit-scrollbar{display:none}
   /* ---- date/heure du jeu (coin haut-droite) ---- */
-  #gameDate{position:fixed;top:10px;right:12px;z-index:10;background:rgba(13,18,28,.92);
-    border:1px solid #36465e;border-radius:10px;padding:6px 12px;font-size:13px;
-    color:#b8d4f0;white-space:nowrap;font-variant-numeric:tabular-nums;
-    box-shadow:0 4px 18px rgba(0,0,0,.45);backdrop-filter:blur(5px)}
+  /* date/heure du jeu : intégrée à la barre du haut (évite qu'un coin fixe
+     ne recouvre la barre quand elle s'élargit) */
+  #gameDate{color:#b8d4f0;white-space:nowrap;font-variant-numeric:tabular-nums;font-size:13px}
   #topbar .stat{display:flex;gap:5px;align-items:center}
   #topbar .stat b{font-variant-numeric:tabular-nums}
   #topbar .sep{width:1px;height:18px;background:#36465e}
@@ -106,6 +105,9 @@
     .tbtn:hover,.tool:hover,.opt-item:hover{background:inherit}
     .tbtn:active{background:#2a3a52}
   }
+
+  /* mini-carte : remonte au-dessus de la barre d'outils sur écran étroit */
+  @media (max-width:1380px){ #minimapPanel{ bottom:calc(98px + env(safe-area-inset-bottom)) !important } }
 
   /* ---- panneau d'info ---- */
   #info{top:70px;right:12px;width:420px;padding:12px 14px;font-size:13px;display:none;z-index:10}
@@ -248,6 +250,23 @@
   .toast.err{border-color:#a0522d;color:#ffc6a0}
   .toast.win{border-color:#d6a82f;color:#ffe9a0;font-size:15px}
   @keyframes tin{from{opacity:0;transform:translateY(8px)}to{opacity:1}}
+  /* ---- la Gazette (grands événements, façon Transport Tycoon) ---- */
+  #newsCard{position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:30;
+    width:min(420px,calc(100vw - 32px));background:#f4ecd8;color:#2a2418;
+    border:1px solid #b9a782;border-radius:4px;box-shadow:0 10px 32px rgba(0,0,0,.45);
+    font-family:Georgia,"Times New Roman",serif;padding:10px 14px 12px;display:none;
+    animation:newsIn .35s cubic-bezier(.2,.9,.3,1.2)}
+  #newsCard .nw-mast{display:flex;justify-content:space-between;align-items:baseline;
+    border-bottom:3px double #6b5b3e;padding-bottom:3px;margin-bottom:7px;
+    font-variant:small-caps;letter-spacing:.06em;font-size:12px;color:#5b4d33}
+  #newsCard .nw-mast b{font-size:15px;color:#2a2418}
+  #newsCard .nw-head{font-size:19px;font-weight:bold;line-height:1.2;margin-bottom:5px}
+  #newsCard .nw-text{font-size:13.5px;line-height:1.4;font-style:italic;color:#3d3426}
+  #newsCard .nw-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:9px}
+  #newsCard button{font-family:inherit;font-size:12px;background:#e6dbc1;color:#2a2418;
+    border:1px solid #a8956c;border-radius:3px;padding:3px 10px;cursor:pointer}
+  #newsCard button:hover{background:#d9cba9}
+  @keyframes newsIn{from{opacity:0;transform:translate(-50%,-14px) rotate(-1.5deg)}to{opacity:1;transform:translate(-50%,0)}}
 
   /* ---- confirmations ---- */
   #confirmOverlay{position:fixed;inset:0;z-index:80;display:none;align-items:center;
@@ -349,6 +368,8 @@
   <span class="stat" id="sVehicles" style="cursor:pointer" title="Véhicules achetés (clic : liste)" data-i18n-title="topbar.vehiclesTitle">🚚 <b id="hVehicles">0</b></span>
   <span class="stat" id="sTrains" style="cursor:pointer" title="Trains achetés (clic : liste)" data-i18n-title="topbar.trainsTitle">🚆 <b id="hTrains">0</b></span>
   <span class="sep"></span>
+  <span class="stat" id="gameDate">📅 01/01/1970 🕐 00:00</span>
+  <span class="sep"></span>
   <button class="tbtn" id="bRotL" title="Pivoter la vue à gauche (Maj+R)" data-i18n-title="topbar.rotateLeft">⟲</button>
   <button class="tbtn" id="bRotR" title="Pivoter la vue à droite (R)" data-i18n-title="topbar.rotateRight">⟳</button>
   <span class="sep"></span>
@@ -360,7 +381,7 @@
   <button class="tbtn" id="bHelp" title="Aide (H)" data-i18n-title="topbar.help">❓</button>
   <span class="sep"></span>
   <div class="opt-wrap">
-    <button class="tbtn" id="bLayer" title="Calques" data-i18n-title="layers.title" data-i18n="layers.button">Layer</button>
+    <button class="tbtn" id="bLayer" title="Calques" data-i18n-title="layers.title">🗺️</button>
     <div id="layerMenu">
       <div class="opt-title" data-i18n="layers.title">Calques</div>
       <div class="opt-item" id="layerUnderstaffedFactories" data-opt="highlightUnderstaffedFactories">
@@ -371,12 +392,20 @@
   </div>
   <span class="sep"></span>
   <div class="opt-wrap">
-    <button class="tbtn" id="bPanels" title="Panneaux" data-i18n-title="panels.title" data-i18n="panels.button">Panneaux</button>
+    <button class="tbtn" id="bPanels" title="Panneaux" data-i18n-title="panels.title">🗂️</button>
     <div id="panelMenu">
       <div class="opt-title" data-i18n="panels.title">Panneaux</div>
       <div class="opt-item" data-panel-opt="panelEvents">
         <span class="chk"></span>
         <span data-i18n="panels.events">Événements</span>
+      </div>
+      <div class="opt-item" data-panel-opt="panelMinimap">
+        <span class="chk"></span>
+        <span data-i18n="panels.minimap">Mini-carte</span>
+      </div>
+      <div class="opt-item" data-panel-opt="panelObjectives">
+        <span class="chk"></span>
+        <span data-i18n="panels.objectives">Objectifs</span>
       </div>
     </div>
   </div>
@@ -410,7 +439,6 @@
   </div>
 </div>
 
-<div id="gameDate">📅 01/01/1970 &nbsp;🕐 00:00</div>
 <div id="townPanel" class="panel"></div>
 <div id="trainPanel" class="panel"></div>
 <div id="zoneOverlay"></div>
@@ -497,6 +525,18 @@
       <li data-i18n-html="help.control8">⌨️ <kbd>Échap</kbd> : annuler — <kbd>Espace</kbd> : pause</li>
       <li data-i18n-html="help.control9">⌨️ <kbd>H</kbd> : ouvrir / fermer cette aide</li>
     </ul>
+  </div>
+
+  <!-- Page 5 : Transports -->
+  <div class="help-page" id="hPage4">
+    <h2 data-i18n="help.transportTitle">🚆 Transports</h2>
+    <ul>
+      <li data-i18n-html="help.transport1"></li>
+      <li data-i18n-html="help.transport2"></li>
+      <li data-i18n-html="help.transport3"></li>
+      <li data-i18n-html="help.transport4"></li>
+      <li data-i18n-html="help.transport5"></li>
+    </ul>
     <button class="tbtn go" id="bGo" data-i18n="help.go">C'est parti !</button>
   </div>
 
@@ -508,6 +548,7 @@
       <span class="dot" data-p="1"></span>
       <span class="dot" data-p="2"></span>
       <span class="dot" data-p="3"></span>
+      <span class="dot" data-p="4"></span>
     </div>
     <button class="tbtn" id="bHelpNext"><span data-i18n="help.next">Suiv.</span><span> ▶</span></button>
   </div>
@@ -530,7 +571,10 @@
 <script src="js/05_logistics.js?v=16"></script>
 <script src="js/06_simulation.js?v=16"></script>
 <script src="js/07_rendering.js?v=16"></script>
+<script src="js/07_rendering_art.js?v=16"></script>
 <script src="js/08_ui_input_loop.js?v=16"></script>
+<script src="js/08_minimap.js?v=16"></script>
+<script src="js/08_objectives.js?v=16"></script>
 <script src="js/09_multiplayer.js?v=16"></script>
 <script src="js/10_saves_chat_console.js?v=16"></script>
 <!-- Migration PixiJS (Full Pixi) — chargé en dernier : PIXI global puis la scène qui

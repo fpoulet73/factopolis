@@ -2,13 +2,14 @@
 
 Ce projet est un **jeu tycoon-like en JS vanilla** dans le navigateur :
 gestion industrielle (Factorio) + city-builder (population/ouvriers) +
-transport (camions, bus, trains sur routes et rails). Rendu isométrique
-2.5D rotatif sur Canvas 2D.
+transport (camions, bus, trains, bateaux, avions). Rendu isométrique 2.5D
+rotatif : scène PixiJS dont les textures sont dessinées en Canvas 2D.
 
 ## Démarrage rapide
 
 ```bash
 npm start          # node server.js, port 8765 → http://localhost:8765
+npm test           # tests headless (Playwright requis, serveur isolé)
 ```
 
 ## Lecture recommandée avant de toucher au code
@@ -25,7 +26,11 @@ npm start          # node server.js, port 8765 → http://localhost:8765
 | `index.html` | DOM + styles inline + chargement des scripts dans l'ordre |
 | `config.js` | **Équilibrage gameplay** (production, recettes, coûts, véhicules…) — à modifier en priorité pour tuner le jeu |
 | `js/01_definitions.js` → `js/10_saves_chat_console.js` | Moteur client découpé par domaine (ordre des préfixes = ordre de chargement) |
-| `js/05_depots/*.js` | Enregistrement des dépôts (garage, train, bateau, avion) |
+| `js/05_depots/*.js` | Enregistrement des dépôts (garage, train, port, aéroport) |
+| `js/07_rendering_art.js` | Art procédural des bâtiments (cuit en textures) |
+| `js/08_minimap.js`, `js/08_objectives.js` | Mini-carte, panneau des objectifs |
+| `js/pixi/` | Scène PixiJS (terrain, sprites triés, culling) + Pixi embarqué |
+| `tools/tests/` | Tests automatisés (`npm test`) : scénarios solo et multijoueur |
 | `js/i18n.js` + `js/i18n/{fr,en,es}.js` | Traductions (`t()`, `setLanguage()`, `data-i18n`) |
 | `server.js` | Serveur HTTP statique + WebSocket (`ws`) — multi-room, scrypt auth, sauvegardes |
 | `data/users.json` | Comptes joueurs (créé au runtime) |
@@ -44,7 +49,9 @@ npm start          # node server.js, port 8765 → http://localhost:8765
 | Validation/Placement, rails, signaux, gares | `js/04_construction.js` |
 | Camions, bus, trains, pathfinding | `js/05_logistics.js` |
 | Boucle de simulation `update(dt)` | `js/06_simulation.js` |
-| Rendu `draw()` | `js/07_rendering.js` |
+| Rendu `draw()`, terrain, véhicules | `js/07_rendering.js` |
+| Apparence des bâtiments | `js/07_rendering_art.js` |
+| Sprites Pixi, culling | `js/pixi/sprites.js` |
 | UI, panneaux, input, boucle rAF | `js/08_ui_input_loop.js` |
 | Multi WebSocket, snapshots, actions | `js/09_multiplayer.js` |
 | Autosaves, chat, commandes console | `js/10_saves_chat_console.js` |
@@ -58,8 +65,12 @@ npm start          # node server.js, port 8765 → http://localhost:8765
   partage de globals (`WALLETS`, `MP`, `BUILD`, `RES`, `cam`,
   `selected`, `tool`, `clickFn`, `drawFn`, `frame`, etc.).
 - **Ne pas commiter** `node_modules/` ni `data/` (runtime).
-- **Tester au minimum** : `npm start` → `http://localhost:8765` →
-  panneau multijoueur sur `ws://localhost:8765`.
+- **Tester** : `npm test` (trains, fret, bateaux/avions, économie, interface,
+  sauvegardes, performance, multijoueur) puis `npm start` →
+  `http://localhost:8765` pour vérifier à l'œil.
+- **Fichiers texte en CRLF** : préférer l'outil d'édition ou un script Python
+  aux heredocs shell (les heredocs contenant des apostrophes typographiques
+  échouent sous Git Bash).
 - **Langue des commentaires et des docs** : français (cohérent avec
   l'existant).
 

@@ -1,3 +1,77 @@
+// ---------- compression des grilles pour le stockage local ----------
+// Une carte 224×224 sérialisée « à plat » pèse ~1 Mo par sauvegarde : le quota du
+// localStorage (~5 Mo) ne tenait que quelques emplacements. Les grilles sont très
+// uniformes (herbe, eau…) : un codage par plages (valeur, longueur) les réduit
+// d'un ou deux ordres de grandeur.
+const LOCAL_SAVE_GRID_KEYS = ['terrain', 'terrainHeightMap', 'waterHeightMap', 'road', 'rail', 'railOwner', 'railTunnel', 'mapMask'];
+function rleEncode(arr){
+  const out = [];
+  for(let i = 0; i < arr.length;){
+    const v = arr[i];
+    let n = 1;
+    while(i + n < arr.length && arr[i + n] === v) n++;
+    out.push(v, n);
+    i += n;
+  }
+  return out;
+}
+function rleDecode(rle){
+  let total = 0;
+  for(let i = 1; i < rle.length; i += 2) total += rle[i];
+  const out = new Array(total);
+  let p = 0;
+  for(let i = 0; i < rle.length; i += 2){
+    const v = rle[i], n = rle[i + 1];
+    for(let k = 0; k < n; k++) out[p++] = v;
+  }
+  return out;
+}
+// Bâtiments : on omet les champs vides ou par défaut (null, false, 0, {}) que
+// applySnapshot restaure de toute façon, et on arrondit les flottants. Les 0
+// porteurs de sens (coordonnées, village n°0…) sont conservés. ~×4 plus léger.
+const LOCAL_SAVE_KEEP_ZERO = new Set(['x', 'y', 'w', 'h', 'townId', 'stationGroupId', 'owner']);
+const roundSave = v => Math.round(v * 1e4) / 1e4;
+// champs dont la présence conditionne la restauration des passagers (applySnapshot)
+const transitGateKey = (type, k) => (k === 'passengers' && type === 'bus_stop')
+  || (k === 'passengersEntrant' && (type === 'train_station' || type === 'boat_depot' || type === 'plane_depot'));
+function compactBuildingForStorage(o){
+  const out = {};
+  for(const k in o){
+    let v = o[k];
+    if(v == null || v === false || v === '') continue;
+    if(v === 0 && !LOCAL_SAVE_KEEP_ZERO.has(k) && !transitGateKey(o.type, k)) continue;
+    if(typeof v === 'number') v = roundSave(v);
+    else if(typeof v === 'object' && !Array.isArray(v)){
+      const keys = Object.keys(v);
+      if(!keys.length) continue;
+      let copy = null;
+      for(const kk of keys){
+        const x = v[kk];
+        if(typeof x === 'number' && x !== roundSave(x)){ copy = copy || { ...v }; copy[kk] = roundSave(x); }
+      }
+      if(copy) v = copy;
+    }
+    out[k] = v;
+  }
+  return out;
+}
+function packStateForStorage(state){
+  if(!state || state._rle) return state;
+  const out = Object.assign({}, state, { _rle: [] });
+  for(const k of LOCAL_SAVE_GRID_KEYS){
+    if(Array.isArray(state[k])){ out[k] = rleEncode(state[k]); out._rle.push(k); }
+  }
+  if(Array.isArray(state.buildings)) out.buildings = state.buildings.map(compactBuildingForStorage);
+  return out;
+}
+function unpackStateFromStorage(state){
+  if(!state || !Array.isArray(state._rle)) return state;
+  const out = Object.assign({}, state);
+  for(const k of state._rle) if(Array.isArray(state[k])) out[k] = rleDecode(state[k]);
+  delete out._rle;
+  return out;
+}
+
 // ---------- sauvegarde automatique ----------
 function autoSaveStorageKey(){
   return MP.roomId != null ? AUTO_SAVE_KEY + '_r' + MP.roomId : AUTO_SAVE_KEY;
@@ -18,8 +92,50 @@ function autoSaveIsRoom(){
   return MP.roomId != null;
 }
 
+// Stockage local : un INDEX léger (emplacement/nom + date) et une clé par
+// sauvegarde. Écrire une sauvegarde ne relit/réécrit plus toutes les autres
+// (l'ancien format, un seul tableau de plusieurs Mo, figeait le jeu ~0,4 s à
+// chaque sauvegarde auto d'une grande ville). L'ancien format est migré.
+function lsGetJSON(key, def){
+  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : def; } catch(e){ return def; }
+}
+// setItem avec éviction : en cas de quota plein, `evict()` libère de la place
+// (renvoie false s'il n'y a plus rien à supprimer) puis on réessaie.
+function lsSetWithEviction(key, value, evict){
+  for(;;){
+    try { localStorage.setItem(key, value); return true; }
+    catch(e){
+      if(!isQuotaExceeded(e) || !evict || !evict()) return false;
+    }
+  }
+}
+// Migre un ancien tableau [{…, state}] vers index + clés individuelles.
+function migrateSaveList(indexKey, list, idOf){
+  if(!Array.isArray(list) || !list.some(e => e && e.state)) return list;
+  const index = [];
+  let removedOld = false;
+  for(const e of list){
+    if(!e || !e.state) continue;
+    const id = idOf(e);
+    const value = JSON.stringify(e.state);
+    const ok = lsSetWithEviction(indexKey + '#' + id, value, () => {
+      if(removedOld) return false;
+      localStorage.removeItem(indexKey); removedOld = true; // les données sont en mémoire
+      return true;
+    });
+    if(!ok) continue;
+    const entry = Object.assign({}, e); delete entry.state;
+    index.push(entry);
+  }
+  try { localStorage.setItem(indexKey, JSON.stringify(index)); } catch(e){}
+  return index;
+}
 function loadAutoSaves(){
-  try { return JSON.parse(localStorage.getItem(autoSaveStorageKey()) || '[]'); } catch(e){ return []; }
+  const key = autoSaveStorageKey();
+  return migrateSaveList(key, lsGetJSON(key, []), e => e.slot);
+}
+function loadAutoSaveState(slot){
+  return lsGetJSON(autoSaveStorageKey() + '#' + slot, null);
 }
 
 function performAutoSave(){
@@ -35,7 +151,7 @@ function performAutoSave(){
       const lastSlot = saves.length > 0 ? slotOf(saves[saves.length - 1]) : 0;
       const nextSlot = (lastSlot % AUTO_SAVE_MAX) + 1;
       const name = autoSaveServerName(nextSlot);
-      MP.ws.send(JSON.stringify({ type: 'save_game', token: MP.token, name, state }));
+      MP.ws.send(JSON.stringify({ type: 'save_game', token: MP.token, name, state: packStateForStorage(state) }));
       // MAJ optimiste : MP.saves n'est rafraîchi qu'à l'auth, sinon la rotation
       // se figerait sur une liste périmée et réécrirait toujours le même slot.
       MP.saves = (MP.saves || []).filter(s => s.name !== name);
@@ -50,32 +166,27 @@ function performAutoSave(){
   }
 
   // --- En solo : sauvegarde dans le localStorage du navigateur ---
-  const saves = loadAutoSaves();
+  const key = autoSaveStorageKey();
+  let saves = loadAutoSaves();
   const lastSlot = saves.length > 0 ? saves[saves.length - 1].slot : 0;
   const nextSlot = (lastSlot % AUTO_SAVE_MAX) + 1;
-  const entry = { slot: nextSlot, date: new Date().toISOString(), state };
-  const updated = saves.filter(s => s.slot !== nextSlot);
-  updated.push(entry);
-
+  saves = saves.filter(s => s.slot !== nextSlot);
+  const wanted = Math.min(AUTO_SAVE_MAX, saves.length + 1);
   // En cas de quota plein, on supprime les emplacements les plus anciens
   // et on réessaie jusqu'à ce que ça tienne.
-  let trimmed = updated.slice(-AUTO_SAVE_MAX);
-  const wanted = trimmed.length;
-  let stored = false;
-  while(trimmed.length){
-    try {
-      localStorage.setItem(autoSaveStorageKey(), JSON.stringify(trimmed));
-      stored = true;
-      break;
-    } catch(e){
-      if(!isQuotaExceeded(e)) break;
-      trimmed = trimmed.slice(1); // abandonne la plus ancienne et réessaie
-    }
-  }
+  const stored = lsSetWithEviction(key + '#' + nextSlot, JSON.stringify(packStateForStorage(state)), () => {
+    const old = saves.shift();
+    if(!old) return false;
+    localStorage.removeItem(key + '#' + old.slot);
+    return true;
+  });
+  if(stored) saves.push({ slot: nextSlot, date: new Date().toISOString() });
+  saves = saves.slice(-AUTO_SAVE_MAX);
+  try { localStorage.setItem(key, JSON.stringify(saves)); } catch(e){}
 
   renderAutoSaves();
   if(stored){
-    if(trimmed.length < wanted){
+    if(saves.length < wanted){
       toast('💾 Sauvegarde auto '+nextSlot+'/'+AUTO_SAVE_MAX+' (anciennes purgées, stockage limité)', 'win');
     } else {
       toast('💾 Sauvegarde auto — emplacement '+nextSlot+'/'+AUTO_SAVE_MAX);
@@ -140,14 +251,16 @@ function renderAutoSaves(){
     btn.onclick = async ()=>{
       const slot = +btn.dataset.autoload;
       const sv = loadAutoSaves().find(s => s.slot === slot);
-      if(!sv) return;
+      const st = sv && loadAutoSaveState(slot);
+      if(!st){ toast('⛔ Sauvegarde introuvable', 'err'); return; }
       const d = new Date(sv.date);
       const label = d.toLocaleDateString('fr-FR')+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
       if(!await confirmAction('Charger la sauvegarde automatique du '+label+' ?', {
         title: 'Charger une sauvegarde auto',
         okText: 'Charger',
       })) return;
-      applySnapshot(sv.state);
+      applySnapshot(unpackStateFromStorage(st));
+      focusCameraOnWorld();
       autoSaveTimer = AUTO_SAVE_INTERVAL;
       toast('📥 Sauvegarde auto chargée', 'win');
     };
@@ -187,7 +300,176 @@ function escHtml(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ---------- panneau « Partie » (solo) ----------
+// Nouvelle carte, sauvegardes locales nommées, sauvegardes auto, export/import
+// d'un fichier JSON. En multijoueur, la partie appartient à la room : ce panneau
+// renvoie vers le panneau multijoueur (sauvegardes gérées par l'hôte).
+const LOCAL_SAVES_KEY = 'factopolis_saves';
+const LOCAL_SAVES_MAX = 12;
+let _localSaveSeq = 0;
+// Index [{ id, name, date }] ; l'état de chaque partie est sous LOCAL_SAVES_KEY#id.
+function loadLocalSaves(){
+  return migrateSaveList(LOCAL_SAVES_KEY, lsGetJSON(LOCAL_SAVES_KEY, []),
+    e => (e.id = e.id || (Date.now().toString(36) + '-' + (_localSaveSeq++))));
+}
+function loadLocalSaveState(entry){
+  return entry ? lsGetJSON(LOCAL_SAVES_KEY + '#' + entry.id, null) : null;
+}
+function storeLocalSaves(list){
+  try { localStorage.setItem(LOCAL_SAVES_KEY, JSON.stringify(list)); return true; }
+  catch(e){ toast('⚠️ Sauvegarde impossible', 'err'); return false; }
+}
+function deleteLocalSave(entry){
+  if(!entry) return;
+  localStorage.removeItem(LOCAL_SAVES_KEY + '#' + entry.id);
+  storeLocalSaves(loadLocalSaves().filter(s => s.id !== entry.id));
+}
+function localSaveNow(name){
+  name = String(name || '').trim().slice(0, 48) || ('Partie ' + new Date().toLocaleString('fr-FR'));
+  let list = loadLocalSaves();
+  for(const s of list.filter(s => s.name === name)) localStorage.removeItem(LOCAL_SAVES_KEY + '#' + s.id);
+  list = list.filter(s => s.name !== name);
+  // au-delà du maximum, les plus anciennes partent
+  while(list.length >= LOCAL_SAVES_MAX) localStorage.removeItem(LOCAL_SAVES_KEY + '#' + list.pop().id);
+  const entry = { id: Date.now().toString(36) + '-' + (_localSaveSeq++), name, date: new Date().toISOString() };
+  // quota plein : on sacrifie d'abord les sauvegardes AUTO les plus anciennes
+  const ok = lsSetWithEviction(LOCAL_SAVES_KEY + '#' + entry.id, JSON.stringify(packStateForStorage(serializeState())), () => {
+    const autos = loadAutoSaves();
+    if(autos.length <= 1) return false;
+    const old = autos.shift();
+    localStorage.removeItem(autoSaveStorageKey() + '#' + old.slot);
+    try { localStorage.setItem(autoSaveStorageKey(), JSON.stringify(autos)); } catch(e){}
+    return true;
+  });
+  if(!ok){
+    toast('⚠️ Stockage du navigateur plein : supprime une sauvegarde ou exporte la partie.', 'err');
+  } else {
+    list.unshift(entry);
+    if(storeLocalSaves(list)) toast('💾 Partie « ' + name + ' » sauvegardée', 'win');
+  }
+  renderGamePanel();
+}
+function exportGameFile(){
+  const data = { meta: { name: 'Factopolis', date: new Date().toISOString(), version: 1 }, state: packStateForStorage(serializeState()) };
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'factopolis-' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function importGameFile(file){
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      const state = unpackStateFromStorage(data.state || data);
+      if(!state || !Array.isArray(state.buildings) || !state.terrain) throw new Error('format');
+      applySnapshot(state);
+      focusCameraOnWorld();
+      autoSaveTimer = AUTO_SAVE_INTERVAL;
+      toast('📥 Partie importée', 'win');
+      renderGamePanel();
+    } catch(e){ toast('⛔ Fichier de sauvegarde invalide', 'err'); }
+  };
+  reader.readAsText(file);
+}
+function injectGamePanel(){
+  const sep = document.createElement('span'); sep.className = 'sep';
+  const btn = document.createElement('button');
+  btn.className = 'tbtn'; btn.id = 'bGame'; btn.textContent = '💾';
+  btn.title = 'Nouvelle carte, sauvegarder, charger, exporter';
+  btn.onclick = () => { const p = $('gamePanel'); p.style.display = p.style.display === 'block' ? 'none' : 'block'; renderGamePanel(); };
+  $('topbar').appendChild(sep); $('topbar').appendChild(btn);
+  const panel = document.createElement('div');
+  panel.id = 'gamePanel'; panel.className = 'panel';
+  panel.style.cssText = 'top:70px;left:300px;width:290px;max-height:calc(100vh - 90px);overflow-y:auto;padding:12px 14px;font-size:13px;display:none;z-index:20';
+  document.body.appendChild(panel);
+}
+function renderGamePanel(){
+  const p = $('gamePanel');
+  if(!p || p.style.display !== 'block') return;
+  const inRoom = mpInRoom();
+  let h = '<div class="panel-head"><h3 style="font-size:15px">💾 Partie</h3><button class="tbtn" id="gpClose" aria-label="Fermer">✕</button></div>';
+  if(inRoom){
+    h += '<div style="color:#8fa3bf;line-height:1.45">Tu joues dans le monde multijoueur <b>'+escHtml(MP.roomName || '')+'</b>. '
+      + 'Les sauvegardes y sont partagées et gérées par l’hôte depuis le panneau 🌐 Multijoueur.</div>';
+  } else {
+    const sizes = MAP_SIZE_OPTIONS.map(s => '<option value="'+s+'"'+(s === WORLD.size ? ' selected' : '')+'>'+s+'×'+s+'</option>').join('');
+    h += '<div class="opt-title" style="padding:4px 0">Nouvelle carte</div>'
+      + '<div style="display:flex;gap:6px;margin-bottom:8px"><select id="gpSize" class="opt-select" style="margin:0;flex:1">'+sizes+'</select>'
+      + '<button class="tbtn" id="gpNew">🌍 Créer</button></div>';
+    h += '<div class="opt-title" style="padding:4px 0">Sauvegarder</div>'
+      + '<div style="display:flex;gap:6px;margin-bottom:6px"><input id="gpName" type="text" placeholder="Nom de la partie" class="opt-select" style="margin:0;flex:1">'
+      + '<button class="tbtn" id="gpSave">💾</button></div>';
+    const saves = loadLocalSaves();
+    h += saves.length ? saves.map((s, i) =>
+        '<div style="display:flex;align-items:center;gap:4px;margin:2px 0;padding:3px 4px;background:#1d2939;border-radius:5px">'
+        + '<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 '+escHtml(s.name)+'</span>'
+        + '<span style="color:#8fa3bf;font-size:10px">'+escHtml(new Date(s.date).toLocaleDateString('fr-FR'))+'</span>'
+        + '<button class="tbtn" style="padding:1px 6px;font-size:11px" data-gp-load="'+i+'">▶</button>'
+        + '<button class="tbtn" style="padding:1px 6px;font-size:11px;color:#ff9a8a" data-gp-del="'+i+'">✕</button></div>').join('')
+      : '<div style="color:#8fa3bf;font-size:11px;font-style:italic">Aucune sauvegarde</div>';
+    const autos = loadAutoSaves().sort((a, b) => new Date(b.date) - new Date(a.date));
+    h += '<div class="opt-title" style="padding:8px 0 4px">Sauvegardes auto (toutes les '+Math.round(AUTO_SAVE_INTERVAL / 60)+' min)</div>';
+    h += autos.length ? autos.map(s =>
+        '<div style="display:flex;align-items:center;gap:4px;margin:2px 0;padding:3px 4px;background:#1d2939;border-radius:5px">'
+        + '<span style="flex:1;font-size:12px">🔄 Auto-'+s.slot+'</span>'
+        + '<span style="color:#8fa3bf;font-size:10px">'+escHtml(new Date(s.date).toLocaleString('fr-FR',{ day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }))+'</span>'
+        + '<button class="tbtn" style="padding:1px 6px;font-size:11px" data-gp-auto="'+s.slot+'">▶</button></div>').join('')
+      : '<div style="color:#8fa3bf;font-size:11px;font-style:italic">Aucune sauvegarde auto</div>';
+    h += '<div style="display:flex;gap:6px;margin-top:10px">'
+      + '<button class="tbtn" id="gpExport" style="flex:1">📤 Exporter</button>'
+      + '<button class="tbtn" id="gpImport" style="flex:1">📥 Importer</button>'
+      + '<input id="gpFile" type="file" accept=".json,application/json" style="display:none"></div>';
+  }
+  p.innerHTML = h;
+  ensurePanelDragHandle('gamePanel');
+  $('gpClose').onclick = () => { p.style.display = 'none'; };
+  if(inRoom) return;
+  $('gpNew').onclick = async () => {
+    if(!await confirmAction('Créer une nouvelle carte ?\nLa partie en cours sera perdue si elle n’est pas sauvegardée.', { title:'Nouvelle carte', okText:'Créer', danger:true })) return;
+    genWorld(normalizeWorldConfig({ ...WORLD, size: +$('gpSize').value, seed: undefined }));
+    autoSaveTimer = AUTO_SAVE_INTERVAL;
+    toast('🌍 Nouvelle carte', 'win');
+    renderGamePanel();
+  };
+  $('gpSave').onclick = () => localSaveNow($('gpName').value);
+  $('gpName').onkeydown = e => { if(e.key === 'Enter') localSaveNow($('gpName').value); };
+  $('gpExport').onclick = exportGameFile;
+  $('gpImport').onclick = () => $('gpFile').click();
+  $('gpFile').onchange = e => { const f = e.target.files?.[0]; if(f) importGameFile(f); e.target.value = ''; };
+  p.querySelectorAll('[data-gp-load]').forEach(b => b.onclick = async () => {
+    const s = loadLocalSaves()[+b.dataset.gpLoad];
+    if(!s || !await confirmAction('Charger « '+s.name+' » ?', { title:'Charger une partie', okText:'Charger' })) return;
+    const st = loadLocalSaveState(s);
+    if(!st){ toast('⛔ Sauvegarde introuvable', 'err'); return; }
+    applySnapshot(unpackStateFromStorage(st));
+    focusCameraOnWorld();
+    autoSaveTimer = AUTO_SAVE_INTERVAL;
+    toast('📥 Partie « '+s.name+' » chargée', 'win');
+  });
+  p.querySelectorAll('[data-gp-del]').forEach(b => b.onclick = async () => {
+    const s = loadLocalSaves()[+b.dataset.gpDel];
+    if(!s || !await confirmAction('Supprimer « '+s.name+' » ?', { title:'Supprimer', okText:'Supprimer', danger:true })) return;
+    deleteLocalSave(s);
+    renderGamePanel();
+  });
+  p.querySelectorAll('[data-gp-auto]').forEach(b => b.onclick = async () => {
+    const s = loadAutoSaves().find(x => x.slot === +b.dataset.gpAuto);
+    if(!s || !await confirmAction('Charger la sauvegarde auto '+s.slot+' ?', { title:'Charger', okText:'Charger' })) return;
+    const st = loadAutoSaveState(s.slot);
+    if(!st){ toast('⛔ Sauvegarde introuvable', 'err'); return; }
+    applySnapshot(unpackStateFromStorage(st));
+    focusCameraOnWorld();
+    autoSaveTimer = AUTO_SAVE_INTERVAL;
+    toast('📥 Sauvegarde auto chargée', 'win');
+  });
+}
+
+injectGamePanel();
 mpInjectUI();
+if(typeof Minimap !== 'undefined') Minimap.setVisible(!!UI_OPTIONS.panelMinimap);
 
 buildToolbar();
 genWorld();

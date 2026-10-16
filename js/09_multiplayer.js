@@ -18,6 +18,44 @@ function refreshOwnerColorsFromRegistry(){
   }
 }
 
+// ---- signature du monde (anti-désynchronisation) ----
+// Routes, rails, tunnels, signaux, terrain et zones jouables ne voyagent que sous
+// forme d'actions. Si une action est refusée par l'hôte (train sur la voie, fonds
+// insuffisants…) ou perdue, l'invité garde une carte divergente. L'hôte joint donc
+// une empreinte FNV-1a de ces tableaux à chaque synchro « monde » ; un invité qui
+// diverge durablement demande un snapshot complet (resync_request).
+let _worldSigCache = { key:null, sig:0 };
+function worldSignature(){
+  const sigKeys = railSignals ? Object.keys(railSignals).sort() : [];
+  const key = N + '|' + groundVersion + '|' + terrainVersion + '|' + railVersion + '|'
+    + (typeof railSignalVersion !== 'undefined' ? railSignalVersion : 0) + '|' + sigKeys.length;
+  if(_worldSigCache.key === key) return _worldSigCache.sig;
+  let h = 0x811c9dc5 ^ N;
+  const mix = arr => {
+    if(!arr) return;
+    for(let i = 0; i < arr.length; i++){ h ^= arr[i] & 0xff; h = Math.imul(h, 16777619); }
+  };
+  mix(terrain); mix(terrainHeightMap); mix(road); mix(rail); mix(railTunnel); mix(mapMask);
+  for(const k of sigKeys){
+    const sg = railSignals[k];
+    const txt = k + (sg.forcedRed ? 'R' : 'G') + (sg.kind === 'junction' ? 'J' : 'B');
+    for(let i = 0; i < txt.length; i++){ h ^= txt.charCodeAt(i); h = Math.imul(h, 16777619); }
+  }
+  _worldSigCache = { key, sig: h >>> 0 };
+  return _worldSigCache.sig;
+}
+let mpWorldMismatch = 0;
+function mpCheckWorldSignature(hostSig){
+  if(hostSig == null || MP.role !== 'guest' || MP.awaitingSnapshot) return;
+  if(hostSig === worldSignature()){ mpWorldMismatch = 0; return; }
+  // Laisser le temps aux actions en vol (les nôtres ou celles des autres) d'être
+  // appliquées des deux côtés avant de conclure à une divergence.
+  if(performance.now() - (MP.lastWorldEditAt || 0) < 2500) return;
+  if(++mpWorldMismatch < 3) return;
+  mpWorldMismatch = 0;
+  if(MP.ws && MP.ws.readyState === 1) MP.ws.send(JSON.stringify({ type:'resync_request' }));
+}
+
 const MP_STATE_SYNC_INTERVAL = 0.2;   // cadence du flux « mouvement » (léger)
 const MP_WORLD_SYNC_INTERVAL = 1.0;   // cadence du flux « monde » complet (lourd)
 const MP_RENDER_DELAY = 0.3;
@@ -99,6 +137,9 @@ function serializeVehicleState(v){
     orderModes: Array.isArray(v.orderModes) ? v.orderModes.slice() : null,
     cargoLoadStopX: v.cargoLoadStop && !v.cargoLoadStop.dead ? v.cargoLoadStop.x : null,
     cargoLoadStopY: v.cargoLoadStop && !v.cargoLoadStop.dead ? v.cargoLoadStop.y : null,
+    cargoFresh: v.cargoFresh ?? null,
+    passengerBoardStopX: v.passengerBoardStop && !v.passengerBoardStop.dead ? v.passengerBoardStop.x : null,
+    passengerBoardStopY: v.passengerBoardStop && !v.passengerBoardStop.dead ? v.passengerBoardStop.y : null,
     engineMult: v.engineMult ?? null,
     boughtAtGtime: v.boughtAtGtime ?? null,
     maintenanceDaysPaid: v.maintenanceDaysPaid ?? 0,
@@ -872,6 +913,7 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   b.trainAllow = o.trainAllow || null;
   b.paused = !!o.paused;
   b.blockedOut = o.blockedOut || null;
+  b.trainReceived = o.trainReceived || null;
   b.owner = o.owner ?? null;
   b.starterHome = !!o.starterHome;
   b.starterSlots = o.starterSlots || 0;
@@ -885,7 +927,7 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
     b.passengersEntrant = o.passengersEntrant ?? 0;
     b.passagersSortant = o.passagersSortant ?? 0;
   }
-  if(b.type === 'train_station'){
+  if(b.type === 'train_station' || b.type === 'boat_depot' || b.type === 'plane_depot'){
     b.passengersEntrant = o.passengersEntrant ?? 0;
     b.passengersEntrantMax = o.passengersEntrantMax ?? 0;
     b.passagersSortant = o.passagersSortant ?? 0;
@@ -945,6 +987,8 @@ function applyVehicleDynamicState(v, sv){
   v.railContinueTile = sv.railContinueTile ?? null;
   v.railPreviousTile = sv.railPreviousTile ?? null;
   v.cargoLoadStop = syncBuildingByCoords(sv.cargoLoadStopX, sv.cargoLoadStopY) || null;
+  v.cargoFresh = sv.cargoFresh ?? null;
+  v.passengerBoardStop = syncBuildingByCoords(sv.passengerBoardStopX, sv.passengerBoardStopY) || null;
   // Brouillon de route en cours d'édition côté client (arrêts ajoutés mais pas
   // encore « Enregistrés ») : la synchro autoritative ne doit pas écraser les
   // ordres locaux, sinon l'arrêt fraîchement ajouté disparaît au prochain sync
@@ -990,6 +1034,7 @@ function applyStateSync(d){
     refreshWorkerAllocation();
     return;
   }
+  mpCheckWorldSignature(d.worldSig);
   const includeTransient = Array.isArray(d.trucks) || Array.isArray(d.walkers) || Array.isArray(d.homeless);
   if(d.playerRegistry && typeof d.playerRegistry === 'object') MP.savedRegistry = d.playerRegistry;
   MP.ownerColors = {};
@@ -1020,6 +1065,14 @@ function applyStateSync(d){
     t.cy = st.cy;
   }
   nextTownId = d.nextTownId ?? nextTownId;
+  // La Gazette : l'hôte publie, l'invité affiche les nouvelles pas encore vues.
+  if(d.news){
+    newsFlags = Object.create(null);
+    for(const k of d.news.flags || []) newsFlags[k] = 1;
+    newsLog = Array.isArray(d.news.log) ? d.news.log : [];
+    nextNewsId = d.news.next || nextNewsId;
+    if(typeof receiveNews === 'function') receiveNews(newsLog, false);
+  }
   nextTrainStationId = d.nextTrainStationId || nextTrainStationId;
   if(selectedTownId != null && !townById.has(selectedTownId)) selectedTownId = null;
 
@@ -1200,9 +1253,11 @@ function mpMaybeBroadcastState(dt){
   // on l'espace. Les barres de progression sont avancées localement entre deux.
   if(mpWorldSyncTimer >= MP_WORLD_SYNC_INTERVAL){
     mpWorldSyncTimer = 0;
+    // bâtiments compactés : ~×4 moins de données à 1 Hz (applyBuildingDynamicState
+    // restaure les valeurs par défaut des champs omis)
     MP.ws.send(JSON.stringify({
       type:'state_sync',
-      state: serializeState({ includeTransient:true, includeWorld:false }),
+      state: packStateForStorage(serializeState({ includeTransient:true, includeWorld:false })),
     }));
   }
 }
@@ -1218,7 +1273,7 @@ function mpForceFullSnapshot(){
   mpStateSyncTimer = 0;
   MP.ws.send(JSON.stringify({
     type:'state_sync',
-    state: serializeState({ includeTransient:true, includeWorld:true }),
+    state: packStateForStorage(serializeState({ includeTransient:true, includeWorld:true })),
   }));
 }
 
@@ -1268,6 +1323,7 @@ function serializeState(opts = {}){
   if(MP.myId != null && MP.myColor) ownerColors[MP.myId] = MP.myColor;
   const out = {
     dynamicOnly: !includeWorld,
+    worldSig: worldSignature(),
     ownerColors,
     wallets: WALLETS,
     homeless: includeTransient
@@ -1299,6 +1355,7 @@ function serializeState(opts = {}){
       pendingProtected:includeTransient ? (b.pendingProtected||0) : 0,
       starve:b.starve||0,
       ore:b.ore||null, allow:b.allow||null, sellTo:b.sellTo||null, sellMin:b.sellMin||null, trainAllow:b.trainAllow||null, paused:b.paused||false, blockedOut:b.blockedOut||null, owner:b.owner||null,
+      trainReceived:b.trainReceived ? { ...b.trainReceived } : null,
       starterHome:!!b.starterHome, starterSlots:b.starterSlots||0, townId:b.townId??null, name:b.name||null,
       mergeBlockedMissing:Array.isArray(b.mergeBlockedMissing) ? b.mergeBlockedMissing.slice() : null,
       passengers:b.passengers||0,
@@ -1308,6 +1365,7 @@ function serializeState(opts = {}){
       stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
+    news: { flags: Object.keys(newsFlags), log: newsLog, next: nextNewsId },
     nextTownId,
     nextTrainStationId,
     vehicles: vehicles.map(serializeVehicleState),
@@ -1322,6 +1380,7 @@ function serializeState(opts = {}){
       world: WORLD,
       size: N,
       mapBounds,
+      starterSite,
       expansionLevels,
       purchasedPieces: Array.from(purchasedPieces),
       mapMask: Array.from(mapMask),
@@ -1447,6 +1506,9 @@ function mpSenderControlsOwner(ownerId, msg){
 }
 
 function applySnapshot(d){
+  // États compactés (grilles RLE, bâtiments sans champs par défaut) : format des
+  // sauvegardes locales ET des transferts réseau/serveur — cf. packStateForStorage.
+  if(d && Array.isArray(d._rle) && typeof unpackStateFromStorage === 'function') d = unpackStateFromStorage(d);
   // Rechargement complet du monde → tout invalider (sol + décor terrain + tunnels).
   markTerrainDirty(); markRailDirty();
   const hadTransient = Array.isArray(d.trucks) || Array.isArray(d.walkers) || Array.isArray(d.homeless);
@@ -1477,6 +1539,7 @@ function applySnapshot(d){
     mapBounds = { ...d.mapBounds };
     expansionLevels = d.expansionLevels || { left:0, right:0, top:0, bottom:0 };
     purchasedPieces = new Set(d.purchasedPieces||[]);
+    starterSite = (d.starterSite && Number.isFinite(d.starterSite.x)) ? { x: d.starterSite.x, y: d.starterSite.y } : null;
     if(d.mapMask){
       mapMask = Uint8Array.from(d.mapMask);
     } else {
@@ -1598,6 +1661,17 @@ function applySnapshot(d){
     towns = d.towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy }));
     nextTownId = d.nextTownId ?? (towns.reduce((m,t)=>Math.max(m,t.id),-1) + 1);
   }
+  // La Gazette : drapeaux et dernières nouvelles (chargement / arrivée : pas
+  // de rediffusion des anciennes unes).
+  newsFlags = Object.create(null); newsLog = []; nextNewsId = 1; newsSeenId = 0;
+  if(d.news){
+    for(const k of d.news.flags || []) newsFlags[k] = 1;
+    newsLog = Array.isArray(d.news.log) ? d.news.log : [];
+    nextNewsId = d.news.next || 1;
+    if(typeof receiveNews === 'function') receiveNews(newsLog, true);
+  } else {
+    newsNeedsPriming = true; // ancienne sauvegarde : amorcé une fois les bâtiments chargés
+  }
   if(selectedTownId != null && !towns.some(t => t.id === selectedTownId)) selectedTownId = null;
 
   for(const o of d.buildings){
@@ -1627,6 +1701,7 @@ function applySnapshot(d){
     if(o.trainAllow) b.trainAllow = o.trainAllow;
     if(o.paused != null) b.paused = o.paused;
     if(o.blockedOut) b.blockedOut = o.blockedOut;
+    if(o.trainReceived) b.trainReceived = o.trainReceived;
     if(o.owner  != null) b.owner  = o.owner;
     if(o.starterHome) b.starterHome = true;
     if(o.starterSlots) b.starterSlots = o.starterSlots;
@@ -1639,7 +1714,7 @@ function applySnapshot(d){
       b.passengersEntrant = o.passengersEntrant ?? 0;
       b.passagersSortant = o.passagersSortant ?? 0;
     }
-    if(o.passengersEntrant != null && b.type === 'train_station'){
+    if(o.passengersEntrant != null && (b.type === 'train_station' || b.type === 'boat_depot' || b.type === 'plane_depot')){
       b.passengersEntrant = o.passengersEntrant;
       b.passengersEntrantMax = o.passengersEntrantMax ?? 0;
       b.passagersSortant = o.passagersSortant ?? 0;
@@ -1735,6 +1810,9 @@ function applySnapshot(d){
       if(Array.isArray(sv.orderModes)) v.orderModes = sv.orderModes.slice();
       if(sv.cargoLoadStopX != null)
         v.cargoLoadStop = buildings.find(b => b.x === sv.cargoLoadStopX && b.y === sv.cargoLoadStopY) || null;
+      if(sv.cargoFresh != null) v.cargoFresh = sv.cargoFresh;
+      if(sv.passengerBoardStopX != null)
+        v.passengerBoardStop = buildings.find(b => b.x === sv.passengerBoardStopX && b.y === sv.passengerBoardStopY) || null;
       if(v.vtype === 'train') syncTrainOrders(v);
       if(sv.busRouteDistance != null) v.busRouteDistance = sv.busRouteDistance;
       if(sv.passengersOnBoard != null) v.passengersOnBoard = sv.passengersOnBoard;
@@ -1854,12 +1932,17 @@ function applySnapshot(d){
       trainConfigLocoSelected = false;
     }
   }
+  if(newsNeedsPriming){
+    newsNeedsPriming = false;
+    if(typeof primeNewsFlags === 'function') primeNewsFlags();
+  }
 }
 
 // ---- patch minimal d'une action entrante ----
 function applyAction(msg){
   const { act } = msg;
   if(!act || typeof act.type !== 'string') return;
+  MP.lastWorldEditAt = performance.now();
   const validIdx = i => Number.isInteger(i) && i >= 0 && i < N*N;
   const validXY = (x,y) => Number.isInteger(x) && Number.isInteger(y) && inMap(x,y);
   switch(act.type){
@@ -1893,6 +1976,44 @@ function applyAction(msg){
         earnMoney(-act.costDelta, 'rembours', walletOf(msg.from));
       }
       break;
+    case 'rail_batch': {
+      // Tracé complet (glisser / démolition) en une action : tout ou rien. Si un
+      // train occupe une des tuiles, l'hôte refuse le lot et rembourse.
+      if(!Array.isArray(act.updates) || !act.updates.length) break;
+      const updates = act.updates.filter(u => validXY(u.x, u.y) && Number.isInteger(u.mask) && u.mask >= 0 && u.mask <= 255);
+      if(!updates.length) break;
+      if(updates.some(u => tileOccupiedByTrain(u.x, u.y))) break;
+      if(msg.fromUsername) walletOf(msg.from).username = msg.fromUsername;
+      const owner = msg.from == null ? null : msg.from;
+      railApplyMaskUpdates(updates, 0, walletOf(msg.from), owner);
+      if(act.costDelta > 0){
+        walletOf(msg.from).money -= act.costDelta;
+        walletOf(msg.from).fin.construction += act.costDelta;
+      } else if(act.costDelta < 0){
+        earnMoney(-act.costDelta, 'rembours', walletOf(msg.from));
+      }
+      break;
+    }
+    case 'road_batch': {
+      if(!Array.isArray(act.tiles)) break;
+      const wSender = walletOf(msg.from);
+      if(msg.fromUsername) wSender.username = msg.fromUsername;
+      const cost = BUILD.road.cost || 0;
+      let placed = 0;
+      for(const i of act.tiles){
+        if(!validIdx(i) || road[i] || bgrid[i] || !mapMask?.[i]) continue;
+        const t = terrain[i];
+        if(!rail[i] && t !== T.GRASS) continue;
+        road[i] = 1;
+        placed++;
+      }
+      if(placed){
+        markGroundDirty();
+        wSender.money -= cost * placed;
+        wSender.fin.construction += cost * placed;
+      }
+      break;
+    }
     case 'rail_signal_update':
       if(!validXY(act.x, act.y) || !Number.isInteger(act.bit)) break;
       if(act.present) setRailSignal(act.x, act.y, act.bit, true, !!act.forcedRed, act.kind || 'block');
@@ -2004,11 +2125,16 @@ function applyAction(msg){
         break;
       }
       if(road[act.y*N+act.x] || rail[act.y*N+act.x] || bgrid[act.y*N+act.x]) break;
+      // Mêmes règles de terrain que la pose locale (gisement, arbres, eau…) : un
+      // client désynchronisé ou modifié ne peut pas poser n'importe où.
+      if(!canPlace(act.btype, act.x, act.y, msg.from).ok) break;
+      if(cost > 0 && wSender.money < cost) break;
       const b = newBuilding(act.btype, act.x, act.y);
       b.owner = msg.from;
       markStarterHomeIfNeeded(b);
-      assignBuildingToTown(b);
+      assignBuildingToTown(b, true);
       assignIndustryName(b);
+      assignTrainDepotName(b);
       buildings.push(b); bgrid[act.y*N+act.x] = b;
       wSender.money -= cost; wSender.fin.construction += cost;
       if(BUILD[b.type].resid) assignHomelessToHousing(b.owner);
@@ -2058,6 +2184,7 @@ function applyAction(msg){
       if(err) break;
       const cost = BUILD[targetType].cost || 0;
       const wSender = walletOf(msg.from);
+      if(wSender.money < cost) break;
       wSender.money -= cost;
       wSender.fin.construction = (wSender.fin.construction||0) + cost;
       applyPlantUpgrade(b, targetType);
@@ -2071,6 +2198,7 @@ function applyAction(msg){
       if(vehicles.some(v=>String(v.id) === String(act.id))) break;
       const cost = VEHICLE_TYPES[act.vtype].cost || 0;
       const wSender = walletOf(msg.from);
+      if(VEHICLE_TYPES[act.vtype].buyDisabled || wSender.money < cost) break;
       wSender.money -= cost;
       wSender.fin.construction = (wSender.fin.construction||0) + cost;
       const v = createPersistentVehicle(act.vtype, garage, act.id);
@@ -2080,7 +2208,7 @@ function applyAction(msg){
     case 'sell_vehicle': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
       if(!v || !mpSenderControlsOwner(v.garageRef?.owner, msg)) break;
-      const refund = Math.floor((VEHICLE_TYPES[v.vtype]?.cost||0) * 0.5);
+      const refund = vehicleResaleValue(v);
       walletOf(msg.from).money += refund;
       walletOf(msg.from).fin.rembours = (walletOf(msg.from).fin.rembours||0) + refund;
       removePersistentVehicle(v);
@@ -2096,6 +2224,11 @@ function applyAction(msg){
         v.orderIndex = Number.isInteger(act.orderIndex) ? act.orderIndex : 0;
         if(Array.isArray(act.orderModes)) v.orderModes = act.orderModes.slice();
         if(!syncTrainOrders(v) || !vehicleCanServeRoute(v)){ v.orders = []; v.source = null; v.dest = null; break; }
+        if(!trainPresentAtDepot(v)){
+          // Train en circulation : ordres appliqués à la volée (pas de retour dépôt).
+          trainApplyOrdersLive(v);
+          break;
+        }
         v.state = 'idle';
         v.currentBuilding = v.garageRef;
         v.pts = [];
@@ -2156,12 +2289,20 @@ function applyAction(msg){
     case 'configure_train': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
       if(!v || !mpSenderControlsOwner(v.garageRef?.owner, msg) || v.vtype !== 'train') break;
+      // Facturer (ou rembourser à 50 %) la différence de valeur : wagons ajoutés /
+      // retirés et niveaux moteur. Sans ça, l'invité équipait ses trains gratuitement
+      // (son paiement local est écrasé par le portefeuille de l'hôte).
+      const before = vehiclePurchaseValue(v);
       v.wagons = Array.isArray(act.wagons) ? act.wagons
         .map(w => typeof w === 'string'
           ? trainCreateWagon(w)
           : (w && typeof w === 'object' ? trainCreateWagon(w.type, w.resource || null) : null))
         .filter(Boolean) : [];
       if(typeof act.engineMult === 'number' && act.engineMult >= 1) v.engineMult = act.engineMult;
+      const delta = vehiclePurchaseValue(v) - before;
+      const wSender = walletOf(msg.from);
+      if(delta > 0){ wSender.money -= delta; wSender.fin.construction = (wSender.fin.construction||0) + delta; }
+      else if(delta < 0) earnMoney(Math.floor(-delta * 0.5), 'rembours', wSender);
       if(v.res && trainWagonCapacityForRes(v, v.res) < v.cargo){ v.cargo = 0; v.res = null; }
       break;
     }
@@ -2193,12 +2334,29 @@ function applyAction(msg){
       reassignBuildingsInRect(act.dstId, act.x1, act.y1, act.x2, act.y2, act.owner);
       break;
     }
+    case 'rename_bld': {
+      if(!validXY(act.x, act.y)) break;
+      const b = bgrid[act.y*N+act.x];
+      if(!b || (b.owner && !mpSenderControlsOwner(b.owner, msg))) break;
+      const name = typeof act.name === 'string' && act.name.trim() ? act.name.trim().slice(0, 64) : null;
+      if(isTrainStationPiece(b) && b.stationGroupId != null){
+        for(const piece of trainStationGroupPieces(b.stationGroupId)) piece.name = name;
+      } else b.name = name;
+      break;
+    }
     case 'rename_bus_stop': {
       if(!validXY(act.x, act.y)) break;
       const b = bgrid[act.y*N+act.x];
       if(!b || b.type !== 'bus_stop') break;
       if(b.owner && b.owner !== msg.from) break;
       b.name = act.name || null;
+      break;
+    }
+    case 'buy_expansion': {
+      if(typeof act.side !== 'string' || !Number.isInteger(act.pieceIndex)) break;
+      const exp = expansions.find(e => e.side === act.side && e.pieceIndex === act.pieceIndex);
+      if(!exp) break;
+      buyExpansion(exp, walletOf(msg.from), true);
       break;
     }
     case 'owner_remap':
@@ -2218,7 +2376,8 @@ function applyAction(msg){
 
 // ---- envoi d'une action au réseau ----
 function netSend(act){
-  if(!MP.ws || !MP.connected) return;
+  if(!MP.ws || !mpInRoom()) return;
+  MP.lastWorldEditAt = performance.now();
   MP.ws.send(JSON.stringify({ type:'action', act }));
 }
 
@@ -2353,6 +2512,7 @@ function mpConnect(url){
         document.title = MP.roomName ? 'Factopolis — ' + MP.roomName : 'Factopolis';
         if(msg.worldConfig) WORLD = normalizeWorldConfig(msg.worldConfig);
         adoptSoloHomeless(MP.myId);
+        if(msg.role === 'host') adoptSoloBuildings(MP.myId);
         ensureHomelessForOwner(MP.myId);
         resetSelectedTown();
         toast((msg.role==='host' ? '👑 Tu es l\'hôte' : '👥 Tu as rejoint la partie')+' (#'+msg.id+')');
@@ -2395,23 +2555,23 @@ function mpConnect(url){
         break;
 
       case 'snapshot_request':
-        // l'hôte envoie l'état complet à un invité
+        // l'hôte envoie l'état complet à un invité (arrivée ou resynchronisation)
         if(MP.role === 'host'){
           MP.ws.send(JSON.stringify({
-            type:'snapshot', forId: msg.forId,
-            state: serializeState({ includeTransient:true }),
+            type:'snapshot', forId: msg.forId, resync: !!msg.resync,
+            state: packStateForStorage(serializeState({ includeTransient:true })),
           }));
         }
         break;
 
       case 'snapshot':
-        // l'invité reçoit l'état initial
+        // l'invité reçoit l'état initial (ou une resynchronisation complète)
         mpResetGuestSnapshotBuffer();
         applySnapshot(msg.state);
         mpRefreshVehPathCache();
         MP.awaitingSnapshot = false;
-        resetSelectedTown();
-        toast('📥 Carte synchronisée');
+        mpWorldMismatch = 0;
+        if(!msg.resync){ resetSelectedTown(); focusCameraOnWorld(); toast('📥 Carte synchronisée'); }
         break;
 
       // Flux « monde » complet (1 Hz) : existence des entités, bâtiments, économie.
@@ -2577,6 +2737,7 @@ function mpConnect(url){
         if(MP.role === 'guest') mpRefreshVehPathCache();
         MP.awaitingSnapshot = false;
         resetSelectedTown();
+        focusCameraOnWorld();
         if(msg.loadedBy !== 'serveur'){
           MP.roomSaveName = msg.name;
           mpRenderSaves();
@@ -2591,6 +2752,7 @@ function mpConnect(url){
         MP.awaitingSnapshot = false;
         if(msg.config) WORLD = normalizeWorldConfig(msg.config);
         resetSelectedTown();
+        focusCameraOnWorld();
         toast('🌍 Nouvelle carte créée par '+msg.createdBy);
         mpUpdateUI();
         break;
@@ -2606,15 +2768,20 @@ function mpConnect(url){
         break;
 
       case 'server_cmd':
+        // Commandes qui modifient la carte : seul l'hôte (ou un joueur hors room) les
+        // exécute ; les invités reçoivent le résultat via la resynchronisation.
+        if(MP.role === 'guest' && msg.cmd !== 'set_money') break;
         if(msg.cmd === 'regen_expansions'){
           generateExpansionTerrain();
           refreshExpansionSlots();
           toast('🌍 Terrain des zones d\'expansion régénéré par le serveur.', 'win');
         } else if(msg.cmd === 'set_money'){
           const amount = Math.round(Number(msg.amount));
-          if(Number.isFinite(amount)){
-            myWallet().money = amount;
-            toast('💰 Solde fixé à '+amount.toLocaleString()+' $ par le serveur.', 'win');
+          if(Number.isFinite(amount) && MP.role !== 'guest'){
+            const target = msg.targetId != null ? walletOf(msg.targetId) : myWallet();
+            target.money = amount;
+            if(msg.targetId == null || msg.targetId === MP.myId)
+              toast('💰 Solde fixé à '+amount.toLocaleString()+' $ par le serveur.', 'win');
           }
         } else if(msg.cmd === 'spawn_fields'){
           spawnFieldsOnMap(msg.fieldType, msg.count);
@@ -2693,10 +2860,9 @@ clickFn = function(x,y){
   }
   const i = y*N+x;
   if(tool==='select'){ clickAt(x,y); return; }
-  if(!MP.connected){
-    toast('🌐 Connecte-toi au serveur multijoueur pour construire','err');
-    return;
-  }
+  // Hors partie multijoueur (solo, ou connecté au lobby sans monde rejoint) : le
+  // jeu est entièrement local, aucune action n'est diffusée.
+  if(!mpInRoom()){ clickAt(x,y); return; }
   if(!MP.username){
     toast('👤 Connecte-toi avec un compte joueur pour construire','err');
     return;
@@ -2720,11 +2886,7 @@ clickFn = function(x,y){
       if(occ){ toast('⛔ Un train occupe cette voie','err'); return; }
       const { updates, refund } = collectRailRemovalUpdates(x, y);
       if(updates.length){
-        let first = true;
-        for(const update of updates){
-          netSend({ type:'rail_update', x:update.x, y:update.y, mask:update.mask, costDelta:first ? -refund : 0 });
-          first = false;
-        }
+        netSend({ type:'rail_batch', updates:updates.map(u => ({ x:u.x, y:u.y, mask:u.mask })), costDelta:-refund });
         railApplyMaskUpdates(updates, -refund);
       }
     } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON){
@@ -2758,11 +2920,7 @@ clickFn = function(x,y){
     const { updates, cost, msg } = collectRailUpdates([{ x, y }]);
     if(!updates.length){ if(msg) toast(msg, 'err'); else clickAt(x,y); return; }
     if(cost > myWallet().money){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
-    let first = true;
-    for(const update of updates){
-      netSend({ type:'rail_update', x:update.x, y:update.y, mask:update.mask, costDelta:first ? cost : 0 });
-      first = false;
-    }
+    netSend({ type:'rail_batch', updates:updates.map(u => ({ x:u.x, y:u.y, mask:u.mask })), costDelta:cost });
     railApplyMaskUpdates(updates, cost);
     return;
   }
@@ -2802,12 +2960,26 @@ function applyRailPathWithNetwork(path){
     if(msg) toast(msg, 'err');
     return false;
   }
-  let first = true;
-  for(const update of updates){
-    netSend({ type:'rail_update', x:update.x, y:update.y, mask:update.mask, costDelta:first ? cost : 0 });
-    first = false;
-  }
+  // Un seul message pour tout le tracé (le serveur limite le débit par client).
+  netSend({ type:'rail_batch', updates:updates.map(u => ({ x:u.x, y:u.y, mask:u.mask })), costDelta:cost });
   railApplyMaskUpdates(updates, cost);
+  return true;
+}
+
+// Route tracée au glisser : pose locale + UNE action réseau pour toutes les tuiles.
+function applyRoadPathWithNetwork(tiles){
+  const cost = BUILD.road.cost || 0;
+  const placed = [];
+  for(const t of tiles){
+    if(!canPlace('road', t.x, t.y).ok) continue;
+    if(myWallet().money < cost * (placed.length + 1)){ toast('Fonds insuffisants ('+cost+' $ par tuile)','err'); break; }
+    placed.push(t.y * N + t.x);
+  }
+  if(!placed.length) return false;
+  for(const i of placed) road[i] = 1;
+  spendMoney(cost * placed.length, 'construction');
+  markGroundDirty();
+  if(mpInRoom() && MP.username) netSend({ type:'road_batch', tiles:placed });
   return true;
 }
 
@@ -2866,7 +3038,7 @@ function mpInjectUI(){
   const sep = document.createElement('span'); sep.className = 'sep';
   const btn = document.createElement('button');
   btn.className = 'tbtn'; btn.id = 'bMP';
-  btn.textContent = '🌐 Multijoueur'; btn.onclick = mpTogglePanel;
+  btn.textContent = '🌐'; btn.title = 'Multijoueur'; btn.onclick = mpTogglePanel;
   $('topbar').appendChild(sep); $('topbar').appendChild(btn);
 
   // panneau principal (scrollable, assez haut)
@@ -3035,7 +3207,7 @@ function mpInjectUI(){
     if(!name){ $('mpSaveErr').textContent = 'Entre un nom'; return; }
     if(!MP.token){ $('mpSaveErr').textContent = 'Non authentifié'; return; }
     $('mpSaveErr').textContent = '';
-    MP.ws.send(JSON.stringify({ type:'save_game', token:MP.token, name, state:serializeState() }));
+    MP.ws.send(JSON.stringify({ type:'save_game', token:MP.token, name, state:packStateForStorage(serializeState()) }));
   };
   $('mpSaveName').addEventListener('keydown', e=>{ if(e.key==='Enter') $('mpBtnSave').click(); });
 
@@ -3053,7 +3225,7 @@ function mpInjectUI(){
       resourceFactor: Number($('mpResourceFactor').value) / 100,
     });
     genWorld(config);
-    MP.ws.send(JSON.stringify({ type:'new_world', config, state:serializeState() }));
+    MP.ws.send(JSON.stringify({ type:'new_world', config, state:packStateForStorage(serializeState()) }));
     $('mpWorldErr').textContent = '';
   };
 
@@ -3226,7 +3398,7 @@ function mpRenderSaves(){
         okText: 'Écraser',
         danger: true,
       })) return;
-      MP.ws.send(JSON.stringify({ type:'save_game', token:MP.token, name, state:serializeState() }));
+      MP.ws.send(JSON.stringify({ type:'save_game', token:MP.token, name, state:packStateForStorage(serializeState()) }));
     };
   });
 

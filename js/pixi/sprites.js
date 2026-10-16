@@ -31,7 +31,25 @@ const PixiSprites = (function(){
     } finally {
       ctx = saved;
     }
-    return { texture: PIXI.Texture.from(oc), ax, ay, w, h };
+    // Source explicite (hors cache Pixi) : une texture bakée peut ainsi être
+    // détruite proprement quand elle est remplacée (re-bake d'un bâtiment).
+    return { texture: new PIXI.Texture({ source: new PIXI.CanvasSource({ resource: oc }) }), ax, ay, w, h };
+  }
+  function destroyBaked(baked){
+    if(!baked?.texture) return;
+    try { baked.texture.destroy(true); } catch(e){}
+  }
+
+  // --- Fenêtre visible (culling) ------------------------------------------
+  // Rectangle monde iso visible, élargi d'une marge. Tout ce qui est dehors n'est
+  // ni mis à jour (overlays, bakes) ni envoyé au GPU.
+  let viewL = 0, viewT = 0, viewR = 0, viewB = 0;
+  function computeView(){
+    const z = cam.z || 1, m = 96 / z;
+    viewL = cam.x - m; viewT = cam.y - m; viewR = cam.x + W / z + m; viewB = cam.y + H / z + m;
+  }
+  function inView(px, py, padX = 0, padTop = 0, padBottom = 0){
+    return px >= viewL - padX && px <= viewR + padX && py >= viewT - padBottom && py <= viewB + padTop;
   }
 
   function applyBaked(s, baked){
@@ -49,7 +67,7 @@ const PixiSprites = (function(){
   // --- Arbres -------------------------------------------------------------
   const TREE_W = 36, TREE_H = 48, TREE_AX = 18, TREE_AY = 40;
   let treeTex = null;
-  let treePool = [];
+  let treePool = [], treeCount = 0;
   // Les arbres ne dépendent QUE du terrain/mapMask → gate sur terrainVersion (pas
   // groundVersion) pour ne PAS rescanner toute la carte à chaque pose de route/rail.
   let treeBuiltVersion = -1, treeBuiltRot = -1, treeBuiltN = -1;
@@ -85,6 +103,7 @@ const PixiSprites = (function(){
       n++;
     }
     for(let i = n; i < treePool.length; i++) treePool[i].visible = false;
+    treeCount = n;
     treeBuiltVersion = terrainVersion; treeBuiltRot = rot; treeBuiltN = N;
   }
 
@@ -92,6 +111,11 @@ const PixiSprites = (function(){
     if(!treeTex) bakeTrees();
     if(treeBuiltVersion !== terrainVersion || treeBuiltRot !== rot || treeBuiltN !== N)
       rebuildTrees(layer);
+    // Culling : seuls les arbres à l'écran restent rendus.
+    for(let i = 0; i < treeCount; i++){
+      const s = treePool[i];
+      s.visible = inView(s.position.x, s.position.y, 24, 48, 8);
+    }
   }
 
   // --- Bouches de tunnel (PNG par direction) ------------------------------
@@ -161,8 +185,10 @@ const PixiSprites = (function(){
     car:   { w:44, h:44, ax:22, ay:28 },
     loco:  { w:60, h:56, ax:30, ay:36 },
     wagon: { w:52, h:48, ax:26, ay:30 },
+    ship:  { w:72, h:56, ax:36, ay:34 },
+    plane: { w:72, h:52, ax:36, ay:30 },
   };
-  const dirCache = { truck:new Map(), car:new Map(), loco:new Map(), wagon:new Map() };
+  const dirCache = { truck:new Map(), car:new Map(), loco:new Map(), wagon:new Map(), ship:new Map(), plane:new Map() };
 
   function getPool(pool, i, layer){
     let s = pool[i];
@@ -196,6 +222,19 @@ const PixiSprites = (function(){
   }
 
   let truckPool = [], carPool = [], locoPool = [], wagonPool = [];
+  let shipPool = [], planePool = [], planeShadowPool = [];
+  // Ombre d'avion : silhouette floue en croix (texture unique).
+  let _planeShadowTex = null;
+  function planeShadowTexture(){
+    if(_planeShadowTex) return _planeShadowTex;
+    const oc = document.createElement('canvas'); oc.width = 64; oc.height = 40;
+    const g = oc.getContext('2d');
+    g.fillStyle = 'rgba(0,0,0,1)';
+    g.beginPath(); g.ellipse(32, 20, 22, 4, 0, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.ellipse(34, 20, 5, 17, 0, 0, Math.PI * 2); g.fill();
+    _planeShadowTex = new PIXI.Texture({ source: new PIXI.CanvasSource({ resource: oc }) });
+    return _planeShadowTex;
+  }
   // Découpe d'un train à une bouche de tunnel. Chaque sprite possède SON masque
   // dédié (s.__clip) : indispensable car Pixi remet renderable=true sur le masque
   // quand on fait `s.mask = null` — un pool partagé réassigné entre sprites ferait
@@ -220,6 +259,7 @@ const PixiSprites = (function(){
     let n = 0;
     for(const tk of trucks){
       const p = truckPose(tk); if(!p) continue;
+      { const c = iso(p.u, p.v); if(!inView(c[0], c[1], 40, 60, 200)) continue; }
       const col = (typeof RES !== 'undefined' && RES[tk.res]?.c) ? RES[tk.res].c : '#aaa';
       n = placeDir(truckPool, n, layer, 'truck', drawTruckCore, col, p.u, p.v, p.du, p.dv, 0.5);
     }
@@ -238,17 +278,20 @@ const PixiSprites = (function(){
   function updateVehicles(layer, ovLayer){
     if(typeof vehicles === 'undefined') return;
     if(typeof ensureTunnelFloors === 'function') ensureTunnelFloors();
-    let nc = 0, nl = 0, nw = 0, nov = 0;
+    let nc = 0, nl = 0, nw = 0, nov = 0, ns = 0, np = 0, nps = 0;
     for(const veh of vehicles){
       const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
       if(veh.state === 'idle' || !rs.pts || !rs.pts.length) continue;
       if(veh.vtype === 'train'){
         for(let i = 0; i < (veh.wagons?.length || 0); i++){
           const wp = trainWagonPose(veh, i); if(!wp) continue;
+          // Wagon encore dans le dépôt (ou derrière, à la sortie) : pas de rail sous lui → masqué.
+          { const [wx, wy] = invRotF(wp.u, wp.v), wtx = Math.floor(wx), wty = Math.floor(wy);
+            if(wtx < 0 || wty < 0 || wtx >= N || wty >= N || !rail[wty * N + wtx]) continue; }
           // Tranché à l'entrée de la bouche, entièrement masqué dans la galerie.
           const clip = tunnelClipInfo(wp.u, wp.v); if(clip === 'hidden') continue;
           const wagon = veh.wagons[i];
-          nw = placeDir(wagonPool, nw, layer, 'wagon', drawWagonCore, trainWagonDef(wagon)?.color || '#888', wp.u, wp.v, wp.du, wp.dv, 0.52);
+          nw = placeDir(wagonPool, nw, layer, 'wagon', drawWagonCore, trainWagonTypeKey(wagon) || '#888', wp.u, wp.v, wp.du, wp.dv, 0.52);
           applyTunnelClip(wagonPool[nw-1], clip, layer);
           // badge ressource sélectionnée (seulement hors bouche)
           const selRes = !clip && typeof trainWagonSelectedResource === 'function' ? trainWagonSelectedResource(wagon) : null;
@@ -265,6 +308,28 @@ const PixiSprites = (function(){
       } else {
         const p = vehiclePose(veh); if(!p) continue;
         const vt = VEHICLE_TYPES[veh.vtype];
+        if(vt.mode === 'water'){
+          ns = placeDir(shipPool, ns, layer, 'ship', drawShipCore, vt.color, p.u, p.v, p.du, p.dv, 0.5);
+          continue;
+        }
+        if(vt.mode === 'air'){
+          // Avion : sprite surélevé de son altitude, toujours au premier plan, et
+          // ombre portée au sol qui s'estompe avec la hauteur.
+          const alt = planeAltitudePx(veh);
+          const g = entityIso(p.u, p.v);
+          const sh = getPool(planeShadowPool, nps++, PixiScene.layers.overlaysUnder || ovLayer);
+          sh.texture = planeShadowTexture();
+          sh.anchor.set(0.5, 0.5);
+          sh.position.set(g[0] + alt * 0.25, g[1] + 2);
+          sh.alpha = Math.max(0.12, 0.38 - alt / 260);
+          sh.rotation = Math.atan2((p.du + p.dv) * TH2, (p.du - p.dv) * TW2);
+          sh.visible = true;
+          np = placeDir(planePool, np, layer, 'plane', drawPlaneCore, vt.color, p.u, p.v, p.du, p.dv, 0.6);
+          const s = planePool[np - 1];
+          s.position.y -= alt;
+          if(alt > 2) s.zIndex = 1e15;
+          continue;
+        }
         nc = placeDir(carPool, nc, layer, 'car', drawCarCore, vt.color, p.u, p.v, p.du, p.dv, 0.52);
         if(veh.cargo > 0){
           const c = entityIso(p.u, p.v), s = getVehOv(ovLayer, nov++);
@@ -273,6 +338,7 @@ const PixiSprites = (function(){
       }
     }
     hidePool(carPool, nc); hidePool(locoPool, nl); hidePool(wagonPool, nw);
+    hidePool(shipPool, ns); hidePool(planePool, np); hidePool(planeShadowPool, nps);
     // Sprites masqués mais rendus invisibles ce frame : neutraliser leur découpe
     // (sinon un masque au renderable réactivé pourrait réapparaître plein écran).
     for(let i = nl; i < locoPool.length; i++) if(locoPool[i].__clip) locoPool[i].__clip.visible = false;
@@ -303,6 +369,7 @@ const PixiSprites = (function(){
     if(typeof walkers === 'undefined') return;
     let n = 0;
     for(const wk of walkers){ const p = walkerPose(wk); if(!p) continue;
+      if(!inView(p.c[0], p.c[1], 16, 24, 8)) continue;
       n = placeWalker(walkerPool, n, layer, wk.col, p, 0.6); }
     hidePool(walkerPool, n);
   }
@@ -310,6 +377,7 @@ const PixiSprites = (function(){
     if(typeof homeless === 'undefined') return;
     let n = 0;
     for(const h of homeless){ const p = homelessPose(h);
+      if(!inView(p.c[0], p.c[1], 16, 24, 8)) continue;
       n = placeWalker(homelessPool, n, layer, h.col || playerColor(h.owner), p, 0.55); }
     hidePool(homelessPool, n);
   }
@@ -336,8 +404,47 @@ const PixiSprites = (function(){
   }
 
   // --- Bâtiments : corps baké (retenu) + overlays live --------------------
-  const bldNodes = new Map();   // b → { body, sig, geom, baked }
+  const bldNodes = new Map();   // b → { body, sig, geom, baked, shareKey }
   const bldOvPool = [];         // slots d'overlays réutilisés chaque frame
+  // Textures de corps PARTAGÉES entre bâtiments identiques (même signature et
+  // même variante d'art) : clé → { baked, tcRel, usedSprite, chim, refs }.
+  // Une grande ville n'a que quelques dizaines de textures distinctes au lieu
+  // d'une par bâtiment (centaines de Mo de VRAM, secondes de cuisson au dézoom).
+  const sharedBodies = new Map();
+  function releaseShared(key){
+    const e = sharedBodies.get(key);
+    if(!e) return;
+    if(--e.refs <= 0){ destroyBaked(e.baked); sharedBodies.delete(key); }
+  }
+  function releaseNodeBody(node){
+    if(node.shareKey){ releaseShared(node.shareKey); node.shareKey = null; }
+    else destroyBaked(node.baked);
+    node.baked = null;
+  }
+  // Corps partagé : cuit au premier usage, puis réutilisé. Le point d'ancrage
+  // des overlays (tc) et les cheminées sont stockés RELATIFS à l'origine iso
+  // du bâtiment, et replacés pour chaque utilisateur.
+  function acquireSharedBody(b, sig){
+    const key = sig + '|v' + (typeof artVariantOf === 'function' ? artVariantOf(b) : 0);
+    let e = sharedBodies.get(key);
+    if(!e){
+      const { baked, geom } = bakeBuildingBody(b);
+      const R0 = liftedIso(geom.rx0, geom.ry0, geom.lift);
+      const ch = typeof BUILDING_CHIMNEYS !== 'undefined' ? BUILDING_CHIMNEYS.get(b) : null;
+      e = { baked, refs:0, usedSprite: !!geom.usedSprite,
+            tcRel: geom.tc ? [geom.tc[0] - R0[0], geom.tc[1] - R0[1]] : [0, 0],
+            chim: ch && ch.rot === rot ? ch.pts.map(p => [p[0] - R0[0], p[1] - R0[1], p[2]]) : null };
+      sharedBodies.set(key, e);
+    }
+    e.refs++;
+    const gm = bldGeomOf(b);
+    const R = liftedIso(gm.rx0, gm.ry0, gm.lift);
+    if(typeof BUILDING_CHIMNEYS !== 'undefined'){
+      if(e.chim && b.type !== 'plant') BUILDING_CHIMNEYS.set(b, { rot, pts: e.chim.map(p => [R[0] + p[0], R[1] + p[1], p[2]]) });
+      else BUILDING_CHIMNEYS.delete(b);
+    }
+    return { key, baked: e.baked, geom: { ...gm, tc: [R[0] + e.tcRel[0], R[1] + e.tcRel[1]], usedSprite: e.usedSprite } };
+  }
 
   function bldGeomOf(b){
     const d = BUILD[b.type];
@@ -356,11 +463,17 @@ const PixiSprites = (function(){
   // Signature de ce qui affecte le CORPS (pas les overlays dynamiques). En mode
   // diagnostic, le corps EST le diagnostic (+ contour blanc si sélectionné) → on
   // inclut ces états.
+  // Partie commune (rotation, pack graphique, mode diagnostic) recalculée une
+  // fois par image dans updateBuildings : la signature par bâtiment n'est plus
+  // qu'une concaténation (plus de tableau + join par bâtiment et par image).
+  let _sigTail = '', _sigDiag = false;
+  function prepareSigTail(){
+    _sigDiag = diagMode();
+    _sigTail = rot + '|' + (typeof UI_OPTIONS!=='undefined' ? UI_OPTIONS.graphicPack : '') + '|' + GRAPHIC_PACK_IMAGES_GEN + '|' + (_sigDiag ? 1 : 0);
+  }
   function bldSig(b){
-    const diag = diagMode();
-    return [b.type, b.w, b.h, b.ore||'', b.owner==null?'':b.owner, b.paused?1:0,
-      rot, (typeof UI_OPTIONS!=='undefined' ? UI_OPTIONS.graphicPack : ''),
-      GRAPHIC_PACK_IMAGES_GEN, diag?1:0, (diag && bldSelected(b))?1:0].join('|');
+    return b.type + '|' + b.w + '|' + b.h + '|' + (b.ore||'') + '|' + (b.owner==null?'':b.owner) + '|' + (b.paused?1:0)
+      + '|' + _sigTail + ((_sigDiag && bldSelected(b)) ? '|s' : '');
   }
 
   function bakeBuildingBody(b){
@@ -445,75 +558,138 @@ const PixiSprites = (function(){
     g.moveTo(A[0],A[1]).lineTo(B[0],B[1]).lineTo(C[0],C[1]).lineTo(D[0],D[1]).closePath();
   }
 
+  // Sélection de gare : groupe sélectionné et pièces de gare, calculés une fois
+  // par image (avant : chaque entrepôt/arrêt visible rescannait tous les
+  // bâtiments → O(n²) sur une grande ville).
+  let _selGroup = null, _stationPieces = [];
+  function prepareSelection(){
+    _selGroup = null; _stationPieces = [];
+    if(!selected || selected.dead) return;
+    const rep = typeof trainStationSelectionRepresentative === 'function' ? trainStationSelectionRepresentative(selected) : null;
+    if(!rep || !isTrainStationPiece(rep)) return;
+    _selGroup = rep.stationGroupId;
+    for(const p of buildings) if(isTrainStationPiece(p)) _stationPieces.push(p);
+  }
+  function inSelectedStation(b){
+    if(_selGroup == null) return false;
+    if(isTrainStationPiece(b)) return b.stationGroupId === _selGroup;
+    if(b.type !== 'bus_stop' && b.type !== 'depot') return false;
+    let best = null;
+    for(const o of _stationPieces){
+      if(buildingEdgeGap(b, o) > 0) continue;
+      if(best == null || o.stationGroupId < best) best = o.stationGroupId;
+    }
+    return best === _selGroup;
+  }
+  // Accès route/rail : ne change qu'avec le réseau → mis en cache par version.
+  function lacksAccess(b){
+    const v = groundVersion + ':' + railVersion;
+    if(b._accV !== v){
+      b._accV = v;
+      b._accLack = b.type === 'train_depot'
+        ? (typeof adjRailTiles === 'function' && !adjRailTiles(b).length)
+        : (typeof adjRoadTiles === 'function' && !adjRoadTiles(b).length);
+    }
+    return b._accLack;
+  }
+
+  // Overlays d'un bâtiment. Toutes les entrées visuelles forment une clé : si
+  // elle n'a pas changé depuis l'image précédente pour ce bâtiment, le slot est
+  // laissé tel quel (pas de clear/regéométrie Pixi — c'était le 1er poste CPU).
   function drawBuildingOv(b, geom, ovLayer, idx){
     const d = BUILD[b.type];
     const { tc, rx0, ry0, rw, rh, lift } = geom;
     let s = bldOvPool[idx];
     if(!s){ s = makeOvSlot(ovLayer); bldOvPool[idx] = s; }
     s.container.visible = true;
-    s.g.clear();
-    for(const t of s.texts) t.visible = false;
 
-    // barre de progression
     const r = recipeOf(b);
-    const prog = typeof buildingRenderProg === 'function' ? buildingRenderProg(b) : (b.prog||0);
-    if(r && prog > 0){
-      const bw = TW*0.42*b.w;
-      s.g.rect(tc[0]-bw/2, tc[1]+TH*0.36, bw, 4).fill({ color:0x000000, alpha:0.45 });
-      s.g.rect(tc[0]-bw/2, tc[1]+TH*0.36, bw*Math.min(1, prog/r.time), 4).fill({ color:0x7fd96a });
-    }
-    // habitants
-    if(d.resid && b.pop > 0){
-      s.pop.text = '👤'+b.pop; s.pop.position.set(tc[0], tc[1]-TH*0.55); s.pop.visible = true;
-      if((b.workersIdle||0) > 0){
-        s.work.text = '💤'+b.workersIdle; s.work.position.set(tc[0], tc[1]-TH*0.32); s.work.visible = true;
-      }
-    }
-    // contour propriétaire (MP) + drapeau, ou sélection solo
-    const sel = (b===selected || (typeof trainStationSelectionMatches==='function' && trainStationSelectionMatches(selected,b)));
-    if(!(typeof UI_OPTIONS!=='undefined' && UI_OPTIONS.hideColorMarkers) && b.owner){
-      const col = playerColor(b.owner);
-      diamondPath(s.g, rx0, ry0, rw, rh, lift); s.g.stroke({ color:col, width: sel?3:1.5 });
-      s.g.circle(tc[0]-TW*rw*0.28, tc[1]-4, 4).fill({ color:col });
-    } else if(sel){
-      diamondPath(s.g, rx0, ry0, rw, rh, lift); s.g.stroke({ color:0xffffff, width:2 });
-    }
-    // badge pausé (industrie en pause)
-    if(d.ind && b.paused){
-      const px = tc[0]+TW*rw*0.24, py = tc[1]-TH*rh*0.32;
-      s.g.circle(px, py, 14).fill({ color:0x000000, alpha:0.78 });
-      s.g.circle(px, py, 11).fill({ color:0xffcc00 }).stroke({ color:0xffffff, width:2 });
-      s.pause.text = 'Ⅱ'; s.pause.position.set(px, py); s.pause.visible = true;
-    }
-    // alerte : pas d'accès route/rail
-    const lacksRoad = b.type !== 'train_depot' && typeof adjRoadTiles === 'function' && !adjRoadTiles(b).length;
-    const lacksRail = b.type === 'train_depot' && typeof adjRailTiles === 'function' && !adjRailTiles(b).length;
-    if(lacksRoad || lacksRail){ s.warn.text = '⚠️'; s.warn.position.set(tc[0], tc[1]-TH*0.95); s.warn.visible = true; }
-    // indicateur "en vente"
-    if(BUILD[b.type]?.storageHub && b.type !== 'tank' && b.sellTo && Object.values(b.sellTo).some(v=>v)){
-      s.sale.text = '$'; s.sale.position.set(tc[0]+TW*rw*0.3, tc[1]-3); s.sale.visible = true;
-    }
-    // passagers (arrêts de bus)
-    if(b.type === 'bus_stop' && (b.passengersMax||0) > 0){
-      const pDisp = Math.floor(b.passengers||0);
-      s.pass.text = '👥'+pDisp;
-      s.pass.style.fill = pDisp < (b.passengersMax||0) ? 0xa0c8e8 : 0x7dd8ff;
-      s.pass.position.set(tc[0], tc[1]-TH*0.75); s.pass.visible = true;
-    }
-    // surbrillance lors de l'assignation de route (traits pleins, sans pointillés)
+    const prog = r ? (typeof buildingRenderProg === 'function' ? buildingRenderProg(b) : (b.prog||0)) : 0;
+    const bw = TW*0.42*b.w;
+    const progPx = (r && prog > 0) ? Math.round(bw*Math.min(1, prog/r.time)) : -1;
+    const showPop = d.resid && b.pop > 0 && (cam.z || 1) >= 0.8;
+    const idle = showPop && (b.workersIdle || 0) > 0;
+    const sel = b === selected || inSelectedStation(b);
+    const ownerMark = !(typeof UI_OPTIONS!=='undefined' && UI_OPTIONS.hideColorMarkers) && b.owner ? b.owner : null;
+    const ownerCol = ownerMark != null ? playerColor(ownerMark) : null;
+    const paused = d.ind && b.paused;
+    const lack = lacksAccess(b);
+    const noWorkers = !lack && typeof isUnderstaffedOwnFactory === 'function' && isUnderstaffedOwnFactory(b) && workersAllocatedOf(b) === 0;
+    const sale = !!(d.storageHub && b.type !== 'tank' && b.sellTo && Object.values(b.sellTo).some(v=>v));
+    const pass = b.type === 'bus_stop' && (b.passengersMax||0) > 0 ? Math.floor(b.passengers||0) : -1;
+    const passFull = pass >= 0 && pass >= (b.passengersMax||0);
+    let rc = null;
     if(typeof vehicleRouteMode !== 'undefined' && vehicleRouteMode
        && typeof vehicleRouteEndpointOk === 'function' && vehicleRouteEndpointOk(b)){
       const isBus = vehicleRouteMode.vehicle?.vtype === 'bus';
       const myOid = (typeof MP !== 'undefined' && MP.connected) ? MP.myId : null;
-      let rc = null;
       if(isBus) rc = 0x7dd8ff;
       else if(vehicleRouteMode.step === 'dest' || b.owner == null || b.owner === myOid || b.type === 'tank') rc = 0x9fe8a0;
       else if(b.owner != null && b.owner !== myOid && b.type === 'market'){
         const vt = VEHICLE_TYPES[vehicleRouteMode.vehicle.vtype];
         if(vt.resources.some(rr => b.sellTo?.[rr])) rc = 0xf0c060;
       }
-      if(rc != null){ diamondPath(s.g, rx0, ry0, rw, rh, lift); s.g.stroke({ color:rc, width:1.5 }); }
     }
+    const key = progPx + '|' + (showPop ? b.pop : -1) + (idle ? 'i' : '') + '|' + (sel ? 1 : 0) + '|' + ownerCol
+      + '|' + (paused ? 1 : 0) + '|' + (lack ? 1 : 0) + '|' + (noWorkers ? workersRequiredOf(b) : -1)
+      + '|' + (sale ? 1 : 0) + '|' + pass + (passFull ? 'f' : '') + '|' + rc;
+    if(!RENDER_SAFE && s.b === b && s.geom === geom && s.key === key) return idx + 1;
+    s.b = b; s.geom = geom; s.key = key;
+
+    s.g.clear();
+    for(const t of s.texts) t.visible = false;
+    // barre de progression
+    if(progPx >= 0){
+      s.g.rect(tc[0]-bw/2, tc[1]+TH*0.36, bw, 4).fill({ color:0x000000, alpha:0.45 });
+      if(progPx > 0) s.g.rect(tc[0]-bw/2, tc[1]+TH*0.36, progPx, 4).fill({ color:0x7fd96a });
+    }
+    // habitants : une seule pastille compacte (ambre s'il reste des inactifs),
+    // masquée en vue éloignée pour ne pas surcharger la ville.
+    if(showPop){
+      const label = '👤' + b.pop;
+      if(s.pop.text !== label) s.pop.text = label;
+      const fill = idle ? 0xffd27a : 0xe8f4ff;
+      if(s.pop.style.fill !== fill) s.pop.style.fill = fill;
+      const py = tc[1] - TH * 0.62;
+      const pw = s.pop.width + 10;
+      s.g.roundRect(tc[0] - pw / 2, py - 7.5, pw, 15, 7).fill({ color:0x0c1420, alpha:0.68 });
+      s.pop.position.set(tc[0], py); s.pop.visible = true;
+    }
+    // contour propriétaire (MP) + drapeau, ou sélection solo
+    if(ownerCol != null){
+      diamondPath(s.g, rx0, ry0, rw, rh, lift); s.g.stroke({ color:ownerCol, width: sel?3:1.5 });
+      s.g.circle(tc[0]-TW*rw*0.28, tc[1]-4, 4).fill({ color:ownerCol });
+    } else if(sel){
+      diamondPath(s.g, rx0, ry0, rw, rh, lift); s.g.stroke({ color:0xffffff, width:2 });
+    }
+    // badge pausé (industrie en pause)
+    if(paused){
+      const px = tc[0]+TW*rw*0.24, py = tc[1]-TH*rh*0.32;
+      s.g.circle(px, py, 14).fill({ color:0x000000, alpha:0.78 });
+      s.g.circle(px, py, 11).fill({ color:0xffcc00 }).stroke({ color:0xffffff, width:2 });
+      s.pause.text = 'Ⅱ'; s.pause.position.set(px, py); s.pause.visible = true;
+    }
+    // alerte : pas d'accès route/rail
+    if(lack){ s.warn.text = '⚠️'; s.warn.position.set(tc[0], tc[1]-TH*0.95); s.warn.visible = true; }
+    // alerte : usine du joueur sans aucun ouvrier (hors rayon des logements → bus)
+    else if(noWorkers){
+      const label = '👷 0/' + workersRequiredOf(b);
+      if(s.work.text !== label) s.work.text = label;
+      const py = tc[1] - TH * 0.95;
+      const pw = s.work.width + 10;
+      s.g.roundRect(tc[0] - pw / 2, py - 7.5, pw, 15, 7).fill({ color:0x3a0c0c, alpha:0.78 }).stroke({ color:0xff6b5a, width:1 });
+      s.work.position.set(tc[0], py); s.work.visible = true;
+    }
+    // indicateur "en vente"
+    if(sale){ s.sale.text = '$'; s.sale.position.set(tc[0]+TW*rw*0.3, tc[1]-3); s.sale.visible = true; }
+    // passagers (arrêts de bus)
+    if(pass >= 0){
+      s.pass.text = '👥'+pass;
+      s.pass.style.fill = passFull ? 0x7dd8ff : 0xa0c8e8;
+      s.pass.position.set(tc[0], tc[1]-TH*0.75); s.pass.visible = true;
+    }
+    // surbrillance lors de l'assignation de route (traits pleins, sans pointillés)
+    if(rc != null){ diamondPath(s.g, rx0, ry0, rw, rh, lift); s.g.stroke({ color:rc, width:1.5 }); }
     return idx + 1;
   }
 
@@ -521,17 +697,39 @@ const PixiSprites = (function(){
     if(typeof buildings === 'undefined') return;
     const seen = new Set();
     let ovN = 0;
+    // En fort dézoom les badges (habitants, ⚠️…) sont illisibles : on les coupe.
+    const showOverlays = (cam.z || 1) >= 0.42;
+    if(showOverlays) prepareSelection();
+    prepareSigTail();
     for(const b of buildings){
       if(b.dead) continue;
       seen.add(b);
       const station = isTrainStationPiece(b);
       let node = bldNodes.get(b);
+      // Culling grossier sur l'emprise iso (+ hauteur max/relief au-dessus). Les
+      // gares sont dessinées en groupe depuis une pièce : marge plus large.
+      const [r1x, r1y] = rotIdx(b.x, b.y);
+      const [r2x, r2y] = rotIdx(b.x + b.w - 1, b.y + b.h - 1);
+      const rx0 = Math.min(r1x, r2x), ry0 = Math.min(r1y, r2y);
+      const rx1 = Math.max(r1x, r2x) + 1, ry1 = Math.max(r1y, r2y) + 1;
+      const extra = station ? 8 : 0;
+      const left = (rx0 - ry1 - extra) * TW2, right = (rx1 - ry0 + extra) * TW2;
+      const top = (rx0 + ry0 - extra) * TH2 - 320, bottom = (rx1 + ry1 + extra) * TH2 + 24;
+      const visible = right >= viewL && left <= viewR && bottom >= viewT && top <= viewB;
+      if(!visible){ if(node) node.body.visible = false; continue; }
       const sig = station ? stationSig(b) : bldSig(b);
-      if(!node){ node = { body:new PIXI.Sprite(), sig:null, geom:null };
+      if(!node){ node = { body:new PIXI.Sprite(), sig:null, geom:null, baked:null };
                  node.body.scale.set(1/SS); sortLayer.addChild(node.body); bldNodes.set(b, node); }
       if(node.sig !== sig){
-        const { baked, geom, diag } = station ? bakeStationPiece(b) : bakeBuildingBody(b);
+        // mode diagnostic : corps propre à chaque bâtiment (état d'effectif) ;
+        // gares : géométrie de groupe → pas de partage non plus
+        const shareable = !station && !diagMode() && !RENDER_SAFE;
+        let baked, geom, diag = false, shareKey = null;
+        if(shareable) ({ key: shareKey, baked, geom } = acquireSharedBody(b, sig));
+        else ({ baked, geom, diag } = station ? bakeStationPiece(b) : bakeBuildingBody(b));
         applyBaked(node.body, baked);
+        releaseNodeBody(node);
+        node.baked = baked; node.shareKey = shareKey;
         node.geom = geom; node.sig = sig; node.diag = diag; node.station = station;
         const R = liftedIso(geom.rx0, geom.ry0, geom.lift);
         node.body.position.set(R[0], R[1]);
@@ -539,10 +737,16 @@ const PixiSprites = (function(){
       }
       node.body.visible = true;
       // Gares : contours/marqueurs déjà bakés. Sinon overlays live (sauf mode diagnostic).
-      if(!station && !node.diag) ovN = drawBuildingOv(b, node.geom, ovLayer, ovN);
+      if(showOverlays && !station && !node.diag) ovN = drawBuildingOv(b, node.geom, ovLayer, ovN);
     }
-    for(const [b, node] of bldNodes){ if(!seen.has(b)) node.body.visible = false; }
-    for(let i = ovN; i < bldOvPool.length; i++) bldOvPool[i].container.visible = false;
+    // Bâtiments disparus (démolis, fusionnés, snapshot) : libérer sprite + texture.
+    for(const [b, node] of bldNodes){
+      if(seen.has(b)) continue;
+      releaseNodeBody(node);
+      node.body.destroy();
+      bldNodes.delete(b);
+    }
+    for(let i = ovN; i < bldOvPool.length; i++){ const sl = bldOvPool[i]; sl.container.visible = false; sl.b = null; }
   }
 
   // --- Boucle par frame ---------------------------------------------------
@@ -550,6 +754,7 @@ const PixiSprites = (function(){
     const layer = PixiScene.layers.sprites;
     const ov = PixiScene.layers.overlaysOver;
     if(!layer || typeof terrain === 'undefined') return;
+    computeView();
     updateTrees(layer);
     updateTunnels(layer);
     updateBuildings(layer, ov);
@@ -561,7 +766,8 @@ const PixiSprites = (function(){
   }
 
   function init(){ PixiScene.onFrame(update); }
-  return { init, bake, dirIndex };
+  // stats : diagnostic / tests (textures de bâtiments distinctes vs nœuds)
+  return { init, bake, dirIndex, stats: () => ({ sharedBodies: sharedBodies.size, buildingNodes: bldNodes.size }) };
 })();
 
 if(typeof PixiScene !== 'undefined') PixiSprites.init();

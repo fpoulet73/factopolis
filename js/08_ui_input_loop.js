@@ -41,12 +41,13 @@ function updateHUD(dt){
     const pad = n => String(n).padStart(2,'0');
     const day = pad(d.getUTCDate()), mon = pad(d.getUTCMonth()+1), yr = d.getUTCFullYear();
     const hr  = pad(d.getUTCHours()), min = pad(d.getUTCMinutes());
-    gdEl.textContent = `📅 ${day}/${mon}/${yr}  🕐 ${hr}:${min}`;
+    gdEl.textContent = `📅 ${day}/${mon}/${yr} 🕐 ${hr}:${min}`;
   }
   renderInfo();
   renderFinance();
   renderVehicleListPanel();
   renderEventsPanel();
+  if(typeof ObjectivesPanel !== 'undefined') ObjectivesPanel.render();
   if(trainConfigVehicle) renderTrainPanel();
 }
 
@@ -123,7 +124,7 @@ function renderFinance(){
     return h;
   };
 
-  const VEH_LABELS = { bus:'🚌 Bus', train:'🚃 Train', camion:'🚛 Camion' };
+  const VEH_LABELS = { bus:'🚌 Bus', train:'🚃 Train', camion:'🚛 Camion', cargo_ship:'🚢 Cargo', ferry:'⛴️ Ferry', plane:'✈️ Avion' };
   const resLabel = k => (RES[k]?.ic ? RES[k].ic+' ' : '') + (RES[k]?.n || k);
   const expandRow = (toggleId, expanded, label, cat, subRows)=>{
     const arrow = expanded ? '▾' : '▸';
@@ -139,7 +140,7 @@ function renderFinance(){
   const hasVeh  = hasRow('vehicules') || financeVehiculesExpanded;
   const hasExp  = hasRow('expansion');
 
-  const incCats = ['ventes','vehicules','taxes','rembours','peageRecu'];
+  const incCats = ['ventes','vehicules','taxes','rembours','primes','peageRecu'];
   const outCats = ['construction','entretien','entretienVehicules','peagePaye','expansion'];
   const netVal = read => incCats.reduce((a,c)=>a+read(c),0) - outCats.reduce((a,c)=>a+read(c),0);
   const netDeltas = months.map(m => netVal(c => (m.end ? (m.end.fin?.[c]||0) : (fin[c]||0)) - (m.start.fin?.[c]||0)));
@@ -155,6 +156,7 @@ function renderFinance(){
         ()=> bucketSubRows(ventesDetail.veh, 'vveh', k=>VEH_LABELS[k]||k, 'in')) : '')
     + row('Taxes des habitants','taxes','+','in')
     + row('Remboursements','rembours','+','in')
+    + (hasRow('primes') ? row('Primes d’objectifs','primes','+','in') : '')
     + (hasRecu ? row('Péages rails reçus','peageRecu','+','in') + playerSubRows(peageDetail.recv,'precv','de','in') : '')
     + row('Construction','construction','−','out')
     + row('Entretien industriel','entretien','−','out')
@@ -355,6 +357,140 @@ function pushGameEvent(msg, target, cls){
   if(UI_OPTIONS.panelEvents) renderEventsPanel();
 }
 
+// ---------- la Gazette ----------
+// Les grands moments (premier train en gare, premier navire, premier vol,
+// paliers de population, premier gratte-ciel…) font la une, une seule fois par
+// partie. Seule la simulation autoritative (solo / hôte) publie ; les invités
+// reçoivent les nouvelles via le flux monde (state.news) et les affichent.
+const NEWS_LOG_MAX = 12;
+function publishNews(key, icon, title, text, target){
+  if(!key || newsFlags[key]) return false;
+  if(typeof MP !== 'undefined' && MP.connected && MP.role === 'guest') return false;
+  newsFlags[key] = 1;
+  const n = { id: nextNewsId++, gtime: gtime || 0, icon: icon || '📰', title: String(title || ''), text: String(text || ''), target: target || null };
+  newsLog.push(n);
+  if(newsLog.length > NEWS_LOG_MAX) newsLog.shift();
+  showNewsCard(n);
+  return true;
+}
+// Invité / chargement : affiche les nouvelles pas encore vues.
+function receiveNews(list, silent){
+  if(!Array.isArray(list)) return;
+  for(const n of list){
+    if(!n || !(n.id > newsSeenId)) continue;
+    if(!silent) showNewsCard(n); else newsSeenId = n.id;
+  }
+}
+const _newsQueue = [];
+let _newsShowing = null, _newsTimer = null;
+function showNewsCard(n){
+  newsSeenId = Math.max(newsSeenId, n.id || 0);
+  if(n.target) pushGameEvent(n.icon + ' ' + n.title, n.target, 'win');
+  _newsQueue.push(n);
+  if(_newsQueue.length > 3) _newsQueue.splice(0, _newsQueue.length - 3);
+  if(!_newsShowing) nextNewsCard();
+}
+function nextNewsCard(){
+  let el = $('newsCard');
+  const n = _newsQueue.shift();
+  _newsShowing = n || null;
+  if(!n){ if(el) el.style.display = 'none'; return; }
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'newsCard';
+    el.setAttribute('role', 'status');
+    document.body.appendChild(el);
+  }
+  const town = n.target?.label ? escUiHtml(n.target.label) : '';
+  el.innerHTML = '<div class="nw-mast"><b>📰 La Gazette de Factopolis</b><span>' + escUiHtml(formatGameDate(n.gtime)) + '</span></div>'
+    + '<div class="nw-head">' + escUiHtml(n.icon + ' ' + n.title) + '</div>'
+    + '<div class="nw-text">' + escUiHtml(n.text) + '</div>'
+    + '<div class="nw-btns">' + (n.target ? '<button data-nw="go">📍 Voir' + (town ? ' — ' + town : '') + '</button>' : '')
+    + '<button data-nw="close">Fermer</button></div>';
+  el.style.display = 'block';
+  el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
+  const done = () => { clearTimeout(_newsTimer); nextNewsCard(); };
+  el.querySelector('[data-nw="close"]').onclick = done;
+  const go = el.querySelector('[data-nw="go"]');
+  if(go) go.onclick = () => { focusGameEventTarget(n.target); done(); };
+  clearTimeout(_newsTimer);
+  _newsTimer = setTimeout(done, 9000);
+  if(typeof playSound === 'function') try { playSound('news'); } catch(e){}
+}
+// Nom de ville le plus proche d'un bâtiment (pour les titres).
+function newsTownName(b){
+  if(!b) return '';
+  const own = towns.find(t => t.id === b.townId);
+  if(own) return own.name;
+  let best = null, bd = Infinity;
+  for(const t of towns){ const d = Math.hypot(t.cx - b.x, t.cy - b.y); if(d < bd){ bd = d; best = t; } }
+  return best && bd < 30 ? best.name : '';
+}
+// « la gare de X » à partir du nom du lieu : nom déjà préfixé (« Gare de X »)
+// ou nom libre (« la gare « Centrale » »), à défaut la ville proche.
+function newsPlaceLabel(b, kind, art){
+  const name = (b && b.name) ? String(b.name) : '';
+  if(name && name.toLowerCase().startsWith(kind)) return art + ' ' + name.charAt(0).toLowerCase() + name.slice(1);
+  if(name) return art + ' ' + kind + ' « ' + name + ' »';
+  const town = newsTownName(b);
+  return art + ' ' + kind + (town ? ' ' + deNom(town) : '');
+}
+// Arrivée d'un véhicule à une escale : premier train en gare, premier navire au
+// port, premier vol (appelé par la simulation).
+function newsOnArrival(v, stopB){
+  if(!v || !stopB || stopB.dead) return;
+  const mode = typeof vehicleMode === 'function' ? vehicleMode(v) : 'road';
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  if(v.vtype === 'train' && isTrainStationPiece(stopB)){
+    const rep = trainStationGroupRepresentative(stopB.stationGroupId) || stopB;
+    const town = newsTownName(rep);
+    publishNews('gare:' + stopB.stationGroupId, '🚂', cap(newsPlaceLabel(rep, 'gare', 'la')) + ' accueille son premier train !',
+      (town ? 'Les habitants ' + deNom(town) : 'La foule') + ' acclament le premier convoi sur le quai.'
+      + ' Le chemin de fer promet prospérité et voyages à toute la région.', eventTargetForBuilding(rep));
+  } else if(mode === 'water' && stopB.type === 'boat_depot'){
+    publishNews('port:' + stopB.x + ',' + stopB.y, '⚓', 'Premier navire à quai : ' + newsPlaceLabel(stopB, 'port', 'le') + ' est ouvert !',
+      'Sirènes et cornes de brume : le port est officiellement ouvert au trafic maritime.', eventTargetForBuilding(stopB));
+  } else if(mode === 'air' && stopB.type === 'plane_depot'){
+    publishNews('aero:' + stopB.x + ',' + stopB.y, '✈️', 'Premier atterrissage : ' + newsPlaceLabel(stopB, 'aéroport', 'l’').replace('l’ ', 'l’') + ' est en service !',
+      'Les curieux se pressent le long des pistes : l’ère de l’aviation commerciale commence.', eventTargetForBuilding(stopB));
+  }
+}
+// Partie chargée sans Gazette (ancienne sauvegarde) : tout ce qui existe déjà est
+// considéré comme annoncé, sinon chaque gare/ville déclencherait sa une d'un coup.
+function primeNewsFlags(){
+  for(const b of buildings){
+    if(b.dead) continue;
+    if(isTrainStationPiece(b) && b.stationGroupId != null) newsFlags['gare:' + b.stationGroupId] = 1;
+    else if(b.type === 'boat_depot') newsFlags['port:' + b.x + ',' + b.y] = 1;
+    else if(b.type === 'plane_depot') newsFlags['aero:' + b.x + ',' + b.y] = 1;
+    if(b.type === 'tower' || b.type === 'tower3' || b.type === 'sky') newsFlags['niveau:' + b.type] = 1;
+  }
+  for(const t of towns){
+    const pop = townPopulation(t);
+    for(const step of NEWS_TOWN_STEPS) if(pop >= step) newsFlags['ville:' + t.id + ':' + step] = 1;
+  }
+}
+// Paliers de population des villes et grands logements (toutes les secondes).
+// (les petits paliers du joueur ont déjà leurs toasts : la Gazette commence à 250)
+const NEWS_TOWN_STEPS = [250, 500, 1000, 2500, 5000, 10000];
+function updateNews(){
+  if(typeof MP !== 'undefined' && MP.connected && MP.role === 'guest') return;
+  for(const t of towns){
+    const pop = townPopulation(t);
+    for(const step of NEWS_TOWN_STEPS){
+      if(pop < step) break;
+      if(newsFlags['ville:' + t.id + ':' + step]) continue;
+      const big = step >= 1000;
+      publishNews('ville:' + t.id + ':' + step, big ? '🏙️' : '🏘️',
+        t.name + ' dépasse les ' + step.toLocaleString('fr-FR') + ' habitants !',
+        big ? 'Embouteillages, chantiers, théâtres : ' + t.name + ' est devenue une vraie métropole.'
+            : 'Le maire inaugure une place du marché : ' + t.name + ' grandit à vue d’œil.',
+        eventTargetForTown(t));
+      break; // un palier par ville et par seconde
+    }
+  }
+}
+
 function focusGameEventTarget(target){
   if(!target) return;
   setTool('select');
@@ -431,6 +567,8 @@ function setPanelVisibility(optKey, visible){
   saveUIOptions();
   refreshPanelMenu();
   if(optKey === 'panelEvents') renderEventsPanel();
+  if(optKey === 'panelMinimap' && typeof Minimap !== 'undefined') Minimap.setVisible(!!visible);
+  if(optKey === 'panelObjectives' && typeof ObjectivesPanel !== 'undefined') ObjectivesPanel.render();
 }
 
 function closeEventsPanel(){
@@ -686,12 +824,10 @@ function handleTrainDepotFlagToggle(depot){
   if(trainConfigVehicle && depotVehicles.includes(trainConfigVehicle)) renderTrainPanel();
 }
 
+// Le panneau s'ouvre partout : les ORDRES se modifient même en circulation ; la
+// COMPOSITION (wagons, moteur) exige que le train soit au dépôt.
 function openTrainPanel(v){
   if(!v || v.vtype !== 'train') return;
-  if(!trainPresentAtDepot(v)){
-    toast('⛔ La configuration du train n’est possible que dans le dépôt.','err');
-    return;
-  }
   trainConfigVehicle = v;
   v.ordersDraft = false; // part d'un état propre : l'hôte reste autoritatif tant qu'on n'édite pas
   trainNormalizeWagons(v);
@@ -860,7 +996,10 @@ function renderTrainPanel(){
     h += '<div style="color:#8fa3bf;font-style:italic;font-size:11px">Tous les wagons sont vides.</div>';
   }
   h += '</div>';
-  h += '<div class="tp-section"><div class="tp-section-title">Wagons <span style="font-size:11px;color:#8fa3bf;font-weight:normal">('+TRAIN_WAGON_COST.toLocaleString('fr-FR')+' $ / wagon)</span></div><div class="tp-wagon-grid">';
+  const _inDepot = trainPresentAtDepot(v);
+  h += '<div class="tp-section"><div class="tp-section-title">Wagons <span style="font-size:11px;color:#8fa3bf;font-weight:normal">('+TRAIN_WAGON_COST.toLocaleString('fr-FR')+' $ / wagon)</span></div>';
+  if(!_inDepot) h += '<div style="color:#e8d48b;font-size:11px;margin-bottom:6px">🔧 La composition ne se modifie qu’au dépôt (rappelle le train avec 🏪).</div>';
+  h += '<div class="tp-wagon-grid"'+(_inDepot ? '' : ' style="opacity:.5;pointer-events:none"')+'>';
   for(const [key, def] of Object.entries(TRAIN_WAGON_TYPES)){
     const count = wagons.filter(w => trainWagonTypeKey(w) === key).length;
     h += '<div class="tp-order"><div><div>'+def.icone+' <b>'+def.nom+'</b></div><div style="font-size:11px;color:#8fa3bf">'+def.resources.map(r => RES[r]?.ic || r).join(' ')+' · '+def.capacite+'</div></div>'
@@ -919,6 +1058,7 @@ function renderTrainPanel(){
   };
   const engineUpBtn = p.querySelector('[data-train-engine-up]');
   if(engineUpBtn) engineUpBtn.onclick = ()=>{
+    if(!trainPresentAtDepot(v)){ toast('⛔ Le train doit être au dépôt pour changer de moteur.','err'); return; }
     const curMult = v.engineMult || 1;
     const curIdx = TRAIN_ENGINE_UPGRADES.reduce((acc, u, i) => u.facteur <= curMult ? i : acc, -1);
     const next = TRAIN_ENGINE_UPGRADES[curIdx + 1];
@@ -933,6 +1073,7 @@ function renderTrainPanel(){
   };
   const engineDownBtn = p.querySelector('[data-train-engine-down]');
   if(engineDownBtn) engineDownBtn.onclick = ()=>{
+    if(!trainPresentAtDepot(v)){ toast('⛔ Le train doit être au dépôt pour changer de moteur.','err'); return; }
     const curMult = v.engineMult || 1;
     const curIdx = TRAIN_ENGINE_UPGRADES.reduce((acc, u, i) => u.facteur <= curMult ? i : acc, -1);
     if(curIdx < 0) return;
@@ -954,6 +1095,7 @@ function renderTrainPanel(){
     renderInfo();
   });
   p.querySelectorAll('[data-train-wagon-add]').forEach(btn => btn.onclick = ()=>{
+    if(!trainPresentAtDepot(v)){ toast('⛔ Le train doit être au dépôt pour changer sa composition.','err'); return; }
     if(myWallet().money < TRAIN_WAGON_COST){ toast('⛔ Fonds insuffisants ('+TRAIN_WAGON_COST.toLocaleString('fr-FR')+' $).','err'); return; }
     v.wagons = trainNormalizeWagons(v);
     const wagon = trainCreateWagon(btn.dataset.trainWagonAdd);
@@ -967,6 +1109,7 @@ function renderTrainPanel(){
     renderInfo();
   });
   p.querySelectorAll('[data-train-wagon-del]').forEach(btn => btn.onclick = ()=>{
+    if(!trainPresentAtDepot(v)){ toast('⛔ Le train doit être au dépôt pour changer sa composition.','err'); return; }
     const key = btn.dataset.trainWagonDel;
     v.wagons = trainNormalizeWagons(v);
     let idx = -1;
@@ -1027,7 +1170,18 @@ function renderTrainPanel(){
       return;
     }
     if(!trainPresentAtDepot(v)){
-      toast('⛔ Le train doit être dans le dépôt pour appliquer une nouvelle route.','err');
+      // En circulation : nouveaux ordres appliqués à la volée, le train rejoint le
+      // 1er arrêt depuis sa position (sans repasser par le dépôt).
+      v.ordersDraft = false;
+      if(!trainApplyOrdersLive(v)){ toast('⛔ Ordres invalides pour ce train.','err'); return; }
+      if(MP.connected) netSend({
+        type:'route_vehicle', id:v.id, orderIndex:v.orderIndex || 0,
+        orders:(v.orders || []).map(b => ({ x:b.x, y:b.y })),
+        orderModes:(v.orderModes || []).slice(),
+      });
+      toast('🚂 Nouveaux ordres appliqués : le train rejoint '+trainStopLabel(v.source)+'.','win', eventTargetForVehicle(v));
+      renderTrainPanel();
+      renderInfo();
       return;
     }
     v.orderIndex = 0;
@@ -1062,6 +1216,24 @@ function renderTrainPanel(){
   };
 }
 
+// Un producteur de `res` ou un entrepôt couvre-t-il ce logement de son rayon de
+// livraison directe ? (les tournées de camions configurées ne sont pas comptées)
+function residSupplierInReach(b, res){
+  const bc = centerOfBuilding(b);
+  for(const c of buildings){
+    if(c.dead || c === b) continue;
+    let radius;
+    if(BUILD[c.type]?.ind){
+      if(!recipeOf(c)?.out?.[res]) continue;
+      radius = indRadiusOf(c);
+    } else if(isStorageHub(c) && c.type !== 'tank' && c.allow?.[res] !== false){
+      radius = depotRadiusOf(c);
+    } else continue;
+    const cc = centerOfBuilding(c);
+    if(Math.max(Math.abs(cc.x - bc.x), Math.abs(cc.y - bc.y)) <= radius) return true;
+  }
+  return false;
+}
 function statusOf(b){
   if(BUILD[b.type].resid){
     if(b.starterHome) return 'Maison de départ protégée (pas besoin de ravitaillement)';
@@ -1083,6 +1255,10 @@ function statusOf(b){
     }
     if(b.pop > (b.protectedPop||0) && b.starve > 0)
       return '⚠️ Pénurie : manque '+resNames(missingReq)+' ! Dégradation dans '+Math.max(0,Math.ceil(STARVE_DELAY-b.starve))+' s';
+    const unreachable = missingReq.filter(r => !residSupplierInReach(b, r));
+    if(unreachable.length)
+      return 'Attend : '+resNames(missingReq)+' — aucun fournisseur à portée de livraison pour '
+        +resNames(unreachable)+' (rapprochez la production, un entrepôt, ou livrez par camion)';
     return 'Attend : '+resNames(missingReq);
   }
   if(b.type==='market') return 'Marché — vente aux autres joueurs';
@@ -1124,9 +1300,13 @@ function statusOf(b){
   if(b.paused) return 'En pause — ouvriers libérés';
   const r = recipeOf(b);
   if(!r) return '';
-  for(const k in r.out) if((b.storage[k]||0) >= capOf(b,k)) return 'Stock de sortie plein';
-  for(const k in r.in)  if((b.storage[k]||0) <  r.in[k]) return 'Manque : '+RES[k].n;
   const req = workersRequiredOf(b);
+  if(req && workersAllocatedOf(b) === 0)
+    return "👷 Aucun ouvrier à portée — construisez des logements à côté ou un arrêt de bus relié à une ville";
+  // la production ne s'arrête que si toutes les sorties sont pleines (sous-produit sans débouché toléré)
+  const outs = Object.keys(r.out);
+  if(outs.length && outs.every(k => (b.storage[k]||0) >= capOf(b,k))) return 'Stock de sortie plein';
+  for(const k in r.in)  if((b.storage[k]||0) <  r.in[k]) return 'Manque : '+RES[k].n;
   if(req && workersAllocatedOf(b) < req)
     return "Production à "+Math.round(workersAllocatedOf(b)/req*100)+" % (manque d'ouvriers à portée)";
   if(req && (b.workersByBusStop||0) > 0){
@@ -1204,7 +1384,7 @@ function renderInfo(){
           h_ += '<div class="row"><span>'+r.ic+' '+r.n+'</span><b>'+resCounts[r.t]+'</b></div>';
       }
       h_ += '<button class="tbtn" style="margin-top:8px;width:100%;'+(canAfford?'':'opacity:0.5;cursor:not-allowed;')+'" '
-          + 'onclick="buyExpansion(selectedExpansion)">'
+          + 'onclick="buyExpansionAction(selectedExpansion)">'
           + (canAfford ? '🧩 Acheter cette pièce' : '💸 Fonds insuffisants')
           + '</button>';
       p.style.display = 'block';
@@ -1340,10 +1520,6 @@ function renderInfo(){
       if(!ownsVeh) return;
       $('bVehRoute').onclick = ()=>{
         if(veh.vtype === 'train'){
-          if(!trainPresentAtDepot(veh)){
-            toast('⛔ La configuration du train n’est possible que dans le dépôt.','err');
-            return;
-          }
           openTrainPanel(veh);
           return;
         }
@@ -1367,7 +1543,7 @@ function renderInfo(){
         p._html = null;
       };
       $('bVehSell').onclick = ()=>{
-        const refund = Math.floor(vt.cost * 0.5);
+        const refund = vehicleResaleValue(veh);
         earnMoney(refund, 'rembours');
         removePersistentVehicle(veh);
         if(MP.connected) netSend({ type:'sell_vehicle', id:veh.id });
@@ -1734,6 +1910,22 @@ function renderInfo(){
       h += '<div class="row"><span>Nom</span><b style="color:#9fd4f0">'+escHtml(b.name)+'</b></div>';
     }
   }
+  if(b.type === 'boat_depot' || b.type === 'plane_depot'){
+    // Escale : voyageurs du voisinage (+ fret via l'entrepôt collé au port).
+    const isPort = b.type === 'boat_depot';
+    const pE = Math.floor(b.passengersEntrant || 0), pEMax = b.passengersEntrantMax || 0;
+    h += '<div style="margin-top:8px;color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em">'+(isPort ? '⚓ Escale' : '🛫 Escale')+'</div>';
+    h += '<div class="row"><span>Voyageurs en attente</span><b style="color:#c8e040">🚶 '+pE+(pEMax>0?' / '+pEMax:'')+'</b></div>';
+    h += '<div class="row"><span>Voyageurs arrivés</span><b style="color:#9fd4f0">🚶 '+Math.floor(b.passagersSortant || 0)+'</b></div>';
+    h += '<div class="row"><span>Rayon</span><b>'+(isPort ? PORT_RADIUS : AIRPORT_RADIUS)+' cases</b></div>';
+    h += '<div class="row"><span>Tarif</span><b style="color:#ffe9a0">'+(isPort ? SHIP_FARE_FACTOR : PLANE_FARE_FACTOR)+' $/voyageur/case</b></div>';
+    if(isPort){
+      const hub = portFreightHub(b);
+      h += hub
+        ? '<div class="status">📦 Fret : entrepôt collé au port — les cargos chargent les ressources en mode 🟢 « distribue » de l\'entrepôt.</div>'
+        : '<div class="warn">⚠️ Aucun entrepôt collé au port : les cargos ne peuvent ni charger ni décharger.</div>';
+    }
+  }
   if(isVehicleDepot(b)){
     const bvehicles = b.vehicles || [];
     // Comme pour les trains : on n'affiche que les véhicules physiquement présents
@@ -1757,6 +1949,11 @@ function renderInfo(){
       } else if(rmVeh?.vtype === 'train'){
         h += '<div class="warn" style="background:#241b12;border-color:#8b6a3b;color:#f0d29a">'
            + (step==='source' ? '🚂 Clique sur la GARE de départ' : '🚂 Clique sur la GARE de destination')
+           + '</div>';
+      } else if(VEHICLE_TYPES[rmVeh?.vtype]?.mode === 'water' || VEHICLE_TYPES[rmVeh?.vtype]?.mode === 'air'){
+        const isShip = VEHICLE_TYPES[rmVeh.vtype].mode === 'water';
+        h += '<div class="warn" style="background:#0e1e30;border-color:#3a6f9c;color:#7dd8ff">'
+           + (isShip ? '⚓ Clique sur le PORT ' : '🛫 Clique sur l\'AÉROPORT ') + (step==='source' ? 'de départ' : 'd\'arrivée')
            + '</div>';
       } else {
         h += '<div class="warn" style="background:#1a2e1a;border-color:#3d8c3d;color:#9fe8a0">'
@@ -2010,10 +2207,6 @@ function renderInfo(){
           return;
         }
         if(v.vtype === 'train'){
-          if(!trainPresentAtDepot(v)){
-            toast('⛔ La configuration du train n’est possible que dans le dépôt.','err');
-            return;
-          }
           openTrainPanel(v);
           return;
         }
@@ -2055,7 +2248,7 @@ function renderInfo(){
           toast('⛔ Ce véhicule appartient à un autre joueur.','err');
           return;
         }
-        const refund = Math.floor(VEHICLE_TYPES[v.vtype].cost * 0.5);
+        const refund = vehicleResaleValue(v);
         earnMoney(refund, 'rembours');
         removePersistentVehicle(v);
         if(MP.connected) netSend({ type:'sell_vehicle', id:v.id });
@@ -2442,8 +2635,8 @@ function buildToolbar(){
     : [
         { key:'vehicules', tool:'garage', label:'Véhicules', icon:'🚛' },
         { key:'train', tool:'train_depot', label:'Train', icon:'🚂' },
-        { key:'bateau', tool:'boat_depot', label:'Bateau', icon:'🚢' },
-        { key:'avion', tool:'plane_depot', label:'Avion', icon:'✈️' },
+        { key:'bateau', tool:'boat_depot', label:'Port', icon:'⚓' },
+        { key:'avion', tool:'plane_depot', label:'Aéroport', icon:'✈️' },
       ];
   for(const k of TOOL_ORDER){
     if(k === 'bus_stop') continue; // regroupé sous "Véhicules"
@@ -3111,15 +3304,18 @@ function canvasLeftUp(){
   if(tool === 'rail' && roadDragStart){
     const { updates, cost, msg } = collectRailUpdates(roadPreviewTiles);
     if(updates.length){
-      if(MP.connected && !MP.username) toast('👤 Connecte-toi avec un compte joueur pour construire','err');
+      if(mpInRoom() && !MP.username) toast('👤 Connecte-toi avec un compte joueur pour construire','err');
       else if(myWallet().money < cost) toast('Fonds insuffisants ('+cost+' $)','err');
-      else if(MP.connected && MP.username) applyRailPathWithNetwork(roadPreviewTiles);
+      else if(mpInRoom()) applyRailPathWithNetwork(roadPreviewTiles);
       else railApplyMaskUpdates(updates, cost);
     } else if(msg) toast(msg, 'err');
     roadDragStart = null; roadPreviewTiles = [];
   } else if(tool === 'road' && roadDragStart){
-    for(const t of roadPreviewTiles)
-      if(canPlace(tool, t.x, t.y).ok) clickFn(t.x, t.y);
+    if(mpInRoom() && !MP.username) toast('👤 Connecte-toi avec un compte joueur pour construire','err');
+    else if(!applyRoadPathWithNetwork(roadPreviewTiles) && roadPreviewTiles.length === 1){
+      const t = roadPreviewTiles[0], v = canPlace('road', t.x, t.y);
+      if(!v.ok && v.msg) toast(v.msg, 'err');
+    }
     roadDragStart = null; roadPreviewTiles = [];
   }
   mouse.lDown = false;
@@ -3471,7 +3667,7 @@ $('finance').addEventListener('pointerdown', e=>{
 $('info').onclick = e=>{ if(e.target.id==='infoCloseBtn') closeInfoPanel(); };
 
 let helpCurrentPage = 0;
-const HELP_PAGES = 4;
+const HELP_PAGES = 5;
 
 function goHelpPage(p){
   helpCurrentPage = Math.max(0, Math.min(HELP_PAGES - 1, p));
@@ -3702,15 +3898,31 @@ let drawFn = draw;
 // regarde, peu importe que le rendu se mette en pause. La simulation, elle, est
 // pilotée par une horloge indépendante (voir simStep / startSimClock plus bas).
 let last = performance.now();
+let lastFrameAt = 0; // dernier passage de la boucle de rendu (horloge sim : voir simStep)
 function frame(now){
   const rdt = Math.min(0.05, (now-last)/1000);
   const gdt = paused ? 0 : rdt * speed;
   last = now;
+  lastFrameAt = performance.now();
+  // Simulation avancée JUSTE AVANT le dessin, au rythme de l'affichage : chaque
+  // image montre l'état exact à son horodatage (plus de « battement » entre
+  // l'horloge du Worker et le vsync, qui faisait saccader trains et camions).
+  // On cadence sur l'horodatage VSYNC du navigateur (`now`), pas sur l'heure
+  // d'exécution du callback : celle-ci jitte (callbacks en retard puis en rafale,
+  // fréquent sur écrans 120/144 Hz ou machines chargées), ce qui donnait des pas
+  // de simulation inégaux — grand pas puis petit pas — donc des trains qui
+  // avancent par à-coups alors que l'affichage est régulier.
+  // Rattrapage plafonné à 100 ms par image : sans plafond, une image longue
+  // déclenchait plusieurs pas de rattrapage d'affilée, donc une image encore plus
+  // longue (spirale) et des trains qui bondissent. Sous 10 images/s le jeu ralentit
+  // au lieu de saccader. Le Worker (onglet masqué) garde son rattrapage complet.
+  simStep(now, 0.1);
   panKeys(rdt);
   trackCamera();
   smoothCamera(rdt);
   if(typeof mpUpdateGuestVisuals === 'function') mpUpdateGuestVisuals(rdt, gdt);
   drawFn();
+  if(typeof Minimap !== 'undefined') Minimap.draw();
   updateHUD(rdt);
   requestAnimationFrame(frame);
 }
@@ -3721,12 +3933,12 @@ function frame(now){
 // throttlés en arrière-plan : l'hôte continue donc à simuler et à diffuser même
 // quand son onglet n'a plus le focus, et les invités ne voient plus le jeu figé.
 let simLast = performance.now();
-function simStep(now){
+function simStep(now, maxDt = 1){
+  if(!(now > simLast)) return; // horloge jamais à reculons (horodatage vsync < heure du Worker)
   let rdt = (now - simLast) / 1000;
   simLast = now;
-  if(rdt <= 0) return;
   // Plafonne le rattrapage après une longue suspension pour éviter un gros saut.
-  if(rdt > 1) rdt = 1;
+  if(rdt > maxDt) rdt = maxDt;
   // Sous-découpe en tranches de 50 ms max : même pas de simulation que l'ancienne
   // boucle rAF (stabilité), tout en gardant la cadence temps réel si les ticks
   // sont espacés (onglet en arrière-plan).
@@ -3761,11 +3973,19 @@ function startSimClock(){
       'else if(e.data&&e.data.t==="stop"){clearInterval(id);id=null;}};';
     const blob = new Blob([src], { type:'application/javascript' });
     _simWorker = new Worker(URL.createObjectURL(blob));
-    _simWorker.onmessage = function(){ simStep(performance.now()); };
+    // Onglet visible : c'est frame() qui pilote la simulation. Le Worker ne prend
+    // le relais que si l'affichage est suspendu (onglet en arrière-plan).
+    _simWorker.onmessage = function(){
+      const t = performance.now();
+      if(t - lastFrameAt > 120) simStep(t);
+    };
     _simWorker.postMessage({ t:'start', ms:SIM_TICK_MS });
   } catch(err){
     // Fallback : setInterval principal (throttlé à ~1 s en arrière-plan, mais
     // grâce au sous-découpage de simStep le jeu garde tout de même sa cadence).
-    _simFallbackInterval = setInterval(function(){ simStep(performance.now()); }, SIM_TICK_MS);
+    _simFallbackInterval = setInterval(function(){
+      const t = performance.now();
+      if(t - lastFrameAt > 120) simStep(t);
+    }, SIM_TICK_MS);
   }
 }

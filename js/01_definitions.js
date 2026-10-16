@@ -154,11 +154,22 @@ const TRAIN_STATION_FILL_TIME = CFG.logistique?.gare?.tempsRemplissage    ?? 8;
 const TRAIN_FARE_FACTOR       = CFG.logistique?.gare?.tarif               ?? 2;
 const TRAIN_FREIGHT_FACTOR    = CFG.logistique?.gare?.tarifFret            ?? 0.5;
 
+// Paramètres des ports / aéroports (voir config.js logistique.bateau / avion).
+const PORT_RADIUS          = CFG.logistique?.bateau?.rayon     ?? 10;
+const SHIP_FARE_FACTOR     = CFG.logistique?.bateau?.tarif     ?? 0.5;
+const SHIP_FREIGHT_FACTOR  = CFG.logistique?.bateau?.tarifFret ?? 0.05;
+const AIRPORT_RADIUS       = CFG.logistique?.avion?.rayon      ?? 16;
+const PLANE_FARE_FACTOR    = CFG.logistique?.avion?.tarif      ?? 1.1;
+const ALL_CARGO_RESOURCES  = ['iron','coal','wood','wheat','cotton','clothes','flour','water','bread','fish','fish_fillet','fish_oil','steel','goods','dirt'];
+
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
+  const cfgShip = CFG.logistique?.bateau || {};
+  const cfgPlane = CFG.logistique?.avion || {};
   const COLOR_MAP = {
     minerai:'#c0763a', plateau:'#8a7a5a', cereale:'#d4b842', marchandises:'#e6c84f',
     frigo:'#4fa6b8', citerne:'#64b7e8', bus:'#3a8fd4', train:'#4f5c6f',
+    cargo_ship:'#2f5f8f', ferry:'#e8eef2', plane:'#f4f6f8',
     // legacy
     bois:'#5e7a3a', ble:'#d7b348', coton:'#f1efe3', vetement:'#b98fcb',
     farine:'#eadfa8', pain:'#d99a45', poisson:'#4fa6b8', acier:'#7a8fa0',
@@ -172,7 +183,11 @@ const VEHICLE_TYPES = (()=>{
     frigo:       { nom:'Camion frigorifique',icone:'🚚', resources:['fish','fish_fillet'],                                         cost:750,  capacite:14, speed:3.8, maintenanceCost: cfgV.frigo?.coutEntretienJournalier        ?? 5  },
     citerne:     { nom:'Camion citerne',     icone:'🚛', resources:['water','fish_oil'],                                           cost:750,  capacite:20, speed:3.5, maintenanceCost: cfgV.citerne?.coutEntretienJournalier      ?? 5  },
     bus:         { nom:'Bus',                icone:'🚌', resources:[],                                                             cost:1500, capacite:40, speed:3.0, maintenanceCost: cfgV.bus?.coutEntretienJournalier           ?? 10 },
-    train:       { nom:'Train',              icone:'🚂', resources:[],                                                             cost:(CFG.logistique?.train?.cout ?? 100000), capacite:0,  speed:2.9, maintenanceCost: CFG.logistique?.train?.coutEntretienJournalier ?? 80 },
+    train:       { nom:'Train',              icone:'🚂', resources:[],                                                             cost:(CFG.logistique?.train?.cout ?? 100000), capacite:0,  speed:2.9, maintenanceCost: CFG.logistique?.train?.coutEntretienJournalier ?? 80, mode:'rail' },
+    // --- bateaux (port) et avions (aéroport) ---
+    cargo_ship:  { nom:'Cargo',              icone:'🚢', resources:ALL_CARGO_RESOURCES.slice(), cost:cfgShip.cargo?.cout ?? 6000, capacite:cfgShip.cargo?.capacite ?? 60, speed:cfgShip.cargo?.vitesse ?? 2.2, maintenanceCost: cfgShip.cargo?.coutEntretienJournalier ?? 20, mode:'water' },
+    ferry:       { nom:'Ferry',              icone:'⛴️', resources:[], passengers:true, cost:cfgShip.ferry?.cout ?? 4500, capacite:cfgShip.ferry?.capacite ?? 60, speed:cfgShip.ferry?.vitesse ?? 2.8, maintenanceCost: cfgShip.ferry?.coutEntretienJournalier ?? 16, mode:'water' },
+    plane:       { nom:'Avion de ligne',     icone:'✈️', resources:[], passengers:true, cost:cfgPlane.avion?.cout ?? 18000, capacite:cfgPlane.avion?.capacite ?? 40, speed:cfgPlane.avion?.vitesse ?? 7, maintenanceCost: cfgPlane.avion?.coutEntretienJournalier ?? 45, mode:'air' },
     // --- legacy (sauvegardes existantes, plus achetables) ---
     bois:        { nom:'Camion bois',        icone:'🚜', resources:['wood'],                   cost:600,  capacite:15, speed:4.0, buyDisabled:true, maintenanceCost: cfgV.bois?.coutEntretienJournalier     ?? 4 },
     ble:         { nom:'Camion blé',         icone:'🚜', resources:['wheat'],                  cost:550,  capacite:15, speed:4.0, buyDisabled:true, maintenanceCost: cfgV.ble?.coutEntretienJournalier      ?? 4 },
@@ -196,6 +211,8 @@ const VEHICLE_TYPES = (()=>{
       color:           COLOR_MAP[k],
       buyDisabled:     d.buyDisabled ?? false,
       maintenanceCost: d.maintenanceCost ?? 0,
+      mode:            d.mode || 'road',        // road | rail | water | air
+      passengers:      !!(d.passengers || k === 'bus'),
     };
   }
   return out;
@@ -908,6 +925,16 @@ const TOWN_SAINTS = ['Pierre','Paul','Jean','Louis','Martin','Nicolas','Étienne
 const TOWN_LA     = ['Rochelle','Forêt','Plaine','Croix','Chapelle','Ferté','Tour','Motte'];
 const TOWN_LE     = ['Bourg','Moulin','Château','Hameau','Plessis','Mesnil'];
 
+// « de » + nom propre avec contraction/élision françaises :
+// Le Château → du Château, Les Ormes → des Ormes, Avignon → d’Avignon.
+function deNom(name){
+  const s = String(name || '');
+  if(/^Le\s/.test(s)) return 'du ' + s.slice(3);
+  if(/^Les\s/.test(s)) return 'des ' + s.slice(4);
+  if(/^[AEIOUYÂÊÎÔÉÈ]/i.test(s)) return 'd’' + s;
+  return 'de ' + s;
+}
+
 function generateTownName(seedX, seedY){
   // Hash déterministe basé sur la position (cohérence multijoueur)
   let s = (Math.imul(seedX, 73856093) ^ Math.imul(seedY, 19349663)) >>> 0;
@@ -998,7 +1025,7 @@ function assignTrainStationName(groupId){
   const cy = pieces.reduce((sum, b) => sum + b.y + (b.h || 1) / 2, 0) / pieces.length;
   const town = nearestTownToPoint(cx, cy);
   const baseTownName = town ? town.name : generateTownName(Math.round(cx), Math.round(cy));
-  const baseName = 'Gare de ' + baseTownName;
+  const baseName = 'Gare ' + deNom(baseTownName);
   const used = new Set(
     buildings
       .filter(b => !b.dead && (b.type === 'train_station' || b.type === 'train_platform'))
@@ -1016,7 +1043,7 @@ function assignTrainDepotName(b){
   const cy = b.y + (b.h || 1) / 2;
   const town = nearestTownToPoint(cx, cy);
   const baseTownName = town ? town.name : generateTownName(Math.round(cx), Math.round(cy));
-  const baseName = 'Dépôt de ' + baseTownName;
+  const baseName = 'Dépôt ' + deNom(baseTownName);
   const used = new Set(
     buildings
       .filter(o => !o.dead && o.type === 'train_depot' && o !== b && o.name)
@@ -1152,9 +1179,18 @@ const depotStoredVehicles = b => isVehicleDepot(b)
   : [];
 const depotHasStoredVehicles = b => depotStoredVehicles(b).length > 0;
 
-// Valeur de remboursement unitaire utilisée quand un dépôt est détruit avec
-// véhicules en transit. N'affecte pas le prix d'achat (joueurs remboursés à 50%).
-const TRAIN_WAGON_REFUND_VALUE = 200;
+// Valeur d'achat totale d'un véhicule : base + wagons + améliorations moteur.
+// La revente (ou la destruction du dépôt) rembourse 50 % de cette valeur.
+function vehiclePurchaseValue(v){
+  if(!v) return 0;
+  let total = VEHICLE_TYPES[v.vtype]?.cost || 0;
+  if(v.vtype === 'train'){
+    total += (Array.isArray(v.wagons) ? v.wagons.length : 0) * TRAIN_WAGON_COST;
+    for(const up of TRAIN_ENGINE_UPGRADES) if(up.facteur <= (v.engineMult || 1)) total += up.cout || 0;
+  }
+  return total;
+}
+function vehicleResaleValue(v){ return Math.floor(vehiclePurchaseValue(v) * 0.5); }
 
 // Tous les véhicules rattachés au dépôt (à quai OU en transit).
 function depotAllVehicles(b){
@@ -1166,10 +1202,7 @@ function depotAllVehicles(b){
 // Valeur totale (coût d'achat) de tous les véhicules rattachés au dépôt.
 function depotVehicleValue(b){
   let total = 0;
-  for(const v of depotAllVehicles(b)){
-    total += VEHICLE_TYPES[v.vtype]?.cost || 0;
-    if(Array.isArray(v.wagons)) total += v.wagons.length * TRAIN_WAGON_REFUND_VALUE;
-  }
+  for(const v of depotAllVehicles(b)) total += vehiclePurchaseValue(v);
   return total;
 }
 
@@ -1196,9 +1229,11 @@ const DEPOT_SHAPES = (()=>{
 
 function checkRectDepot(x,y,w,h){
   const area = w*h, set = [];
+  const owner = bgrid[y*N+x]?.owner ?? null;
   for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++){
     const b = bgrid[yy*N+xx];
     if(!b || b.type !== 'depot') return null;
+    if((b.owner ?? null) !== owner) return null; // jamais de fusion entre joueurs
     if(b.w*b.h >= area) return null;          // déjà aussi grand ou plus grand
     if(b.x<x || b.y<y || b.x+b.w>x+w || b.y+b.h>y+h) return null;
     if(!set.includes(b)) set.push(b);
@@ -1206,20 +1241,37 @@ function checkRectDepot(x,y,w,h){
   return set.length ? set : null;
 }
 
+// Coins haut-gauche candidats d'un rectangle de fusion : la tuile (x,y) d'un
+// rectangle valide est forcément l'origine d'un des bâtiments fusionnés. On ne
+// teste donc que ces origines (triées comme l'ancien balayage ligne par ligne)
+// au lieu de toutes les tuiles de la carte pour chaque forme.
+function mergeAnchors(filter){
+  return buildings.filter(b => !b.dead && filter(b))
+    .map(b => [b.x, b.y])
+    .sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+}
+
 function tryMergeDepot(){
+  const anchors = mergeAnchors(b => b.type === 'depot');
+  if(anchors.length < 2) return false;
   for(const [w,h] of DEPOT_SHAPES){
-    for(let y=0; y<=N-h; y++) for(let x=0; x<=N-w; x++){
+    for(const [x, y] of anchors){
+      if(x > N-w || y > N-h) continue;
       const set = checkRectDepot(x,y,w,h);
       if(!set) continue;
       const owner = set[0].owner||null;
-      const store = {}, allow = {};
-      // initialiser allow à true pour toutes les ressources
-      for(const k in RES) allow[k] = true;
+      const store = {}, allow = {}, trainAllow = {}, sellTo = {}, sellMin = {};
+      for(const k in RES){ allow[k] = false; trainAllow[k] = false; sellTo[k] = false; sellMin[k] = 0; }
       let wasSel = false;
       for(const o of set){
         for(const k in o.storage) store[k] = (store[k]||0) + o.storage[k];
         // une ressource est refusée dans le grand entrepôt seulement si TOUS les petits la refusent
-        for(const k in RES) if(o.allow?.[k] !== false) allow[k] = true;
+        for(const k in RES){
+          if(o.allow?.[k] !== false) allow[k] = true;
+          if(o.trainAllow?.[k]) trainAllow[k] = true;
+          if(o.sellTo?.[k]) sellTo[k] = true;
+          sellMin[k] = Math.max(sellMin[k], o.sellMin?.[k] || 0);
+        }
         if(o === selected) wasSel = true;
         o.dead = true;
         setGrid(o, null);
@@ -1227,7 +1279,7 @@ function tryMergeDepot(){
       buildings = buildings.filter(o=> !o.dead);
       const t = newBuilding('depot', x, y, w, h);
       t.owner = owner;
-      t.allow = allow;
+      t.allow = allow; t.trainAllow = trainAllow; t.sellTo = sellTo; t.sellMin = sellMin;
       for(const k in store) t.storage[k] = Math.min(capOf(t,k), store[k]);
       buildings.push(t);
       setGrid(t, t);

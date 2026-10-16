@@ -11,8 +11,11 @@ Factopolis est un jeu de gestion/simulation en navigateur qui mélange :
 - chaînes de production type Factorio (extraction, recettes, stocks) ;
 - city builder avec population, logements, taxes, ouvriers et villages ;
 - transport tycoon : camions auto, bus, trains sur routes et rails
-  (signaux, cantons) ;
-- rendu isométrique 2.5D rotatif sur Canvas 2D.
+  (signaux, cantons), bateaux (ports) et avions (aéroports) ;
+- rendu isométrique 2.5D rotatif : scène PixiJS (WebGL) dont les textures
+  sont dessinées en Canvas 2D procédural (`07_rendering_art.js`) ;
+- jouable en solo (sauvegardes locales) ou en multijoueur (rooms serveur),
+  avec une progression guidée par objectifs (primes).
 
 Le joueur construit une ville industrielle : extraire fer/charbon/bois,
 transformer en acier puis marchandises/outils, livrer les ressources aux
@@ -20,10 +23,12 @@ logements, faire grandir la population et financer l'expansion.
 
 ## Stack et lancement
 
-- Frontend : `index.html`, `config.js`, `js/*.js`, Canvas 2D, JS vanilla.
+- Frontend : `index.html`, `config.js`, `js/*.js`, PixiJS embarqué (`js/pixi/`), JS vanilla.
 - Backend : `server.js`, Node.js, serveur HTTP statique + WebSocket `ws`.
 - Dépendance serveur : `ws` uniquement (aucune côté client).
-- Lancement : `npm start` ou `node server.js [port]`.
+- Lancement : `npm start` ou `node server.js [port]` (`FACTOPOLIS_DATA_DIR`
+  permet un dossier de données alternatif, utilisé par les tests).
+- Tests : `npm test` (Playwright requis) — voir `tools/tests/run-all.js`.
 - Port par défaut : `8765`.
 - URL locale : `http://localhost:8765` · WebSocket : `ws://localhost:8765`.
 - Le serveur peut être interrogé en console (`help`, `rooms`, `players`,
@@ -96,6 +101,14 @@ La taille par défaut est `N = 64` (redimensionnable 32 → 128 via
 `steel`, `goods` (outils de construction), `dirt` (terre de remblai).
 `TRADE_PRICES` définit les prix de vente inter-joueurs.
 
+**Génération** (`genWorld`) : eau, relief, arbres, taches de blé/coton/fer/
+charbon, au moins une zone de chaque ressource dans la zone jouable, puis
+**zone de départ garantie** (`ensureStarterArea`, résultat dans `starterSite`) :
+site de plaine dégagé proche du centre à ~5 cases d'une rive (étang creusé si
+aucune eau à portée), fer, charbon et bosquet à moins de ~11 cases. Blé et
+coton restent dispersés (transport en milieu de partie). La caméra démarre sur
+ce site.
+
 ## Bâtiments
 
 Outils/bâtiments (catalogue `BUILD`) :
@@ -133,19 +146,26 @@ appliquées ensuite depuis `CONFIG`.
 
 La boucle `frame()` (dans `08_ui_input_loop.js`) :
 
-1. `panKeys(dt)` puis `smoothCamera(dt)` (caméra lissée vers `targetCam`).
-2. appelle `update(dt * speed)` si non pause.
-3. dessine via `drawFn()` (surchargé en multi pour curseurs).
-4. met à jour le HUD (`updateHUD`).
-5. décrémente `autoSaveTimer` (autosave local + serveur).
-6. relance `requestAnimationFrame`.
+1. `simStep(now)` : avance la simulation jusqu'à l'instant de l'image
+   (`update(dt * speed)` par tranches de 50 ms max, si non pause et si on est
+   autoritaire), diffuse l'état (hôte) et gère l'autosave.
+2. `panKeys(dt)`, `trackCamera()`, `smoothCamera(dt)`.
+3. dessine via `drawFn()` (Canvas 2D overlays + `PixiScene.render()`), puis la
+   mini-carte (`Minimap.draw`).
+4. met à jour le HUD (`updateHUD`, 5×/s : panneaux, objectifs).
+5. relance `requestAnimationFrame`.
+
+Onglet en arrière-plan (rAF suspendu) : une horloge Web Worker prend le relais
+de `simStep` (au-delà de 120 ms sans image) pour que l'hôte continue à simuler.
 
 `update(dt)` dans `06_simulation.js` gère dans l'ordre :
 
-1. sync pré-boucle (`ensureAllStarterProtections`,
-   `refreshWorkerAllocation`, `syncIncomingReservations`,
-   `syncResidentReservations`).
-2. production (avec `eff` efficacité = workers alloués/requis).
+1. objectifs (`updateObjectives`, 1×/s) puis sync pré-boucle
+   (`ensureAllStarterProtections`, `refreshWorkerAllocationIfNeeded` — grille
+   spatiale, recalcul sur changement ou toutes les 0,5 s —,
+   `syncIncomingReservations`, `syncResidentReservations`).
+2. production (avec `eff` efficacité = workers alloués/requis) ; elle ne
+   s'arrête que si TOUTES les sorties sont pleines (sous-produit non bloquant).
 3. consommation des logements (revenu + bonus +20 % si ressource bonus).
 4. croissance population (walkers si logement plein et approvisionné).
 5. pénurie (split ou perte d'habitant).
@@ -165,8 +185,9 @@ La boucle `frame()` (dans `08_ui_input_loop.js`) :
 ## Population, logements et pénurie
 
 Les logements consomment les ressources indispensables (configurables
-par niveau : `ressourcesIndispensables`,
-`ressourcesFusion`, `ressourcesBonus`).
+par niveau : `ressourcesIndispensables`, `ressourcesUpgrade` (quota avant
+fusion), `ressourcesBonus` — l'huile de poisson par défaut). Rayon de travail
+d'un logement : `habitants.rayonTravail` (4 + 2 × plus grand côté).
 
 - Chaque consommation donne de l'argent et peut déclencher l'arrivée
   d'un habitant (`spawnWalker` via `pathToEdge`, Dijkstra maison).
@@ -189,7 +210,7 @@ Niveaux (du plus petit au plus grand) :
 - `tower` 2×2 ;
 - `bigtower` 3×2 / 2×3 ;
 - `tower3` 3×3 ;
-- `sky` gratte-ciel 4×4 (150 hab).
+- `sky` gratte-ciel 4×4 (180 hab).
 
 ## Villages / villes
 
@@ -202,7 +223,15 @@ Chaque logement est rattaché à un village :
 - `townReachableJobBuildings(tid)` : emplois accessibles depuis les
   maisons du village (selon `workRadiusOf`).
 - `refreshWorkerAllocation()` : deux passes — proximité d'abord, puis
-  bus_stops à portée pour compléter (`workersByBusStop`).
+  bus_stops à portée pour compléter (`workersByBusStop`). Ordre des postes :
+  filières **vitales** d'abord (`isEssentialJob` : produit une ressource exigée
+  par un logement ou l'un de ses intrants — poisson, filets, blé, farine, eau,
+  charbon, pain, coton, vêtements ; cf. `essentialResources()`), puis les plus
+  gros postes. Évite qu'une nouvelle fonderie vide les pêcheurs (spirale de
+  déclin). Une usine du joueur sans aucun ouvrier affiche un badge « 👷 0/n ».
+- Livraison des outils (ressource de fusion) : concentrée sur les logements
+  **pleins** les plus avancés (score de `tryDispatch` dans `05_logistics.js`)
+  pour que la première fusion arrive vite au lieu d'étaler le quota.
 - `mergeTowns(dstId, srcId)` / `reassignBuildingsInRect(...)` : fusion
   et réaffectation (création par rectangle via panneau village).
 
@@ -273,12 +302,26 @@ Le système le plus complexe (~880 lignes dans `05_logistics.js`) :
 - **Quais** : `trainStationStopTiles` choisit le quai d'arrivée selon
   l'axe d'approche ; `trainTargetTileAvailable` réservation souple
   (train le plus proche gagne, tie-break par `id`).
+- **Occupation des cantons** : `trainFootprintIndex` (cantons couverts par loco
+  + wagons de chaque train), reconstruit une fois par pas puis mis à jour à
+  chaque train traité (`trainFootprintTouch`) → un canton qu'un train vient
+  d'occuper est aussitôt rouge pour les suivants (y compris départs de dépôt).
+- **Retournement** : `prepareRailTrip` détecte un demi-tour et retourne le
+  convoi façon TTD (`trainReversalPlan` : la tête devient l'ancienne queue).
+- **Itinéraire** : `findRailPath` préfère une sortie au premier feu vert mais
+  se replie sur un itinéraire passant un feu rouge (le train attendra au feu).
+- **Ordres en circulation** : `trainApplyOrdersLive` (panneau train ou action
+  `route_vehicle` quand le train n'est pas au dépôt) ; replanification à la
+  tuile suivante (`rerouteAtNextTile`). La composition reste au dépôt.
+- **Fret payé une fois** : `b.trainReceived[res]` (stock livré par train) et
+  `v.cargoFresh` (part « fraîche » du chargement) empêchent une rente en navette.
 - **Circuits** : `v.orders` (≥ 2), `orderIndex` circulaire,
   `syncTrainOrders` nettoie les doublons.
 - **Dépôt** : `setTrainDepotDeparture` arme le départ manuel (drapeau
   UI dans `08_ui_input_loop.js`).
 - **Revenus** : passagers = `nb × distance × TRAIN_FARE_FACTOR`,
-  fret = `× TRAIN_FREIGHT_FACTOR`.
+  fret = unités fraîches × prix commercial × distance × `TRAIN_FREIGHT_FACTOR`
+  (`config.js` `logistique.gare`).
 
 ### Bus et arrêts de bus
 
@@ -290,10 +333,19 @@ Le système le plus complexe (~880 lignes dans `05_logistics.js`) :
 
 ### Bateaux et avions
 
-**Placeholders uniquement** : `boat_depot` et `plane_depot` sont
-déclarés dans `js/05_depots/bateau.js` et `avion.js` mais `buyCatalog`
-est vide et aucune logique de déplacement n'existe. Structure prête pour
-implémentation future.
+- Types de véhicules à `mode` dédié (`VEHICLE_TYPES[k].mode` : road | rail |
+  water | air) : `cargo_ship`, `ferry` (port `boat_depot`), `plane`
+  (aéroport `plane_depot`). Réglages : `config.js` `logistique.bateau/avion`.
+- Le port se pose au bord de l'eau. Itinéraire : `findWaterPath` (BFS 8
+  directions sur l'eau, sans couper les coins) ; avion : `findAirPath` (ligne
+  droite, altitude `planeAltitudePx` au rendu + ombre au sol).
+- `vehiclePathBetween(v, a, b)` choisit route / eau / air ; bateaux et avions
+  avancent sans trafic (`advanceFreeUnit`) et, à chaque escale,
+  `transportStopProcess` décharge puis recharge (lignes à double sens).
+- Fret (cargo) : réutilise `trainProcessStop` avec l'entrepôt collé au port
+  (`portFreightHub`) et le tarif `SHIP_FREIGHT_FACTOR`. Voyageurs (ferry,
+  avion) : habitants sans emploi dans le rayon de l'escale
+  (`refreshTransitPassengerCaps`), revenu voyageurs × distance × tarif.
 
 ### Gares
 
@@ -315,13 +367,17 @@ Chaque wallet contient :
   `{ventes, taxes, rembours, construction, entretien, expansion}` ;
 - `finHist[]` : historique (max 61 échantillons ~1 s) pour calculer
   le rythme $/min ;
+- `objIndex` : avancement dans `OBJECTIVES` (`06_simulation.js`) ; primes
+  versées dans la catégorie `fin.primes` ;
 - `mi` : progression des milestones `[25, 50, 100, 200, 400]` ;
 - `eff` : efficacité de production (workers alloués / requis) ;
 - `starterHomes`, `starterHomesGranted` : 2 maisons protégées par
   joueur pour éviter le blocage au démarrage.
 
 En multi, chaque joueur a son wallet. Les revenus, taxes, entretien et
-coûts sont appliqués au propriétaire du bâtiment/véhicule.
+coûts sont appliqués au propriétaire du bâtiment/véhicule. En solo le wallet
+est rangé sous la clé `0` alors que les bâtiments ont `owner = null` :
+`walletOwnerOf(k)` fait la conversion pour les boucles « par wallet ».
 
 ## Expansion de carte
 
@@ -331,8 +387,10 @@ Le joueur achète des **pièces de puzzle** sur les 4 bords + 4 coins :
   avec multiplicateur `2^level` pour les bandes suivantes.
 - `jigsawTileInPiece` détermine l'appartenance d'une tuile à une pièce
   (formes "tabs" circulaires).
-- `buyExpansion(exp)` débite le wallet, étend `mapMask` et `mapBounds`,
-  incrémente `expansionLevels` à la complétion d'une bande.
+- `buyExpansionAction(exp)` (UI) diffuse l'action `buy_expansion` puis
+  `buyExpansion(exp, payer)` débite le wallet, étend `mapMask` et `mapBounds`,
+  incrémente `expansionLevels` à la complétion d'une bande (l'hôte rejoue
+  l'achat pour le joueur expéditeur).
 - `expTileCost(t)` : prix de base par type de terrain (eau 600, herbe
   3000, coton 4200, fer 6000…).
 
@@ -357,7 +415,14 @@ Côté client :
   formats et remap d'owner ID).
 - `applyAction(msg)` rejoue une action reçue d'un autre joueur.
 - `clickFn` est surchargé en multi pour envoyer l'action via `netSend`
-  puis l'appliquer localement.
+  puis l'appliquer localement ; hors room (`mpInRoom()` faux : solo ou lobby)
+  le jeu est purement local. Les tracés partent groupés
+  (`applyRailPathWithNetwork`, `applyRoadPathWithNetwork`).
+- L'hôte valide les poses reçues (`canPlace(..., actorId)`, fonds) et facture
+  la composition des trains (`configure_train`).
+- Signature du monde (`worldSignature`, FNV-1a sur terrain, relief, routes,
+  rails, tunnels, zones et signaux) jointe à chaque `state_sync` ; un invité
+  durablement divergent envoie `resync_request` → snapshot complet.
 - Les bâtiments posés en multi reçoivent `owner = MP.myId`.
 - `MP_ZONE = 20` interdit de construire trop près des bâtiments d'un
   autre joueur (parmi les joueurs **connectés**).
@@ -391,24 +456,45 @@ Côté client :
 **Client → serveur** : `register`, `login`, `resume`, `logout`,
 `list_rooms`, `join_room`, `create_room`, `leave_room`, `list_saves`,
 `save_game`, `load_game`, `delete_save`, `new_world`, `snapshot`,
-`action`, `cursor`, `chat`, `promote_admin`.
+`state_sync`, `move_sync`, `action`, `cursor`, `chat`, `promote_admin`,
+`demote_admin`, `resync_request`.
 
-**Types d'actions** (sanitizées puis relayées) : `road`, `rail_update`,
-`rail_signal_update`, `bulldoze_road`, `bulldoze_tree`, `terraform`,
-`fill_water`, `bulldoze_bld`, `build`, `toggle_bld_pause`,
-`toggle_out_block`, `clear_bld_stock`, `upgrade_plant`, `buy_vehicle`,
-`sell_vehicle`, `route_vehicle`, `return_vehicle`, `merge_towns`,
-`zone_reassign`, `rename_bus_stop`, `owner_remap`, `pause`, `speed`.
+**Types d'actions** (sanitizées puis relayées) : `road`, `road_batch`,
+`rail_update`, `rail_batch`, `rail_signal_update` (avec `forcedRed`, `kind`),
+`tunnel_build`, `bulldoze_road`, `bulldoze_tree`, `terraform`,
+`terraform_level`, `fill_water`, `bulldoze_bld`, `build`, `toggle_bld_pause`,
+`toggle_out_block`, `toggle_resid_upgrade_pause`, `clear_bld_stock`,
+`upgrade_plant`, `buy_vehicle`, `sell_vehicle`, `route_vehicle`,
+`return_vehicle`, `pin_vehicle_res`, `configure_train`,
+`depot_departure_flag`, `merge_towns`, `zone_reassign`, `rename_bus_stop`,
+`rename_bld`, `buy_expansion`, `owner_remap`, `pause`, `speed` (0.5–4).
+
+Le serveur limite le débit par client avec un seau de jetons (rafale 400,
+150 msg/s) au lieu de jeter silencieusement au-delà de 60 msg/s.
 
 **Commandes serveur** (`server_cmd`) : `regen_expansions`,
 `set_money {amount}`, `spawn_fields {fieldType, count}`.
 
 ## Sauvegardes
 
-- **Locales** : autosaves en `localStorage` (rotation 5 slots,
-  pattern `[Auto] <room> <slot>` en multi).
-- **Serveur** : `data/saves/<user>_<nom>.json` par utilisateur.
-- Format : `{ meta:{username, name, date}, state: serializeState() }`.
+- **Locales (solo)** : panneau 💾 Partie — sauvegardes nommées et autosaves
+  (rotation 5 slots), export/import d'un fichier JSON, nouvelle carte.
+  Stockage `localStorage` : un **index** léger (`factopolis_saves` →
+  `[{id,name,date}]`, `factopolis_autosaves` → `[{slot,date}]`) et **une clé
+  par sauvegarde** (`factopolis_saves#<id>`, `factopolis_autosaves#<slot>`) :
+  une autosave n'écrit qu'un emplacement (≈10 ms au lieu de ~0,4 s sur une
+  grande ville). Quota plein → éviction des autosaves les plus anciennes.
+  L'ancien format (tableau unique avec les états) est migré à la lecture
+  (`migrateSaveList`).
+- **État compacté** (`packStateForStorage` / `unpackStateFromStorage`) :
+  grilles codées par plages (RLE) et bâtiments sans champs vides/par défaut
+  (`compactBuildingForStorage`, flottants arrondis) — ~×4 sur une grande
+  ville. Utilisé aussi sur le réseau : snapshot d'arrivée, flux monde 1 Hz,
+  snapshots forcés, sauvegardes serveur. `applySnapshot` dépaquette tout état
+  portant `_rle` ; `applyBuildingDynamicState` restaure les valeurs par défaut.
+- **Serveur** : `data/saves/<room>_<nom>.json`.
+- Format : `{ meta:{username, name, date}, state }` (état compacté ou brut,
+  le serveur le traite comme opaque).
 - Charger une sauvegarde diffuse `game_loaded` à tous les clients
   connectés (remplace la partie pour tout le monde dans la room).
 - Autosaves serveur envoyées par le client admin toutes les
@@ -421,6 +507,13 @@ Côté client :
 Interface principale :
 
 - **splash** : titre isométrique + bouton "Commencer".
+- **la Gazette** (`publishNews`, `showNewsCard`, `newsOnArrival`,
+  `updateNews` dans `08_ui_input_loop.js`) : carte « journal » en haut de
+  l'écran pour les grands moments, une fois par partie (`newsFlags`). Seule
+  la simulation autoritative publie ; `state.news` ({flags, log, next}) voyage
+  dans le flux monde et les sauvegardes, l'invité affiche les nouvelles dont
+  l'id dépasse `newsSeenId` (pas de rediffusion au chargement). Les unes
+  rejoignent aussi le journal d'événements.
 - **topbar** : argent (cliquable → finances), village, population,
   emplois, camions, date jeu, rotation, pause, vitesses 1×/2×/3×,
   aide, calques (surbrillance usines sous-effectuées), options
@@ -436,8 +529,11 @@ Interface principale :
 - **panneau finances** : totaux et rythme $/min, bilans par catégorie.
 - **panneau multijoueur** injecté par `mpInjectUI()` : connexion,
   auth, lobby des mondes, liste joueurs, sauvegardes, chat.
-- **panneau aide** : 4 pages paginées (intro, bâtiments, logements &
-  fusion, contrôles).
+- **panneau aide** : 5 pages paginées (intro, bâtiments, logements &
+  fusion, contrôles, transports).
+- **panneau Partie** (💾), **mini-carte** (`Minimap`, bas-droite) et
+  **objectifs** (`ObjectivesPanel`, haut-gauche), activables dans le menu
+  Panneaux (🗂️).
 
 Panneaux draggable via leur `.panel-head`.
 
@@ -484,6 +580,28 @@ Thèmes et sprites communautaires dans `assets/graphic-packs/` :
 
 ## Rendu isométrique
 
+Le rendu est hybride : `PixiScene` (`js/pixi/scene.js`) affiche le ciel, le sol
+(texture du scroll-buffer `groundCache`) et une couche de sprites triés en
+profondeur (`js/pixi/sprites.js` : bâtiments cuits par `drawBuildingBody` /
+`drawBuildingArt`, arbres, véhicules en textures directionnelles à 24 angles,
+piétons) avec culling sur la vue ; le canevas `#cv` par-dessus porte les
+overlays dynamiques. Les corps de bâtiments sont **partagés** : la position ne
+choisit qu'une variante d'art parmi `ART_VARIANTS` (`artVariantOf`), et les
+bâtiments de même signature (`bldSig`) + variante réutilisent la même texture
+(`sharedBodies`, compteur de références ; ancre des overlays et cheminées
+stockées en relatif). Une ville de 3 700 bâtiments tient en ~40 textures.
+Exceptions : gares (géométrie de groupe) et mode diagnostic (corps propre à
+chaque usine). `PixiSprites.stats()` expose les compteurs.
+
+Coût par image maîtrisé : les passes « sol » et « routes/rails » de `draw()`
+ne parcourent les cases que lors d'une reconstruction du buffer-sol
+(`groundDirty`) ; les feux tricolores sont relevés à ce moment-là
+(`_cachedTrafficLights`) puis seulement recolorés chaque image. Les overlays
+Pixi d'un bâtiment (`drawBuildingOv`) ne sont regéométrisés que si leur clé
+visuelle change (barre de progression au pixel près, habitants, sélection,
+alertes…) ; la sélection de gare est préparée une fois par image
+(`prepareSelection`) et l'accès route/rail mis en cache par version du réseau.
+
 `draw()` dans `07_rendering.js` suit cet ordre :
 
 1. ciel (gradient) ;
@@ -518,9 +636,9 @@ préserver le FPS. La simulation n'est pas gelée.
   sont remis à zéro au chargement/synchronisation.
 - Les sauvegardes sont par utilisateur, mais charger une sauvegarde
   remplace la partie pour tous les clients connectés à la room.
-- Bateaux et avions = placeholders (dépôts achetables, aucun déplacement).
-- `rename_bld` est envoyé en multi mais non géré dans `applyAction` —
-  à corriger.
+- Les tests automatisés (`npm test`) couvrent trains, fret, bateaux/avions,
+  économie de départ, interface, sauvegardes, performance et multijoueur :
+  les relancer après toute modification de la logistique ou du réseau.
 - `node_modules/` est présent dans le workspace et non suivi par git.
 
 ## Style de modification recommandé

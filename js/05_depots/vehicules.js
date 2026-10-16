@@ -2,7 +2,7 @@
 
 BUILD.garage = BUILD.garage || {};
 BUILD.garage.transportDepot = true;
-BUILD.garage.buyCatalog = BUILD.garage.buyCatalog || Object.keys(VEHICLE_TYPES).filter(k => !VEHICLE_TYPES[k].buyDisabled && k !== 'train');
+BUILD.garage.buyCatalog = BUILD.garage.buyCatalog || Object.keys(VEHICLE_TYPES).filter(k => !VEHICLE_TYPES[k].buyDisabled && VEHICLE_TYPES[k].mode === 'road');
 
 registerDepotTool({
   key: 'vehicules',

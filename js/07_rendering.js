@@ -281,8 +281,17 @@ function shade(hex,f){
   const k = hex+f;
   let c = _shadeCache[k];
   if(c) return c;
-  const n = parseInt(hex.slice(1),16);
-  let r = n>>16&255, g = n>>8&255, b = n&255;
+  let r, g, b;
+  if(hex.charCodeAt(0) === 35){ // '#rrggbb' (ou '#rgb')
+    let h = hex.slice(1);
+    if(h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    const n = parseInt(h,16);
+    r = n>>16&255; g = n>>8&255; b = n&255;
+  } else {
+    // 'rgb(r,g,b)' : couleur déjà ombrée (enchaînement de shade()).
+    const m = hex.match(/\d+(\.\d+)?/g) || [0,0,0];
+    r = +m[0]; g = +m[1]; b = +m[2];
+  }
   if(f>=0){ r += (255-r)*f; g += (255-g)*f; b += (255-b)*f; }
   else    { r *= 1+f; g *= 1+f; b *= 1+f; }
   return _shadeCache[k] = 'rgb('+(r|0)+','+(g|0)+','+(b|0)+')';
@@ -340,6 +349,23 @@ function trainPrism(u, v, du, dv, halfLen, halfWid, hp, col, lift){
   ctx.beginPath();
   ctx.moveTo(...tf); ctx.lineTo(...tfl); ctx.lineTo(...tbl); ctx.lineTo(...tbr);
   ctx.closePath(); ctx.stroke();
+}
+
+// Assemblage de boîtes orientées (locomotive, wagons, camions). Chaque pièce :
+// { off:décalage longitudinal (tuiles), lat:décalage latéral, hl, hw, z0, h, col,
+//   layer }. Les pièces d'une même couche sont triées par profondeur (u+v) pour
+// que la plus éloignée soit peinte en premier.
+function drawOrientedParts(u, v, du, dv, parts, lift){
+  const d = Math.hypot(du, dv) || 1;
+  const fu = du / d, fv = dv / d, ru = fv, rv = -fu;
+  const placed = parts.map((p, i) => {
+    const pu = u + fu * (p.off || 0) + ru * (p.lat || 0);
+    const pv = v + fv * (p.off || 0) + rv * (p.lat || 0);
+    return { p, pu, pv, i };
+  });
+  placed.sort((a, b) => ((a.p.layer || 0) - (b.p.layer || 0)) || ((a.pu + a.pv) - (b.pu + b.pv)) || (a.i - b.i));
+  for(const { p, pu, pv } of placed)
+    trainPrism(pu, pv, du, dv, p.hl, p.hw, p.h, p.col, (lift || 0) + (p.z0 || 0));
 }
 
 // prisme iso : base [u0,v0]-[u1,v1] (tuiles tournées), hauteur hp px, surélévation lift
@@ -651,23 +677,39 @@ function drawBuildingSprite(b, rx0, ry0, rw, rh, d, lift){
   ];
 }
 
+// Arbre : sapin étagé ou feuillu arrondi selon la tuile (8 variantes cuites
+// par js/pixi/sprites.js). Lumière haut-droite : moitié droite plus claire.
 function drawTree(rx,ry,x,y){
   const c = tileCenterIso(rx, ry, x, y);
-  const h = 13 + (hash(x,y)&7);
-  ctx.fillStyle = 'rgba(0,0,0,.16)';
-  ctx.beginPath(); ctx.ellipse(c[0]+2, c[1]+2, 9, 4.5, 0, 0, 7); ctx.fill();
+  const hs = hash(x,y);
+  const h = 13 + (hs&7);
+  const kind = (hs >>> 3) & 3;           // 0-1 sapin, 2-3 feuillu
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 10, 4.5, 0, 0, 7); ctx.fill();
   ctx.fillStyle = '#6b4a2a';
-  ctx.fillRect(c[0]-1.5, c[1]-h*0.4, 3, h*0.4+1);
-  const tri = (top, base, hw, col)=>{
-    ctx.fillStyle = col;
-    ctx.beginPath();
-    ctx.moveTo(c[0], c[1]-top);
-    ctx.lineTo(c[0]+hw, c[1]-base);
-    ctx.lineTo(c[0]-hw, c[1]-base);
-    ctx.closePath(); ctx.fill();
-  };
-  tri(h+9,  h*0.25, 9.5, '#2e7d32');
-  tri(h+14, h*0.55, 6.5, '#43a047');
+  ctx.fillRect(c[0]-1.5, c[1]-h*0.45, 3, h*0.45+1);
+  if(kind < 2){
+    const base = ['#2c6e33', '#2f7a3a', '#285f34', '#336b2c'][(hs >>> 6) & 3];
+    const tier = (top, bot, hw)=>{
+      ctx.fillStyle = shade(base, -0.12);
+      ctx.beginPath(); ctx.moveTo(c[0], c[1]-top); ctx.lineTo(c[0], c[1]-bot+1.5); ctx.lineTo(c[0]-hw, c[1]-bot); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = shade(base, 0.12);
+      ctx.beginPath(); ctx.moveTo(c[0], c[1]-top); ctx.lineTo(c[0]+hw, c[1]-bot); ctx.lineTo(c[0], c[1]-bot+1.5); ctx.closePath(); ctx.fill();
+    };
+    tier(h+6,  h*0.30, 9.5);
+    tier(h+11, h*0.62, 7.5);
+    tier(h+16, h*0.92, 5);
+  } else {
+    const base = ['#4f9a3a', '#5ea53f', '#46883a', '#6aa844'][(hs >>> 6) & 3];
+    const blob = (ox, oy, r, f)=>{
+      ctx.fillStyle = shade(base, f);
+      ctx.beginPath(); ctx.arc(c[0]+ox, c[1]-h+oy, r, 0, Math.PI*2); ctx.fill();
+    };
+    blob(-4, 2, 6.5, -0.18);
+    blob(4, 2, 6.5, -0.05);
+    blob(0, -3, 7.5, 0.04);
+    blob(2.5, -5, 4, 0.20);
+  }
 }
 
 function isUnderstaffedOwnFactory(b){
@@ -825,16 +867,21 @@ function drawTrainStationPiece(b){
       const [lrx, lry] = rotIdx(last.x, last.y);
       const c0 = liftedIso(frx + 0.5, fry + 0.5, terrainLiftPxAt(first.x, first.y));
       const c1 = liftedIso(lrx + 0.5, lry + 0.5, terrainLiftPxAt(last.x, last.y));
-      const half = len * 0.48, offset = 9;
+      const half = len * 0.48, offset = 10;
       const x0 = c0[0] - tx * half + nx * offset, y0 = c0[1] - ty * half + ny * offset;
       const x1 = c1[0] + tx * half + nx * offset, y1 = c1[1] + ty * half + ny * offset;
+      // Quai en béton (bordure + dalle), bande de sécurité jaune côté voie.
       ctx.lineCap = 'butt';
-      ctx.strokeStyle = shade(ownerColor, -0.42); ctx.lineWidth = 10;
-      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-      ctx.strokeStyle = shade(ownerColor, 0.20); ctx.lineWidth = 6;
+      ctx.strokeStyle = '#7d7a73'; ctx.lineWidth = 11;
+      ctx.beginPath(); ctx.moveTo(x0, y0 + 1.5); ctx.lineTo(x1, y1 + 1.5); ctx.stroke();
+      ctx.strokeStyle = '#c9c4b8'; ctx.lineWidth = 9;
       ctx.beginPath(); ctx.moveTo(x0, y0 - 1); ctx.lineTo(x1, y1 - 1); ctx.stroke();
       ctx.strokeStyle = '#f0d15f'; ctx.lineWidth = 1.4;
-      ctx.beginPath(); ctx.moveTo(x0 - nx * 4, y0 - ny * 4); ctx.lineTo(x1 - nx * 4, y1 - ny * 4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0 - nx * 3.6, y0 - 1 - ny * 3.6); ctx.lineTo(x1 - nx * 3.6, y1 - 1 - ny * 3.6); ctx.stroke();
+      // Liseré aux couleurs du propriétaire côté gare (le quai reste au sol :
+      // une marquise haute serait recouverte par les trains, dessinés après).
+      ctx.strokeStyle = shade(ownerColor, -0.1); ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(x0 + nx * 4, y0 - 1 + ny * 4); ctx.lineTo(x1 + nx * 4, y1 - 1 + ny * 4); ctx.stroke();
 
       // Repère visuel des dalles manquantes : un quai incomplet (trou interne ou
       // trop court) n'est JAMAIS desservi (cf. trainStationStopTiles, qui écarte
@@ -873,12 +920,16 @@ function drawTrainStationPiece(b){
     const bounds = trainStationGroupBounds(b.stationGroupId, 'train_station');
     if(bounds && bounds.pieces[0] === b){
       const col = b.owner ? playerColor(b.owner) : '#b07b49';
-      prism(bounds.rx0 + 0.08, bounds.ry0 + 0.08, bounds.rx0 + bounds.rw - 0.08, bounds.ry0 + bounds.rh - 0.08, 10, col, lift);
-      const c = liftedIso(bounds.rx0 + bounds.rw * 0.5, bounds.ry0 + bounds.rh * 0.5, lift);
-      ctx.fillStyle = '#f5e7c8';
-      ctx.font = '14px "Segoe UI Emoji",sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('🚉', c[0], c[1] - 9);
+      if(typeof drawStationBuildingArt === 'function'){
+        drawStationBuildingArt(bounds.rx0, bounds.ry0, bounds.rw, bounds.rh, lift, col, b);
+      } else {
+        prism(bounds.rx0 + 0.08, bounds.ry0 + 0.08, bounds.rx0 + bounds.rw - 0.08, bounds.ry0 + bounds.rh - 0.08, 10, col, lift);
+        const c = liftedIso(bounds.rx0 + bounds.rw * 0.5, bounds.ry0 + bounds.rh * 0.5, lift);
+        ctx.fillStyle = '#f5e7c8';
+        ctx.font = '14px "Segoe UI Emoji",sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('🚉', c[0], c[1] - 9);
+      }
     }
   }
   const selectedGroup = trainStationSelectionMatches(selected, b);
@@ -926,7 +977,13 @@ function drawBuildingBody(b){
   const hgt = d.ind ? d.hgt*(1+0.18*(Math.max(b.w,b.h)-1)) : d.hgt;
   const bCol = packBuildingColor(b, d);
   let tc = drawBuildingSprite(b, rx0, ry0, rw, rh, d, lift);
-  const usedSprite = !!tc;
+  let usedSprite = !!tc;
+  // Art procédural (js/07_rendering_art.js) : maisons, usines, dépôts dessinés en
+  // détail. Repli sur le prisme + icône pour les types sans art dédié.
+  if(!tc && typeof drawBuildingArt === 'function'){
+    tc = drawBuildingArt(b, rx0, ry0, rw, rh, lift, hgt, bCol);
+    if(tc) usedSprite = true;
+  }
   if(!tc){
     tc = prism(rx0, ry0, rx0+rw, ry0+rh, hgt, bCol, lift);
     drawRoofAccent(rx0, ry0, rw, rh, hgt, bCol, b, d, lift);
@@ -1305,16 +1362,62 @@ function trainWagonPose(veh, wagonIndex){
 }
 
 // Corps directionnel d'un wagon (ombre + 2 prismes). Source partagée rendu + baking.
-function drawWagonCore(u, v, du, dv, color){
+// Corps d'un wagon selon son type (clé TRAIN_WAGON_TYPES) — une couleur seule
+// donne un fourgon générique. Source partagée rendu Canvas2D + textures Pixi.
+function drawWagonCore(u, v, du, dv, typeOrColor){
   const c = entityIso(u, v);
   const lift = entityLiftPxAtRot(u, v);
   const nd0 = Math.hypot(du, dv) || 1;
   const fn0 = du/nd0, fv0 = dv/nd0;
   const shadowAngle0 = Math.atan2((fn0+fv0)*TH2, (fn0-fv0)*TW2);
-  ctx.fillStyle = 'rgba(0,0,0,.18)';
-  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 11, 4.5, shadowAngle0, 0, Math.PI*2); ctx.fill();
-  trainPrism(u, v, du, dv, 0.30,      0.13,      5, '#252e38', lift);
-  trainPrism(u, v, du, dv, 0.30*0.82, 0.13*0.82, 7, color, lift + 4);
+  ctx.fillStyle = 'rgba(0,0,0,.20)';
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 11.5, 4.6, shadowAngle0, 0, Math.PI*2); ctx.fill();
+  const type = TRAIN_WAGON_TYPES[typeOrColor] ? typeOrColor : null;
+  const color = type ? TRAIN_WAGON_TYPES[type].color : typeOrColor;
+  const P = [{ hl:0.30, hw:0.12, z0:0, h:3.5, col:'#22282f', layer:0 }];
+  switch(type){
+    case 'voiture':
+      P.push({ hl:0.29, hw:0.12, z0:3.5, h:3.5, col:'#2f6f52', layer:1 },
+             { hl:0.29, hw:0.12, z0:7,   h:3,   col:'#d7ecf2', layer:2 },
+             { hl:0.29, hw:0.12, z0:10,  h:1.5, col:'#2f6f52', layer:3 },
+             { hl:0.27, hw:0.10, z0:11.5,h:1.5, col:'#8a9096', layer:4 });
+      break;
+    case 'minerai':
+      P.push({ hl:0.27, hw:0.12, z0:3.5, h:6, col:'#7a4f33', layer:1 },
+             { hl:0.23, hw:0.09, z0:9.4, h:0.6, col:'#3a2a20', layer:2 });
+      break;
+    case 'cereale':
+      P.push({ hl:0.27, hw:0.12, z0:3.5, h:5, col:'#c9a52e', layer:1 },
+             { hl:0.25, hw:0.10, z0:8.5, h:2, col:'#d8b84a', layer:2 },
+             { hl:0.20, hw:0.06, z0:10.5,h:1, col:'#b08e22', layer:3 });
+      break;
+    case 'marchandises':
+      P.push({ hl:0.28, hw:0.12, z0:3.5, h:8, col:'#3a6b9e', layer:1 },
+             { hl:0.29, hw:0.13, z0:11.5,h:1, col:'#5d86b0', layer:2 });
+      break;
+    case 'plateau':
+      P.push({ hl:0.29, hw:0.12, z0:3.5, h:1.5, col:'#7a4928', layer:1 },
+             { hl:0.22, hw:0.09, z0:5, h:3, col:'#c8a06a', layer:2 },
+             { off:0.26, lat:0.1, hl:0.014, hw:0.014, z0:5, h:4, col:'#3b2a1a', layer:3 },
+             { off:-0.26, lat:0.1, hl:0.014, hw:0.014, z0:5, h:4, col:'#3b2a1a', layer:3 },
+             { off:0.26, lat:-0.1, hl:0.014, hw:0.014, z0:5, h:4, col:'#3b2a1a', layer:3 },
+             { off:-0.26, lat:-0.1, hl:0.014, hw:0.014, z0:5, h:4, col:'#3b2a1a', layer:3 });
+      break;
+    case 'frigo':
+      P.push({ hl:0.28, hw:0.12, z0:3.5, h:3.5, col:'#e9eef2', layer:1 },
+             { hl:0.28, hw:0.12, z0:7, h:1.4, col:'#3d8fc2', layer:2 },
+             { hl:0.28, hw:0.12, z0:8.4, h:3, col:'#e9eef2', layer:3 });
+      break;
+    case 'citerne':
+      P.push({ hl:0.26, hw:0.09, z0:3.5, h:2.5, col:'#7f8f9b', layer:1 },
+             { hl:0.27, hw:0.11, z0:6, h:3, col:'#93a3ae', layer:2 },
+             { hl:0.26, hw:0.08, z0:9, h:1.6, col:'#a9b7c1', layer:3 },
+             { hl:0.04, hw:0.04, z0:10.6, h:1.6, col:'#6c7a85', layer:4 });
+      break;
+    default:
+      P.push({ hl:0.25, hw:0.11, z0:3.5, h:7, col:color, layer:1 });
+  }
+  drawOrientedParts(u, v, du, dv, P, lift);
 }
 function drawTrainWagon(veh, wagonIndex){
   const pose = trainWagonPose(veh, wagonIndex);
@@ -1325,7 +1428,7 @@ function drawTrainWagon(veh, wagonIndex){
   if(!wtype) return;
   const selectedRes = trainWagonSelectedResource(wagon);
   const c = entityIso(u, v);
-  drawWagonCore(u, v, du, dv, wtype.color);
+  drawWagonCore(u, v, du, dv, trainWagonTypeKey(wagon) || wtype.color);
   if(selectedRes && RES[selectedRes]?.ic){
     const label = RES[selectedRes].ic;
     ctx.save();
@@ -1355,10 +1458,12 @@ function trainPose(veh){
     const [du, dv] = rotDir(dx, dy);
     return { u: pose.u, v: pose.v, du, dv };
   }
-  const pose = lanePose(pts || [{x:0,y:0}], 0, 0, 0);
-  if(Math.abs(pose.du) > 1e-6 || Math.abs(pose.dv) > 1e-6) return pose;
   const curTile = rs?.railContinueTile ?? rs?.pathTiles?.[rs?.seg ?? 0] ?? null;
   const prevTile = rs?.railPreviousTile ?? null;
+  // Aucun tracé (train à quai, ou état invité pas encore reçu) : pose déduite des
+  // tuiles d'arrivée, sinon null (rien à dessiner) — jamais d'accès hors tableau.
+  const pose = pts && pts.length ? lanePose(pts, 0, 0, 0) : null;
+  if(pose && (Math.abs(pose.du) > 1e-6 || Math.abs(pose.dv) > 1e-6)) return pose;
   if(curTile != null && prevTile != null && curTile !== prevTile){
     const cx = curTile % N, cy = (curTile / N) | 0;
     const px = prevTile % N, py = (prevTile / N) | 0;
@@ -1380,31 +1485,87 @@ function isTrainLocoVisible(veh){
 }
 // Émet une bouffée de fumée au-dessus de la cheminée de la loco. Positions
 // stockées en px iso (repère monde, avant transform caméra), comme les floats.
-function emitTrainSmoke(veh){
-  if(smoke.length > 140) return;
+function emitTrainSmoke(veh, puff = 1){
+  if(smoke.length > 260) return;
   const pose = trainPose(veh);
   if(!pose) return;
   if(tunnelClipInfo(pose.u, pose.v)) return; // loco entrée dans la bouche : pas de fumée
   const [ix, iy] = entityIso(pose.u, pose.v);
-  const life = 1.1 + Math.random() * 0.6;
+  const life = (1.1 + Math.random() * 0.6) * (puff < 1 ? 0.75 : 1);
+  // cheminée à l'avant de la loco (dans le sens de marche)
+  const d = Math.hypot(pose.du, pose.dv) || 1;
+  const fx = ((pose.du - pose.dv) / d) * TW2 * 0.24, fy = ((pose.du + pose.dv) / d) * TH2 * 0.24;
   smoke.push({
-    x: ix + (Math.random() - 0.5) * 6,
-    y: iy - TH * 0.95 + (Math.random() - 0.5) * 4,  // au-dessus de la loco
+    x: ix + fx + (Math.random() - 0.5) * 3,
+    y: iy + fy - 19 + (Math.random() - 0.5) * 2,
     vx: (Math.random() - 0.5) * 7,
     vy: -(11 + Math.random() * 9),                  // montée (px iso/s)
-    r: 2.5 + Math.random() * 2,
+    r: (2.5 + Math.random() * 2) * puff,
     grow: 9 + Math.random() * 7,                    // expansion (px/s)
-    life, life0: life,
+    life, life0: life, a: puff < 1 ? 0.32 : 0.45,
   });
 }
 
+// Fumée d'une cheminée d'usine (coordonnées iso déjà calculées par l'art).
+function emitChimneySmoke(px, py, dark){
+  if(smoke.length > 260) return;
+  const life = 1.6 + Math.random() * 0.9;
+  smoke.push({
+    x: px + (Math.random() - 0.5) * 2, y: py - 1,
+    vx: 3 + (Math.random() - 0.5) * 5, vy: -(8 + Math.random() * 6),
+    r: 1.8 + Math.random() * 1.4, grow: 7 + Math.random() * 5,
+    life, life0: life, a: 0.38, col: dark ? '#6b6f75' : '#c9cdd2',
+  });
+}
+
+// Évolution des particules + émetteurs, pilotés par le rendu (temps réel × vitesse
+// de jeu) : la fumée vit aussi chez les invités, qui ne simulent pas.
+let _smokeLast = 0;
+function stepSmoke(){
+  const now = performance.now();
+  let dt = _smokeLast ? (now - _smokeLast) / 1000 : 0;
+  _smokeLast = now;
+  if(dt > 0.1) dt = 0.1;
+  for(let i = smoke.length - 1; i >= 0; i--){
+    const s = smoke[i];
+    s.life -= dt;
+    if(s.life <= 0){ smoke.splice(i, 1); continue; }
+    s.x += s.vx * dt; s.y += s.vy * dt; s.r += s.grow * dt;
+  }
+  if(paused || drawFast || (cam.z || 1) < 0.55) return;
+  const gdt = dt * (speed || 1);
+  // locomotives en marche : petites bouffées régulières
+  for(const v of vehicles){
+    if(v.vtype !== 'train' || v.state === 'idle' || v.waitTimer > 0) continue;
+    v._puffAcc = (v._puffAcc || 0) + gdt;
+    if(v._puffAcc < 0.22) continue;
+    v._puffAcc = 0;
+    if(isTrainLocoVisible(v)) emitTrainSmoke(v, 0.7);
+  }
+  // cheminées des usines qui produisent (positions mémorisées par l'art cuit)
+  if(typeof BUILDING_CHIMNEYS === 'undefined') return;
+  const z = cam.z || 1;
+  for(const [b, info] of BUILDING_CHIMNEYS){
+    if(b.dead || info.rot !== rot){ if(b.dead) BUILDING_CHIMNEYS.delete(b); continue; }
+    if(b.paused || !(b.prog > 0)) continue;
+    for(const pt of info.pts){
+      if(pt[0] < cam.x - 20 || pt[0] > cam.x + W / z + 20 || pt[1] < cam.y - 40 || pt[1] > cam.y + H / z + 20) continue;
+      pt[3] = (pt[3] || Math.random() * 0.4) + gdt;
+      if(pt[3] < 0.45) continue;
+      pt[3] = 0;
+      emitChimneySmoke(pt[0], pt[1], pt[2]);
+    }
+  }
+}
+
 function drawSmoke(){
+  stepSmoke();
   if(!smoke.length) return;
   for(const s of smoke){
-    const a = Math.max(0, s.life / s.life0) * 0.45;
+    const a = Math.max(0, s.life / s.life0) * (s.a || 0.45);
     if(a <= 0.01) continue;
     ctx.globalAlpha = a;
-    ctx.fillStyle = '#c2c7cc';
+    ctx.fillStyle = s.col || '#c2c7cc';
     ctx.beginPath();
     ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
     ctx.fill();
@@ -1431,9 +1592,8 @@ function drawTruckCore(u, v, du, dv, col){
   const c = entityIso(u, v);
   const lift = terrainLiftPxAtRot(u, v);
   ctx.fillStyle = 'rgba(0,0,0,.20)';
-  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 9, 4, shadowAngle, 0, Math.PI*2); ctx.fill();
-  trainPrism(u, v, du, dv, 0.21, 0.11, 4, '#39404c', lift);
-  trainPrism(u, v, du, dv, 0.21*0.72, 0.11*0.72, 6, col, lift + 4);
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 9.5, 4, shadowAngle, 0, Math.PI*2); ctx.fill();
+  drawTruckParts(u, v, du, dv, col, lift);
 }
 function drawTruck(tk){
   const p = truckPose(tk);
@@ -2049,18 +2209,29 @@ function drawTrainDepotFlags(){
 
 // Corps directionnel (locomotive / voiture) : ombre + prismes. Source partagée
 // rendu + baking Pixi. (Les anneaux focus/sélection + label cargo sont des overlays.)
+// Locomotive à vapeur : châssis, chaudière, dôme, cheminée, cabine aux
+// couleurs du propriétaire, traverse avant rouge.
 function drawTrainLocoCore(u, v, du, dv, color){
   const c = entityIso(u, v);
   const lift = entityLiftPxAtRot(u, v);
-  const hl=0.34, hw=0.16, nd=Math.hypot(du,dv)||1;
+  const nd=Math.hypot(du,dv)||1;
   const fn_l=du/nd, fv_l=dv/nd;
   const shadowAngle_l = Math.atan2((fn_l+fv_l)*TH2, (fn_l-fv_l)*TW2);
-  ctx.fillStyle = 'rgba(0,0,0,.22)';
-  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 13, 5.5, shadowAngle_l, 0, Math.PI*2); ctx.fill();
-  trainPrism(u, v, du, dv, hl,      hw,      6, '#2f3640', lift);
-  trainPrism(u, v, du, dv, hl*0.78, hw*0.78, 8, color, lift + 5);
-  trainPrism(u+(du/nd)*0.06, v+(dv/nd)*0.06, du, dv, hl*0.28, hw, 10, '#92a2b4', lift + 8);
+  ctx.fillStyle = 'rgba(0,0,0,.24)';
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 13.5, 5.5, shadowAngle_l, 0, Math.PI*2); ctx.fill();
+  drawOrientedParts(u, v, du, dv, [
+    { hl:0.34, hw:0.14, z0:0, h:4, col:'#20252b', layer:0 },
+    { off:0.33, hl:0.02, hw:0.15, z0:0.5, h:3.5, col:'#b8322a', layer:1 },
+    { off:0.07, hl:0.24, hw:0.095, z0:4, h:7.5, col:'#323b45', layer:1 },
+    { off:-0.21, hl:0.11, hw:0.14, z0:4, h:11, col:color, layer:1 },
+    { off:0.08, hl:0.23, hw:0.04, z0:11.4, h:0.6, col:'#c9a13b', layer:2 },
+    { off:-0.21, hl:0.13, hw:0.155, z0:15, h:1.6, col:'#1b2026', layer:2 },
+    { off:0.04, hl:0.045, hw:0.05, z0:11.5, h:3, col:'#c9a13b', layer:3 },
+    { off:0.24, hl:0.035, hw:0.035, z0:11.5, h:6.5, col:'#16191d', layer:3 },
+  ], lift);
 }
+// Véhicule routier acheté : bus (caisse vitrée) ou camion (cabine + caisse
+// à la couleur du type). Source partagée rendu + textures Pixi.
 function drawCarCore(u, v, du, dv, color){
   const c = entityIso(u, v);
   const lift = terrainLiftPxAtRot(u, v);
@@ -2068,9 +2239,79 @@ function drawCarCore(u, v, du, dv, color){
   const fn = du/nd, fv = dv/nd;
   const shadowAngle = Math.atan2((fn+fv)*TH2, (fn-fv)*TW2);
   ctx.fillStyle = 'rgba(0,0,0,.20)';
-  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 10, 4.6, shadowAngle, 0, Math.PI*2); ctx.fill();
-  trainPrism(u, v, du, dv, 0.23, 0.13, 5, '#39404c', lift);
-  trainPrism(u, v, du, dv, 0.23*0.72, 0.13*0.72, 7, color, lift + 5);
+  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+1, 10.5, 4.6, shadowAngle, 0, Math.PI*2); ctx.fill();
+  if(color === VEHICLE_TYPES.bus?.color){
+    drawOrientedParts(u, v, du, dv, [
+      { hl:0.25, hw:0.10, z0:0, h:2.5, col:'#22272e', layer:0 },
+      { hl:0.25, hw:0.10, z0:2.5, h:3.5, col:color, layer:1 },
+      { hl:0.25, hw:0.10, z0:6, h:2.6, col:'#d6ecf4', layer:2 },
+      { hl:0.25, hw:0.10, z0:8.6, h:1.4, col:'#f2f4f6', layer:3 },
+    ], lift);
+    return;
+  }
+  drawTruckParts(u, v, du, dv, color, lift);
+}
+// Bateau : coque bicolore, pont, passerelle/cheminée à l'arrière ; conteneurs
+// (cargo) ou superstructure vitrée (ferry). Un léger sillage d'écume autour.
+function drawShipCore(u, v, du, dv, color){
+  const c = entityIso(u, v);
+  const lift = entityLiftPxAtRot(u, v);
+  const nd = Math.hypot(du, dv) || 1;
+  const fn = du/nd, fv = dv/nd;
+  const ang = Math.atan2((fn+fv)*TH2, (fn-fv)*TW2);
+  ctx.fillStyle = 'rgba(235,248,255,.35)';
+  ctx.beginPath(); ctx.ellipse(c[0], c[1]+1, 19, 6.5, ang, 0, Math.PI*2); ctx.fill();
+  const ferry = color === VEHICLE_TYPES.ferry?.color;
+  const parts = [
+    { hl:0.44, hw:0.15, z0:-1, h:3, col:'#7a2a22', layer:0 },
+    { off:0.02, hl:0.42, hw:0.15, z0:2, h:3, col: ferry ? '#f2f4f6' : color, layer:1 },
+    { off:0.40, hl:0.05, hw:0.10, z0:2, h:3, col: ferry ? '#f2f4f6' : color, layer:1 },
+  ];
+  if(ferry){
+    parts.push({ off:-0.04, hl:0.30, hw:0.12, z0:5, h:3, col:'#2f6f9a', layer:2 },
+               { off:-0.04, hl:0.30, hw:0.12, z0:8, h:2, col:'#f2f4f6', layer:3 },
+               { off:-0.10, hl:0.16, hw:0.09, z0:10, h:3, col:'#e9eef2', layer:4 },
+               { off:-0.16, hl:0.04, hw:0.04, z0:13, h:4, col:'#c0392b', layer:5 });
+  } else {
+    parts.push({ off:0.16, hl:0.10, hw:0.12, z0:5, h:4, col:'#d97a2b', layer:2 },
+               { off:-0.02, hl:0.08, hw:0.12, z0:5, h:4, col:'#3a8a5a', layer:2 },
+               { off:0.16, hl:0.10, hw:0.12, z0:9, h:3.5, col:'#c9a52e', layer:3 },
+               { off:-0.26, hl:0.09, hw:0.12, z0:5, h:8, col:'#f0f2f4', layer:2 },
+               { off:-0.30, hl:0.035, hw:0.035, z0:13, h:4, col:'#222', layer:4 });
+  }
+  drawOrientedParts(u, v, du, dv, parts, lift);
+}
+// Avion de ligne vu du dessus/côté : fuselage, ailes, dérive. `alt` = altitude px.
+function drawPlaneCore(u, v, du, dv, color){
+  const lift = entityLiftPxAtRot(u, v);
+  drawOrientedParts(u, v, du, dv, [
+    { off:0.02, hl:0.08, hw:0.36, z0:3, h:1.2, col:'#cfd6dc', layer:0 },
+    { hl:0.34, hw:0.055, z0:2, h:4.5, col:color || '#f4f6f8', layer:1 },
+    { off:0.31, hl:0.04, hw:0.05, z0:4, h:2, col:'#2a3644', layer:2 },
+    { off:-0.29, hl:0.05, hw:0.13, z0:5.5, h:0.9, col:'#cfd6dc', layer:2 },
+    { off:-0.30, hl:0.05, hw:0.012, z0:6.5, h:6, col:'#c0392b', layer:3 },
+    { off:0.0, lat:0.17, hl:0.05, hw:0.025, z0:1.5, h:1.8, col:'#8a9096', layer:2 },
+    { off:0.0, lat:-0.17, hl:0.05, hw:0.025, z0:1.5, h:1.8, col:'#8a9096', layer:2 },
+  ], lift);
+}
+// Altitude d'un avion le long de son vol : montée / descente près des aéroports.
+function planeAltitudePx(veh){
+  const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
+  const pts = rs.pts;
+  if(!pts || pts.length < 2 || veh.state === 'idle' || veh.waitTimer > 0) return 0;
+  const n = pts.length - 1;
+  const segLen = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) / TILE;
+  const s = (Math.min(n, (rs.seg || 0) + (rs.t || 0))) * segLen, total = n * segLen;
+  return Math.min(70, 20 * Math.min(s, total - s));
+}
+
+function drawTruckParts(u, v, du, dv, cargoCol, lift){
+  drawOrientedParts(u, v, du, dv, [
+    { hl:0.21, hw:0.095, z0:0, h:3, col:'#2b3037', layer:0 },
+    { off:0.145, hl:0.06, hw:0.095, z0:3, h:6, col:'#e8e5dd', layer:1 },
+    { off:0.17, hl:0.03, hw:0.092, z0:6.2, h:2.2, col:'#2a3644', layer:2 },
+    { off:-0.055, hl:0.145, hw:0.10, z0:3, h:7, col:cargoCol, layer:1 },
+  ], lift);
 }
 function vehiclePose(veh){
   const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
@@ -2096,6 +2337,12 @@ function drawVehicle(veh){
   const vt = VEHICLE_TYPES[veh.vtype];
   if(veh.vtype === 'train'){
     drawTrainLocoCore(u, v, du, dv, vehicleColor(veh));
+  } else if(vt.mode === 'water'){
+    drawShipCore(u, v, du, dv, vt.color);
+  } else if(vt.mode === 'air'){
+    ctx.save(); ctx.translate(0, -planeAltitudePx(veh));
+    drawPlaneCore(u, v, du, dv, vt.color);
+    ctx.restore();
   } else {
     drawCarCore(u, v, du, dv, vt.color);
     if(!drawFast && veh.cargo > 0){
@@ -2212,12 +2459,17 @@ function expPieceTabs(side, pi, n){
 
 function drawExpansionBadges(){
   if(drawFast) return;
+  const zz = cam.z || 1, vx0 = cam.x - TH * 3, vx1 = cam.x + W / zz + TH * 3, vy0 = cam.y - TH * 3, vy1 = cam.y + H / zz + TH * 3;
+  const money = myWallet().money;
   for(const exp of expansions){
+    // Centre ISO de la pièce ; hors écran, on ne dessine rien (avant : toutes les
+    // pastilles de la carte, avec ombre floue, à chaque image).
+    const [ru, rv] = rotF(exp.cx, exp.cy);
+    const ix = (ru - rv) * TW2, iy = (ru + rv) * TH2;
+    if(ix < vx0 || ix > vx1 || iy < vy0 - 120 || iy > vy1 + 120) continue;
     const isHov = exp === hoveredExpansion;
     const isSel = exp === selectedExpansion;
-    const canAfford = myWallet().money >= exp.cost;
-    // Centre ISO de la pièce
-    const [ru, rv] = rotF(exp.cx, exp.cy);
+    const canAfford = money >= exp.cost;
     const [px, py] = liftedIso(ru, rv, terrainLiftPxAtRot(ru, rv));
     const pulse = 0.85 + 0.15 * Math.sin(gtime * 2.4 + exp.cx * 0.12);
 
@@ -2234,13 +2486,179 @@ function drawExpansionBadges(){
 
     // Prix
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.9)'; ctx.shadowBlur = 4;
     ctx.fillStyle = canAfford ? '#ffe9a0' : '#ff9a8a';
     ctx.font = 'bold '+Math.round(TH*0.52)+'px "Segoe UI",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(exp.cost.toLocaleString()+'$', px, py);
+    const label = (exp._lbl && exp._lblCost === exp.cost) ? exp._lbl : (exp._lblCost = exp.cost, exp._lbl = exp.cost.toLocaleString()+'$');
+    ctx.lineJoin = 'round'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; // contour (shadowBlur = trop coûteux)
+    ctx.strokeText(label, px, py);
+    ctx.fillText(label, px, py);
     ctx.restore();
   }
+}
+
+// ---- Terrain : prairies nuancées, relief éclairé, eau profonde ----
+// Couleur mélangée (a→b, t∈[0,1]) mise en cache : chaînes CSS réutilisées.
+const _mixCache = new Map();
+function mixColor(a, b, t){
+  const k = a + b + t;
+  let c = _mixCache.get(k);
+  if(c) return c;
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const r = ((pa >> 16 & 255) * (1 - t) + (pb >> 16 & 255) * t) | 0;
+  const g = ((pa >> 8 & 255) * (1 - t) + (pb >> 8 & 255) * t) | 0;
+  const bl = ((pa & 255) * (1 - t) + (pb & 255) * t) | 0;
+  c = '#' + ((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1);
+  _mixCache.set(k, c);
+  return c;
+}
+const _lum = h => { const n = parseInt(h.slice(1), 16); return (n >> 16 & 255) * 0.3 + (n >> 8 & 255) * 0.59 + (n & 255) * 0.11; };
+// Teintes de prairie : 8 nuances entre la plus sombre et la plus claire du pack.
+let _grassTonesKey = '', _grassTones = null;
+function grassTones(pack){
+  const key = (pack.grass || []).join(',');
+  if(key === _grassTonesKey) return _grassTones;
+  const cols = (pack.grass || ['#74b048']).slice().sort((a, b) => _lum(a) - _lum(b));
+  const dark = shadeHex(cols[0], -0.04), light = shadeHex(cols[cols.length - 1], 0.04);
+  _grassTones = Array.from({ length:8 }, (_, i) => mixColor(dark, light, i / 7));
+  _grassTonesKey = key;
+  return _grassTones;
+}
+function shadeHex(hex, f){
+  const n = parseInt(hex.slice(1), 16);
+  let r = n >> 16 & 255, g = n >> 8 & 255, b = n & 255;
+  if(f >= 0){ r += (255 - r) * f; g += (255 - g) * f; b += (255 - b) * f; }
+  else { r *= 1 + f; g *= 1 + f; b *= 1 + f; }
+  return '#' + ((1 << 24) | ((r | 0) << 16) | ((g | 0) << 8) | (b | 0)).toString(16).slice(1);
+}
+// Bruit basse fréquence (taches de prairie) recalculé avec le terrain.
+let _meadowNoise = null, _meadowVersion = -1, _meadowN = -1;
+function meadowTone(x, y){
+  if(_meadowVersion !== terrainVersion || _meadowN !== N || !_meadowNoise){
+    _meadowNoise = { f: valueNoise(11), g: valueNoise(4), cache: new Float32Array(N * N).fill(-1) };
+    _meadowVersion = terrainVersion; _meadowN = N;
+  }
+  const i = y * N + x;
+  let v = _meadowNoise.cache[i];
+  if(v < 0){
+    v = _meadowNoise.f(x, y) * 0.75 + _meadowNoise.g(x, y) * 0.25;
+    _meadowNoise.cache[i] = v;
+  }
+  return v;
+}
+// Profondeur de l'eau (distance à la rive, 1..8) : dégradé clair → profond.
+let _waterDepth = null, _waterDepthVersion = -1, _waterDepthN = -1;
+function waterDepthAt(i){
+  if(_waterDepthVersion !== terrainVersion || _waterDepthN !== N || !_waterDepth){
+    const depth = new Uint8Array(N * N);
+    const q = new Int32Array(N * N);
+    let qh = 0, qt = 0;
+    for(let k = 0; k < N * N; k++){
+      if(terrain[k] !== T.WATER) continue;
+      depth[k] = 8;
+      const x = k % N, y = (k / N) | 0;
+      for(const [dx, dy] of DIRS8){
+        const nx = x + dx, ny = y + dy;
+        if(nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        if(terrain[ny * N + nx] !== T.WATER){ depth[k] = 1; q[qt++] = k; break; }
+      }
+    }
+    while(qh < qt){
+      const k = q[qh++], d = depth[k];
+      if(d >= 7) continue;
+      const x = k % N, y = (k / N) | 0;
+      for(const [dx, dy] of DIRS8){
+        const nx = x + dx, ny = y + dy;
+        if(nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        const nk = ny * N + nx;
+        if(terrain[nk] === T.WATER && depth[nk] > d + 1){ depth[nk] = d + 1; q[qt++] = nk; }
+      }
+    }
+    _waterDepth = depth; _waterDepthVersion = terrainVersion; _waterDepthN = N;
+  }
+  return _waterDepth[i];
+}
+let _waterTonesKey = '', _waterTones = null;
+function waterTones(pack){
+  const key = (pack.water || []).join(',');
+  if(key === _waterTonesKey) return _waterTones;
+  const w = pack.water || ['#3590cf'];
+  const shallow = shadeHex(w[0], 0.22), mid = w[0], deep = shadeHex(w[w.length - 1], -0.30);
+  _waterTones = Array.from({ length:9 }, (_, i) => i <= 2 ? mixColor(shallow, mid, i / 2) : mixColor(mid, deep, (i - 2) / 6));
+  _waterTonesKey = key;
+  return _waterTones;
+}
+// Éclairage d'une tuile en pente (lumière venant du haut-droite de l'écran).
+function tileSlopeLight(p, rx, ry){
+  const hA = (rx + ry) * TH2 - p.A[1];
+  const hB = (rx + 1 + ry) * TH2 - p.B[1];
+  const hC = (rx + ry + 2) * TH2 - p.C[1];
+  const hD = (rx + ry + 1) * TH2 - p.D[1];
+  if(hA === hB && hB === hC && hC === hD) return 0;
+  const gu = ((hB + hC) - (hA + hD)) * 0.5;   // px gagnés vers +u (face « droite »)
+  const gv = ((hD + hC) - (hA + hB)) * 0.5;   // px gagnés vers +v (face « gauche »)
+  const f = (-0.35 * gu + 0.75 * gv) / TILE * 0.62;
+  return Math.max(-0.38, Math.min(0.26, f));
+}
+// Remplit la tuile de sol (herbe nuancée / eau en dégradé / sable…), éclairée
+// selon sa pente. Détails (touffes, écume) seulement hors zoom actif.
+function drawGroundTileBase(rx, ry, x, y, t, pack){
+  const p = terrainTilePoints(rx, ry, x, y);
+  let col;
+  if(t === T.WATER){
+    const d = waterDepthAt(y * N + x);
+    col = waterTones(pack)[Math.min(8, d)];
+  } else if(t === T.SAND || t === T.CLAY){
+    col = packTerrain(t, x, y);
+  } else {
+    const tones = grassTones(pack);
+    const n = meadowTone(x, y) * 0.82 + ((hash(x, y) & 255) / 255) * 0.18;
+    col = tones[Math.max(0, Math.min(7, Math.round(n * 7)))];
+  }
+  const light = t === T.WATER ? 0 : tileSlopeLight(p, rx, ry);
+  if(light) col = shade(col, Math.round(light * 25) / 25);
+  pathTilePoints(p);
+  ctx.fillStyle = col;
+  ctx.fill();
+  if(!drawFast){
+    // Masque les fines coutures anti-aliasées entre tuiles voisines.
+    ctx.strokeStyle = col; ctx.lineWidth = 0.7; ctx.stroke();
+    if(t === T.WATER){
+      // Écume le long des rives (arêtes partagées avec une tuile de terre).
+      const edges = [[0, -1, 'A', 'B'], [1, 0, 'B', 'C'], [0, 1, 'C', 'D'], [-1, 0, 'D', 'A']];
+      ctx.strokeStyle = 'rgba(235,248,255,.55)'; ctx.lineWidth = 1.6;
+      for(const [du, dv, a, b] of edges){
+        const [nx, ny] = invRotIdx(rx + du, ry + dv);
+        if(nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        if(terrain[ny * N + nx] === T.WATER) continue;
+        const pa = p[a], pb = p[b];
+        const cx = (p.A[0] + p.C[0]) / 2, cy = (p.A[1] + p.C[1]) / 2;
+        ctx.beginPath();
+        ctx.moveTo(pa[0] + (cx - pa[0]) * 0.12, pa[1] + (cy - pa[1]) * 0.12);
+        ctx.lineTo(pb[0] + (cx - pb[0]) * 0.12, pb[1] + (cy - pb[1]) * 0.12);
+        ctx.stroke();
+      }
+      // Reflets épars au large
+      const hs = hash(x, y);
+      if((hs & 15) === 0 && waterDepthAt(y * N + x) > 2){
+        const c = tileCenterIso(rx, ry, x, y);
+        ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(c[0] - 6, c[1]); ctx.lineTo(c[0] + 4, c[1] - 1); ctx.stroke();
+      }
+    } else if(t === T.GRASS && (hash(x + 7, y + 3) & 3) === 0){
+      // Touffes d'herbe
+      const hs = hash(x + 11, y - 5), c = tileCenterIso(rx, ry, x, y);
+      ctx.strokeStyle = shade(col, -0.22); ctx.lineWidth = 1;
+      for(let k = 0; k < 3; k++){
+        const ox = ((hs >> (k * 4)) & 15) / 15 * TW * 0.5 - TW * 0.25;
+        const oy = ((hs >> (k * 4 + 2)) & 15) / 15 * TH * 0.44 - TH * 0.22;
+        ctx.beginPath();
+        ctx.moveTo(c[0] + ox - 1.5, c[1] + oy); ctx.lineTo(c[0] + ox, c[1] + oy - 3);
+        ctx.lineTo(c[0] + ox + 1.5, c[1] + oy); ctx.stroke();
+      }
+    }
+  }
+  return p;
 }
 
 // Exposés pour la couche terrain PixiJS (Phase 2, flag ?pixiterrain) : offset de blit
@@ -2250,7 +2668,12 @@ let groundBlitSrcX = 0, groundBlitSrcY = 0, groundTexVersion = 0, cacheCamZ = 1;
 // L'usage réel est gaté sur PixiScene.ready (voir usePixiTerrain dans draw()) → si Pixi
 // n'initialise pas (WebGL indispo), on retombe automatiquement sur le rendu Canvas2D.
 let PIXI_TERRAIN = !(typeof location !== 'undefined' && location.search.includes('nopixiterrain'));
+// Diagnostic : ?safe désactive les optimisations de rendu (textures de bâtiments
+// partagées, saut des passes sol/routes hors reconstruction, cache des badges).
+const RENDER_SAFE = typeof location !== 'undefined' && /[?&]safe(?:[=&#]|$)/.test(location.search);
 
+// Feux tricolores relevés à la dernière reconstruction du sol (cf. draw, passe 2).
+let _cachedTrafficLights = [];
 function draw(){
   // Sécurité : si une frame précédente a jeté pendant le rendu du buffer-sol, `ctx`
   // pourrait être resté pointé sur groundCacheCtx. getContext('2d') renvoie le contexte
@@ -2286,8 +2709,20 @@ function draw(){
   // dans groundCache (au lieu de #cv, de toute façon caché) → terrain net et suivi au zoom.
   // Même coût de rendu qu'aujourd'hui (le drawFast re-rend le sol chaque frame), juste
   // redirigé, + un re-upload de texture. Hors mode Pixi : comportement inchangé.
-  const rebuildBuffer = (!drawFast && !bufferReusable) || (drawFast && usePixiTerrain);
-  const groundDirty = rebuildBuffer || drawFast; // exécuter les tracés coûteux du sol ?
+  // Pendant un zoom en mode Pixi, le buffer déjà cuit est simplement mis à
+  // l'échelle par le GPU (cf. PixiScene) : on ne le reconstruit que s'il ne couvre
+  // plus la vue ou s'il est trop étiré (flou), au lieu de chaque image.
+  let zoomRebuild = false;
+  if(drawFast && usePixiTerrain){
+    const zc = cacheCamZ || z, ratio = z / zc;
+    const covered = _bufContentKey != null
+      && cam.x >= cacheCamX - M / zc && cam.x + W / z <= cacheCamX + (W + M) / zc
+      && cam.y >= cacheCamY - M / zc && cam.y + H / z <= cacheCamY + (H + M) / zc;
+    zoomRebuild = !covered || ratio < 0.72 || ratio > 1.55;
+  }
+  const rebuildBuffer = (!drawFast && !bufferReusable) || zoomRebuild;
+  // Tracés coûteux du sol : en reconstruction, ou en zoom Canvas2D (rendu direct).
+  const groundDirty = rebuildBuffer || (drawFast && !usePixiTerrain);
 
   // CIEL : en mode Pixi-terrain, ciel + sol sont sur Pixi ; #cv (au-dessus) ne porte
   // QUE les overlays dynamiques (transparent) → on l'efface. Sinon, ciel repère écran.
@@ -2373,7 +2808,10 @@ function draw(){
   const visibleFish = [];
 
   // --- passe 1 : sol (ordre ligne par ligne = peintre) ---
-  for(let ry=minRy; ry<=maxRy; ry++) for(let rx=minRx; rx<=maxRx; rx++){
+  // Tout son dessin dépend de groundDirty : quand le buffer-sol est réutilisé
+  // (cas courant), on saute le parcours des cases (relief, neige… ~30 % du CPU
+  // d'une image sur une grande ville).
+  if(groundDirty || RENDER_SAFE) for(let ry=minRy; ry<=maxRy; ry++) for(let rx=minRx; rx<=maxRx; rx++){
     const px = (rx-ry)*TW2, py = (rx+ry)*TH2;
     if(px < vx0-TW || px > vx1 || py < vy0 || py > vy1) continue;
     const [x,y] = invRotIdx(rx,ry);
@@ -2417,11 +2855,9 @@ function draw(){
 
     if(groundDirty){
     if(t===T.WATER){
-      ctx.fillStyle = packTerrain(T.WATER, x, y);
-      tilePolygon(rx, ry, x, y); ctx.fill();
+      drawGroundTileBase(rx, ry, x, y, t, pack);
     } else {
-      ctx.fillStyle = packTerrain(t, x, y);
-      tilePolygon(rx, ry, x, y); ctx.fill();
+      drawGroundTileBase(rx, ry, x, y, t, pack);
       if(snowAmount > 0){
         ctx.save();
         ctx.globalAlpha = 0.24 + snowAmount * 0.46;
@@ -2511,7 +2947,10 @@ function draw(){
   const railColor = '#6f747c';
   const railLineColor = '#c7ccd3';
   if(typeof ensureTunnelFloors === 'function') ensureTunnelFloors(); // plancher tunnel à jour
-  for(let ry=minRy-1; ry<=maxRy+1; ry++) for(let rx=minRx-1; rx<=maxRx+1; rx++){
+  // Les tracés routes/rails ne servent qu'à la reconstruction du sol ; seuls les
+  // feux tricolores sont dynamiques : leur liste (positions + axes) est relevée
+  // à la reconstruction (zone du buffer, marge comprise) et réutilisée ensuite.
+  if(groundDirty || RENDER_SAFE) for(let ry=minRy-1; ry<=maxRy+1; ry++) for(let rx=minRx-1; rx<=maxRx+1; rx++){
     const [x,y] = invRotIdx(rx,ry);
     if(x<0||y<0||x>=N||y>=N) continue;
     const i = y*N+x;
@@ -2543,17 +2982,16 @@ function draw(){
         roadSegments.push([c, liftedIso(rx+du*0.5+0.5, ry+dv*0.5+0.5, tileEdgeLiftPx(x,y,dx,dy))]);
       }
       if(!links) roadSingles.push(c);
-      else if(!UI_OPTIONS.disableTrafficLights && isTrafficIntersectionTile({ x, y, i })){
-        const tileAxis = trafficGreenAxis({ x, y, i });
+      else if(isTrafficIntersectionTile({ x, y, i })){
         const approaches = [];
         for(const [adx,ady] of [[1,0],[-1,0],[0,1],[0,-1]]){
           const nx = x+adx, ny = y+ady;
           if(!inMap(nx,ny) || !road[ny*N+nx]) continue;
           const [du,dv] = rotDir(adx,ady);
-          const axisDir = Math.abs(adx) >= Math.abs(ady) ? 'ew' : 'ns';
-          approaches.push({ du, dv, green: tileAxis === axisDir });
+          const axis = Math.abs(adx) >= Math.abs(ady) ? 'ew' : 'ns';
+          approaches.push({ du, dv, axis, green:false });
         }
-        if(approaches.length) trafficLights.push({ c, approaches });
+        if(approaches.length) trafficLights.push({ c, x, y, i, approaches });
       }
     }
 
@@ -2734,16 +3172,21 @@ function draw(){
     // au centre de chaque tuile.
     const roadJoints = [];
     for(const [a,b] of roadSegments){ roadJoints.push(a,b); }
-    strokeSegments(roadSegments, roadWidth, pack.road, 'butt');
-    fillNodes(roadNodes, roadWidth*0.5, pack.road);
-    fillNodes(roadJoints, roadWidth*0.5, pack.road);
-    fillNodes(roadSingles, roadWidth*0.56, pack.road);
+    // Trottoirs clairs, chaussée d'asphalte, marquage central en pointillés.
+    const curb = shade(pack.roadLine, 0.38);
+    strokeSegments(roadSegments, roadWidth + 4, curb, 'butt');
+    fillNodes(roadNodes, (roadWidth + 4)*0.5, curb);
+    fillNodes(roadJoints, (roadWidth + 4)*0.5, curb);
+    fillNodes(roadSingles, (roadWidth + 4)*0.56, curb);
+    strokeSegments(roadSegments, roadWidth - 2, pack.road, 'butt');
+    fillNodes(roadNodes, (roadWidth - 2)*0.5, pack.road);
+    fillNodes(roadJoints, (roadWidth - 2)*0.5, pack.road);
+    fillNodes(roadSingles, (roadWidth - 2)*0.56, pack.road);
     if(!drawFast){
-      strokeSegments(roadSegments, roadLineWidth, pack.roadLine, 'butt');
-      fillNodes(roadNodes, roadLineWidth*0.5, pack.roadLine);
-      fillNodes(roadJoints, roadLineWidth*0.5, pack.roadLine);
-      strokeSegments(roadSegments, 1.4, 'rgba(200,206,214,.55)', 'butt');
-      fillNodes(roadSingles, roadLineWidth*0.56, pack.roadLine);
+      ctx.save();
+      ctx.setLineDash([6.5, 5.7]);
+      strokeSegments(roadSegments, 1.4, 'rgba(240,232,190,.75)', 'butt');
+      ctx.restore();
     }
     const railSingleCoords = railSingles.map(s=>s.c);
     strokeRailBed(railSegments, 11, '#4f3925');
@@ -2801,11 +3244,25 @@ function draw(){
 
   // Éléments du sol DYNAMIQUES (hors cache) : feux de circulation et signaux
   // ferroviaires changent de couleur en continu → dessinés chaque frame.
-  if(!drawFast){
-    for(const tl of trafficLights) drawTrafficLight(tl.c, tl.approaches);
+  if(groundDirty || RENDER_SAFE) _cachedTrafficLights = trafficLights;
+  if(!drawFast && !UI_OPTIONS.disableTrafficLights){
+    const lx0 = cam.x - TW, lx1 = cam.x + W / z + TW, ly0 = cam.y - TH * 2, ly1 = cam.y + H / z + TH * 2;
+    for(const tl of _cachedTrafficLights){
+      if(tl.c[0] < lx0 || tl.c[0] > lx1 || tl.c[1] < ly0 || tl.c[1] > ly1) continue;
+      const g = trafficGreenAxis(tl);
+      for(const a of tl.approaches) a.green = g === a.axis;
+      drawTrafficLight(tl.c, tl.approaches);
+    }
   }
   if(railSignals){
-    for(const sig of Object.values(railSignals)) drawRailSignal(sig);
+    // Culling : seuls les signaux à l'écran (le halo lumineux shadowBlur est coûteux).
+    const sx0 = cam.x - 40, sx1 = cam.x + W / z + 40, sy0 = cam.y - 40, sy1 = cam.y + H / z + 60;
+    for(const sig of Object.values(railSignals)){
+      const [rx, ry] = rotIdx(sig.x, sig.y);
+      const px = (rx - ry) * TW2, py = (rx + ry) * TH2;
+      if(px < sx0 || px > sx1 || py < sy0 || py > sy1 + 200) continue;
+      drawRailSignal(sig);
+    }
   }
 
   if(radiusSel)

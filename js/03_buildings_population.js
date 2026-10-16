@@ -23,7 +23,7 @@ function newBuilding(type,x,y,w,h){
     b.passengersEntrant = 0;
     b.passagersSortant = 0;
   }
-  if(type==='train_station'){
+  if(type==='train_station' || type==='boat_depot' || type==='plane_depot'){
     b.passengersEntrant = 0;
     b.passengersEntrantMax = 0;
     b.passengersEntrantQuota = 0;
@@ -373,6 +373,13 @@ function ensureHomelessForOwner(owner){
   const w = walletOf(key);
   if(w.homelessSeeded) return;
   w.homelessSeeded = true;
+}
+
+// Le monde solo devient celui d'une room fraîchement créée : ses bâtiments (sans
+// propriétaire) reviennent au joueur qui l'héberge, sinon ils resteraient neutres.
+function adoptSoloBuildings(owner){
+  if(owner == null) return;
+  for(const b of buildings) if(!b.dead && b.owner == null) b.owner = owner;
 }
 
 function adoptSoloWallet(owner){

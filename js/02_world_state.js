@@ -31,7 +31,7 @@ let terraformRadius = 1; // 1..4 : taille du carré N×N affecté par Creuser/Re
 let speed = 1, paused = false;
 let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0, passengerCycleTimer = 0;
 let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
-const FIN_ZERO = ()=> ({ ventes:0, vehicules:0, taxes:0, rembours:0, construction:0, entretien:0, entretienVehicules:0, peageRecu:0, peagePaye:0, expansion:0 });
+const FIN_ZERO = ()=> ({ ventes:0, vehicules:0, taxes:0, rembours:0, primes:0, construction:0, entretien:0, entretienVehicules:0, peageRecu:0, peagePaye:0, expansion:0 });
 const START_HOMELESS = 0;
 let rot = 0; // orientation de la vue (0..3)
 const cam = { x:0, y:0, z:1 };
@@ -52,6 +52,8 @@ const UI_OPTIONS = (() => {
     soundZoomMin: (typeof saved.soundZoomMin === 'number') ? saved.soundZoomMin : ((CFG && CFG.sons && CFG.sons.zoomMin) ?? 1.0),
     graphicPack: GRAPHIC_PACKS[saved.graphicPack] || /^asset:/.test(saved.graphicPack || '') ? saved.graphicPack : 'classic',
     panelEvents: saved.panelEvents ?? false,
+    panelMinimap: saved.panelMinimap ?? true,
+    panelObjectives: saved.panelObjectives ?? true,
   };
 })();
 function saveUIOptions(){ localStorage.setItem('factopolis_ui_options', JSON.stringify(UI_OPTIONS)); }
@@ -59,6 +61,13 @@ function saveUIOptions(){ localStorage.setItem('factopolis_ui_options', JSON.str
 // Historique runtime des événements UI focalisables (non persisté dans les sauvegardes).
 let gameEvents = [];
 let nextGameEventId = 1;
+// La Gazette : grands événements annoncés une seule fois par partie (drapeaux et
+// dernières nouvelles persistés et synchronisés ; l'hôte publie, cf. publishNews).
+let newsFlags = Object.create(null);
+let newsLog = [];
+let nextNewsId = 1;
+let newsSeenId = 0;   // dernière nouvelle affichée localement
+let newsNeedsPriming = false; // ancienne sauvegarde chargée : marquer l'existant comme annoncé
 
 // ---------- sons ----------
 // Effets sonores du jeu, définis dans config.js (CFG.sons) : nom logique →
@@ -124,6 +133,10 @@ const walletOf  = oid => {
   return WALLETS[k];
 };
 const myWallet  = () => walletOf(currentWalletOwner());
+// Clé de WALLETS → identifiant propriétaire des bâtiments. En solo le portefeuille
+// est rangé sous la clé 0 alors que les bâtiments ont owner = null : sans cette
+// conversion, taxes, paliers de population et efficacité ne comptaient RIEN en solo.
+const walletOwnerOf = k => { const n = +k; return n === 0 ? null : n; };
 // accesseurs rétro-compatibles (lecture/écriture du wallet courant)
 const getMoney   = ()    => myWallet().money;
 const spendMoney = (n,cat)=>{ const w=myWallet(); w.money-=n; w.fin[cat]=(w.fin[cat]||0)+n; };
@@ -539,6 +552,7 @@ function growMap(need){
   // génération : les closures valueNoise doivent échantillonner le repère absolu décalé.
   WORLD.noiseOx = (WORLD.noiseOx || 0) + dx;
   WORLD.noiseOy = (WORLD.noiseOy || 0) + dy;
+  if(starterSite) starterSite = { x: starterSite.x + dx, y: starterSite.y + dy };
   generateNewMapRegion(oldN, dx, dy);
 
   // Grille d'occupation des bâtiments
@@ -618,6 +632,7 @@ let groundVersion = 0;          // incrémenté à chaque mutation du sol (buffe
 // tunnel QUE des rails. Poser une route/un rail ne doit donc pas les recalculer.
 let terrainVersion = 0;         // terrain, eau/relief, mapMask (zones)
 let railVersion = 0;            // masques rail + tuiles de tunnel
+let railSignalVersion = 0;      // pose/retrait/état des signaux ferroviaires
 function markGroundDirty(){ groundVersion++; }
 function markTerrainDirty(){ terrainVersion++; groundVersion++; } // terrain → + sol
 function markRailDirty(){ railVersion++; groundVersion++; }       // rail → + sol
@@ -886,6 +901,132 @@ function applyBaseTerrain(noiseA, noiseB, noiseC, waterPct, inScope){
   if(!inScope) rebuildWaterLevels();
 }
 
+// Zone de départ garantie (façon Factorio) : choisit un site de plaine dégagé
+// près du centre et d'une rive (pêche = première filière), creuse un étang s'il
+// n'y a pas d'eau à portée, et ajoute fer, charbon et bosquet à moins de ~11
+// cases s'ils manquent (dans le rayon de travail d'un premier quartier). Blé et coton restent répartis sur la carte : les faire
+// venir de loin est le jeu de transport du milieu de partie.
+let starterSite = null; // site de départ choisi par genWorld (tuile {x,y})
+
+// Caméra sur un endroit utile après chargement / arrivée dans un monde : ses
+// propres bâtiments, sinon la ville la plus peuplée, sinon le site de départ,
+// sinon le centre de la zone jouable.
+function focusCameraOnWorld(){
+  const me = myOwner();
+  const pick = list => {
+    if(!list.length) return null;
+    let sx = 0, sy = 0;
+    for(const b of list){ sx += b.x + b.w / 2; sy += b.y + b.h / 2; }
+    sx /= list.length; sy /= list.length;
+    let best = list[0], bd = Infinity;
+    for(const b of list){ const d = Math.abs(b.x - sx) + Math.abs(b.y - sy); if(d < bd){ bd = d; best = b; } }
+    return { x: best.x + best.w / 2, y: best.y + best.h / 2 };
+  };
+  const alive = buildings.filter(b => !b.dead);
+  let at = pick(alive.filter(b => ownedBy(b, me) && (BUILD[b.type]?.resid || BUILD[b.type]?.ind)));
+  if(!at){
+    const homes = alive.filter(b => BUILD[b.type]?.resid);
+    const byTown = new Map();
+    for(const h of homes){ const k = h.townId ?? -1; byTown.set(k, (byTown.get(k) || 0) + (h.pop || 0)); }
+    let bestTown = null, bestPop = -1;
+    for(const [k, p] of byTown) if(p > bestPop){ bestPop = p; bestTown = k; }
+    at = pick(homes.filter(h => (h.townId ?? -1) === bestTown));
+  }
+  if(!at && starterSite) at = { x: starterSite.x + 0.5, y: starterSite.y + 0.5 };
+  if(!at) at = { x: (mapBounds.x0 + mapBounds.x1) / 2, y: (mapBounds.y0 + mapBounds.y1) / 2 };
+  cam.z = 1;
+  centerOn(at.x * TILE, at.y * TILE);
+}
+
+function ensureStarterArea(){
+  const { x0, y0, x1, y1 } = mapBounds;
+  const mcx = (x0 + x1) >> 1, mcy = (y0 + y1) >> 1;
+  const inPlay = (x, y, m) => x >= x0 + m && y >= y0 + m && x < x1 - m && y < y1 - m;
+  const plainGrass = (x, y) => terrain[y*N+x] === T.GRASS && terrainLevelAt(x, y) <= 2;
+  // distance (Chebyshev) de chaque case à la rive la plus proche
+  const dShore = new Int16Array(N*N).fill(-1);
+  const q = new Int32Array(N*N);
+  let qh = 0, qt = 0;
+  for(let y = y0; y < y1; y++) for(let x = x0; x < x1; x++){
+    const i = y*N+x;
+    if(terrain[i] === T.GRASS && tileTouchesWater(x, y)){ dShore[i] = 0; q[qt++] = i; }
+  }
+  while(qh < qt){
+    const c = q[qh++], cx = c % N, cy = (c / N) | 0;
+    for(const [dx, dy] of DIRS8){
+      const nx = cx + dx, ny = cy + dy;
+      if(nx < x0 || ny < y0 || nx >= x1 || ny >= y1) continue;
+      const ni = ny*N+nx;
+      if(dShore[ni] >= 0) continue;
+      dShore[ni] = dShore[c] + 1; q[qt++] = ni;
+    }
+  }
+  // site : herbe de plaine dégagée (7×7 à 70 %), idéalement à ~5 cases d'une rive
+  const R = Math.max(4, Math.min(28, ((x1 - x0) >> 1) - 10));
+  let best = null, bestScore = Infinity;
+  for(let y = mcy - R; y <= mcy + R; y++) for(let x = mcx - R; x <= mcx + R; x++){
+    if(!inPlay(x, y, 10) || !plainGrass(x, y)) continue;
+    let free = 0;
+    for(let dy = -3; dy <= 3; dy++) for(let dx = -3; dx <= 3; dx++) if(plainGrass(x+dx, y+dy)) free++;
+    if(free < 34) continue;
+    const ds = dShore[y*N+x] < 0 ? 40 : dShore[y*N+x];
+    const score = Math.abs(ds - 5) * 2 + Math.max(Math.abs(x - mcx), Math.abs(y - mcy)) * 0.5;
+    if(score < bestScore){ bestScore = score; best = { x, y, ds }; }
+  }
+  if(!best) return null;
+  const { x: sx, y: sy } = best;
+  // Aplanit la plaine autour du site (±1 niveau seulement : collines et
+  // montagnes restent intactes) pour que la rive proche soit constructible —
+  // une case n'est plate que si aucune voisine n'est plus haute.
+  const L = terrainLevelAt(sx, sy);
+  for(let dy = -8; dy <= 8; dy++) for(let dx = -8; dx <= 8; dx++){
+    const x = sx + dx, y = sy + dy;
+    if(!inPlay(x, y, 1) || dx*dx + dy*dy > 72) continue;
+    const i = y*N+x;
+    if(terrain[i] !== T.WATER && Math.abs(terrainHeightMap[i] - L) <= 1) terrainHeightMap[i] = L;
+  }
+  const ring = (dmin, dmax, fn) => {
+    for(let tries = 0; tries < 80; tries++){
+      const a = Math.random() * Math.PI * 2, d = dmin + Math.random() * (dmax - dmin);
+      const cx = Math.round(sx + Math.cos(a) * d), cy = Math.round(sy + Math.sin(a) * d);
+      if(inPlay(cx, cy, 4) && fn(cx, cy)) return true;
+    }
+    return false;
+  };
+  const disk = (cx, cy, r, fn) => {
+    for(let dy = -Math.ceil(r); dy <= Math.ceil(r); dy++) for(let dx = -Math.ceil(r); dx <= Math.ceil(r); dx++)
+      if(dx*dx + dy*dy <= r*r + 0.3) fn(cx + dx, cy + dy);
+  };
+  // étang si aucune rive à portée
+  if(best.ds > 10){
+    ring(5, 8, (cx, cy) => {
+      let ok = true;
+      disk(cx, cy, 2.3, (x, y) => { if(!plainGrass(x, y) || Math.max(Math.abs(x - sx), Math.abs(y - sy)) < 3) ok = false; });
+      if(!ok) return false;
+      disk(cx, cy, 2.3, (x, y) => { terrain[y*N+x] = T.WATER; terrainHeightMap[y*N+x] = 0; });
+      return true;
+    });
+  }
+  rebuildWaterLevels();
+  const nearest = (type, maxD) => {
+    for(let y = sy - maxD; y <= sy + maxD; y++) for(let x = sx - maxD; x <= sx + maxD; x++)
+      if(inMap(x, y) && mapMask[y*N+x] && terrain[y*N+x] === type) return true;
+    return false;
+  };
+  const patch = (type, dmin, dmax, r, fill) => ring(dmin, dmax, (cx, cy) => {
+    if(!plainGrass(cx, cy)) return false;
+    disk(cx, cy, r, (x, y) => {
+      if(terrain[y*N+x] === T.GRASS && !tileTouchesWater(x, y) && Math.random() < fill) terrain[y*N+x] = type;
+    });
+    terrain[cy*N+cx] = type;
+    return true;
+  });
+  if(!nearest(T.IRON, 11)) patch(T.IRON, 6, 10, 1.5, 0.85);
+  if(!nearest(T.COAL, 11)) patch(T.COAL, 6, 10, 1.5, 0.85);
+  if(!nearest(T.TREE, 8)) patch(T.TREE, 4, 7, 2, 0.6);
+  return { x: sx, y: sy };
+}
+
 function genWorld(config){
   WORLD = normalizeWorldConfig(config || WORLD);
   const N_PLAY = WORLD.size;
@@ -907,6 +1048,7 @@ function genWorld(config){
   towns = []; nextTownId = 0; selectedTownId = null; townLabelHits = []; trainDepotFlagHits = [];
   WALLETS = {}; gtime = 0;
   gameEvents = []; nextGameEventId = 1;
+  newsFlags = Object.create(null); newsLog = []; nextNewsId = 1; newsSeenId = 0;
   selected = null; dispatchTimer = 0; taxTimer = 0; mergeTimer = 0; upkeepTimer = 0; busStopTimer = 0; passengerCycleTimer = 0;
   mapBounds = { x0: EXP_MARGIN, y0: EXP_MARGIN, x1: EXP_MARGIN + N_PLAY, y1: EXP_MARGIN + N_PLAY };
   expansions = []; expansionLevels = { left:0, right:0, top:0, bottom:0 };
@@ -976,16 +1118,21 @@ function genWorld(config){
   };
   [T.TREE, T.WHEAT, T.COTTON, T.IRON, T.COAL].forEach(ensureResourceZoneInPlayArea);
   applyShoreResources(tn, (x, y) => !!mapMask[y*N+x]);
+  // zone de départ jouable : rive, fer, charbon et bois à portée (façon Factorio)
+  const start = ensureStarterArea();
+  starterSite = start;
   markTerrainDirty();
 
-  // caméra : centrée sur une zone d'herbe proche du milieu de la zone jouable
+  // caméra : centrée sur le site de départ (à défaut, herbe proche du milieu)
   const mcx = (mapBounds.x0+mapBounds.x1)>>1, mcy = (mapBounds.y0+mapBounds.y1)>>1;
-  let sx = mcx, sy = mcy;
-  outer:
-  for(let r=0;r<N_PLAY>>1;r++)
-    for(let y=mcy-r;y<=mcy+r;y++)
-      for(let x=mcx-r;x<=mcx+r;x++)
-        if(inMap(x,y) && terrain[y*N+x]===T.GRASS){ sx=x; sy=y; break outer; }
+  let sx = start ? start.x : mcx, sy = start ? start.y : mcy;
+  if(!start){
+    outer:
+    for(let r=0;r<N_PLAY>>1;r++)
+      for(let y=mcy-r;y<=mcy+r;y++)
+        for(let x=mcx-r;x<=mcx+r;x++)
+          if(inMap(x,y) && terrain[y*N+x]===T.GRASS){ sx=x; sy=y; break outer; }
+  }
   cam.z = 1;
   centerOn(sx*TILE+TILE/2, sy*TILE+TILE/2);
   if(MP.connected && MP.myId != null) ensureHomelessForOwner(MP.myId);
@@ -1007,7 +1154,11 @@ const workersAllocatedOf = b => {
   if(b.paused) return 0;
   return Math.min(workersRequiredOf(b), b.workersAssigned||0);
 };
-const workRadiusOf = b => BUILD[b.type].resid ? Math.max(b.w||1, b.h||1) * 3 : 0;
+// Rayon de recrutement des ouvriers d'un logement : base + taille × facteur
+// (config habitants.rayonTravail). Maison 1×1 → 6 cases, gratte-ciel 4×4 → 12.
+const WORK_RADIUS_BASE   = CFG.habitants?.rayonTravail?.base     ?? 4;
+const WORK_RADIUS_FACTOR = CFG.habitants?.rayonTravail?.parTaille ?? 2;
+const workRadiusOf = b => BUILD[b.type].resid ? WORK_RADIUS_BASE + Math.max(b.w||1, b.h||1) * WORK_RADIUS_FACTOR : 0;
 const centerOfBuilding = b => ({ x:b.x + (b.w||1)/2 - 0.5, y:b.y + (b.h||1)/2 - 0.5 });
 const buildingDistance = (a,b)=>{
   const ca = centerOfBuilding(a), cb = centerOfBuilding(b);
@@ -1230,10 +1381,27 @@ function refreshExpansionSlots(){
   }
 }
 
-function buyExpansion(exp){
+// Achat depuis l'interface : appliqué localement puis diffusé (l'hôte rejoue
+// l'achat pour le joueur expéditeur, cf. applyAction 'buy_expansion').
+function buyExpansionAction(exp){
   if(!exp) return;
   if(myWallet().money < exp.cost){ toast('Fonds insuffisants ('+exp.cost.toLocaleString()+' $ requis).','err'); return; }
-  spendMoney(exp.cost, 'expansion');
+  if(typeof mpInRoom === 'function' && mpInRoom()){
+    if(!MP.username){ toast('👤 Connecte-toi avec un compte joueur pour acheter du terrain','err'); return; }
+    netSend({ type:'buy_expansion', side:exp.side, pieceIndex:exp.pieceIndex });
+  }
+  buyExpansion(exp);
+}
+
+function buyExpansion(exp, payer = null, remote = false){
+  if(!exp) return false;
+  const wallet = payer || myWallet();
+  if(wallet.money < exp.cost){
+    if(!remote) toast('Fonds insuffisants ('+exp.cost.toLocaleString()+' $ requis).','err');
+    return false;
+  }
+  wallet.money -= exp.cost;
+  wallet.fin.expansion = (wallet.fin.expansion || 0) + exp.cost;
 
   // Remplir les tuiles de cette pièce dans le masque
   const s = exp.strip || exp;
@@ -1274,13 +1442,14 @@ function buyExpansion(exp){
 
   refreshExpansionSlots();
   markTerrainDirty(); // mapMask/zones modifiés → cache sol + décor (arbres révélés)
-  selectedExpansion = null;
+  if(selectedExpansion && (selectedExpansion === exp || !expansions.includes(selectedExpansion))) selectedExpansion = null;
   hudTimer = 0;
   const dirLabel = {right:'droite',left:'gauche',bottom:'bas',top:'haut',
     'top-left':'haut-gauche','top-right':'haut-droite',
     'bottom-left':'bas-gauche','bottom-right':'bas-droite'}[exp.side];
-  toast('🧩 Pièce achetée vers '+dirLabel+'.','win');
+  if(!remote) toast('🧩 Pièce achetée vers '+dirLabel+'.','win');
   addFloat(exp.cx, exp.cy, '🧩', '#60d8a0');
+  return true;
 }
 
 function townOwnedBy(t, oid=myOwner()){
@@ -1328,22 +1497,44 @@ function townHousingCap(townId){
   return townHomes(townId).reduce((s,b)=>s+BUILD[b.type].resid.popCap, 0);
 }
 
+// Emplois à portée des logements d'un village. Appelé par le HUD plusieurs fois
+// par seconde : grille spatiale des postes + cache court (même pas de temps).
+let _townJobsCache = { key:'', map:new Map() };
 function townReachableJobBuildings(townId){
+  const key = buildings.length + ':' + Math.floor(gtime * 2) + ':' + _workerAllocSig;
+  if(_townJobsCache.key !== key) _townJobsCache = { key, map:new Map() };
+  const cached = _townJobsCache.map.get(townId);
+  if(cached) return cached;
   const homes = townHomes(townId);
+  const CELL = 16, grid = new Map();
+  for(const job of buildings){
+    if(job.dead || job.paused || workersRequiredOf(job) <= 0) continue;
+    const c = centerOfBuilding(job);
+    const k = Math.floor(c.x / CELL) * 65536 + Math.floor(c.y / CELL);
+    let cell = grid.get(k);
+    if(!cell){ cell = []; grid.set(k, cell); }
+    cell.push(job);
+  }
   const seen = new Set();
   const out = [];
   for(const home of homes){
     const radius = workRadiusOf(home);
-    for(const job of buildings){
-      if(job.dead || job.paused || !ownedBy(job, home.owner)) continue;
-      const req = workersRequiredOf(job);
-      if(req <= 0 || seen.has(job)) continue;
-      if(buildingDistance(home, job) <= radius){
-        seen.add(job);
-        out.push(job);
+    const hc = centerOfBuilding(home);
+    const gx0 = Math.floor((hc.x - radius) / CELL), gx1 = Math.floor((hc.x + radius) / CELL);
+    const gy0 = Math.floor((hc.y - radius) / CELL), gy1 = Math.floor((hc.y + radius) / CELL);
+    for(let gx = gx0; gx <= gx1; gx++) for(let gy = gy0; gy <= gy1; gy++){
+      const cell = grid.get(gx * 65536 + gy);
+      if(!cell) continue;
+      for(const job of cell){
+        if(seen.has(job) || !ownedBy(job, home.owner)) continue;
+        if(buildingDistance(home, job) <= radius){
+          seen.add(job);
+          out.push(job);
+        }
       }
     }
   }
+  _townJobsCache.map.set(townId, out);
   return out;
 }
 
@@ -1358,9 +1549,24 @@ function townAllocatedWorkers(townId){
 function refreshTransitPassengerCaps(){
   const busStops = buildings.filter(b => !b.dead && b.type === 'bus_stop');
   const trainStations = buildings.filter(b => !b.dead && b.type === 'train_station');
+  // Un arrêt/une gare posé(e) AVANT le village n'avait jamais de townId, donc ne
+  // recevait jamais de voyageurs. On le rattache au village le plus proche dès
+  // qu'il en existe un à portée.
+  for(const b of busStops.concat(trainStations)){
+    if(b.townId != null && towns.some(t => t.id === b.townId)) continue;
+    const t = getTownOf({ x:b.x, y:b.y, w:b.w, h:b.h, townId:null });
+    b.townId = t ? t.id : null;
+  }
 
+  const terminals = buildings.filter(b => !b.dead && (b.type === 'boat_depot' || b.type === 'plane_depot'));
+  for(const t of terminals){
+    if(t.townId != null && towns.some(tw => tw.id === t.townId)) continue;
+    const tw = getTownOf({ x:t.x, y:t.y, w:t.w, h:t.h, townId:null });
+    t.townId = tw ? tw.id : null;
+  }
   for(const stop of busStops) stop.passengersMax = 0;
   for(const station of trainStations) station.passengersEntrantMax = 0;
+  for(const t of terminals) t.passengersEntrantMax = 0;
 
   const homesByTown = new Map();
   for(const home of buildings){
@@ -1421,6 +1627,12 @@ function refreshTransitPassengerCaps(){
         if(buildingDistance(home, station) > TRAIN_STATION_RADIUS) continue;
         addEntry('train:' + station.stationGroupId + ':' + station.x + ',' + station.y, station).weight += idle;
       }
+      for(const t of terminals){
+        if(t.townId !== townId) continue;
+        const radius = t.type === 'boat_depot' ? PORT_RADIUS : AIRPORT_RADIUS;
+        if(buildingDistance(home, t) > radius) continue;
+        addEntry('term:' + t.x + ',' + t.y, t).weight += idle;
+      }
     }
 
     if(idleTotal <= 0 || !entries.length) continue;
@@ -1430,29 +1642,110 @@ function refreshTransitPassengerCaps(){
 
     for(const entry of entries){
       if(entry.building.type === 'bus_stop') entry.building.passengersMax = entry.building._tmpTransitCap || 0;
-      else if(entry.building.type === 'train_station') entry.building.passengersEntrantMax = entry.building._tmpTransitCap || 0;
+      else entry.building.passengersEntrantMax = entry.building._tmpTransitCap || 0;
       delete entry.building._tmpTransitCap;
     }
   }
 }
 
+// Allocation des ouvriers : coûteuse (chaque poste cherche les logements à
+// portée). Recalculée seulement quand la structure change (bâtiments, population,
+// pauses) ou au plus tard toutes les WORKER_ALLOC_PERIOD secondes de jeu.
+const WORKER_ALLOC_PERIOD = 0.5;
+let _workerAllocSig = '', _workerAllocAt = -Infinity;
+function refreshWorkerAllocationIfNeeded(){
+  let pop = 0, paused = 0;
+  for(const b of buildings){ pop += b.pop || 0; if(b.paused) paused++; }
+  const sig = buildings.length + ':' + pop + ':' + paused + ':' + Object.keys(WALLETS).length;
+  const age = gtime - _workerAllocAt;
+  // Une population qui bouge sans cesse (grande ville) changeait la signature à
+  // chaque tick : on espace alors les recalculs d'au moins 0,3 s de jeu.
+  if(age >= 0 && age < WORKER_ALLOC_PERIOD && (sig === _workerAllocSig || age < 0.3)) return;
+  refreshWorkerAllocation();
+}
+
+const WORKER_GRID_CELL = 16;
+// Ressources « vitales » : celles qu'exigent les logements (filets, pain,
+// vêtements) et, par fermeture sur les recettes, leurs intrants (poisson, farine,
+// blé, eau, charbon, coton). Les postes qui les produisent sont servis en
+// ouvriers AVANT les autres : bâtir une fonderie ne doit pas vider les cabanes de
+// pêcheurs et affamer la ville (spirale de déclin).
+let _essentialRes = null;
+function essentialResources(){
+  if(_essentialRes) return _essentialRes;
+  const set = new Set();
+  for(const t in BUILD) for(const r of BUILD[t].resid?.required || []) set.add(r);
+  for(let changed = true; changed;){
+    changed = false;
+    for(const t in BUILD){
+      const rc = BUILD[t].recipe;
+      if(!rc || !Object.keys(rc.out || {}).some(k => set.has(k))) continue;
+      for(const k in rc.in || {}) if(!set.has(k)){ set.add(k); changed = true; }
+    }
+  }
+  return (_essentialRes = set);
+}
+function isEssentialJob(b){
+  const out = recipeOf(b)?.out;
+  if(!out) return false;
+  const ess = essentialResources();
+  for(const k in out) if(ess.has(k)) return true;
+  return false;
+}
 function refreshWorkerAllocation(){
-  for(const b of buildings){ b.workersAssigned = 0; b.workersByTown = {}; b.workersIdle = 0; }
-  const jobs = buildings
-    .filter(b=>!b.dead && !b.paused && workersRequiredOf(b)>0)
-    .sort((a,b)=> workersRequiredOf(b) - workersRequiredOf(a)); // les plus grands postes en premier
+  {
+    let pop = 0, paused = 0;
+    for(const b of buildings){ pop += b.pop || 0; if(b.paused) paused++; }
+    _workerAllocSig = buildings.length + ':' + pop + ':' + paused + ':' + Object.keys(WALLETS).length;
+    _workerAllocAt = gtime;
+  }
+  for(const b of buildings){ b.workersAssigned = 0; b.workersByTown = {}; b.workersIdle = 0; b.workersByBusStop = 0; }
+  const jobs = buildings.filter(b=>!b.dead && !b.paused && workersRequiredOf(b)>0);
+  for(const b of jobs) b._wEss = isEssentialJob(b) ? 1 : 0;
+  // filières vitales d'abord, puis les plus grands postes (un transformateur
+  // pourvu avant ses fournisseurs : la chaîne démarre même avec peu d'habitants)
+  jobs.sort((a,b)=> (b._wEss - a._wEss) || (workersRequiredOf(b) - workersRequiredOf(a)));
   const homes = buildings
     .filter(b=>!b.dead && BUILD[b.type].resid && b.pop>0);
   // disponibilité par maison
   const avail = new Map(homes.map(h => [h, h.pop]));
+  // Grille spatiale des logements (par centre) : un poste n'examine que les
+  // cellules à portée du plus grand rayon de travail, au lieu de toute la carte.
+  // Centres et rayons précalculés (pas d'allocation dans les boucles chaudes).
+  const grid = new Map();
+  let maxRadius = 0;
+  for(const h of homes){
+    h._wcx = h.x + (h.w||1)/2 - 0.5; h._wcy = h.y + (h.h||1)/2 - 0.5;
+    h._wr = workRadiusOf(h);
+    const key = Math.floor(h._wcx / WORKER_GRID_CELL) * 65536 + Math.floor(h._wcy / WORKER_GRID_CELL);
+    let cell = grid.get(key);
+    if(!cell){ cell = []; grid.set(key, cell); }
+    cell.push(h);
+    if(h._wr > maxRadius) maxRadius = h._wr;
+  }
+  const candidates = [];
+  const homesNear = job => {
+    const jx = job.x + (job.w||1)/2 - 0.5, jy = job.y + (job.h||1)/2 - 0.5;
+    candidates.length = 0;
+    const cx0 = Math.floor((jx - maxRadius) / WORKER_GRID_CELL), cx1 = Math.floor((jx + maxRadius) / WORKER_GRID_CELL);
+    const cy0 = Math.floor((jy - maxRadius) / WORKER_GRID_CELL), cy1 = Math.floor((jy + maxRadius) / WORKER_GRID_CELL);
+    for(let gx = cx0; gx <= cx1; gx++) for(let gy = cy0; gy <= cy1; gy++){
+      const cell = grid.get(gx * 65536 + gy);
+      if(!cell) continue;
+      for(const h of cell){
+        if(!(avail.get(h) > 0)) continue;
+        if(h.owner != null && job.owner != null && h.owner !== job.owner) continue;
+        const d = Math.max(Math.abs(h._wcx - jx), Math.abs(h._wcy - jy));
+        if(d <= h._wr){ h._wd = d; candidates.push(h); } // pas d'objet par candidat
+      }
+    }
+    candidates.sort((a,b)=> (a._wd - b._wd) || (a.y - b.y) || (a.x - b.x));
+    return candidates;
+  };
   // approche centrée sur le poste : chaque poste recrute depuis les maisons les plus proches
   // null owner = bâtiment solo/non assigné, peut travailler avec n'importe quel propriétaire
   for(const job of jobs){
-    const nearbyHomes = homes
-      .filter(h => (h.owner == null || job.owner == null || h.owner === job.owner)
-                && avail.get(h) > 0
-                && buildingDistance(h, job) <= workRadiusOf(h))
-      .sort((a,b)=> buildingDistance(a, job) - buildingDistance(b, job));
+    const nearbyHomes = homesNear(job);
     for(const home of nearbyHomes){
       const need = workersRequiredOf(job) - workersAllocatedOf(job);
       if(need <= 0) break;
@@ -1486,9 +1779,13 @@ function refreshWorkerAllocation(){
   }
 
   for(const k in WALLETS){
-    const oid = +k;
-    const req = jobsTotal(oid);
-    const assigned = buildings.filter(b=>ownedBy(b,oid)).reduce((s,b)=>s+workersAllocatedOf(b),0);
+    const oid = walletOwnerOf(k);
+    let req = 0, assigned = 0;
+    for(const b of buildings){
+      if(b.dead || !ownedBy(b, oid)) continue;
+      if(!b.paused) req += workersRequiredOf(b);
+      assigned += workersAllocatedOf(b);
+    }
     WALLETS[k].eff = req > 0 ? Math.min(1, assigned / req) : 1;
   }
 }

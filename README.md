@@ -9,11 +9,13 @@ qui mélange trois genres :
   assemblage, stocks, recettes ;
 - 🏙️ **city-builder** à la *SimCity* : logements, population, ouvriers,
   villages, taxes, expansion territoriale ;
-- 🚚 **transport tycoon** : camions, bus, trains sur routes et réseaux
-  ferrés avec signaux et cantons.
+- 🚚 **transport tycoon** : camions, bus, trains (signaux, cantons), bateaux
+  et avions.
 
-Le tout en **rendu isométrique 2.5D rotatif** sur Canvas 2D, sans dépendance
-cliente (JS vanilla), avec un serveur Node.js léger pour le multijoueur.
+Le tout en **rendu isométrique 2.5D rotatif** (PixiJS/WebGL, textures cuites
+depuis un dessin Canvas 2D procédural), JS vanilla sans build, avec un serveur
+Node.js léger pour le multijoueur. Le jeu se joue **en solo** (sauvegardes
+locales) ou **en multijoueur** (mondes partagés sur le serveur).
 
 ---
 
@@ -28,14 +30,21 @@ l'expansion de son territoire.
 ### Chaîne de production simplifiée
 
 ```
-⛏️ Mine (fer)      + ⛏️ Mine (charbon)  → 🔥 Fonderie → acier
-🌾 Ferme (blé)     + 💧 Pompe (eau)     → ⚙️ Moulin → farine → 🥖 Boulangerie → pain
-☁️ Champ (coton)                       → 🧵 Tissage → vêtements
 🎣 Cabane pêcheur                      → 🐟 Poissonnerie → filet + huile
-🪓 Bûcheron (bois)
-acier + bois → 🏭 Usine → outils de construction
-outils + vêtements + pain + filets → 🏠 Logements → 👥 habitants + 💰 argent + 🛠️ ouvriers
+⛏️ Mine (fer)      + ⛏️ Mine (charbon)  → 🔥 Fonderie → acier
+🪓 Bûcheron (bois) + acier             → 🏭 Usine → outils de construction
+🌾 Ferme (blé) → ⚙️ Moulin → farine + 💧 eau + charbon → 🥖 Boulangerie → pain
+☁️ Champ (coton)                       → 🧵 Tissage → vêtements
+filets (+ huile en bonus) → 🏠 Maisons → 👥 habitants + 💰 argent + 🛠️ ouvriers
+outils (quota) → fusion en niveau supérieur ; pain puis vêtements pour les grands immeubles
 ```
+
+La partie est guidée par une suite d'**objectifs** (première maison → filière
+poisson → acier → outils → fusions → camions → trains → ports/aéroports) qui
+rapportent des primes. **La Gazette** met à la une les grands moments de la
+partie (premier train en gare, premier navire, premier vol, villes de 250 à
+10 000 habitants, premier immeuble / tour / gratte-ciel), avec un bouton pour
+s'y rendre.
 
 ---
 
@@ -44,10 +53,10 @@ outils + vêtements + pain + filets → 🏠 Logements → 👥 habitants + 💰
 | Couche | Techno | Détail |
 |---|---|---|
 | Client | HTML + CSS + JS vanilla | `index.html`, `config.js`, `js/*.js` (scripts classiques, globals partagés) |
-| Rendu | Canvas 2D | isométrique 2.5D rotatif, painter's algorithm, sprites / prismes |
+| Rendu | PixiJS v8 (WebGL) + Canvas 2D | sprites triés en profondeur sur Pixi ; bâtiments, véhicules, arbres dessinés en Canvas 2D procédural puis cuits en textures ; sol rendu dans un scroll-buffer ; overlays dynamiques sur `#cv` |
 | Serveur | Node.js | `server.js`, HTTP statique + WebSocket via `ws` |
-| Dépendances | `ws` (côté serveur uniquement) | aucune dépendance cliente, aucun build step |
-| Données | JSON sur disque | `data/users.json`, `data/saves/<user>_<nom>.json` |
+| Dépendances | `ws` (serveur) ; Pixi embarqué (`js/pixi/vendor`) | aucun build step ; Playwright optionnel pour les tests |
+| Données | JSON sur disque | `data/users.json`, `data/saves/<room>_<nom>.json` |
 
 ### Lancement
 
@@ -57,8 +66,24 @@ npm start                 # ou : node server.js
 # WebSocket         → ws://localhost:8765
 ```
 
-Le serveur sert aussi les fichiers statiques ; on peut jouer en ouvrant
-`index.html` directement (mode solo, sans multi ni sauvegardes serveur).
+Le serveur sert aussi les fichiers statiques. **Solo** : cliquer « Commencer »
+et construire ; le bouton 💾 (Partie) crée une nouvelle carte, sauvegarde/charge
+localement (navigateur, grilles compressées) et exporte/importe un fichier JSON.
+**Multijoueur** : bouton 🌐 → connexion, compte, choix d'un monde.
+
+### Tests automatisés
+
+```bash
+npm i -D playwright && npx playwright install chromium   # une fois
+npm test                  # serveur isolé (données temporaires) + Chromium headless
+npm test -- trains        # filtre par nom de scénario
+```
+
+Scénarios dans `tools/tests/solo/` (trains : terminus, boucle, quais, évitement,
+ordres en route ; fret/voyageurs ; bateaux/avions ; zone de départ des cartes
+générées ; économie de début de partie et filière acier → outils → première fusion ;
+interface ; sauvegarde ; performance) et `tools/tests/mp/` (synchronisation
+hôte/invité, migration d'hôte, sauvegarde/chargement serveur).
 
 ---
 
@@ -77,12 +102,16 @@ global — **l'ordre numérique des prefixes doit rester stable**.
 | `03_buildings_population.js` | Création de bâtiments, stock, capacité, population/logement, spécialisation des usines, démollition |
 | `04_construction.js` | Validation `canPlace`, placement `clickAt`, routes, masques rails 8-dir, signaux et cantons, gares/quais fusionnables, zone multi `MP_ZONE=20` |
 | `05_logistics.js` | Camions auto (dispatch BFS), véhicules persistants, bus, trains + wagons, pathfinding ferroviaire, signaux, réservation de quais, feux de carrefour |
-| `05_depots/*.js` | Enregistrement des dépôts (garage, train_depot, boat_depot, plane_depot) dans la toolbar |
+| `05_depots/*.js` | Enregistrement des dépôts (garage, dépôt de train, port, aéroport) dans la toolbar |
 | `06_simulation.js` | Boucle `update(dt)` : production, consommation logements, taxes, entretien, fusions, walkers, pénurie, milestones, transit passagers |
-| `07_rendering.js` | `draw()` principal : terrain iso, bâtiments (sprites + prismes), routes, rails, véhicules, walkers, overlays, packs graphiques, badges |
-| `08_ui_input_loop.js` | HUD, panneaux (info/finance/train/town/help), barre d'outils, souris/clavier, aperçus route/rail, boucle `requestAnimationFrame(frame)` |
+| `07_rendering.js` | `draw()` principal : terrain iso (prairies nuancées, pentes éclairées, eau profonde), routes, rails, signaux, overlays, cœurs des véhicules (loco, wagons, camions, bus, bateaux, avions), fumée |
+| `07_rendering_art.js` | Art procédural des bâtiments (maisons à toit en pente, immeubles, tours, usines, moulin, mine, port, aéroport, gares…) cuit en textures |
+| `08_ui_input_loop.js` | HUD, panneaux (info/finance/train/town/help), barre d'outils, souris/clavier, aperçus route/rail, boucle `requestAnimationFrame(frame)` (qui pilote aussi la simulation) |
+| `08_minimap.js` | Mini-carte isométrique (vue d'ensemble, cadre caméra, clic pour s'y rendre) |
+| `08_objectives.js` | Panneau des objectifs (progression guidée, primes) |
+| `pixi/scene.js`, `pixi/sprites.js` | Scène PixiJS : terrain (texture du scroll-buffer), sprites triés (bâtiments, arbres, véhicules), overlays, culling |
 | `09_multiplayer.js` | WebSocket client, `serializeState`/`applySnapshot`, `applyAction`, rooms, auth token, owner remapping, override de `clickFn`/`drawFn`, panneau multijoueur |
-| `10_saves_chat_console.js` | Auto-saves locales + serveur, chat, commandes console (`regenExpansions`, `spawnFieldsOnMap`) |
+| `10_saves_chat_console.js` | Panneau Partie (solo), sauvegardes locales compressées (RLE) + auto-saves serveur, chat, commandes console, bootstrap |
 | `i18n.js` + `i18n/{fr,en,es}.js` | Système de traduction (`t()`, `setLanguage()`, attributs `data-i18n`) |
 
 ### Serveur (`server.js`)
@@ -138,12 +167,13 @@ paramètres des logements, etc.
 ### Logements (fusionnables par paliers)
 `house` (1×1) → `duplex` (2×1) → `row` (3×1) → `residence` (4×1) →
 `tower` (2×2) → `bigtower` (3×2) → `tower3` (3×3) → `sky` gratte-ciel (4×4,
-150 habitants).
+180 habitants).
 
 ### Logistique
 - `road`, `rail`, `rail_signal`, `train_station`, `train_platform`
 - `garage` (camions + bus), `train_depot`, `bus_stop`
-- `boat_depot`, `plane_depot` (placeholders non implémentés)
+- `boat_depot` (**port**, au bord de l'eau : cargos + ferries), `plane_depot`
+  (**aéroport** : avions de ligne)
 - `depot` (entrepôt, fusionnable), `market` (vente inter-joueurs),
   `tank` (citerne d'eau)
 - `terrassement` (produit la terre utilisée pour remblayer l'eau)
@@ -161,19 +191,30 @@ paramètres des logements, etc.
 | **Camions** (achetés) | `minerai`, `plateau`, `céréale`, `marchandises`, `frigo`, `citerne` | via `garage` |
 | **Bus** | Transport de passagers entre arrêts / gares | via `garage` |
 | **Trains** | Fret + passagers, wagons configurables, circuits | via `train_depot` |
+| **Bateaux** | Cargo (fret via un entrepôt collé au port) et ferry (voyageurs), navigation par l'eau entre ports | via le port |
+| **Avions** | Voyageurs, vol direct entre aéroports (altitude + ombre) | via l'aéroport |
 
-Trains = système le plus complexe : **signaux**, **cantons** (block
-occupancy reconstruit à chaque frame), **réservation de quais**, **trail
-des wagons**, replanification aux bifurcations, départ armé depuis dépôt.
+Trains = système le plus complexe : **signaux** (bloc et jonction, rouge
+forcé), **cantons** (empreinte loco + wagons, index incrémental), **réservation
+de quais**, **trail des wagons**, replanification aux bifurcations, départ armé
+depuis le dépôt (un seul train à la fois dans le canton de sortie),
+**retournement façon TTD** au terminus, **ordres modifiables en circulation**
+(la composition se change au dépôt), revenu de fret payé une seule fois par
+marchandise (pas de rente en navette).
 
 ---
 
 ## Population, logements et ouvriers
 
-- Chaque logement consomme des ressources (outils, vêtements, pain…)
-  → argent + arrivée d'habitants (marchent depuis le bord de carte).
-- Les **ouvriers** sont alloués aux usines par proximité (`workRadiusOf`).
-  Une usine sous-effectuée tourne au ralenti.
+- Chaque logement consomme ses ressources indispensables (filets de poisson,
+  puis pain, vêtements selon le niveau) → argent + arrivée d'habitants
+  (marchent depuis le bord de carte) ; l'huile de poisson est un bonus.
+- Les **ouvriers** sont alloués aux usines par proximité (`workRadiusOf` :
+  6 cases pour une maison, jusqu'à 12 pour un gratte-ciel ; au-delà, bus),
+  les filières vitales (poisson, pain, vêtements) étant servies en premier.
+  Une usine sous-effectuée tourne au ralenti ; sans aucun ouvrier elle affiche
+  un badge 👷 0/n. Un sous-produit sans débouché ne
+  bloque plus la production principale.
 - Les logements **pleins et approvisionnés** couvrant un rectangle
   fusionnent en niveau supérieur.
 - En cas de pénurie prolongée (`STARVE_DELAY`) : un bâtiment fusionné se
@@ -200,8 +241,9 @@ Chaque joueur possède un **wallet** :
 - **Entretien** industriel périodique (réduit si en pause).
 - **Entretien véhicules** quotidien, croissant de +3 % par mois.
 - **Revenus logements** à chaque consommation + bonus si ressources bonus.
-- **Revenus bus/train** au prorata des passagers × distance, avec partage
-  inter-joueurs configurable.
+- **Revenus bus/train/bateau/avion** au prorata des passagers × distance ;
+  fret payé au prix commercial × distance × tarif.
+- **Primes d'objectifs** (catégorie « primes » du panneau finances).
 - **Starter homes** : 2 premières maisons protégées par joueur pour
   éviter le blocage démarrage.
 
@@ -210,7 +252,14 @@ Chaque joueur possède un **wallet** :
 ## Multijoueur
 
 - Le serveur n'est **pas autoritaire** sur la simulation : il relaie les
-  actions et synchronise via snapshots.
+  actions et synchronise via snapshots ; l'hôte simule et diffuse un flux
+  « monde » (1 Hz) et un flux « mouvement » (5 Hz) interpolé côté invité.
+- Les tracés (rails, routes au glisser) partent en **une seule action groupée**
+  (`rail_batch`, `road_batch`) ; le serveur limite le débit par seau de jetons.
+- Chaque synchro porte une **signature du monde** (routes, rails, signaux,
+  terrain, zones) : un invité qui diverge demande automatiquement un snapshot
+  complet (`resync_request`).
+- Si l'hôte quitte, un autre joueur identifié est promu et reprend la simulation.
 - L'**hôte** répond aux `snapshot_request`, détient la vérité pour les
   nouveaux invités, contrôle pause/vitesse.
 - Les **admins** peuvent sauvegarder/charger.
@@ -227,8 +276,10 @@ Voir `SESSION_CONTEXT.md` pour le détail du protocole WebSocket.
 
 ## Sauvegardes
 
-- **Locales** (autosaves, rotation 5 slots en `localStorage`).
-- **Serveur** (`data/saves/<user>_<nom>.json`) — par utilisateur,
+- **Locales** (solo) : panneau 💾 Partie — sauvegardes nommées et autosaves
+  (rotation 5 slots) en `localStorage`, grilles compressées par plages (RLE,
+  ~×13) ; export/import d'un fichier JSON.
+- **Serveur** (`data/saves/<room>_<nom>.json`) — par monde (room),
   chargement/diffusion à toute la room.
 - Autosaves serveur pattern `[Auto] <room> <slot>`.
 - Format : `{ meta:{username,name,date}, state: serializeState() }`.
@@ -265,10 +316,8 @@ médiéval.
 
 - Serveur non autoritaire : validation métier côté serveur partielle
   (sanitization des paramètres mais pas de logique métier complète).
-- Les snapshots ne sérialisent **pas** camions, walkers et floats —
-  remis à zéro au chargement/synchronisation.
-- Les bateaux et avions sont des **placeholders** (dépôts achetables
-  mais aucun déplacement implémenté).
+- Les sauvegardes ne conservent pas les camions automatiques ni les piétons
+  (éphémères) ; le multijoueur les transmet en direct.
 - `node_modules/` est présent localement et non suivi par git.
 - Projet volontairement **vanilla, sans build step** — éviter les
   refactors globaux qui casseraient le partage de globals entre scripts.

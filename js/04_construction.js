@@ -14,6 +14,9 @@ const MP = {
 };
 
 const mpHasAdminRights = () => MP.connected && (MP.role === 'host' || MP.isAdmin);
+// Vrai uniquement quand on joue dans un monde multijoueur (room rejointe). Connecté
+// au lobby sans room, ou hors ligne, le jeu est local (solo).
+const mpInRoom = () => MP.connected && MP.roomId != null && MP.role != null;
 const controlledBy = (owner, actorId = (MP.connected ? MP.myId : null)) =>
   owner == null || actorId == null || owner === actorId;
 const canUseBuilding = (b, actorId = (MP.connected ? MP.myId : null)) =>
@@ -176,6 +179,7 @@ function setRailSignal(x, y, bit, present, forcedRed = false, kind = 'block'){
   const key = railSignalKey(x, y, bit);
   if(present) railSignals[key] = { x, y, bit, forcedRed:!!forcedRed, kind:kind || 'block' };
   else delete railSignals[key];
+  railSignalVersion++;
   rebuildRailBlocks();
 }
 
@@ -606,13 +610,13 @@ function tunnelMaskUpdates(path){
   return updates;
 }
 
-function canPlace(t,x,y){
+function canPlace(t,x,y, actorId = MP.myId){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
   if(t==='terraform') return { ok: !!(road[i] || rail[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL || ter===T.SAND || ter===T.CLAY) };
   if(t==='fill_water'){
     if(ter !== T.WATER) return { ok:false, msg:'L\'outil Remblai ne s\'applique que sur l\'eau' };
-    if(!terrassementNear(x, y, MP.myId ?? 1)) return { ok:false, msg:'Aucune usine de terrassement à portée avec assez de terre ('+FILL_WATER_COST+' terres requises)' };
+    if(!terrassementNear(x, y, actorId ?? null)) return { ok:false, msg:'Aucune usine de terrassement à portée avec assez de terre ('+FILL_WATER_COST+' terres requises)' };
     return { ok:true };
   }
   if(t==='terraform_dig' || t==='terraform_raise'){
@@ -675,6 +679,7 @@ function canPlace(t,x,y){
       if(capErr) return { ok:false, msg:capErr };
     }
     if(t==='pump' && !waterNear(x,y,1)) return { ok:false, msg:"La pompe doit être au bord de l'eau" };
+    if(t==='boat_depot' && !waterNear(x,y,1)) return { ok:false, msg:"Le port doit être construit au bord de l'eau" };
     if(t==='fisher'){
       if(!waterNear(x,y,1)) return { ok:false, msg:"La cabane de pêcheur doit être au bord de l'eau" };
       const FISHER_EXCL = 4;
@@ -694,7 +699,7 @@ function canPlace(t,x,y){
     const bx = x + 0.5, by = y + 0.5;
     const nearest = nearestTownToPoint(bx, by);
     const wouldCreateTown = !nearest || Math.hypot(bx - nearest.cx, by - nearest.cy) > TOWN_RADIUS;
-    if(wouldCreateTown && nearbyEnemyOwner(MP.myId, x, y))
+    if(wouldCreateTown && nearbyEnemyOwner(actorId, x, y))
       return { ok:false, msg:"Trop proche d'un autre joueur pour fonder un village (−"+MP_ZONE+' cases)' };
   }
   return { ok:true };
@@ -742,6 +747,10 @@ function clickAt(x,y){
           toast('⛔ Le bus ne peut utiliser que ses propres arrêts et gares comme source et destination.','err');
         else if(veh.vtype === 'train')
           toast('⛔ Le train ne peut utiliser que des gares ou dépôts ferroviaires.','err');
+        else if(VEHICLE_TYPES[veh.vtype]?.mode === 'water')
+          toast('⛔ Un bateau relie deux de tes ports.','err');
+        else if(VEHICLE_TYPES[veh.vtype]?.mode === 'air')
+          toast('⛔ Un avion relie deux de tes aéroports.','err');
         else
           toast('⛔ Les véhicules ne peuvent utiliser que leurs propres entrepôts comme source et destination.','err');
         return;
@@ -779,6 +788,7 @@ function clickAt(x,y){
           toast('Route définie. Le véhicule attend le drapeau vert pour sortir du dépôt.','win', eventTargetForVehicle(vRef));
         else if(routeStarted) toast('Route définie ! Le véhicule commence sa tournée.','win', eventTargetForVehicle(vRef));
         else if(vRef.vtype === 'train') toast('⛔ Aucun chemin ferroviaire continu depuis le dépôt du train.','err');
+        else if(VEHICLE_TYPES[vRef.vtype]?.mode === 'water') toast('⛔ Aucun chemin par l\'eau entre ces ports.','err');
         else toast('⛔ Aucun chemin disponible depuis le dépôt du véhicule.','err');
         if($('info')) $('info')._html = null;
         renderInfo();
@@ -837,7 +847,7 @@ function clickAt(x,y){
   if(tool==='fill_water'){
     const ter = terrain[i];
     if(ter !== T.WATER){ toast('L\'outil Remblai ne s\'applique que sur l\'eau','err'); return; }
-    const depot = terrassementNear(x, y, MP.myId ?? 1);
+    const depot = terrassementNear(x, y, MP.myId ?? null);
     if(!depot){ toast('⛔ Aucune usine de terrassement à portée avec '+FILL_WATER_COST+' terres','err'); return; }
     depot.storage['dirt'] = (depot.storage['dirt']||0) - FILL_WATER_COST;
     terrain[i] = T.GRASS; rebuildWaterLevels(); markTerrainDirty();

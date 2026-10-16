@@ -23,9 +23,13 @@ js/04_construction.js
 js/05_logistics.js
 js/06_simulation.js
 js/07_rendering.js
+js/07_rendering_art.js  ← art procédural des bâtiments (cuit en textures)
 js/08_ui_input_loop.js
+js/08_minimap.js        ← mini-carte
+js/08_objectives.js     ← panneau des objectifs
 js/09_multiplayer.js    ← surcharge clickFn / drawFn / boutons pause
-js/10_saves_chat_console.js  ← bootstrap final : mpInjectUI, frame()
+js/10_saves_chat_console.js  ← bootstrap final : panneau Partie, mpInjectUI, frame()
+js/pixi/vendor/pixi.min.js, js/pixi/scene.js, js/pixi/sprites.js  ← scène PixiJS (chargée en dernier)
 ```
 
 ## Carte des fichiers
@@ -66,7 +70,8 @@ js/10_saves_chat_console.js  ← bootstrap final : mpInjectUI, frame()
   `generateExpansionTerrain`), expansion jigsaw
   (`refreshExpansionSlots`, `buyExpansion`), allocation des travailleurs
   et transit (`refreshWorkerAllocation` 2 passes,
-  `refreshTransitPassengerCaps`).
+  `refreshTransitPassengerCaps` — gares, arrêts, ports, aéroports),
+  conversions solo (`walletOwnerOf`).
 - **`03_buildings_population.js`** : création de bâtiments (`newBuilding`,
   `setGrid`, `recipeOf`), stock/capacité (`capOf`, `accepts`, `space`,
   `adjRoadTiles`), validation de terrain (`treeNear`, `fieldNear`,
@@ -105,13 +110,12 @@ js/10_saves_chat_console.js  ← bootstrap final : mpInjectUI, frame()
   (intra/inter-ville, partage multi), `findNearbyTrainStation`.
 - **`05_depots/`** : enregistrement des dépôts dans la toolbar via
   `registerDepotTool`.
-  - `vehicules.js` : `garage` (camions + bus, `buyCatalog` depuis
-    `VEHICLE_TYPES`).
+  - `vehicules.js` : `garage` (véhicules de `mode` road : camions + bus).
   - `train.js` : `train_depot` (`buyCatalog: ['train']`).
-  - `bateau.js` : `boat_depot` (**placeholder**, `buyCatalog: []`).
-  - `avion.js` : `plane_depot` (**placeholder**, `buyCatalog: []`).
+  - `bateau.js` : `boat_depot` = port (`cargo_ship`, `ferry`).
+  - `avion.js` : `plane_depot` = aéroport (`plane`).
 - **`06_simulation.js`** : boucle `update(dt)` (voir l'ordre détaillé
-  dans `SESSION_CONTEXT.md`). Helpers : `fisherFishBonus`,
+  dans `SESSION_CONTEXT.md`), objectifs (`OBJECTIVES`, `updateObjectives`). Helpers : `fisherFishBonus`,
   `checkRect`/`checkRectInd`, `tryMerge`/`tryMergeInd`/`tryMergeDepot`/
   `tryMergeTrainStations`, `growPop`, `pathToEdge` (Dijkstra maison),
   `spawnWalker`, `spawnLeavers`, `residentialSplitPlan` (backtracking),
@@ -132,6 +136,12 @@ js/10_saves_chat_console.js  ← bootstrap final : mpInjectUI, frame()
   `drawRailSignal`), UI canvas (`drawTownLabels`, `drawTrainDepotFlags`,
   `drawExpansionBadges`, `jigsawPath`, `expPieceTabs`), floats
   (`addFloat`).
+- **`07_rendering_art.js`** : art procédural (`drawBuildingArt`,
+  `drawStationBuildingArt`) — primitives iso `artBox`, `artGable`, `artHip`,
+  `artCylinder`, `artWindowGrid`… ; relève les cheminées
+  (`BUILDING_CHIMNEYS`) pour la fumée animée.
+- **`08_minimap.js`** : `Minimap` (vue d'ensemble iso, clic pour recentrer).
+- **`08_objectives.js`** : `ObjectivesPanel` (objectif courant, annonces).
 - **`08_ui_input_loop.js`** : HUD (`updateHUD`, `formatGameDate`),
   panneaux (`renderInfo`, `renderFinance`, `openTrainPanel`/
   `renderTrainPanel`, `openTownPanel`/`renderTownPanel`, `toggleFinance`,

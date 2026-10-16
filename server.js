@@ -16,7 +16,8 @@ const { WebSocketServer } = require('ws');
 
 const PORT      = process.env.PORT || process.argv[2] || 8765;
 const STATIC    = __dirname;
-const DATA_DIR  = path.join(__dirname, 'data');
+// FACTOPOLIS_DATA_DIR : dossier de données alternatif (tests automatisés isolés).
+const DATA_DIR  = process.env.FACTOPOLIS_DATA_DIR ? path.resolve(process.env.FACTOPOLIS_DATA_DIR) : path.join(__dirname, 'data');
 const SAVES_DIR = path.join(DATA_DIR, 'saves');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
@@ -201,6 +202,7 @@ const MIME = {
   '.css': 'text/css', '.json': 'application/json',
   '.svg': 'image/svg+xml', '.png': 'image/png',
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
+  '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.ico': 'image/x-icon',
 };
 const PUBLIC_ROOT_FILES = new Set(['index.html', 'config.js', 'favicon.ico']);
 const PUBLIC_DIRS = ['js', 'assets'];
@@ -477,11 +479,13 @@ function sanitizeWorldConfig(config = {}) {
 }
 
 const ALLOWED_ACTIONS = new Set([
-  'road', 'bulldoze_road', 'rail_update', 'rail_signal_update', 'tunnel_build', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
+  'road', 'road_batch', 'bulldoze_road', 'rail_update', 'rail_batch', 'rail_signal_update', 'tunnel_build', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
   'build', 'toggle_bld_pause', 'toggle_out_block', 'toggle_resid_upgrade_pause', 'clear_bld_stock', 'upgrade_plant',
   'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'pin_vehicle_res', 'configure_train', 'merge_towns',
   'zone_reassign', 'rename_bus_stop', 'owner_remap', 'depot_departure_flag', 'pause', 'speed',
+  'buy_expansion', 'terraform_level', 'rename_bld',
 ]);
+const EXPANSION_SIDES = new Set(['left','right','top','bottom','top-left','top-right','bottom-left','bottom-right']);
 const ALLOWED_BUILD_TYPES = new Set([
   'road', 'rail', 'mine', 'lumber', 'farm', 'cotton_farm', 'weaver', 'pump', 'fisher', 'mill',
   'bakery', 'fishery', 'smelter', 'factory', 'plant', 'house', 'depot', 'market',
@@ -490,6 +494,7 @@ const ALLOWED_BUILD_TYPES = new Set([
 const ALLOWED_VEHICLE_TYPES = new Set([
   // types achetables actuels
   'minerai', 'plateau', 'cereale', 'marchandises', 'frigo', 'citerne', 'bus', 'train',
+  'cargo_ship', 'ferry', 'plane',
   // types hérités (sauvegardes existantes, plus achetables mais toujours routables)
   'bois', 'ble', 'coton', 'vetement', 'farine', 'pain', 'poisson', 'acier',
 ]);
@@ -526,11 +531,32 @@ function sanitizeAction(client, msg) {
       if (!intInRange(act.x) || !intInRange(act.y) || !intInRange(act.mask, 0, 255)) return null;
       if (act.costDelta != null && !numInRange(act.costDelta, -100000, 100000)) return null;
       Object.assign(out, { x:act.x, y:act.y, mask:act.mask, costDelta: act.costDelta || 0 }); break;
+    case 'rail_batch': {
+      // Tracé de rail complet (glisser) en UN message : évite de saturer le
+      // limiteur de débit avec une action par tuile (perte d'actions → désync).
+      if (!Array.isArray(act.updates) || !act.updates.length || act.updates.length > 2000) return null;
+      const updates = [];
+      for (const u of act.updates) {
+        if (!u || !intInRange(u.x) || !intInRange(u.y) || !intInRange(u.mask, 0, 255)) return null;
+        updates.push({ x:u.x, y:u.y, mask:u.mask });
+      }
+      if (act.costDelta != null && !numInRange(act.costDelta, -1000000, 1000000)) return null;
+      Object.assign(out, { updates, costDelta: act.costDelta || 0 }); break;
+    }
+    case 'road_batch': {
+      if (!Array.isArray(act.tiles) || !act.tiles.length || act.tiles.length > 2000) return null;
+      if (!act.tiles.every(validTileIndex)) return null;
+      out.tiles = act.tiles.slice(); break;
+    }
     case 'rail_signal_update':
       if (!intInRange(act.x) || !intInRange(act.y) || !intInRange(act.bit, 0, 255)) return null;
       if (typeof act.present !== 'boolean') return null;
       if (act.costDelta != null && !numInRange(act.costDelta, -100000, 100000)) return null;
-      Object.assign(out, { x:act.x, y:act.y, bit:act.bit, present:act.present, costDelta: act.costDelta || 0 }); break;
+      // forcedRed (feu rouge forcé) et kind (bloc / jonction) doivent voyager avec
+      // le signal, sinon les autres joueurs voient un simple feu de bloc vert.
+      Object.assign(out, { x:act.x, y:act.y, bit:act.bit, present:act.present,
+        forcedRed: !!act.forcedRed, kind: act.kind === 'junction' ? 'junction' : 'block',
+        costDelta: act.costDelta || 0 }); break;
     case 'tunnel_build': {
       if (!Array.isArray(act.updates) || act.updates.length > 200) return null;
       const updates = [];
@@ -648,9 +674,20 @@ function sanitizeAction(client, msg) {
     case 'owner_remap':
       if (!intInRange(act.oldId, 0, 1000000) || !intInRange(act.newId, 0, 1000000) || act.newId !== client.id) return null;
       Object.assign(out, { oldId: act.oldId, newId: act.newId }); break;
+    case 'buy_expansion':
+      if (!EXPANSION_SIDES.has(act.side) || !intInRange(act.pieceIndex, 0, 16)) return null;
+      Object.assign(out, { side: act.side, pieceIndex: act.pieceIndex }); break;
+    case 'terraform_level': {
+      if (!Array.isArray(act.tiles) || !act.tiles.length || act.tiles.length > 64) return null;
+      if (!act.tiles.every(validTileIndex) || (act.dir !== 1 && act.dir !== -1)) return null;
+      Object.assign(out, { tiles: act.tiles.slice(), dir: act.dir }); break;
+    }
+    case 'rename_bld':
+      if (!intInRange(act.x) || !intInRange(act.y) || !validName(act.name, 64)) return null;
+      Object.assign(out, { x: act.x, y: act.y, name: act.name || null }); break;
     case 'pause': break;
     case 'speed':
-      if (![0.5, 1, 2, 4].includes(Number(act.s))) return null;
+      if (![0.5, 1, 2, 3, 4].includes(Number(act.s))) return null;
       out.s = Number(act.s); break;
     default: return null;
   }
@@ -685,9 +722,11 @@ wss.on('connection', (ws) => {
   }, 30000);
   ws.on('pong', () => clearTimeout(pongTimeout));
 
-  // rate limiting
-  let msgCount = 0, msgWindowStart = Date.now();
-  const MAX_MSG_PER_SEC = 60;
+  // Limiteur de débit à seau de jetons : rafales autorisées (glisser une route,
+  // flux de synchro de l'hôte…) mais débit moyen plafonné. L'ancien plafond dur à
+  // 60 msg/s jetait silencieusement des actions → désynchronisation.
+  const RATE_BURST = 400, RATE_PER_SEC = 150;
+  let rateTokens = RATE_BURST, rateLast = Date.now(), rateWarned = false;
 
   // Envoyer immédiatement la liste des rooms (lobby)
   sendRoomList(client);
@@ -703,8 +742,14 @@ wss.on('connection', (ws) => {
 
   ws.on('message', (raw) => {
     const now = Date.now();
-    if (now - msgWindowStart > 1000) { msgCount = 0; msgWindowStart = now; }
-    if (++msgCount > MAX_MSG_PER_SEC) return;
+    rateTokens = Math.min(RATE_BURST, rateTokens + (now - rateLast) / 1000 * RATE_PER_SEC);
+    rateLast = now;
+    if (rateTokens < 1) {
+      if (!rateWarned) { rateWarned = true; console.warn(`[rate] ${clientLabel(client)} dépasse le débit autorisé`); }
+      return;
+    }
+    rateTokens -= 1;
+    rateWarned = false;
 
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
@@ -948,6 +993,21 @@ wss.on('connection', (ws) => {
           room.pendingSnapshots.delete(Number(msg.forId));
           send(target, msg);
         }
+        break;
+      }
+
+      // Un invité détecte une divergence de son monde (routes/rails/terrain) avec
+      // celui de l'hôte : on demande à l'hôte un snapshot complet pour lui seul.
+      case 'resync_request': {
+        const room = roomOf(client);
+        if (!room || room.hostId == null || room.hostId === client.id) break;
+        if (client.lastResyncAt && now - client.lastResyncAt < 8000) break;
+        client.lastResyncAt = now;
+        const host = allClients.find(c => c.id === room.hostId);
+        if (!host) break;
+        room.pendingSnapshots.set(client.id, host.id);
+        send(host, { type:'snapshot_request', forId: client.id, resync: true });
+        console.log(`[resync] ${clientLabel(client)} resynchronisé depuis l'hôte`);
         break;
       }
 
@@ -1204,7 +1264,13 @@ function handleConsoleCommand(line) {
         allClients.forEach(c => console.log(`  #${c.id} ${c.name}${c.username ? ' ('+c.username+')' : ''}`));
         break;
       }
-      send(target, { type:'server_cmd', cmd:'set_money', amount: Math.round(amount) });
+      // L'économie est simulée par l'hôte de la room : c'est lui qui doit modifier
+      // le portefeuille du joueur visé (un invité verrait sa valeur écrasée à la
+      // synchro suivante). Hors room, le joueur applique lui-même.
+      const room = roomOf(target);
+      const host = room && room.hostId != null ? allClients.find(c => c.id === room.hostId) : null;
+      if (host) send(host, { type:'server_cmd', cmd:'set_money', amount: Math.round(amount), targetId: target.id });
+      else send(target, { type:'server_cmd', cmd:'set_money', amount: Math.round(amount), targetId: null });
       console.log(`[setmoney] ${target.name} → ${Math.round(amount).toLocaleString()} $`);
       break;
     }

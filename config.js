@@ -79,8 +79,9 @@ const CONFIG = {
     ressourcesIndispensables: ['fish_fillet'],
     // Ressources requises pour l'upgrade : compteur à atteindre, non consommé en continu.
     ressourcesUpgrade: { goods: 50 },
-    // Ressources optionnelles consommées si disponibles, bonus revenu +20 %.
-    ressourcesBonus: [],
+    // Ressources optionnelles consommées si disponibles : leur prix de vente
+    // s'ajoute au revenu du cycle (l'huile de poisson éclaire les foyers).
+    ressourcesBonus: ['fish_oil'],
   },
 
   /* ---------- IMMEUBLES (niveau 2×2) ---------- */
@@ -91,7 +92,7 @@ const CONFIG = {
     stockMax: 25,
     ressourcesIndispensables: ['fish_fillet','bread'],
     ressourcesUpgrade: { goods: 150 },
-    ressourcesBonus: [],
+    ressourcesBonus: ['fish_oil'],
   },
 
   /* ---------- DUPLEX ----------
@@ -103,8 +104,8 @@ const CONFIG = {
     habitantsMax: 12,
     stockMax: 14,
     ressourcesIndispensables: ['fish_fillet'],
-    ressourcesUpgrade: { goods: 300 },
-    ressourcesBonus: [],
+    ressourcesUpgrade: { goods: 150 },
+    ressourcesBonus: ['fish_oil'],
   },
 
   /* ---------- MAISONS EN RANGÉE ---------- */
@@ -116,7 +117,7 @@ const CONFIG = {
     stockMax: 18,
     ressourcesIndispensables: ['fish_fillet'],
     ressourcesUpgrade: { goods: 250 },
-    ressourcesBonus: [],
+    ressourcesBonus: ['fish_oil'],
   },
 
   /* ---------- RÉSIDENCE ---------- */
@@ -128,7 +129,7 @@ const CONFIG = {
     stockMax: 22,
     ressourcesIndispensables: ['fish_fillet','bread'],
     ressourcesUpgrade: { goods: 350 },
-    ressourcesBonus: [],
+    ressourcesBonus: ['fish_oil'],
   },
 
   /* ---------- GRAND IMMEUBLE ---------- */
@@ -140,7 +141,7 @@ const CONFIG = {
     stockMax: 40,
     ressourcesIndispensables: ['fish_fillet','bread'],
     ressourcesUpgrade: { goods: 400 },
-    ressourcesBonus: [],
+    ressourcesBonus: ['fish_oil'],
   },
 
   /* ---------- TOUR (niveau 3×3) ---------- */
@@ -152,7 +153,7 @@ const CONFIG = {
     stockMax: 60,
     ressourcesIndispensables: ['fish_fillet','bread','clothes'],
     ressourcesUpgrade: { goods: 500 },
-    ressourcesBonus: [],
+    ressourcesBonus: ['fish_oil'],
   },
 
   /* ---------- GRATTE-CIEL ---------- */
@@ -160,11 +161,11 @@ const CONFIG = {
     formes: [[4,4]],
     intervalleConsommation: 7,
     revenuParUnite: 20,
-    habitantsMax: 150,
+    habitantsMax: 180,
     stockMax: 80,
     ressourcesIndispensables: ['fish_fillet','bread','clothes'],
     ressourcesUpgrade: {},
-    ressourcesBonus: [],
+    ressourcesBonus: ['fish_oil'],
   },
 
   /* ---------- FUSION INDUSTRIELLE ----------
@@ -209,6 +210,10 @@ const CONFIG = {
   habitants: {
     vitesseMarche: 1.3,         // tuiles par seconde — les nouveaux arrivants rejoignent
                                 // leur logement à pied depuis le bord de la carte
+    // Distance (cases) jusqu'à laquelle les habitants d'un logement vont travailler :
+    // base + plus grand côté du logement × parTaille (maison 6, immeuble 2×2 8, gratte-ciel 12).
+    // Au-delà, il faut un arrêt de bus pour amener des navetteurs.
+    rayonTravail: { base: 4, parTaille: 2 },
     croissanceBonus: {
       seuilStock: 0.1,          // fraction du stock max requise pour déclencher la croissance bonus
       intervalle:  30,          // secondes entre chaque habitant supplémentaire
@@ -229,7 +234,7 @@ const CONFIG = {
       filetPoisson: 3,          // fish_fillet (bonus)
       // ressources rarement consommées par les logements (configs personnalisées)
       poisson:      2,          // fish
-      huilePoisson: 7,          // fish_oil
+      huilePoisson: 2,          // fish_oil (bonus des logements)
       farine:       2,          // flour
       eau:          1,          // water
       ble:          2,          // wheat
@@ -292,31 +297,70 @@ const CONFIG = {
     tauxHausseMensuelle: 0.03,   // hausse mensuelle du coût d'entretien pour tous les véhicules (+3 % par défaut)
     garage: { cout: 1200, tempsArret: 2 },  // tempsArret : heures de jeu d'arrêt pour chargement/déchargement
     train:  {
-      cout: 100000,                // prix d'achat d'un train
-      coutWagon: 10000,            // prix d'achat d'un wagon (tous types)
+      cout: 20000,                 // prix d'achat d'une locomotive
+      coutWagon: 2000,             // prix d'achat d'un wagon (tous types)
       tempsArret: 2.5,             // heures de jeu d'arrêt standard du train
       tempsArretGareSecondes: 5,   // secondes réelles d'arrêt lorsqu'une gare est utilisée comme étape
-      coutEntretienJournalier: 80, // $ prélevés chaque jour de jeu par train
+      coutEntretienJournalier: 30, // $ prélevés chaque jour de jeu par train
       peageRailParTuile: 1,        // $ payés au propriétaire des rails par tuile empruntée qui ne lui appartient pas (péréqué au moment de l'entretien)
       /* Améliorations moteur : chaque niveau multiplie la vitesse ET le coût
-         d'entretien journalier par le facteur. Le prix démarre à 50 000 $ et
-         croît du même facteur (×1.5) à chaque niveau. cout = prix d'achat unique. */
+         d'entretien journalier par le facteur. cout = prix d'achat unique. */
       ameliorationsMoteur: [
-        { facteur: 1.5, cout: 50000  },
-        { facteur: 2,   cout: 75000  },
-        { facteur: 2.5, cout: 112500 },
-        { facteur: 3,   cout: 168750 },
+        { facteur: 1.5, cout: 8000  },
+        { facteur: 2,   cout: 14000 },
+        { facteur: 2.5, cout: 22000 },
+        { facteur: 3,   cout: 34000 },
       ],
     },
-    /* coutEntretienJournalier par type de véhicule ($ / jour de jeu) */
+    /* ---------- GARES ----------
+       rayon            : cases autour de la gare où les habitants sans emploi deviennent voyageurs
+       tempsRemplissage : (indicatif) remplissage des voyageurs, en gtime-secondes
+       tarif            : $ par voyageur et par case parcourue (distance de Manhattan entre gares)
+       tarifFret        : $ par unité livrée = prix commercial × distance × tarifFret */
+    gare: {
+      rayon: 12,
+      tempsRemplissage: 8,
+      tarif: 0.8,
+      tarifFret: 0.08,
+    },
+    /* ---------- VÉHICULES ROUTIERS ----------
+       coutEntretienJournalier : $ prélevés chaque jour de jeu (hausse mensuelle ci-dessus).
+       Surcharges optionnelles : nom, icone, ressources, cout, capacite, vitesse.
+       Types achetables : minerai, plateau, cereale, marchandises, frigo, citerne, bus. */
     vehicules: {
-      minerai:      { coutEntretienJournalier: 7  },
-      plateau:      { coutEntretienJournalier: 7  },
-      cereale:      { coutEntretienJournalier: 6  },
-      marchandises: { coutEntretienJournalier: 5  },
-      frigo:        { coutEntretienJournalier: 5  },
-      citerne:      { coutEntretienJournalier: 5  },
-      bus:          { coutEntretienJournalier: 10 },
+      minerai:      { coutEntretienJournalier: 7,  cout: 800,  capacite: 15, vitesse: 4.0 },
+      plateau:      { coutEntretienJournalier: 7,  cout: 900,  capacite: 14, vitesse: 3.8 },
+      cereale:      { coutEntretienJournalier: 6,  cout: 600,  capacite: 15, vitesse: 4.0 },
+      marchandises: { coutEntretienJournalier: 5,  cout: 700,  capacite: 12, vitesse: 3.8 },
+      frigo:        { coutEntretienJournalier: 5,  cout: 750,  capacite: 14, vitesse: 3.8 },
+      citerne:      { coutEntretienJournalier: 5,  cout: 750,  capacite: 20, vitesse: 3.5 },
+      bus:          { coutEntretienJournalier: 10, cout: 1500, capacite: 40, vitesse: 3.0 },
+    },
+
+    /* ---------- PORTS ET BATEAUX ----------
+       Le port se construit au bord de l'eau ; les bateaux naviguent de port en port.
+       Fret (cargo) : chargé/déchargé dans un ENTREPÔT collé au port (ressources
+       cochées « fret » dans l'entrepôt). Voyageurs (ferry) : habitants sans emploi
+       dans le rayon du port.
+       tarif     : $ par voyageur et par case (distance à vol d'oiseau entre ports)
+       tarifFret : $ par unité livrée = prix commercial × distance × tarifFret */
+    bateau: {
+      cout: 1400,
+      rayon: 10,
+      tarif: 0.5,
+      tarifFret: 0.05,
+      cargo: { cout: 6000, capacite: 60, vitesse: 2.2, coutEntretienJournalier: 20 },
+      ferry: { cout: 4500, capacite: 60, vitesse: 2.8, coutEntretienJournalier: 16 },
+    },
+
+    /* ---------- AÉROPORTS ET AVIONS ----------
+       Les avions volent en ligne droite d'aéroport en aéroport et transportent des
+       voyageurs (habitants sans emploi dans le rayon de l'aéroport). */
+    avion: {
+      cout: 3500,
+      rayon: 16,
+      tarif: 1.1,
+      avion: { cout: 18000, capacite: 40, vitesse: 7, coutEntretienJournalier: 45 },
     },
 
     /* ---------- ARRÊT DE BUS ----------
@@ -340,19 +384,6 @@ const CONFIG = {
       partProprietaire:  0.8,  // part du revenu revenant au propriétaire du bus lors d'un trajet inter-joueurs (0.8 = 80 %)
     },
 
-    vehicules: {
-      minerai:      { nom:'Camion minerai',      icone:'🚛', ressources:['iron','coal'], cout:800,  capacite:15, vitesse:4.0 },
-      bois:         { nom:'Camion bois',          icone:'🚜', ressources:['wood'],        cout:600,  capacite:15, vitesse:4.0 },
-      ble:          { nom:'Camion blé',           icone:'🚜', ressources:['wheat'],       cout:550,  capacite:15, vitesse:4.0 },
-      coton:        { nom:'Chariot coton',         icone:'🛒', ressources:['cotton'],          cout:550, capacite:15, vitesse:4.0 },
-      vetement:     { nom:'Camion vêtements',      icone:'🚐', ressources:['clothes'],         cout:650, capacite:12, vitesse:3.8 },
-      farine:       { nom:'Camion farine',        icone:'🚚', ressources:['flour'],       cout:650,  capacite:15, vitesse:3.8 },
-      citerne:      { nom:'Camion citerne',       icone:'🚛', ressources:['water','fish_oil'],          cout:750,  capacite:20, vitesse:3.5 },
-      pain:         { nom:'Camion pain',          icone:'🚚', ressources:['bread'],                        cout:700,  capacite:15, vitesse:3.8 },
-      poisson:      { nom:'Chariot poisson',      icone:'🛒', ressources:['fish','fish_fillet','fish_oil'], cout:650, capacite:14, vitesse:3.8 },
-      acier:        { nom:'Camion acier',         icone:'🚚', ressources:['steel'],                        cout:1000, capacite:12, vitesse:3.5 },
-      marchandises: { nom:'Camion marchandises',  icone:'🚐', ressources:['goods','clothes','bread'],      cout:700,  capacite:12, vitesse:3.5 },
-    },
   },
 
   lac: {
