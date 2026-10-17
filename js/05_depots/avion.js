@@ -298,10 +298,61 @@ function hangarsOf(d){
   const g = planeDepotAirport(d);
   return g ? buildings.filter(o => !o.dead && o.type === 'plane_depot' && planeDepotAirport(o) === g) : [d];
 }
+const hangarTiles = hs => hs.reduce((n, o) => n + (o.w || 1) * (o.h || 1), 0);
 function hangarFleet(d){
-  const hs = hangarsOf(d);
+  const hs = hangarsOf(d), tiles = hangarTiles(hs);
   const planes = vehicles.filter(v => VEHICLE_TYPES[v.vtype]?.mode === 'air' && hs.includes(v.garageRef)).length;
-  return { hangars:hs.length, planes, capacity:hangarCapacityFor(hs.length) };
+  return { hangars:tiles, planes, capacity:hangarCapacityFor(tiles) };
+}
+
+// ---------- fusion des hangars ----------
+// Des hangars adjacents (rectangle plein) ne forment plus qu'un seul hangar plus grand : les
+// avions, le propriétaire et la capacité (1 case = 1 hangar) sont conservés.
+function checkRectHangar(x, y, w, h){
+  const area = w * h, set = [];
+  const owner = bgrid[y*N+x]?.owner ?? null;
+  for(let yy = y; yy < y + h; yy++) for(let xx = x; xx < x + w; xx++){
+    const b = bgrid[yy*N+xx];
+    if(!b || b.type !== 'plane_depot') return null;
+    if((b.owner ?? null) !== owner) return null;
+    if(b.w * b.h >= area) return null;
+    if(b.x < x || b.y < y || b.x + b.w > x + w || b.y + b.h > y + h) return null;
+    if(!set.includes(b)) set.push(b);
+  }
+  return set.length ? set : null;
+}
+function tryMergeHangars(){
+  const anchors = mergeAnchors(b => b.type === 'plane_depot');
+  if(anchors.length < 2) return false;
+  for(const [w, h] of DEPOT_SHAPES){
+    for(const [x, y] of anchors){
+      if(x > N - w || y > N - h) continue;
+      const set = checkRectHangar(x, y, w, h);
+      if(!set) continue;
+      const t = newBuilding('plane_depot', x, y, w, h);
+      t.owner = set[0].owner || null;
+      t.townId = set[0].townId ?? null;
+      t.name = set.find(o => o.name)?.name || null;
+      const wasSel = set.includes(selected);
+      for(const o of set){
+        for(const v of vehicles){
+          if(v.garageRef === o) v.garageRef = t;
+          if(v.currentBuilding === o) v.currentBuilding = t;
+        }
+        t.vehicles.push(...(o.vehicles || []));
+        o.dead = true;
+        setGrid(o, null);
+      }
+      buildings = buildings.filter(o => !o.dead);
+      buildings.push(t);
+      setGrid(t, t);
+      airVersion++;
+      if(wasSel) selected = t;
+      toast('✈️ '+set.length+' hangars → '+w+'×'+h+' !', 'win', eventTargetForBuilding(t));
+      return true;
+    }
+  }
+  return false;
 }
 // Peut-on acheter un avion de plus dans ce hangar ?
 // Entrepôt faisant partie de l'aéroport du hangar (collé à l'une de ses pièces) : fret aérien.
@@ -335,7 +386,7 @@ function airParkingError(x, y){
   if(!groups.size) return 'Le parking doit être posé contre un aéroport (avec au moins un hangar).';
   let parkings = 0;
   for(const g of groups) parkings += g.pieces.filter(p => p.type === 'air_parking').length;
-  const hangars = buildings.filter(o => !o.dead && o.type === 'plane_depot' && groups.has(planeDepotAirport(o))).length;
+  const hangars = hangarTiles(buildings.filter(o => !o.dead && o.type === 'plane_depot' && groups.has(planeDepotAirport(o))));
   const cap = hangarCapacityFor(hangars);
   if(parkings + 1 > cap)
     return cap <= 0 ? 'Il faut au moins un hangar contre une voie de taxi de l' + String.fromCharCode(39) + 'aéroport avant de poser un parking.'

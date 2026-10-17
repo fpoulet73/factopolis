@@ -254,7 +254,7 @@ function update(dt){
   }
 
   mergeTimer += dt;
-  if(mergeTimer >= 1){ mergeTimer = 0; tryMerge(); tryExpandLuxury(); tryMergeInd(); tryMergeDepot(); tryMergeTrainStations(); }
+  if(mergeTimer >= 1){ mergeTimer = 0; tryMerge(); tryMergeHangars(); tryExpandLuxury(); tryMergeInd(); tryMergeDepot(); tryMergeTrainStations(); }
 
   // Expédition automatique : TOUS les bâtiments étaient traités d'un coup toutes les
   // 0,7 s (une recherche de route par ressource) → une image longue à chaque cycle,

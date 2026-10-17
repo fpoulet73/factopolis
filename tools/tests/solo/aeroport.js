@@ -76,7 +76,9 @@ check('avion au repos : sort du hangar et roule vers sa place (pas d apparition 
 check('avion en pause : place de parking réservée', pl.paused && !!pl.parkSlot && park && pl.parkSlot.x >= 183 && pl.parkSlot.y === 101);
 T_.run(60, 0.2);
 check('avion arrivé et stationné sur sa place', pl.state === 'idle' && parkingSlotOf(pl)?.x === pl.parkSlot.x);
-const pl2 = createPersistentVehicle('plane', hg);
+const hgNow = bgrid[99 * N + 182]; // les 2 hangars adjacents ont fusionné pendant la simulation
+check('hangars adjacents fusionnés', hgNow.w * hgNow.h === 2 && pl.garageRef === hgNow);
+const pl2 = createPersistentVehicle('plane', hgNow);
 const taken = airportOf(tg).pieces.filter(p => p.type === 'air_parking').length;
 setPlanePaused(pl2, true);
 check('deux avions en pause : places différentes', !pl2.parkSlot || pl2.parkSlot.x !== pl.parkSlot.x);

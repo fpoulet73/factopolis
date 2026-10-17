@@ -2153,10 +2153,12 @@ function renderInfo(){
       h += '<div style="margin-top:8px;color:#8fa3bf">Véhicules assignés</div>';
       h += '<div style="max-height:600px;overflow-y:auto;padding:1px">';
       // Rendu d'un wagon/loco : icône + charge, sans cadre ni roues
-      const trainCarHtml = (icon, sub, isLoco) =>
+      const trainCarHtml = (icon, sub, isLoco, sell) =>
           '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:34px;flex:0 0 auto;line-height:1.1">'
         +   '<div style="font-size:15px">'+icon+'</div>'
         +   '<div style="font-size:8px;color:#8fa3bf">'+sub+'</div>'
+        +   (sell ? '<button class="tbtn" data-sell-wagon="'+sell.vid+':'+sell.idx+'" title="Vendre ce wagon (+'+sell.refund.toLocaleString('fr-FR')+' $)"'+(sell.ok ? '' : ' disabled')
+              + ' style="padding:0 3px;margin:1px 0 0;font-size:9px;line-height:1.3;width:auto;border:none;background:transparent;color:#ff9a8a;cursor:pointer">🗑️</button>' : '')
         + '</div>';
       for(const v of shownVehicles){
         const vt = VEHICLE_TYPES[v.vtype];
@@ -2206,7 +2208,7 @@ function renderInfo(){
             const load = _wagonLoad[idx];
             const selectedRes = trainWagonSelectedResource(wagons[idx]);
             const icon = selectedRes ? (RES[selectedRes]?.ic || '📦') : def.icone;
-            h += trainCarHtml(icon, load.amt+'/'+load.cap, false);
+            h += trainCarHtml(icon, load.amt+'/'+load.cap, false, { vid:v.id, idx, ok:canControlVehicle, refund:Math.floor(TRAIN_WAGON_COST * 0.5) });
           }
           h += '</div>';
           h += '<div style="flex:1"></div>';
@@ -2430,6 +2432,30 @@ function renderInfo(){
       };
       inp.onkeydown = e => { if(e.key === 'Enter') inp.blur(); };
       inp.onblur = saveName;
+    });
+    // vente d'un wagon précis du train, au dépôt (50 % du prix, comme le bouton − du panneau train)
+    p.querySelectorAll('[data-sell-wagon]').forEach(btn=>{
+      btn.onclick = e=>{
+        e.stopPropagation();
+        const [vid, idxS] = btn.dataset.sellWagon.split(':');
+        const v = vehicles.find(vv=>String(vv.id)===vid);
+        if(!v || v.vtype !== 'train') return;
+        if(MP.connected && v.garageRef?.owner && v.garageRef.owner !== MP.myId){
+          toast('⛔ Ce train appartient à un autre joueur.','err');
+          return;
+        }
+        if(!trainPresentAtDepot(v)){ toast('⛔ Le train doit être au dépôt pour vendre un wagon.','err'); return; }
+        const wagons = trainNormalizeWagons(v), idx = +idxS;
+        if(!wagons[idx]) return;
+        wagons.splice(idx, 1);
+        const refund = Math.floor(TRAIN_WAGON_COST * 0.5);
+        earnMoney(refund, 'rembours');
+        syncTrainConfig(v);
+        toast('🗑️ Wagon vendu (+'+refund.toLocaleString('fr-FR')+' $)');
+        p._html = null;
+        if(typeof renderTrainPanel === 'function' && trainConfigVehicle === v) renderTrainPanel();
+        renderInfo();
+      };
     });
     p.querySelectorAll('[data-sell-v]').forEach(btn=>{
       btn.onclick = ()=>{
