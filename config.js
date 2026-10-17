@@ -422,8 +422,8 @@ const CONFIG = {
       rayon: 10,
       tarif: 0.5,
       tarifFret: 0.05,
-      cargo: { cout: 6000, capacite: 60, vitesse: 2.2, coutEntretienJournalier: 20 },
-      ferry: { cout: 4500, capacite: 60, vitesse: 2.8, coutEntretienJournalier: 16 },
+      cargo: { cout: 6000, capacite: 60, vitesse: 1.2, coutEntretienJournalier: 20 },
+      ferry: { cout: 4500, capacite: 60, vitesse: 1.6, coutEntretienJournalier: 16 },
     },
 
     /* ---------- AÉROPORTS ET AVIONS ----------
