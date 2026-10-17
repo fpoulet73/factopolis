@@ -8,6 +8,20 @@
      flour = farine        water = eau
      bread = pain         steel = acier         goods = marchandises
      fish = poisson       fish_fillet = filet   fish_oil = huile de poisson
+   Gisements et ressources de base ajoutés :
+     copper_ore = minerai de cuivre   gold_ore = minerai d'or (précieux)
+     limestone  = calcaire            sand = sable          clay = argile
+     oil        = pétrole brut
+   Produits intermédiaires et matériaux de chantier :
+     copper = cuivre      copper_wire = fil de cuivre   gold = or
+     steel_beam = poutrelle en acier  steel_plate = plaque en acier
+     cement = ciment      concrete = béton     glass = verre   window = vitre
+     rope = corde         paint = peinture jaune        nails = clous
+     chemicals = produits chimiques   fuel = carburant  plastic = plastique
+     glue = colle         circuit = carte électronique
+   Biens de luxe : furniture = meubles, appliances = électroménager,
+     jewelry = bijoux, quantum_chip = processeur quantique
+   Ressources spatiales (fusées) : helium3 = hélium-3, xenite = xénite
    ============================================================ */
 const CONFIG = {
 
@@ -32,6 +46,88 @@ const CONFIG = {
     poissonnerie:{ temps: 3.4, entree: { fish: 2 }, sortie: { fish_fillet: 1, fish_oil: 1 }, cout: 850, entretien: 2.2 },
     fonderie: { temps: 3.5, entree: { iron: 1, coal: 1 }, sortie: { steel: 1 },  cout: 900,  entretien: 3   },
     usine:    { temps: 4.0, entree: { steel: 1, wood: 1 }, sortie: { goods: 1 }, cout: 1400, entretien: 4   },
+
+    // --- extraction avancée ---
+    // La mine extrait aussi le cuivre, l'or, le calcaire (carrière), le sable et l'argile
+    // selon la tuile où elle est posée. Le puits de pétrole se pose sur une nappe.
+    puitsPetrole:   { temps: 3.0, sortie: { oil: 1 },                                              cout: 1800, entretien: 3   },
+    // --- métallurgie ---
+    fonderieCuivre: { temps: 3.6, entree: { copper_ore: 2, coal: 1 }, sortie: { copper: 1 },       cout: 1100, entretien: 3   },
+    trefilerie:     { temps: 3.0, entree: { copper: 1 },              sortie: { copper_wire: 2 },  cout: 1000, entretien: 2.5 },
+    affinerieOr:    { temps: 5.0, entree: { gold_ore: 3, chemicals: 1 }, sortie: { gold: 1 },      cout: 2400, entretien: 4   },
+    laminoir:       { temps: 4.0, entree: { steel: 2 },               sortie: { steel_beam: 1 },   cout: 1300, entretien: 3.5 },
+    tolerie:        { temps: 3.2, entree: { steel: 1 },               sortie: { steel_plate: 1 },  cout: 1200, entretien: 3   },
+    clouterie:      { temps: 3.0, entree: { steel: 1 },               sortie: { nails: 4 },        cout: 900,  entretien: 2.2 },
+    // --- matériaux de construction ---
+    cimenterie:     { temps: 4.5, entree: { limestone: 2, clay: 1, coal: 1 }, sortie: { cement: 2 }, cout: 1500, entretien: 3.5 },
+    centraleBeton:  { temps: 3.5, entree: { cement: 1, sand: 2, water: 1 },   sortie: { concrete: 2 }, cout: 1200, entretien: 3 },
+    verrerie:       { temps: 4.0, entree: { sand: 2, limestone: 1, coal: 1 }, sortie: { glass: 2 },   cout: 1300, entretien: 3   },
+    vitrerie:       { temps: 3.0, entree: { glass: 2 },               sortie: { window: 1 },       cout: 900,  entretien: 2.2 },
+    corderie:       { temps: 3.4, entree: { cotton: 3 },              sortie: { rope: 2 },         cout: 800,  entretien: 2   },
+    // --- chimie (pétrole) ---
+    raffinerie:     { temps: 4.5, entree: { oil: 3 },                 sortie: { fuel: 1, chemicals: 2 }, cout: 2600, entretien: 5 },
+    usineChimique:  { temps: 4.0, entree: { chemicals: 2, water: 1 }, sortie: { plastic: 1, glue: 1 }, cout: 2000, entretien: 4 },
+    peinture:       { temps: 3.6, entree: { chemicals: 1, clay: 1 },  sortie: { paint: 2 },        cout: 1400, entretien: 3   },
+    // --- électronique et biens de luxe ---
+    electronique:   { temps: 5.0, entree: { copper_wire: 2, plastic: 1, gold: 1 }, sortie: { circuit: 2 }, cout: 3000, entretien: 5 },
+    ebenisterie:    { temps: 4.5, entree: { wood: 2, nails: 2, glue: 1 },          sortie: { furniture: 1 }, cout: 1600, entretien: 3.2 },
+    electromenager: { temps: 5.0, entree: { circuit: 1, steel_plate: 1, plastic: 1, copper_wire: 1 }, sortie: { appliances: 1 }, cout: 2800, entretien: 4.5 },
+    joaillerie:     { temps: 5.0, entree: { gold: 1, glass: 1 },                   sortie: { jewelry: 2 },  cout: 2500, entretien: 4 },
+    laboQuantique:  { temps: 8.0, entree: { circuit: 2, xenite: 1, helium3: 1 },   sortie: { quantum_chip: 1 }, cout: 8000, entretien: 10 },
+  },
+
+  /* ---------- MATÉRIAUX DE CHANTIER ----------
+     Les grands bâtiments (port, aéroport, centre spatial, usines chimiques et
+     avancées) exigent, EN PLUS de leur prix, des matériaux stockés dans un
+     ENTREPÔT du joueur dont le rayon d'action couvre la case de construction (les
+     entrepôts se cochent comme d'habitude : il faut y accepter ces ressources).
+     Les matériaux sont prélevés à la pose (entrepôts les plus proches d'abord).
+     Les usines avancées (clés de `production` côté moteur : refinery, electronics_plant…)
+     peuvent aussi en exiger lors de la spécialisation d'une usine abandonnée.
+     Les gares, quais et dépôts de train n'en demandent pas (on peut en ajouter ici :
+     clés train_station, train_platform, train_depot).
+     actif : false pour désactiver complètement l'exigence (mode bac à sable). */
+  materiauxChantier: {
+    actif: true,
+    batiments: {
+      // port
+      boat_depot:     { concrete: 6, steel_beam: 3, rope: 6, paint: 2 },
+      // aéroport
+      plane_depot:    { steel_beam: 6, steel_plate: 4, concrete: 4, paint: 1 },  // hangar
+      air_terminal:   { steel_beam: 3, concrete: 4, window: 4, copper_wire: 2, circuit: 1 },
+      air_tower:      { steel_beam: 2, concrete: 3, window: 3, copper_wire: 2, circuit: 2 },
+      air_runway:     { concrete: 4, paint: 1 },
+      air_taxi:       { concrete: 2, paint: 1 },
+      air_parking:    { concrete: 1, paint: 1 },
+      // usines avancées (spécialisation d'une usine abandonnée)
+      refinery:          { steel_beam: 3, steel_plate: 4, concrete: 4 },
+      chem_plant:        { steel_plate: 4, concrete: 3, glass: 2 },
+      gold_refinery:     { steel_beam: 2, concrete: 3 },
+      electronics_plant: { steel_beam: 2, concrete: 4, window: 3, copper_wire: 4 },
+      appliance_factory: { steel_beam: 2, concrete: 3, window: 2 },
+      quantum_lab:       { steel_beam: 4, concrete: 8, window: 6, circuit: 6 },
+      // espace
+      space_center:   { steel_beam: 30, steel_plate: 20, concrete: 40, window: 10, copper_wire: 16, circuit: 12, paint: 6 },
+    },
+  },
+
+  /* ---------- CENTRE SPATIAL ----------
+     Bâtiment 3×3 posé depuis le menu Bâtiments. Il reçoit des pièces de fusée par
+     camion, assemble la fusée sur son pas de tir puis la lance : au retour de mission
+     la capsule rapporte des ressources introuvables sur Terre.
+       fusee           : pièces consommées par lancement
+       tempsAssemblage : secondes de jeu (à plein effectif d'ouvriers)
+       dureeMission    : secondes de jeu entre le décollage et le retour de la capsule
+       cargaison       : ressources rapportées à chaque mission */
+  centreSpatial: {
+    cout: 60000,
+    entretien: 25,
+    ouvriers: 12,
+    taille: 3,
+    fusee: { steel_plate: 8, circuit: 4, fuel: 12, copper_wire: 4 },
+    tempsAssemblage: 60,
+    dureeMission: 90,
+    cargaison: { helium3: 6, xenite: 4 },
   },
 
   /* ---------- BÂTIMENTS CIVILS ---------- */
@@ -65,6 +161,10 @@ const CONFIG = {
       cotton: 0.05,
       iron:   0.1,
       coal:   0.1,
+      copper:    0.1,   // minerai de cuivre (fils électriques)
+      limestone: 0.1,   // calcaire (ciment, verre)
+      oil:       0.05,  // nappes de pétrole (chimie, carburant)
+      gold:      0.025, // minerai d'or : précieux et rare (électronique, bijoux)
     },
   },
 
@@ -91,7 +191,8 @@ const CONFIG = {
     habitantsMax: 30,
     stockMax: 25,
     ressourcesIndispensables: ['fish_fillet','bread'],
-    ressourcesUpgrade: { goods: 150 },
+    // les étages supérieurs se vitrent : il faut des vitres pour fusionner plus haut
+    ressourcesUpgrade: { goods: 150, window: 20 },
     ressourcesBonus: ['fish_oil'],
   },
 
@@ -140,7 +241,7 @@ const CONFIG = {
     habitantsMax: 60,
     stockMax: 40,
     ressourcesIndispensables: ['fish_fillet','bread'],
-    ressourcesUpgrade: { goods: 400 },
+    ressourcesUpgrade: { goods: 400, concrete: 40, window: 30 },
     ressourcesBonus: ['fish_oil'],
   },
 
@@ -152,7 +253,8 @@ const CONFIG = {
     habitantsMax: 95,
     stockMax: 60,
     ressourcesIndispensables: ['fish_fillet','bread','clothes'],
-    ressourcesUpgrade: { goods: 500 },
+    // un gratte-ciel exige une structure acier + béton et des façades vitrées
+    ressourcesUpgrade: { goods: 500, concrete: 80, window: 60, steel_beam: 30 },
     ressourcesBonus: ['fish_oil'],
   },
 
@@ -183,7 +285,10 @@ const CONFIG = {
        manoir  4 cases → 20 cadres
        domaine 9 cases → 40 patrons (taille maximale)
      Chaque niveau accepte les mêmes clés que les logements basiques, plus
-     `classe` (clé de classesHabitants). */
+     `classe` (clé de classesHabitants).
+     Les classes aisées veulent du confort : meubles (bois + clous + colle) pour les
+     employés, électroménager pour les cadres, bijoux en or et processeurs quantiques
+     (domotique) pour les patrons. */
   maisonLuxe: {
     seuilHabitants: 100,
     multiplicateurCout: 5,
@@ -203,8 +308,8 @@ const CONFIG = {
       habitantsMax: 10,
       stockMax: 14,
       ressourcesIndispensables: ['fish_fillet','bread'],
-      ressourcesUpgrade: { goods: 150, clothes: 75 },
-      ressourcesBonus: ['fish_oil'],
+      ressourcesUpgrade: { goods: 150, clothes: 75, furniture: 30 },
+      ressourcesBonus: ['fish_oil','furniture'],
     },
     manoir: {
       classe: 'cadre',
@@ -212,9 +317,9 @@ const CONFIG = {
       intervalleConsommation: 30,
       habitantsMax: 20,
       stockMax: 20,
-      ressourcesIndispensables: ['fish_fillet','bread','clothes'],
-      ressourcesUpgrade: { goods: 300, clothes: 150 },
-      ressourcesBonus: ['fish_oil'],
+      ressourcesIndispensables: ['fish_fillet','bread','clothes','furniture'],
+      ressourcesUpgrade: { goods: 300, clothes: 150, appliances: 40, jewelry: 20 },
+      ressourcesBonus: ['fish_oil','appliances'],
     },
     domaine: {
       classe: 'patron',
@@ -222,9 +327,9 @@ const CONFIG = {
       intervalleConsommation: 20,
       habitantsMax: 40,
       stockMax: 30,
-      ressourcesIndispensables: ['fish_fillet','bread','clothes'],
+      ressourcesIndispensables: ['fish_fillet','bread','clothes','furniture','appliances'],
       ressourcesUpgrade: {},
-      ressourcesBonus: ['fish_oil'],
+      ressourcesBonus: ['fish_oil','jewelry','quantum_chip'],
     },
   },
 
@@ -317,6 +422,11 @@ const CONFIG = {
       bois:         2,          // wood
       acier:        6,          // steel
       terre:        0,          // dirt
+      // biens de luxe (classes aisées : × multiplicateur de revenu de la classe)
+      meubles:      5,          // furniture
+      electromenager: 8,        // appliances
+      bijoux:       12,         // jewelry
+      processeurQuantique: 20,  // quantum_chip
     },
   },
 

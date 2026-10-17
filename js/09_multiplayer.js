@@ -948,6 +948,12 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   b.runwayRev = !!o.runwayRev;
   if(o.decor != null) b.decor = o.decor;
   if(o.design != null) b.design = o.design;
+  if(b.type === 'space_center'){
+    // invité : la fusée décolle / la capsule revient au rythme de l'hôte
+    if(b.spacePhase !== (o.spacePhase || null) && typeof spaceCenterPhaseChanged === 'function') spaceCenterPhaseChanged(b, o.spacePhase || null);
+    b.spacePhase = o.spacePhase || null;
+    b.launches = o.launches || 0;
+  }
   const r = recipeOf(b);
   if(r && syncGtime != null && prevSyncGtime != null && syncGtime > prevSyncGtime){
     const deltaG = syncGtime - prevSyncGtime;
@@ -1381,6 +1387,7 @@ function serializeState(opts = {}){
       passengersEntrant:b.passengersEntrant??null, passengersEntrantMax:b.passengersEntrantMax??null, passagersSortant:b.passagersSortant??null,
       passengersEntrantPending:b.passengersEntrantPending??null,
       stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null, runwayRev:b.runwayRev ? 1 : 0, decor:b.decor ?? null, design:b.design ?? null,
+      spacePhase:b.spacePhase || null, launches:b.launches || 0,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
     news: { flags: Object.keys(newsFlags), log: newsLog, next: nextNewsId },
@@ -1754,6 +1761,8 @@ function applySnapshot(d){
     if(o.runwayRev != null) b.runwayRev = !!o.runwayRev;
     if(o.decor != null) b.decor = o.decor;
     if(o.design != null) b.design = o.design;
+    if(o.spacePhase) b.spacePhase = o.spacePhase;
+    if(o.launches) b.launches = o.launches;
     buildings.push(b);
     setGrid(b,b);
     if(b.stationGroupId != null) nextTrainStationId = Math.max(nextTrainStationId, b.stationGroupId + 1);
@@ -2159,8 +2168,11 @@ function applyAction(msg){
       if(act.btype === 'train_station'){
         const info = trainStationPlacementInfo(act.x, act.y, msg.from);
         if(!info.ok) break;
+        const mt = info.platform ? 'train_platform' : 'train_station';
+        if(buildMaterialsMissing(mt, act.x, act.y, 1, 1, msg.from)) break; // matériaux de chantier absents
         const b = placeTrainStationTile(act.x, act.y, msg.from);
         if(!b) break;
+        consumeBuildMaterials(mt, act.x, act.y, 1, 1, msg.from);
         wSender.money -= cost; wSender.fin.construction += cost;
         break;
       }
@@ -2174,15 +2186,17 @@ function applyAction(msg){
       if(road[act.y*N+act.x] || rail[act.y*N+act.x] || bgrid[act.y*N+act.x]) break;
       // Mêmes règles de terrain que la pose locale (gisement, arbres, eau…) : un
       // client désynchronisé ou modifié ne peut pas poser n'importe où.
+      // (inclut l'emprise des grands bâtiments et les matériaux de chantier)
       if(!canPlace(act.btype, act.x, act.y, msg.from).ok) break;
       if(cost > 0 && wSender.money < cost) break;
       const b = newBuilding(act.btype, act.x, act.y);
       b.owner = msg.from;
+      consumeBuildMaterials(act.btype, act.x, act.y, b.w, b.h, msg.from);
       markStarterHomeIfNeeded(b);
       assignBuildingToTown(b, true);
       assignIndustryName(b);
       assignTrainDepotName(b);
-      buildings.push(b); bgrid[act.y*N+act.x] = b;
+      buildings.push(b); setGrid(b, b);
       wSender.money -= cost; wSender.fin.construction += cost;
       if(BUILD[b.type].resid) assignHomelessToHousing(b.owner);
       break;
@@ -2978,8 +2992,8 @@ clickFn = function(x,y){
       }
     } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON){
       netSend({ type:'bulldoze_tree', i });
-    } else if(terrain[i]===T.IRON || terrain[i]===T.COAL){
-      netSend({ type:'terraform', i });
+    } else if(isClearableTerrain(terrain[i])){
+      netSend({ type:'terraform', i }); // gisements (minerais, calcaire, sable, argile) et nappes de pétrole
     }
     clickAt(x,y);
     return;

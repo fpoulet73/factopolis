@@ -1,12 +1,19 @@
 // Aides injectées dans la page de test (scope global du jeu). Voir run-all.js.
 window.T_ = {
-  // Monde plat, tout en herbe, entièrement jouable, budget illimité.
-  flatWorld(){
+  // Monde plat, tout en herbe, entièrement jouable, budget illimité, sans
+  // matériaux de chantier (bac à sable : materials=true pour les exiger).
+  flatWorld(materials = false){
     for(let i = 0; i < N * N; i++){ terrain[i] = T.GRASS; terrainHeightMap[i] = 1; }
     mapMask.fill(1);
     mapBounds = { x0:0, y0:0, x1:N, y1:N };
     rebuildWaterLevels(); markTerrainDirty();
     myWallet().money = 1e9;
+    WORLD.buildMaterials = !!materials;
+  },
+  // Remplit un entrepôt (acceptant ces ressources) : { res: quantité }.
+  stock(depot, map){
+    for(const r in map){ depot.allow[r] = true; depot.storage[r] = (depot.storage[r] || 0) + map[r]; }
+    return depot;
   },
   water(x0, y0, x1, y1){
     for(let y = y0; y < y1; y++) for(let x = x0; x < x1; x++) terrain[y * N + x] = T.WATER;

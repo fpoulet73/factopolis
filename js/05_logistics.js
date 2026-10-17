@@ -510,7 +510,7 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
   const senderCenter = centerOfBuilding(b);
   for(const c of buildings){
     if(c===b || c.dead || !accepts(c,res) || space(c,res)<=0) continue;
-    if(res === 'water' && b.type === 'pump' && c.type === 'bakery') continue;
+    if(res === 'water' && b.type === 'pump' && c.type !== 'tank') continue; // l'eau transite par une citerne
     if(isStorageHub(b) && isStorageHub(c)) continue;
     const pumpToTank = b.type === 'pump' && res === 'water' && c.type === 'tank';
 
@@ -2948,7 +2948,7 @@ function updateVehicles(dt){
           const dst = v.dest;
           const canDeposit = accepts(dst, v.res)
             && vehicleCanServeRoute(v, v.res)
-            && !(v.res === 'water' && v.source?.type === 'pump' && dst.type === 'bakery');
+            && !(v.res === 'water' && v.source?.type === 'pump' && usesWater(dst));
           const delivered = canDeposit ? depositResourceIntoBuilding(dst, v.res, v.cargo) : 0;
           v.cargo = Math.max(0, v.cargo - delivered);
           if(v.cargo <= 0){ v.cargo = 0; v.res = null; }

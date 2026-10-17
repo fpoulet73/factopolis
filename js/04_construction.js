@@ -680,7 +680,7 @@ function applyCanal(i){
 function canPlace(t,x,y, actorId = MP.myId){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
-  if(t==='terraform') return { ok: !!(road[i] || rail[i] || bgrid[i] || ter===T.TREE || ter===T.WHEAT || ter===T.COTTON || ter===T.IRON || ter===T.COAL || ter===T.SAND || ter===T.CLAY) };
+  if(t==='terraform') return { ok: !!(road[i] || rail[i] || bgrid[i] || isClearableTerrain(ter)) };
   if(t==='fill_water'){
     if(ter !== T.WATER) return { ok:false, msg:'L\'outil Remblai ne s\'applique que sur l\'eau' };
     if(!terrassementNear(x, y, actorId ?? null)) return { ok:false, msg:'Aucune usine de terrassement à portée avec assez de terre ('+FILL_WATER_COST+' terres requises)' };
@@ -728,8 +728,30 @@ function canPlace(t,x,y, actorId = MP.myId){
     if(ter!==T.GRASS) return { ok:false, msg:"Les rails se posent sur l'herbe (démolis les arbres ou champs)" };
     return { ok:true };
   }
-  if(t==='train_station') return trainStationPlacementInfo(x, y);
+  if(t==='train_station'){
+    const info = trainStationPlacementInfo(x, y);
+    if(!info.ok) return info;
+    const mt = info.platform ? 'train_platform' : 'train_station';
+    const miss = buildMaterialsMissing(mt, x, y, 1, 1, actorId ?? null);
+    return miss ? { ok:false, msg:buildMaterialsError(mt, x, y, 1, 1, actorId ?? null), materials:miss } : info;
+  }
   if(t==='air_parking'){ const pe = airParkingError(x, y); if(pe) return { ok:false, msg:pe }; }
+  // grand bâtiment d'un seul tenant (centre spatial 3×3) : toute l'emprise doit être libre et plane
+  const fp = footprintOf(t);
+  if(fp > 1){
+    const lvl = terrainLevelAt(x, y);
+    for(let dy = 0; dy < fp; dy++) for(let dx = 0; dx < fp; dx++){
+      const tx = x + dx, ty = y + dy;
+      if(!inMap(tx, ty)) return { ok:false, msg:'Le chantier ('+fp+'×'+fp+') déborde de la carte' };
+      const ti = ty*N+tx;
+      if(road[ti] || rail[ti] || bgrid[ti]) return { ok:false, msg:'Emprise occupée : il faut '+fp+'×'+fp+' cases libres' };
+      if(terrain[ti] !== T.GRASS) return { ok:false, msg:'Il faut une zone d’herbe libre de '+fp+'×'+fp+' cases' };
+      if(!tileIsFlat(tx, ty) || terrainLevelAt(tx, ty) !== lvl) return { ok:false, msg:'Terrain non plat : nivelez une zone de '+fp+'×'+fp+' cases' };
+    }
+    const miss = buildMaterialsMissing(t, x, y, fp, fp, actorId ?? null);
+    if(miss) return { ok:false, msg:buildMaterialsError(t, x, y, fp, fp, actorId ?? null), materials:miss };
+    return { ok:true };
+  }
   if(road[i] || rail[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
   if(BUILD[t]?.lux){
     // seule la maison de luxe se pose ; villa, manoir et domaine naissent de son agrandissement
@@ -739,7 +761,9 @@ function canPlace(t,x,y, actorId = MP.myId){
   }
   if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
   if(t==='mine'){
-    if(ter!==T.IRON && ter!==T.COAL) return { ok:false, msg:'La mine doit être sur un gisement' };
+    if(!isMineDeposit(ter)) return { ok:false, msg:'La mine doit être sur un gisement (fer, charbon, cuivre, or, calcaire, sable ou argile)' };
+  } else if(t==='oil_well'){
+    if(ter!==T.OIL) return { ok:false, msg:'Le puits doit être posé sur une nappe de pétrole' };
   } else {
     if(ter!==T.GRASS) return { ok:false, msg:'Terrain non constructible' };
     if(t==='lumber' && !treeNear(x,y,2)) return { ok:false, msg:"Aucun arbre à moins de 2 cases" };
@@ -777,8 +801,12 @@ function canPlace(t,x,y, actorId = MP.myId){
     if(wouldCreateTown && nearbyEnemyOwner(actorId, x, y))
       return { ok:false, msg:"Trop proche d'un autre joueur pour fonder un village (−"+MP_ZONE+' cases)' };
   }
+  const miss = buildMaterialsMissing(t, x, y, 1, 1, actorId ?? null);
+  if(miss) return { ok:false, msg:buildMaterialsError(t, x, y, 1, 1, actorId ?? null), materials:miss };
   return { ok:true };
 }
+// Côté de l'emprise posée en un clic (1 pour tous, sauf les grands bâtiments d'un seul tenant).
+const footprintOf = t => (BUILD[t] && !BUILD[t].resid && BUILD[t].size > 1) ? BUILD[t].size : 1;
 
 function clickAt(x,y){
   if(!inMap(x,y)){
@@ -927,7 +955,7 @@ function clickAt(x,y){
       if(occ){ toast('⛔ Un train occupe cette voie','err'); return; }
       const { updates, refund } = collectRailRemovalUpdates(x, y);
       railApplyMaskUpdates(updates, -refund);
-    } else if(terrain[i]===T.TREE || terrain[i]===T.WHEAT || terrain[i]===T.COTTON || terrain[i]===T.IRON || terrain[i]===T.COAL || terrain[i]===T.SAND || terrain[i]===T.CLAY){
+    } else if(isClearableTerrain(terrain[i])){
       terrain[i] = T.GRASS; markTerrainDirty(); // l'envoi réseau est géré par clickFn (09_multiplayer.js)
     }
     return;
@@ -1011,9 +1039,12 @@ function clickAt(x,y){
   }
   if(tool === 'train_station'){
     if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
+    const mt = materialTypeForTool(tool, x, y);
     const b = placeTrainStationTile(x, y, MP.myId);
     if(!b) return;
     spendMoney(cost, 'construction');
+    if(consumeBuildMaterials(mt, x, y, 1, 1, MP.myId) && buildMaterialsFor(mt))
+      addFloat(x, y, '🏗️ −'+resAmountsIcons(buildMaterialsFor(mt)), '#ffd27a');
     selected = b;
     return;
   }
@@ -1022,12 +1053,14 @@ function clickAt(x,y){
   if(tool==='road'){ road[i] = 1; markGroundDirty(); return; }
   const b = newBuilding(tool,x,y);
   b.owner = MP.myId;
+  if(consumeBuildMaterials(tool, x, y, b.w, b.h, MP.myId) && buildMaterialsFor(tool))
+    addFloat(x + (b.w-1)/2, y, '🏗️ −'+resAmountsIcons(buildMaterialsFor(tool)), '#ffd27a');
   markStarterHomeIfNeeded(b);
   assignBuildingToTown(b);
   assignIndustryName(b);
   assignTrainDepotName(b);
   buildings.push(b);
-  bgrid[i] = b;
+  setGrid(b, b);
   selected = b;
   if(BUILD[b.type].resid) assignHomelessToHousing(b.owner);
 }

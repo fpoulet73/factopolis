@@ -39,6 +39,39 @@ filets (+ huile en bonus) → 🏠 Maisons → 👥 habitants + 💰 argent + �
 outils (quota) → fusion en niveau supérieur ; pain puis vêtements pour les grands immeubles
 ```
 
+### Chaînes avancées
+
+```
+⛏️ Mine (calcaire, argile, sable, cuivre, or)      🛢️ Puits de pétrole (nappe)
+calcaire + argile + charbon → 🌋 Cimenterie → ciment ; ciment + sable + eau → 🚧 Centrale à béton → béton
+sable + calcaire + charbon → 🏺 Verrerie → verre → 🪟 Vitrerie → vitres
+acier → 🔨 Laminoir → poutrelles · 🗜️ Tôlerie → plaques · 📌 Clouterie → clous
+minerai de cuivre + charbon → ♨️ Fonderie de cuivre → cuivre → 🌀 Tréfilerie → fil de cuivre
+coton → 🪢 Corderie → cordes
+pétrole → ⛽ Raffinerie → carburant + produits chimiques → 🧪 Usine chimique → plastique + colle
+produits chimiques + argile (ocre) → 🎨 Usine de peinture → peinture jaune
+minerai d'or + produits chimiques → 🏅 Affinerie → or
+fil de cuivre + plastique + or → 🖥️ Usine électronique → cartes électroniques
+bois + clous + colle → 🪑 Ébénisterie → meubles · cartes + plaques + plastique + fil → 🔌 électroménager
+or + verre → 💍 Joaillerie → bijoux
+plaques + cartes + carburant + fil → 🚀 Centre spatial → fusée → hélium-3 + xénite (espace)
+cartes + xénite + hélium-3 → 🔬 Laboratoire quantique → processeurs quantiques
+```
+
+**Matériaux de chantier** : ports, hangars, gares d'aéroport, pistes, taxis,
+parkings, tours de contrôle, centre spatial et usines avancées (raffinerie, usine
+chimique, électronique…) exigent, en plus de leur prix,
+des matériaux (poutrelles, plaques d'acier, béton, vitres, cordes, fil de cuivre,
+peinture jaune, cartes électroniques) stockés dans un **entrepôt du joueur dont le
+rayon couvre le chantier**. Ils sont prélevés à la pose. Le fantôme de placement
+affiche le besoin ou le manque, et les rayons des entrepôts s'affichent.
+Les gares, quais et dépôts de train n'en demandent pas.
+Configuration : `materiauxChantier` dans `config.js` (`actif: false` = bac à sable).
+
+**Luxe** : les employés (villas) demandent des meubles, les cadres (manoirs) de
+l'électroménager, les patrons (domaines) des bijoux et des processeurs quantiques.
+Les tours et gratte-ciel exigent béton, vitres et poutrelles pour fusionner.
+
 La partie est guidée par une suite d'**objectifs** (première maison → filière
 poisson → acier → outils → fusions → camions → trains → ports/aéroports) qui
 rapportent des primes. **La Gazette** met à la une les grands moments de la
@@ -82,8 +115,11 @@ npm test -- trains        # filtre par nom de scénario
 Scénarios dans `tools/tests/solo/` (trains : terminus, boucle, quais, évitement,
 ordres en route ; fret/voyageurs ; bateaux/avions ; zone de départ des cartes
 générées ; économie de début de partie et filière acier → outils → première fusion ;
-interface ; sauvegarde ; performance) et `tools/tests/mp/` (synchronisation
-hôte/invité, migration d'hôte, sauvegarde/chargement serveur).
+matériaux de chantier ; chaînes avancées ; centre spatial ; interface ; sauvegarde ;
+performance) et `tools/tests/mp/` (synchronisation hôte/invité, migration d'hôte,
+sauvegarde/chargement serveur, validation des matériaux par l'hôte).
+`T_.flatWorld()` crée un monde « bac à sable » sans matériaux de chantier
+(`T_.flatWorld(true)` pour les exiger).
 
 ---
 
@@ -142,20 +178,35 @@ paramètres des logements, etc.
 
 ## Ressources
 
-15 ressources manipulées dans le jeu :
+45 ressources, rangées par familles (`RES[k].cat`, `RES_CATEGORIES`) :
 
-`iron` (fer), `coal` (charbon), `wood` (bois), `wheat` (blé),
-`cotton` (coton), `clothes` (vêtements), `flour` (farine), `water` (eau),
-`bread` (pain), `fish` (poisson), `fish_fillet` (filet),
-`fish_oil` (huile), `steel` (acier), `goods` (outils de construction),
-`dirt` (terre).
+- **base** : `iron`, `coal`, `wood`, `wheat`, `cotton`, `water`, `fish`, `dirt`,
+  `copper_ore`, `gold_ore`, `limestone`, `sand`, `clay`, `oil` ;
+- **alimentation & textile** : `clothes`, `flour`, `bread`, `fish_fillet`, `fish_oil` ;
+- **métallurgie** : `steel`, `copper`, `gold`, `nails` ;
+- **matériaux de chantier** : `goods`, `copper_wire`, `steel_beam`, `steel_plate`,
+  `cement`, `concrete`, `glass`, `window`, `rope`, `paint` ;
+- **chimie** : `chemicals`, `fuel`, `plastic`, `glue` ;
+- **électronique** : `circuit`, `quantum_chip` ;
+- **luxe** : `furniture`, `appliances`, `jewelry` ;
+- **espace** (fusées) : `helium3`, `xenite`.
+
+Gisements (`T.COPPER`, `T.GOLD`, `T.LIMESTONE`, `T.OIL`, plus le sable et l'argile
+du littoral) générés en taches (`WORLD_DEPOSITS`, `monde.ressources` dans `config.js`).
 
 ---
 
 ## Bâtiments
 
 ### Production (fusionnables en rectangles)
-- `mine` : fer **ou** charbon selon le gisement
+- `mine` : fer, charbon, cuivre, or, calcaire, sable ou argile selon le gisement
+- `oil_well` : pétrole (sur une nappe)
+- usines avancées (spécialisations de `plant`, `ADVANCED_FACTORIES`) :
+  `copper_smelter`, `wire_mill`, `gold_refinery`, `rolling_mill`, `sheet_mill`,
+  `nail_factory`, `cement_plant`, `concrete_plant`, `glassworks`, `glazier`,
+  `ropery`, `refinery`, `chem_plant`, `paint_factory`, `electronics_plant`,
+  `furniture_factory`, `appliance_factory`, `jeweler`, `quantum_lab`
+- `space_center` : centre spatial 3×3 (non fusionnable) — fusées et ressources spatiales
 - `lumber` : bois (près d'arbres)
 - `farm` / `cotton_farm` : blé / coton
 - `pump` : eau (bord de l'eau)

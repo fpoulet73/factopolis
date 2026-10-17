@@ -194,9 +194,22 @@ function worldDefaultsFromConfig(){
       cotton: clampNum(resourcesCfg.cotton, 0, 100, 1),
       iron: clampNum(resourcesCfg.iron, 0, 100, 2),
       coal: clampNum(resourcesCfg.coal, 0, 100, 2),
+      copper: clampNum(resourcesCfg.copper, 0, 100, 0.1),
+      limestone: clampNum(resourcesCfg.limestone, 0, 100, 0.1),
+      oil: clampNum(resourcesCfg.oil, 0, 100, 0.05),
+      gold: clampNum(resourcesCfg.gold, 0, 100, 0.025),
     },
   };
 }
+// Gisements générés en taches (type de tuile, clé de WORLD.resources, options de tache).
+const WORLD_DEPOSITS = [
+  { t:T.IRON,      key:'iron' },
+  { t:T.COAL,      key:'coal' },
+  { t:T.COPPER,    key:'copper' },
+  { t:T.LIMESTONE, key:'limestone' },
+  { t:T.OIL,       key:'oil',  opts:{ maxRadius:1, fillChance:0.75 } },
+  { t:T.GOLD,      key:'gold', opts:{ maxRadius:1, fillChance:0.6 } },
+];
 
 const WORLD_DEFAULTS = worldDefaultsFromConfig();
 let WORLD = normalizeWorldConfig(WORLD_DEFAULTS);
@@ -219,7 +232,13 @@ function normalizeWorldConfig(config){
       cotton: clampNum(baseRes.cotton * resourceFactor, 0, 100, baseRes.cotton),
       iron: clampNum(baseRes.iron * resourceFactor, 0, 100, baseRes.iron),
       coal: clampNum(baseRes.coal * resourceFactor, 0, 100, baseRes.coal),
+      copper: clampNum(baseRes.copper * resourceFactor, 0, 100, baseRes.copper),
+      limestone: clampNum(baseRes.limestone * resourceFactor, 0, 100, baseRes.limestone),
+      oil: clampNum(baseRes.oil * resourceFactor, 0, 100, baseRes.oil),
+      gold: clampNum(baseRes.gold * resourceFactor, 0, 100, baseRes.gold),
     },
+    // Matériaux de chantier exigés pour les grands bâtiments (false : bac à sable, cf. tests)
+    buildMaterials: c.buildMaterials !== false,
     seed: Number.isFinite(c.seed) ? c.seed : Math.floor(Math.random() * 2 ** 31),
     // Décalage cumulé de l'origine de la grille (growMap) — repère absolu du bruit
     noiseOx: Number.isFinite(c.noiseOx) ? c.noiseOx : 0,
@@ -853,7 +872,7 @@ function rebuildTerrainHeightsFromTerrain(inScope){
     const broad = pseudoNoise(x, y, 0.065, 0.052, 17);
     const detail = pseudoNoise(x, y, 0.17, 0.11, 53);
     const coastPenalty = tileTouchesWater(x, y) ? 0.22 : 0;
-    const richness = (terrain[i] === T.IRON || terrain[i] === T.COAL) ? 0.08 : 0;
+    const richness = (terrain[i] !== T.SAND && terrain[i] !== T.CLAY && isMineDeposit(terrain[i])) ? 0.08 : 0;
     const value = Math.max(0, Math.min(1, broad * 0.78 + detail * 0.22 - coastPenalty + richness));
     terrainHeightMap[i] = 1 + Math.round(value * Math.max(0, cfg.levels - 1));
   }
@@ -1042,6 +1061,29 @@ function ensureStarterArea(){
   if(!nearest(T.IRON, 11)) patch(T.IRON, 6, 10, 1.5, 0.85);
   if(!nearest(T.COAL, 11)) patch(T.COAL, 6, 10, 1.5, 0.85);
   if(!nearest(T.TREE, 8)) patch(T.TREE, 4, 7, 2, 0.6);
+  // Au moins une case de rive plate en herbe pour la première cabane de pêcheur : les
+  // gisements, le sable, les arbres ou une berge en pente peuvent occuper toute la rive
+  // proche. On dégage puis aplanit la case de rive la plus proche du site.
+  const fisherSpot = (x, y) => terrain[y*N+x] === T.GRASS && tileTouchesWater(x, y) && tileIsFlat(x, y);
+  let hasSpot = false;
+  for(let y = sy - 6; y <= sy + 6 && !hasSpot; y++) for(let x = sx - 6; x <= sx + 6; x++)
+    if(inMap(x, y) && mapMask[y*N+x] && fisherSpot(x, y)){ hasSpot = true; break; }
+  if(!hasSpot){
+    const cands = [];
+    for(let y = sy - 6; y <= sy + 6; y++) for(let x = sx - 6; x <= sx + 6; x++)
+      if(inPlay(x, y, 2) && terrain[y*N+x] !== T.WATER && tileTouchesWater(x, y))
+        cands.push({ x, y, d: Math.max(Math.abs(x - sx), Math.abs(y - sy)) });
+    cands.sort((a, b) => a.d - b.d);
+    for(const c of cands.slice(0, 6)){
+      const i = c.y*N+c.x;
+      terrain[i] = T.GRASS;
+      let h = terrainLevelAt(c.x, c.y);
+      for(const [dx, dy] of DIRS8) h = Math.max(h, terrainLevelAt(c.x + dx, c.y + dy));
+      terrainHeightMap[i] = h;
+      rebuildWaterLevels();
+      if(fisherSpot(c.x, c.y)) break;
+    }
+  }
   return { x: sx, y: sy };
 }
 
@@ -1113,8 +1155,7 @@ function genWorld(config){
   const patchCount = pct => Math.round(N*N * pct / 100 / 8);
   placePatch(T.WHEAT, patchCount(WORLD.resources.wheat));
   placePatch(T.COTTON, patchCount(WORLD.resources.cotton), { maxRadius:1, fillChance:0.65 });
-  placePatch(T.IRON, patchCount(WORLD.resources.iron));
-  placePatch(T.COAL, patchCount(WORLD.resources.coal));
+  for(const dep of WORLD_DEPOSITS) placePatch(dep.t, patchCount(WORLD.resources[dep.key] ?? 0), dep.opts);
   // Garantit une zone de chaque ressource indispensable dans la zone jouable initiale
   // (les taches ci-dessus peuvent toutes tomber dans la marge d'expansion non achetée)
   const ensureResourceZoneInPlayArea = (type) => {
@@ -1134,7 +1175,7 @@ function genWorld(config){
       if(terrain[y*N+x] === T.GRASS) terrain[y*N+x] = type;
     }
   };
-  [T.TREE, T.WHEAT, T.COTTON, T.IRON, T.COAL].forEach(ensureResourceZoneInPlayArea);
+  [T.TREE, T.WHEAT, T.COTTON, ...WORLD_DEPOSITS.map(dep => dep.t)].forEach(ensureResourceZoneInPlayArea);
   applyShoreResources(tn, (x, y) => !!mapMask[y*N+x]);
   // zone de départ jouable : rive, fer, charbon et bois à portée (façon Factorio)
   const start = ensureStarterArea();
@@ -1166,8 +1207,8 @@ const popTotal  = (oid=myOwner()) => buildings.filter(b=>ownedBy(b,oid)).reduce(
 const housingCap= (oid=myOwner()) => buildings.filter(b=>ownedBy(b,oid)).reduce((s,b)=>
       s + (BUILD[b.type].resid ? BUILD[b.type].resid.popCap : 0), 0);
 const jobsTotal = (oid=myOwner()) => buildings.filter(b=>!b.dead && ownedBy(b,oid))
-  .reduce((s,b)=> s + (b.paused ? 0 : (BUILD[b.type].workers||0)*b.w*b.h), 0);
-const workersRequiredOf = b => (BUILD[b.type].workers||0)*b.w*b.h;
+  .reduce((s,b)=> s + (b.paused ? 0 : (BUILD[b.type].workers||0)*indAreaOf(b)), 0);
+const workersRequiredOf = b => (BUILD[b.type].workers||0)*indAreaOf(b);
 const workersAllocatedOf = b => {
   if(b.paused) return 0;
   return Math.min(workersRequiredOf(b), b.workersAssigned||0);
@@ -1245,8 +1286,7 @@ function generateExpansionTerrain(){
   const cnt=pct=>Math.round(mTiles*pct/100/8);
   pp(T.WHEAT,cnt(WORLD.resources?.wheat??8));
   pp(T.COTTON,cnt(WORLD.resources?.cotton??2),{maxRadius:1,fillChance:0.65});
-  pp(T.IRON, cnt(WORLD.resources?.iron??10));
-  pp(T.COAL, cnt(WORLD.resources?.coal??10));
+  for(const dep of WORLD_DEPOSITS) pp(dep.t, cnt(WORLD.resources?.[dep.key] ?? WORLD_DEFAULTS.resources[dep.key] ?? 0), dep.opts);
   applyShoreResources(tn, (x, y) => !inPlay(x, y));
   rebuildWaterLevels();
   markTerrainDirty();
@@ -1313,8 +1353,7 @@ function generateNewMapRegion(oldN, dx, dy){
   const cnt=pct=>Math.round(mTiles*pct/100/8);
   pp(T.WHEAT,cnt(WORLD.resources?.wheat??8));
   pp(T.COTTON,cnt(WORLD.resources?.cotton??2),{maxRadius:1,fillChance:0.65});
-  pp(T.IRON, cnt(WORLD.resources?.iron??10));
-  pp(T.COAL, cnt(WORLD.resources?.coal??10));
+  for(const dep of WORLD_DEPOSITS) pp(dep.t, cnt(WORLD.resources?.[dep.key] ?? WORLD_DEFAULTS.resources[dep.key] ?? 0), dep.opts);
   applyShoreResources(tn, isNew);
   rebuildWaterLevels();
   markTerrainDirty();
@@ -1331,6 +1370,10 @@ function expTileCost(t){
   if(t===T.COAL)  return 5500;  // minerai
   if(t===T.SAND)  return 3600;  // ressource littorale
   if(t===T.CLAY)  return 3900;  // ressource littorale
+  if(t===T.COPPER)    return 6500;  // minerai de cuivre
+  if(t===T.LIMESTONE) return 4800;  // carrière de calcaire
+  if(t===T.OIL)       return 8000;  // nappe de pétrole
+  if(t===T.GOLD)      return 12000; // minerai précieux
   return 3000;
 }
 
@@ -1862,7 +1905,9 @@ let _essentialRes = null;
 function essentialResources(){
   if(_essentialRes) return _essentialRes;
   const set = new Set();
-  for(const t in BUILD) for(const r of BUILD[t].resid?.required || []) set.add(r);
+  // besoins des logements ouvriers seulement : le confort des classes aisées (meubles,
+  // électroménager…) ne doit pas prendre les ouvriers des filières alimentaires
+  for(const t in BUILD) if(!BUILD[t].lux) for(const r of BUILD[t].resid?.required || []) set.add(r);
   for(let changed = true; changed;){
     changed = false;
     for(const t in BUILD){

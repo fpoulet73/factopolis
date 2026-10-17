@@ -51,7 +51,17 @@ let N = 64;              // taille de la carte (tuiles)
 const TILE = 36;         // taille d'une tuile en px monde (simulation)
 const TW = 64, TH = 36;  // taille d'une tuile iso à l'écran (36 pour perspective correcte)
 const TW2 = TW/2, TH2 = TH/2;
-const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4, WHEAT:5, COTTON:6, SAND:7, CLAY:8 };
+const T = { GRASS:0, WATER:1, TREE:2, IRON:3, COAL:4, WHEAT:5, COTTON:6, SAND:7, CLAY:8,
+            COPPER:9, GOLD:10, LIMESTONE:11, OIL:12 };
+// Gisements exploitables par une mine (tuile → ressource extraite). Le sable et
+// l'argile du littoral, le calcaire (carrière) et l'or s'extraient aussi à la mine.
+const DEPOSIT_ORES = {
+  [T.IRON]:'iron', [T.COAL]:'coal', [T.COPPER]:'copper_ore', [T.GOLD]:'gold_ore',
+  [T.LIMESTONE]:'limestone', [T.SAND]:'sand', [T.CLAY]:'clay',
+};
+const isMineDeposit = ter => DEPOSIT_ORES[ter] != null;
+// Tuiles « ressource » rasables au bulldozer (champs, arbres, gisements, nappes).
+const isClearableTerrain = ter => ter === T.TREE || ter === T.WHEAT || ter === T.COTTON || ter === T.OIL || isMineDeposit(ter);
 const DIRS  = [[1,0],[-1,0],[0,1],[0,-1]];
 const DIRS8 = [[1,0],[-1,0],[0,1],[0,-1],[1,-1],[-1,1],[1,1],[-1,-1]];
 const RAIL_DIRS = [
@@ -161,7 +171,17 @@ const SHIP_FREIGHT_FACTOR  = CFG.logistique?.bateau?.tarifFret ?? 0.05;
 const AIRPORT_RADIUS       = CFG.logistique?.avion?.rayon      ?? 16;
 const PLANE_FREIGHT_FACTOR = CFG.logistique?.avion?.tarifFret ?? 0.12;
 const PLANE_FARE_FACTOR    = CFG.logistique?.avion?.tarif      ?? 1.1;
-const ALL_CARGO_RESOURCES  = ['iron','coal','wood','wheat','cotton','clothes','flour','water','bread','fish','fish_fillet','fish_oil','steel','goods','dirt'];
+const ALL_CARGO_RESOURCES  = ['iron','coal','wood','wheat','cotton','clothes','flour','water','bread','fish','fish_fillet','fish_oil','steel','goods','dirt',
+  'copper_ore','gold_ore','limestone','sand','clay','oil','copper','copper_wire','gold','steel_beam','steel_plate','nails',
+  'cement','concrete','glass','window','rope','chemicals','fuel','plastic','glue','paint','circuit',
+  'furniture','appliances','jewelry','quantum_chip','helium3','xenite'];
+// Familles de cargaison partagées par les camions achetés et les wagons :
+// vrac (minerais, granulats, ciment), plateau (profilés, bobines), marchandises
+// (produits finis, fragiles ou précieux) et citerne (liquides et gaz).
+const CARGO_BULK   = ['iron','coal','dirt','copper_ore','gold_ore','limestone','sand','clay','cement','concrete'];
+const CARGO_FLAT   = ['wood','steel','steel_beam','steel_plate','rope','copper','copper_wire','nails'];
+const CARGO_GOODS  = ['goods','clothes','bread','glass','window','paint','plastic','glue','circuit','furniture','appliances','jewelry','gold','xenite','quantum_chip'];
+const CARGO_LIQUID = ['water','fish_oil','oil','fuel','chemicals','helium3'];
 
 const VEHICLE_TYPES = (()=>{
   const cfgV = CFG.logistique?.vehicules || {};
@@ -177,12 +197,12 @@ const VEHICLE_TYPES = (()=>{
   };
   const DEFS = {
     // --- types achetables ---
-    minerai:     { nom:'Camion minerai',     icone:'🚛', resources:['iron','coal','dirt'],                                          cost:800,  capacite:15, speed:4.0, maintenanceCost: cfgV.minerai?.coutEntretienJournalier      ?? 5  },
-    plateau:     { nom:'Camion plateau',     icone:'🚚', resources:['wood','steel'],                                                cost:900,  capacite:14, speed:3.8, maintenanceCost: cfgV.plateau?.coutEntretienJournalier      ?? 5  },
+    minerai:     { nom:'Camion minerai',     icone:'🚛', resources:CARGO_BULK.slice(),                                             cost:800,  capacite:15, speed:4.0, maintenanceCost: cfgV.minerai?.coutEntretienJournalier      ?? 5  },
+    plateau:     { nom:'Camion plateau',     icone:'🚚', resources:CARGO_FLAT.slice(),                                             cost:900,  capacite:14, speed:3.8, maintenanceCost: cfgV.plateau?.coutEntretienJournalier      ?? 5  },
     cereale:     { nom:'Camion céréales',    icone:'🚜', resources:['wheat','cotton','flour'],                                      cost:600,  capacite:15, speed:4.0, maintenanceCost: cfgV.cereale?.coutEntretienJournalier      ?? 4  },
-    marchandises:{ nom:'Camion marchandises',icone:'🚐', resources:['goods','clothes','bread'],                                    cost:700,  capacite:12, speed:3.8, maintenanceCost: cfgV.marchandises?.coutEntretienJournalier ?? 5  },
+    marchandises:{ nom:'Camion marchandises',icone:'🚐', resources:CARGO_GOODS.slice(),                                            cost:700,  capacite:12, speed:3.8, maintenanceCost: cfgV.marchandises?.coutEntretienJournalier ?? 5  },
     frigo:       { nom:'Camion frigorifique',icone:'🚚', resources:['fish','fish_fillet'],                                         cost:750,  capacite:14, speed:3.8, maintenanceCost: cfgV.frigo?.coutEntretienJournalier        ?? 5  },
-    citerne:     { nom:'Camion citerne',     icone:'🚛', resources:['water','fish_oil'],                                           cost:750,  capacite:20, speed:3.5, maintenanceCost: cfgV.citerne?.coutEntretienJournalier      ?? 5  },
+    citerne:     { nom:'Camion citerne',     icone:'🚛', resources:CARGO_LIQUID.slice(),                                           cost:750,  capacite:20, speed:3.5, maintenanceCost: cfgV.citerne?.coutEntretienJournalier      ?? 5  },
     bus:         { nom:'Bus',                icone:'🚌', resources:[],                                                             cost:1500, capacite:40, speed:3.0, maintenanceCost: cfgV.bus?.coutEntretienJournalier           ?? 10 },
     train:       { nom:'Train',              icone:'🚂', resources:[],                                                             cost:(CFG.logistique?.train?.cout ?? 100000), capacite:0,  speed:2.9, maintenanceCost: CFG.logistique?.train?.coutEntretienJournalier ?? 80, mode:'rail' },
     // --- bateaux (port) et avions (aéroport) ---
@@ -220,12 +240,12 @@ const VEHICLE_TYPES = (()=>{
   return out;
 })();
 const TRAIN_WAGON_TYPES = {
-  minerai:       { nom:'Wagon minerai',       icone:'🪨', resources:['iron','coal','dirt'],       capacite:20, color:'#9b6844' },
+  minerai:       { nom:'Wagon minerai',       icone:'🪨', resources:CARGO_BULK.slice(),           capacite:20, color:'#9b6844' },
   cereale:       { nom:'Wagon céréales',      icone:'🌾', resources:['wheat','cotton','flour'],   capacite:20, color:'#c8a228' },
-  marchandises:  { nom:'Wagon marchandises',  icone:'📦', resources:['goods','clothes','bread'],  capacite:18, color:'#3a6b9e' },
-  plateau:       { nom:'Wagon plateau',       icone:'🪵', resources:['wood','steel'],             capacite:18, color:'#7a4928' },
+  marchandises:  { nom:'Wagon marchandises',  icone:'📦', resources:CARGO_GOODS.slice(),          capacite:18, color:'#3a6b9e' },
+  plateau:       { nom:'Wagon plateau',       icone:'🪵', resources:CARGO_FLAT.slice(),           capacite:18, color:'#7a4928' },
   frigo:         { nom:'Wagon frigorifique',  icone:'🐟', resources:['fish','fish_fillet'],       capacite:18, color:'#5ea8c4' },
-  citerne:       { nom:'Wagon citerne',       icone:'💧', resources:['water','fish_oil'],         capacite:22, color:'#7a8c9e' },
+  citerne:       { nom:'Wagon citerne',       icone:'💧', resources:CARGO_LIQUID.slice(),         capacite:22, color:'#7a8c9e' },
   voiture:       { nom:'Voiture voyageurs',   icone:'🚃', resources:[],                           capacite:40, color:'#c8e040', passenger:true },
 };
 
@@ -368,23 +388,93 @@ const TERRAFORM_LEVEL_COST = 25; // $ par tuile impactée (creuser/remonter d'un
 const TUNNEL_COST_PER_TILE = 60; // $ par tuile creusée pour un tunnel ferroviaire
 const TUNNEL_MAX_LENGTH = 32;    // longueur max (tuiles) recherchée pour une sortie de tunnel
 
+// cat : famille d'affichage (panneaux d'entrepôt, aide), cf. RES_CATEGORIES.
 const RES = {
-  iron:  { n:'Fer',                    c:'#d98a4f', ic:'🔩' },
-  coal:  { n:'Charbon',                c:'#454552', ic:'⚫' },
-  wood:  { n:'Bois',                   c:'#a4713d', ic:'🪵' },
-  wheat: { n:'Blé',                    c:'#d7b348', ic:'🌾' },
-  cotton:{ n:'Coton',                  c:'#f1efe3', ic:'☁️' },
-  clothes:{ n:'Vêtement',              c:'#b98fcb', ic:'👕' },
-  flour: { n:'Farine',                 c:'#eadfa8', ic:'🫙' },
-  water: { n:'Eau',                    c:'#64b7e8', ic:'💧' },
-  bread: { n:'Pain',                   c:'#d99a45', ic:'🍞' },
-  fish:  { n:'Poisson',                c:'#4fa6b8', ic:'🐟' },
-  fish_fillet: { n:'Filet de poisson', c:'#c7e7e9', ic:'🍣' },
-  fish_oil:    { n:'Huile de poisson', c:'#d6b45c', ic:'🫒' },
-  steel: { n:'Acier',                  c:'#a8bdd2', ic:'⚙️' },
-  goods: { n:'Outils de construction', c:'#e6c84f', ic:'🔧' },
-  dirt:  { n:'Terre',                  c:'#8B6347', ic:'🌑' },
+  iron:  { n:'Fer',                    c:'#d98a4f', ic:'🔩', cat:'base' },
+  coal:  { n:'Charbon',                c:'#454552', ic:'⚫', cat:'base' },
+  wood:  { n:'Bois',                   c:'#a4713d', ic:'🪵', cat:'base' },
+  wheat: { n:'Blé',                    c:'#d7b348', ic:'🌾', cat:'base' },
+  cotton:{ n:'Coton',                  c:'#f1efe3', ic:'☁️', cat:'base' },
+  clothes:{ n:'Vêtement',              c:'#b98fcb', ic:'👕', cat:'food' },
+  flour: { n:'Farine',                 c:'#eadfa8', ic:'🫙', cat:'food' },
+  water: { n:'Eau',                    c:'#64b7e8', ic:'💧', cat:'base' },
+  bread: { n:'Pain',                   c:'#d99a45', ic:'🍞', cat:'food' },
+  fish:  { n:'Poisson',                c:'#4fa6b8', ic:'🐟', cat:'base' },
+  fish_fillet: { n:'Filet de poisson', c:'#c7e7e9', ic:'🍣', cat:'food' },
+  fish_oil:    { n:'Huile de poisson', c:'#d6b45c', ic:'🫒', cat:'food' },
+  steel: { n:'Acier',                  c:'#a8bdd2', ic:'⚙️', cat:'metal' },
+  goods: { n:'Outils de construction', c:'#e6c84f', ic:'🔧', cat:'build' },
+  dirt:  { n:'Terre',                  c:'#8B6347', ic:'🌑', cat:'base' },
+  // --- gisements et ressources de base ---
+  copper_ore: { n:'Minerai de cuivre', c:'#c46a3a', ic:'🟠', cat:'base' },
+  gold_ore:   { n:'Minerai d’or',      c:'#d8b23a', ic:'🟡', cat:'base' },
+  limestone:  { n:'Calcaire',          c:'#d9d4c2', ic:'🪨', cat:'base' },
+  sand:       { n:'Sable',             c:'#e8d28a', ic:'🏖️', cat:'base' },
+  clay:       { n:'Argile',            c:'#c07a50', ic:'🧱', cat:'base' },
+  oil:        { n:'Pétrole',           c:'#2a2630', ic:'🖤', cat:'base' },
+  // --- métallurgie ---
+  copper:      { n:'Cuivre',           c:'#d9804a', ic:'🥉', cat:'metal' },
+  copper_wire: { n:'Fil de cuivre',    c:'#e8945a', ic:'➰', cat:'build' },
+  gold:        { n:'Or',               c:'#f2c94c', ic:'🪙', cat:'metal' },
+  nails:       { n:'Clous',            c:'#9aa6b2', ic:'📌', cat:'metal' },
+  // --- matériaux de chantier ---
+  steel_beam:  { n:'Poutrelle en acier', c:'#7f95ab', ic:'🪜', cat:'build' },
+  steel_plate: { n:'Plaque en acier',  c:'#b9c7d6', ic:'🛡️', cat:'build' },
+  cement:      { n:'Ciment',           c:'#b4b0a6', ic:'🧂', cat:'build' },
+  concrete:    { n:'Béton',            c:'#8f9298', ic:'🔲', cat:'build' },
+  glass:       { n:'Verre',            c:'#bfe6f2', ic:'🫧', cat:'build' },
+  window:      { n:'Vitre',            c:'#8fd0ea', ic:'🪟', cat:'build' },
+  rope:        { n:'Corde',            c:'#c9a46a', ic:'🪢', cat:'build' },
+  paint:       { n:'Peinture jaune',   c:'#f2c230', ic:'🎨', cat:'build' },
+  // --- chimie ---
+  chemicals:   { n:'Produits chimiques', c:'#7fc97a', ic:'⚗️', cat:'chem' },
+  fuel:        { n:'Carburant',        c:'#e06a3a', ic:'⛽', cat:'chem' },
+  plastic:     { n:'Plastique',        c:'#e7e2f0', ic:'🧴', cat:'chem' },
+  glue:        { n:'Colle',            c:'#e8cf7a', ic:'🍯', cat:'chem' },
+  // --- électronique ---
+  circuit:     { n:'Carte électronique', c:'#3f9a5a', ic:'💾', cat:'tech' },
+  appliances:  { n:'Électroménager',   c:'#d8dde3', ic:'📺', cat:'lux' },
+  quantum_chip:{ n:'Processeur quantique', c:'#b58cff', ic:'🔮', cat:'tech' },
+  // --- biens de luxe ---
+  furniture:   { n:'Meubles',          c:'#a0683a', ic:'🛋️', cat:'lux' },
+  jewelry:     { n:'Bijoux',           c:'#ffd76a', ic:'💍', cat:'lux' },
+  // --- ressources spatiales (rapportées par les fusées) ---
+  helium3:     { n:'Hélium-3',         c:'#9fe6ff', ic:'⚛️', cat:'space' },
+  xenite:      { n:'Xénite',           c:'#7a5cff', ic:'💠', cat:'space' },
 };
+// Noms courts (≤ 10 caractères) affichés sous les tuiles des entrepôts ; le nom
+// complet reste dans l'infobulle.
+const RES_SHORT = {
+  fish_fillet:'Filet', fish_oil:'Huile', goods:'Outils', copper_ore:'M. cuivre', gold_ore:'M. or',
+  copper_wire:'Fil cuivre', steel_beam:'Poutrelle', steel_plate:'Plaque', paint:'Peinture',
+  chemicals:'Chimie', circuit:'Carte élec', appliances:'Électromén', quantum_chip:'Processeur',
+};
+for(const k in RES) RES[k].s = RES_SHORT[k] || RES[k].n;
+// Familles d'affichage des ressources (ordre des sections dans les panneaux).
+const RES_CATEGORIES = [
+  { key:'base',  n:'Ressources de base',     ic:'⛏️' },
+  { key:'food',  n:'Alimentation & textile', ic:'🍞' },
+  { key:'metal', n:'Métallurgie',            ic:'⚙️' },
+  { key:'build', n:'Matériaux de chantier',  ic:'🏗️' },
+  { key:'chem',  n:'Chimie',                 ic:'🧪' },
+  { key:'tech',  n:'Électronique',           ic:'💾' },
+  { key:'lux',   n:'Biens de luxe',          ic:'💎' },
+  { key:'space', n:'Ressources spatiales',   ic:'🚀' },
+];
+// Clés de RES groupées par famille, dans l'ordre de RES_CATEGORIES.
+function resKeysByCategory(filter){
+  return RES_CATEGORIES.map(c => ({ ...c, keys: Object.keys(RES).filter(k => (RES[k].cat || 'base') === c.key && (!filter || filter(k))) }))
+    .filter(c => c.keys.length);
+}
+// Quantités → texte « 2 🪜 Poutrelle en acier, 3 🔲 Béton ».
+function resAmountsText(map, sep = ', '){
+  return Object.keys(map || {}).filter(r => RES[r] && map[r] > 0)
+    .map(r => map[r] + ' ' + RES[r].ic + ' ' + RES[r].n).join(sep);
+}
+// Version compacte « 2🪜 3🔲 » (textes flottants, fantôme de placement).
+function resAmountsIcons(map){
+  return Object.keys(map || {}).filter(r => RES[r] && map[r] > 0).map(r => map[r] + RES[r].ic).join(' ');
+}
 
 const GRAPHIC_PACKS = {
   classic: {
@@ -591,6 +681,10 @@ const RESID_PRICES = (()=>{
     wood:        cfg.bois         ?? 2,
     steel:       cfg.acier        ?? 7,
     dirt:        cfg.terre        ?? 0,
+    furniture:   cfg.meubles      ?? 5,
+    appliances:  cfg.electromenager ?? 8,
+    jewelry:     cfg.bijoux       ?? 12,
+    quantum_chip:cfg.processeurQuantique ?? 20,
   };
 })();
 
@@ -612,6 +706,17 @@ const TRADE_PRICES = (()=>{
     steel: cfg.acier        ?? 14,
     goods: cfg.marchandises ?? 10,
     dirt:  cfg.terre        ?? 1,
+    // prix commerciaux (vente au marché, fret) des nouvelles ressources
+    copper_ore: cfg.mineraiCuivre ?? 7,   gold_ore: cfg.mineraiOr ?? 18,  limestone: cfg.calcaire ?? 4,
+    sand:       cfg.sable         ?? 3,   clay:     cfg.argile    ?? 3,   oil:       cfg.petrole  ?? 9,
+    copper:     cfg.cuivre        ?? 16,  copper_wire: cfg.filCuivre ?? 10, gold:     cfg.or       ?? 70,
+    nails:      cfg.clous         ?? 5,   steel_beam: cfg.poutrelle ?? 32, steel_plate: cfg.plaqueAcier ?? 16,
+    cement:     cfg.ciment        ?? 9,   concrete: cfg.beton     ?? 12,  glass:     cfg.verre    ?? 9,
+    window:     cfg.vitre         ?? 22,  rope:     cfg.corde     ?? 10,  paint:     cfg.peinture ?? 14,
+    chemicals:  cfg.chimie        ?? 8,   fuel:     cfg.carburant ?? 18,  plastic:   cfg.plastique ?? 14,
+    glue:       cfg.colle         ?? 14,  circuit:  cfg.carte     ?? 80,  furniture: cfg.meubles  ?? 60,
+    appliances: cfg.electromenager ?? 140, jewelry: cfg.bijoux    ?? 60,  quantum_chip: cfg.processeurQuantique ?? 600,
+    helium3:    cfg.helium3       ?? 160, xenite:   cfg.xenite    ?? 220,
   };
 })();
 
@@ -628,6 +733,26 @@ const PROD_CONFIG_KEYS = {
   poissonnerie:'fishery',
   fonderie:'smelter',
   usine:'factory',
+  puitsPetrole:'oil_well',
+  fonderieCuivre:'copper_smelter',
+  trefilerie:'wire_mill',
+  affinerieOr:'gold_refinery',
+  laminoir:'rolling_mill',
+  tolerie:'sheet_mill',
+  clouterie:'nail_factory',
+  cimenterie:'cement_plant',
+  centraleBeton:'concrete_plant',
+  verrerie:'glassworks',
+  vitrerie:'glazier',
+  corderie:'ropery',
+  raffinerie:'refinery',
+  usineChimique:'chem_plant',
+  peinture:'paint_factory',
+  electronique:'electronics_plant',
+  ebenisterie:'furniture_factory',
+  electromenager:'appliance_factory',
+  joaillerie:'jeweler',
+  laboQuantique:'quantum_lab',
 };
 const PROD_TYPE_TO_CONFIG_KEY = {};
 for(const fr in PROD_CONFIG_KEYS) PROD_TYPE_TO_CONFIG_KEY[PROD_CONFIG_KEYS[fr]] = fr;
@@ -655,7 +780,12 @@ const BUILD = {
   mine:    { n:'Mine',      ic:'⛏️', hk:'3', cost: CFG.production?.mine?.cout     ?? 450,
              workers:3, time:2.2, col:'#7d6457', hgt:16, ind:true,
              upkeep: CFG.production?.mine?.entretien     ?? 2,
-             desc:'À placer sur un gisement (fer ou charbon).' },
+             desc:'À placer sur un gisement : fer, charbon, cuivre, or (précieux), calcaire (carrière), sable ou argile du littoral. Extrait la ressource de la tuile.' },
+  oil_well:{ n:'Puits de pétrole', ic:'🛢️', hk:'', cost: CFG.production?.puitsPetrole?.cout ?? 1800,
+             workers:3, time:3.0, col:'#3a3540', hgt:20, ind:true,
+             upkeep: CFG.production?.puitsPetrole?.entretien ?? 3,
+             recipe:{ in:{}, out:{oil:1} },
+             desc:'À placer sur une nappe de pétrole (taches sombres). Pompe le pétrole brut pour la raffinerie.' },
   lumber:  { n:'Bûcheron',  ic:'🪓', hk:'4', cost: CFG.production?.bucheron?.cout ?? 350,
              workers:2, time:2.8, col:'#5e7a3a', hgt:16, ind:true,
              upkeep: CFG.production?.bucheron?.entretien ?? 1.5,
@@ -712,7 +842,7 @@ const BUILD = {
              recipe:{ in:{steel:1, wood:1}, out:{goods:1} },
              desc:'Acier + bois → outils de construction.' },
   plant:   { n:'Usine',     ic:'🏚️', hk:'5', cost: CFG.batiments?.usineAbandonee?.cout ?? 150, col:'#4e5663', hgt:18,
-             desc:"Usine abandonnée. À convertir ensuite en aciérie, ferme, ferme de coton, tissage, moulin, boulangerie ou usine d'outils." },
+             desc:"Usine abandonnée. À spécialiser ensuite : alimentation (ferme, moulin, boulangerie…), métallurgie (aciérie, laminoir, tôlerie, cuivre, or), matériaux (cimenterie, béton, verrerie, vitrerie, corderie), chimie (raffinerie, usine chimique, peinture), électronique et biens de luxe." },
   house:   { n:'Maison',    ic:'🏠', hk:'6', cost: CFG.batiments?.maison?.cout    ?? 100,
              col:'#9a7e5f', hgt:18, desc:'' },
   depot:   { n:'Entrepôt',        ic:'📦', hk:'7', cost: CFG.batiments?.entrepot?.cout  ?? 400,
@@ -749,17 +879,83 @@ const BUILD = {
                        ' cases : permet de combler l\'eau avec l\'outil Remblai (10 terres/tuile).' },
 };
 
+// ---------- chaînes de production avancées ----------
+// Usines obtenues en spécialisant une usine abandonnée (plant). Recette, temps,
+// coût et entretien sont surchargés par config.js (clés françaises de
+// PROD_CONFIG_KEYS) ; la description reprend la recette finale (applyProductionConfig).
+// [type, nom, icône, ouvriers, couleur, hauteur, entrées, sorties, note]
+const ADVANCED_FACTORIES = [
+  ['copper_smelter',   'Fonderie de cuivre',     '♨️', 4, '#a0583a', 24, { copper_ore:2, coal:1 }, { copper:1 }, ''],
+  ['wire_mill',        'Tréfilerie',             '🌀', 3, '#b8754a', 20, { copper:1 }, { copper_wire:2 }, 'Le fil de cuivre câble gares, tours de contrôle et électronique.'],
+  ['gold_refinery',    'Affinerie d’or',         '🏅', 4, '#b8963a', 22, { gold_ore:3, chemicals:1 }, { gold:1 }, 'Lixiviation chimique du minerai précieux.'],
+  ['rolling_mill',     'Laminoir',               '🔨', 4, '#6a7a8c', 22, { steel:2 }, { steel_beam:1 }, 'Poutrelles pour les charpentes des grands bâtiments.'],
+  ['sheet_mill',       'Tôlerie',                '🗜️', 3, '#7f8fa0', 20, { steel:1 }, { steel_plate:1 }, 'Plaques pour hangars, quais et fusées.'],
+  ['nail_factory',     'Clouterie',              '📌', 3, '#8a96a3', 18, { steel:1 }, { nails:4 }, ''],
+  ['cement_plant',     'Cimenterie',             '🌋', 4, '#a39d8f', 26, { limestone:2, clay:1, coal:1 }, { cement:2 }, 'Four rotatif : calcaire et argile cuits au charbon.'],
+  ['concrete_plant',   'Centrale à béton',       '🚧', 3, '#8f9298', 22, { cement:1, sand:2, water:1 }, { concrete:2 }, 'Nécessite une citerne d’eau proche.'],
+  ['glassworks',       'Verrerie',               '🏺', 4, '#6fa8b8', 24, { sand:2, limestone:1, coal:1 }, { glass:2 }, ''],
+  ['glazier',          'Vitrerie',               '🪟', 3, '#7cc0d8', 20, { glass:2 }, { window:1 }, 'Vitres pour les gares, terminaux et immeubles.'],
+  ['ropery',           'Corderie',               '🪢', 3, '#b08a5a', 18, { cotton:3 }, { rope:2 }, 'Cordages d’amarrage pour les ports.'],
+  ['refinery',         'Raffinerie',             '⛽', 5, '#5a5560', 30, { oil:3 }, { fuel:1, chemicals:2 }, 'Carburant (fusées) + produits chimiques.'],
+  ['chem_plant',       'Usine chimique',         '🧪', 4, '#5f8a5a', 26, { chemicals:2, water:1 }, { plastic:1, glue:1 }, 'Nécessite une citerne d’eau proche.'],
+  ['paint_factory',    'Usine de peinture',      '🎨', 3, '#c9a43a', 20, { chemicals:1, clay:1 }, { paint:2 }, 'Pigment d’ocre jaune (argile) : marquages des pistes, taxis et quais.'],
+  ['electronics_plant','Usine électronique',     '🖥️', 5, '#3f6a8a', 26, { copper_wire:2, plastic:1, gold:1 }, { circuit:2 }, 'Cartes électroniques aux contacts plaqués or.'],
+  ['furniture_factory','Ébénisterie',            '🪑', 4, '#8a5a32', 20, { wood:2, nails:2, glue:1 }, { furniture:1 }, 'Meubles demandés par les employés, cadres et patrons.'],
+  ['appliance_factory','Usine d’électroménager', '🔌', 5, '#8fa0b0', 24, { circuit:1, steel_plate:1, plastic:1, copper_wire:1 }, { appliances:1 }, 'Électroménager pour les cadres et les patrons.'],
+  ['jeweler',          'Joaillerie',             '💍', 3, '#c9a24a', 20, { gold:1, glass:1 }, { jewelry:2 }, 'Bijoux en or et cristal pour les patrons.'],
+  ['quantum_lab',      'Laboratoire quantique',  '🔬', 6, '#5a4a8a', 30, { circuit:2, xenite:1, helium3:1 }, { quantum_chip:1 }, 'Exploite la xénite et l’hélium-3 rapportés de l’espace.'],
+];
+for(const [type, n, ic, workers, col, hgt, rin, rout, note] of ADVANCED_FACTORIES){
+  const c = CFG.production?.[PROD_TYPE_TO_CONFIG_KEY[type]] || {};
+  BUILD[type] = { n, ic, hk:'', cost: c.cout ?? 1200, workers, time: c.temps ?? 4, col, hgt, ind:true,
+    upkeep: c.entretien ?? 3, recipe:{ in:{ ...rin }, out:{ ...rout } }, note, desc:note };
+}
+
+// ---------- centre spatial ----------
+// Bâtiment 3×3 : assemble une fusée à partir des pièces livrées, la lance puis
+// récupère la capsule et sa cargaison extraterrestre (cf. updateSpaceCenter).
+const SPACE_CFG = CFG.centreSpatial || {};
+const SPACE_ROCKET_PARTS  = _resMap(SPACE_CFG.fusee, { steel_plate:8, circuit:4, fuel:12, copper_wire:4 });
+const SPACE_CARGO         = _resMap(SPACE_CFG.cargaison, { helium3:6, xenite:4 });
+const SPACE_ASSEMBLY_TIME = Math.max(1, +SPACE_CFG.tempsAssemblage || 60);
+const SPACE_MISSION_TIME  = Math.max(1, +SPACE_CFG.dureeMission || 90);
+const SPACE_CENTER_SIZE   = Math.max(2, Math.min(4, Math.round(+SPACE_CFG.taille || 3)));
+BUILD.space_center = { n:'Centre spatial', ic:'🚀', hk:'', cost: SPACE_CFG.cout ?? 60000,
+  workers: SPACE_CFG.ouvriers ?? 12, time: SPACE_ASSEMBLY_TIME, col:'#c9d1da', hgt:40, ind:true,
+  size: SPACE_CENTER_SIZE, noMerge:true, upkeep: SPACE_CFG.entretien ?? 25,
+  desc:'Bâtiment '+SPACE_CENTER_SIZE+'×'+SPACE_CENTER_SIZE+' sur terrain plat. Reçoit des pièces de fusée ('+resAmountsText(SPACE_ROCKET_PARTS)
+    +'), assemble la fusée puis la lance. Au retour de mission, la capsule rapporte '+resAmountsText(SPACE_CARGO)
+    +' — des ressources introuvables sur Terre.' };
+
 const PLANT_UPGRADES = {
-  smelter: { label:'Aciérie',       type:'smelter', icon:'🔥' },
-  farm:    { label:'Ferme',         type:'farm',    icon:'🌾' },
-  cotton_farm:{ label:'Ferme de coton', type:'cotton_farm', icon:'☁️' },
-  weaver:  { label:'Usine de tissage', type:'weaver', icon:'🧵' },
-  mill:    { label:'Moulin',        type:'mill',    icon:'⚙️' },
-  bakery:  { label:'Boulangerie',   type:'bakery',  icon:'🥖' },
-  fishery: { label:'Poissonnerie',  type:'fishery', icon:'🐟' },
-  factory: { label:'Outils de construction', type:'factory', icon:'🏭' },
-  terrassement: { label:'Usine de terrassement', type:'terrassement', icon:'🏗️' },
+  smelter: { label:'Aciérie',       type:'smelter', icon:'🔥', cat:'metal' },
+  farm:    { label:'Ferme',         type:'farm',    icon:'🌾', cat:'food' },
+  cotton_farm:{ label:'Ferme de coton', type:'cotton_farm', icon:'☁️', cat:'food' },
+  weaver:  { label:'Usine de tissage', type:'weaver', icon:'🧵', cat:'food' },
+  mill:    { label:'Moulin',        type:'mill',    icon:'⚙️', cat:'food' },
+  bakery:  { label:'Boulangerie',   type:'bakery',  icon:'🥖', cat:'food' },
+  fishery: { label:'Poissonnerie',  type:'fishery', icon:'🐟', cat:'food' },
+  factory: { label:'Outils de construction', type:'factory', icon:'🏭', cat:'build' },
+  terrassement: { label:'Usine de terrassement', type:'terrassement', icon:'🏗️', cat:'build' },
 };
+// catégorie d'affichage des spécialisations avancées (panneau de l'usine abandonnée)
+const ADVANCED_FACTORY_CATS = {
+  copper_smelter:'metal', wire_mill:'metal', gold_refinery:'metal', rolling_mill:'metal', sheet_mill:'metal', nail_factory:'metal',
+  cement_plant:'build', concrete_plant:'build', glassworks:'build', glazier:'build', ropery:'build',
+  refinery:'chem', chem_plant:'chem', paint_factory:'chem',
+  electronics_plant:'tech', quantum_lab:'tech',
+  furniture_factory:'lux', appliance_factory:'lux', jeweler:'lux',
+};
+for(const [type, n, ic] of ADVANCED_FACTORIES)
+  PLANT_UPGRADES[type] = { label:n, type, icon:ic, cat:ADVANCED_FACTORY_CATS[type] || 'build' };
+const PLANT_UPGRADE_CATEGORIES = [
+  { key:'food',  n:'Alimentation & textile' },
+  { key:'metal', n:'Métallurgie' },
+  { key:'build', n:'Matériaux de chantier' },
+  { key:'chem',  n:'Chimie (pétrole)' },
+  { key:'tech',  n:'Électronique & haute technologie' },
+  { key:'lux',   n:'Biens de luxe' },
+];
 
 const DEPOT_TOOLBAR_ITEMS = [];
 function registerDepotTool(item){
@@ -1009,7 +1205,10 @@ const IND_RADIUS_FACTOR = CFG.industrie?.rayonFacteur ?? 4;
 const indRadiusOf = b => Math.round(IND_RADIUS_BASE + Math.sqrt(b.w * b.h) * IND_RADIUS_FACTOR);
 const FISHER_FISH_RADIUS = CFG.production?.pecheur?.rayonPeche ?? 5;
 const fisherRadiusOf = () => FISHER_FISH_RADIUS;
-const upkeepOf = b => (BUILD[b.type].upkeep||0) * b.w*b.h * indFactor(b.w*b.h)
+// « cases » comptées pour les ouvriers et l'entretien : un bâtiment d'un seul tenant
+// (centre spatial) compte une fois, une usine fusionnée autant que de cases.
+const indAreaOf = b => BUILD[b.type]?.noMerge ? 1 : b.w * b.h;
+const upkeepOf = b => (BUILD[b.type].upkeep||0) * indAreaOf(b) * indFactor(indAreaOf(b))
                       * (b.paused ? PAUSE_UPKEEP : 1);
 
 // ---------- système de villes / villages ----------
@@ -1082,6 +1281,27 @@ const IND_NAMES = {
   factory: ['Manufacture Centrale','Atelier du Peuple','Grande Usine','Fabrique Royale','Usine Municipale','Atelier des Arts','Grande Fabrique','Usine Centrale','Fabrique du Nord','Manufacture Royale'],
   terrassement: ['Chantier Central','Entreprise du Sol','Chantier des Berges','Remblai du Lac','Chantier Royal','Terrassement du Nord','Chantier des Rives','Entreprise de la Vallée','Grand Chantier','Chantier des Marais'],
   market: ['Grand Marché','Marché du Peuple','Halle aux Denrées','Marché Royal','Marché Central','Marché du Nord','Halle Centrale','Marché des Halles','Grand Bazar','Marché de la Place'],
+  oil_well: ['Puits de l\'Or Noir','Derrick du Nord','Puits Central','Forage des Plaines','Puits Royal','Derrick de la Vallée','Forage Profond','Puits du Couchant'],
+  copper_smelter: ['Fonderie Rouge','Cuivrerie Centrale','Fonderie du Cuivre','Fourneau Royal','Cuivrerie du Nord','Fonderie des Mines'],
+  wire_mill: ['Tréfilerie Centrale','Câblerie du Nord','Tréfilerie Royale','Fils & Câbles','Câblerie de la Vallée','Tréfilerie des Forges'],
+  gold_refinery: ['Affinerie Royale','Comptoir de l\'Or','Affinerie du Nord','Maison de l\'Or','Affinerie des Monts','Raffinerie d\'Or'],
+  rolling_mill: ['Laminoir Central','Grand Laminoir','Laminoir du Nord','Profilés Royaux','Laminoir des Forges','Aciérie des Poutres'],
+  sheet_mill: ['Tôlerie Centrale','Tôlerie du Nord','Presses Royales','Tôlerie des Forges','Grande Tôlerie','Tôlerie de la Vallée'],
+  nail_factory: ['Clouterie Centrale','Clouterie du Nord','Pointerie Royale','Clouterie des Forges','Vieille Clouterie'],
+  cement_plant: ['Cimenterie Centrale','Cimenterie des Calcaires','Four à Chaux','Cimenterie du Nord','Grande Cimenterie','Cimenterie Royale'],
+  concrete_plant: ['Centrale à Béton','Bétonnière du Nord','Béton des Plaines','Centrale du Chantier','Béton Royal','Bétonnerie Centrale'],
+  glassworks: ['Verrerie Centrale','Verrerie des Sables','Cristallerie Royale','Verrerie du Nord','Souffleurs de Verre','Grande Verrerie'],
+  glazier: ['Vitrerie Centrale','Miroiterie Royale','Vitrerie du Nord','Atelier des Vitres','Vitrerie de la Place'],
+  ropery: ['Corderie Royale','Corderie du Port','Corderie Centrale','Atelier des Cordages','Corderie du Nord'],
+  refinery: ['Raffinerie Centrale','Raffinerie du Nord','Grande Raffinerie','Raffinerie des Plaines','Raffinerie Royale','Pétrochimie de la Vallée'],
+  chem_plant: ['Usine Chimique Centrale','Chimie du Nord','Laboratoires Réunis','Chimie des Plaines','Grande Chimie','Chimie Royale'],
+  paint_factory: ['Peintures Centrales','Couleurs du Nord','Ocres Royales','Peintures de la Vallée','Atelier des Couleurs'],
+  electronics_plant: ['Électronique Centrale','Circuits du Nord','Silicium Royal','Composants Réunis','Électronique de la Vallée','Grande Électronique'],
+  furniture_factory: ['Ébénisterie Royale','Meubles du Nord','Atelier des Ébénistes','Mobilier Central','Ébénisterie de la Vallée'],
+  appliance_factory: ['Électroménager Central','Appareils du Nord','Usine des Appareils','Électroménager Royal','Foyer Moderne'],
+  jeweler: ['Joaillerie Royale','Maison des Bijoux','Orfèvrerie Centrale','Joaillerie du Nord','Bijouterie de la Place'],
+  quantum_lab: ['Laboratoire Quantique','Institut des Qubits','Centre de Recherche','Labo Stellaire','Institut Quantique Royal'],
+  space_center: ['Centre Spatial','Cosmodrome','Base de Lancement','Spatioport','Centre Spatial du Nord','Cosmodrome Royal'],
 };
 const IND_AREA_RADIUS = 30; // rayon de déduplication des noms
 
@@ -1418,5 +1638,36 @@ function tryMergeDepot(){
   for(const L of LUX_LEVELS) BUILD[L.key].cost = Math.round((BUILD.house.cost || 0) * LUX_COST_MULT);
 })();
 
-const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco','terraform','fill_water','terraform_dig','terraform_raise','terraform_canal'];
+// Recette lisible : « 2 🟠 + 1 ⚫ → 1 🥉 » ; long=true : noms complets ;
+// long='full' : icône + nom (« 2 ⚙️ acier → 1 🪜 poutrelle en acier »).
+function recipeText(rec, long = false){
+  const fmt = r => long === 'full' ? RES[r].ic + ' ' + RES[r].n.toLowerCase() : long ? RES[r].n.toLowerCase() : RES[r].ic;
+  const side = m => Object.keys(m || {}).filter(r => RES[r]).map(r => m[r] + ' ' + fmt(r)).join(' + ');
+  const lhs = side(rec?.in);
+  return (lhs ? lhs + ' → ' : '') + side(rec?.out);
+}
+// description des usines avancées : recette finale (après config.js) + note
+for(const [type] of ADVANCED_FACTORIES){
+  const d = BUILD[type];
+  d.desc = recipeText(d.recipe, true) + '.' + (d.note ? ' ' + d.note : '');
+}
+
+// ---------- matériaux de chantier ----------
+// Grands bâtiments : en plus du prix, des matériaux stockés dans un entrepôt du
+// joueur dont le rayon couvre la case (cf. buildMaterialsError, 03_buildings_population.js).
+const BUILD_MATERIALS_ON = CFG.materiauxChantier?.actif !== false;
+const BUILD_MATERIALS = (()=>{
+  const raw = CFG.materiauxChantier?.batiments || {};
+  const out = {};
+  for(const type in raw){
+    const m = _resMap(raw[type], {});
+    if(Object.keys(m).length) out[type] = m;
+  }
+  return out;
+})();
+// Matériaux exigés pour un type (null si aucun). Le placement de l'outil « Gare »
+// pose un quai sur un rail : la clé est alors train_platform.
+const buildMaterialsOf = type => BUILD_MATERIALS[type] || null;
+
+const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','oil_well','plant','house','space_center','depot','market','tank','pump','garage','bus_stop','air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco','terraform','fill_water','terraform_dig','terraform_raise','terraform_canal'];
 const MILESTONES = [25, 50, 100, 200, 400];

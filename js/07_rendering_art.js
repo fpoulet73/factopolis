@@ -792,7 +792,7 @@ function artIndustry(b, u0, v0, u1, v1, rng, d, bCol){
   let top = 30;
   switch(type){
     case 'mine': {
-      const ore = b.ore === 'iron' ? '#b0663a' : '#2f3036';
+      const ore = b.ore === 'coal' ? '#2f3036' : b.ore === 'iron' ? '#b0663a' : (RES[b.ore]?.c || '#b0663a');
       artGround(u0 + 0.04, v0 + 0.04, u1 - 0.04, v1 - 0.04, '#8a7a66');
       artPile(u0 + wu * 0.3, v1 - wv * 0.28, 0.22 * Math.min(2, big), ore, 7);
       artHall(u0 + wu * 0.45, v0 + 0.12, u1 - 0.1, v0 + wv * 0.55, 12, '#8d8173', '#5a524a', rng);
@@ -913,9 +913,343 @@ function artIndustry(b, u0, v0, u1, v1, rng, d, bCol){
       artBush(u0 + 0.2, v1 - 0.12, 2.6, '#5a7a3a');
       top = 24; break;
     }
-    default: return null;
+    default: {
+      const h = artAdvancedIndustry(b, u0, v0, u1, v1, rng, d);
+      if(h == null) return null;
+      top = h; break;
+    }
   }
   return artP(cu, cv, top);
+}
+
+// --- Chaînes de production avancées ------------------------------------------
+// Sphère (réservoir de gaz, dôme) posée en (u,v) à l'altitude z.
+function artSphere(u, v, z, r, col){
+  const c = artP(u, v, z + r);
+  const g = ctx.createRadialGradient(c[0] - r * 0.35, c[1] - r * 0.4, r * 0.15, c[0], c[1], r);
+  g.addColorStop(0, shade(col, 0.35)); g.addColorStop(0.7, col); g.addColorStop(1, shade(col, -0.35));
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  const f = artP(u, v, 0); ctx.beginPath(); ctx.ellipse(f[0] - 2, f[1] + 1, r * 1.1, r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c[0], c[1], r, 0, Math.PI * 2); ctx.fill();
+}
+// Petite flamme (torchère de raffinerie, four) au point écran p.
+function artFlame(p, s = 1){
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,170,60,.85)';
+  ctx.beginPath(); ctx.moveTo(p[0] - 2.4 * s, p[1]); ctx.quadraticCurveTo(p[0], p[1] - 9 * s, p[0] + 2.4 * s, p[1]); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(255,236,150,.95)';
+  ctx.beginPath(); ctx.moveTo(p[0] - 1.1 * s, p[1]); ctx.quadraticCurveTo(p[0], p[1] - 5 * s, p[0] + 1.1 * s, p[1]); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+// Pile de profilés / plaques (laminoir, tôlerie) : barres parallèles le long de u.
+function artBars(u0, v0, u1, v1, col, layers = 3, flat = false){
+  for(let i = 0; i < layers; i++){
+    const z = 1 + i * (flat ? 1.6 : 2.6);
+    if(flat){ artBox(u0, v0, u1, v1, z - 1.2, z, shade(col, i % 2 ? 0.08 : -0.04), { edges:false }); continue; }
+    for(let k = 0; k < 3; k++){
+      const vv = v0 + (v1 - v0) * (k + 0.5) / 3;
+      const a = artP(u0, vv, z), e = artP(u1, vv, z);
+      ctx.strokeStyle = shade(col, -0.25); ctx.lineWidth = 2.6; ctx.lineCap = 'butt';
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+      ctx.strokeStyle = shade(col, 0.2); ctx.lineWidth = 0.9;
+      ctx.beginPath(); ctx.moveTo(a[0], a[1] - 1); ctx.lineTo(e[0], e[1] - 1); ctx.stroke();
+    }
+  }
+}
+// Tuyauterie : polyligne épaisse entre points (u,v,z).
+function artPipe(pts, col = '#8a9096', lw = 1.6){
+  ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  pts.forEach(([u, v, z], i) => { const p = artP(u, v, z); if(i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); });
+  ctx.stroke();
+}
+
+// Art des usines avancées ; retourne la hauteur du sommet (ancre des overlays) ou null.
+function artAdvancedIndustry(b, u0, v0, u1, v1, rng, d){
+  const type = b.type;
+  const wu = u1 - u0, wv = v1 - v0, big = Math.max(b.w, b.h);
+  const H = 12 + big * 3;
+  // hangar principal ; opts.cut : fraction de la largeur laissée libre côté u1 (cuves, piles…)
+  const hall = (wall, roof, opts) => artHall(u0 + 0.1, v0 + 0.1, u1 - wu * (opts?.cut ?? 0.1), v1 - 0.12, opts?.H ?? H, wall, roof, rng, opts || {});
+  switch(type){
+    case 'oil_well': {
+      // chevalet de pompage (« tête de cheval ») + cuve de stockage
+      artGround(u0 + 0.06, v0 + 0.06, u1 - 0.06, v1 - 0.06, '#6f665c');
+      artCylinder(u1 - 0.24, v1 - 0.26, 0.13, 0, 12, '#5d5a66', { bands:1, topCol:'#7a7686' });
+      const pu = u0 + wu * 0.42, pv = v0 + wv * 0.42;
+      artBox(pu - 0.22, pv - 0.06, pu + 0.22, pv + 0.06, 0, 3, '#3d3a44', { edges:false });
+      const apex = artP(pu, pv, 17);
+      ctx.strokeStyle = '#2b2a31'; ctx.lineWidth = 1.8;
+      for(const du of [-0.14, 0.14]){ const f = artP(pu + du, pv, 0); ctx.beginPath(); ctx.moveTo(f[0], f[1]); ctx.lineTo(apex[0], apex[1]); ctx.stroke(); }
+      const hb = artP(pu - 0.34, pv, 15), tb = artP(pu + 0.3, pv, 20);
+      ctx.strokeStyle = '#c94a3a'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(tb[0], tb[1]); ctx.lineTo(hb[0], hb[1]); ctx.stroke();
+      ctx.fillStyle = '#c94a3a'; ctx.beginPath(); ctx.moveTo(hb[0], hb[1] - 3); ctx.lineTo(hb[0] - 4, hb[1] + 2); ctx.lineTo(hb[0] + 1, hb[1] + 4); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#1f1e24'; ctx.lineWidth = 0.8;
+      const rodTop = artP(pu - 0.36, pv, 13), rodBot = artP(pu - 0.36, pv, 0);
+      ctx.beginPath(); ctx.moveTo(rodTop[0], rodTop[1]); ctx.lineTo(rodBot[0], rodBot[1]); ctx.stroke();
+      ctx.lineCap = 'butt';
+      artSphere(pu + 0.3, pv + 0.05, 1.5, 2.6, '#4a4752'); // contrepoids
+      return 22;
+    }
+    case 'copper_smelter': case 'glassworks': {
+      const glass = type === 'glassworks';
+      artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#8b8f93');
+      hall(glass ? '#7aa7b6' : '#a86a48', glass ? '#3c5c68' : '#5a3a2c', { cut:0.38 });
+      artCylinder(u1 - wu * 0.2, v0 + wv * 0.38, 0.15 * Math.min(2, big), 0, H + 10, glass ? '#5d7f8c' : '#9a5a3a', { bands:2, hollow:true });
+      const g = artP(u1 - wu * 0.2, v0 + wv * 0.38, H + 10);
+      ctx.save(); ctx.globalAlpha = 0.6; ctx.fillStyle = glass ? '#ffb45a' : '#ff7a2c';
+      ctx.beginPath(); ctx.ellipse(g[0], g[1], 4.5, 2.2, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      artChimney(u0 + wu * 0.25, v0 + 0.22, H, 14 + big * 4, glass ? '#5b6a70' : '#6b4a3a', 0.07);
+      if(glass) for(let k = 0; k < 3; k++) artCylinder(u0 + 0.22 + k * 0.14, v1 - 0.12, 0.04, 0, 5, 'rgba(170,230,245,.9)', { top:true });
+      else artPile(u0 + 0.25, v1 - 0.14, 0.12, '#c46a3a', 4);
+      return H + 14;
+    }
+    case 'wire_mill': {
+      artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#8e9296');
+      hall('#b98a6a', '#5c4a3e', { cut:0.32, sawtooth:true });
+      for(let k = 0; k < 3; k++){
+        const u = u1 - 0.2, v = v0 + 0.2 + k * (wv - 0.4) / 2;
+        artCylinder(u, v, 0.09, 0, 6, '#d9804a', { bands:2, topCol:'#e8a070' });
+        const t = artP(u, v, 6); ctx.fillStyle = '#5a3a2a'; ctx.beginPath(); ctx.ellipse(t[0], t[1], 2, 1, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      return H + 10;
+    }
+    case 'gold_refinery': case 'jeweler': {
+      const jew = type === 'jeweler';
+      artGround(u0 + 0.05, v0 + 0.05, u1 - 0.05, v1 - 0.05, jew ? '#cfc6b0' : '#8b8f93');
+      artShadow(u0 + 0.14, v0 + 0.14, u1 - 0.18, v1 - 0.16, H + 10);
+      artBox(u0 + 0.14, v0 + 0.14, u1 - 0.18, v1 - 0.16, 0, H, jew ? '#efe4cc' : '#9a8a6a', { top:false });
+      artBox(u0 + 0.13, v0 + 0.13, u1 - 0.17, v1 - 0.15, H - 2.5, H - 1, '#e2b84a', { top:false, edges:false });
+      artHip(u0 + 0.14, v0 + 0.14, u1 - 0.18, v1 - 0.16, H, H + 8, jew ? '#5a4a6a' : '#5a5246', 0.3);
+      artWindowGrid(u0 + 0.14, v0 + 0.14, u1 - 0.18, v1 - 0.16, 0, H - 3, 6, rng, { lit:0.6, glow:'rgba(255,220,120,.95)' });
+      if(!jew){ artCylinder(u1 - 0.12, v0 + 0.2, 0.07, 0, 12, '#7f8a7a', { bands:1 }); artChimney(u0 + 0.3, v0 + 0.25, H, 10, '#6a6252', 0.06); }
+      else artSphere((u0 + u1) / 2 - 0.02, (v0 + v1) / 2 - 0.02, H + 6, 3.2, '#f2c94c');
+      return H + 14;
+    }
+    case 'rolling_mill': case 'sheet_mill': case 'nail_factory': {
+      artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#868b90');
+      const plates = type === 'sheet_mill', nails = type === 'nail_factory';
+      hall(nails ? '#8f99a3' : '#6f7f90', '#3a4450', { cut:0.34, sawtooth:!nails });
+      if(nails){ for(let k = 0; k < 3; k++) artBox(u1 - 0.3, v0 + 0.16 + k * 0.24, u1 - 0.14, v0 + 0.32 + k * 0.24, 0, 4, '#a07a4a'); }
+      else artBars(u1 - 0.3, v0 + 0.14, u1 - 0.1, v1 - 0.16, plates ? '#b9c7d6' : '#7f95ab', 3, plates);
+      artChimney(u0 + 0.24, v0 + 0.22, H, 12 + big * 3, '#59626b', 0.07);
+      return H + 10;
+    }
+    case 'cement_plant': case 'concrete_plant': {
+      const cement = type === 'cement_plant';
+      artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#9a968c');
+      if(cement){
+        // tour de préchauffage + silos + four rotatif (cylindre incliné le long de u)
+        artBox(u0 + 0.12, v0 + 0.14, u0 + 0.42, v0 + 0.44, 0, H + 18, '#b7b1a3');
+        artWindowGrid(u0 + 0.12, v0 + 0.14, u0 + 0.42, v0 + 0.44, 4, H + 16, 7, rng, { lit:0.1 });
+        const a = artP(u0 + 0.42, v0 + 0.36, 9), e = artP(u1 - 0.12, v0 + 0.36, 4);
+        ctx.strokeStyle = '#6e6658'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+        ctx.strokeStyle = '#a39a8a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(a[0], a[1] - 2); ctx.lineTo(e[0], e[1] - 2); ctx.stroke();
+        ctx.lineCap = 'butt';
+        for(let k = 0; k < 2; k++) artCylinder(u0 + 0.3 + k * 0.28, v1 - 0.25, 0.12, 0, H + 6, '#d2cdbf', { bands:2, topCol:'#b9b3a4' });
+        artChimney(u0 + 0.2, v0 + 0.2, H + 18, 10, '#8f8778', 0.06);
+        return H + 30;
+      }
+      // centrale à béton : tour de malaxage, silo à ciment, tas de sable, convoyeur
+      artPile(u0 + 0.24, v1 - 0.24, 0.16, '#e0c98a', 6);
+      artPile(u0 + 0.5, v1 - 0.18, 0.12, '#9a9690', 5);
+      artBox(u1 - 0.42, v0 + 0.14, u1 - 0.14, v0 + 0.42, 0, H + 12, '#c9ccd0');
+      artBox(u1 - 0.43, v0 + 0.13, u1 - 0.13, v0 + 0.43, H + 4, H + 6, '#f2c230', { top:false, edges:false });
+      artCylinder(u0 + 0.3, v0 + 0.26, 0.12, 6, H + 16, '#b4b8bc', { bands:2 });
+      ctx.strokeStyle = '#4f555b'; ctx.lineWidth = 1;
+      for(const [du, dv] of [[-0.08, -0.08], [0.08, 0.08], [0.08, -0.08], [-0.08, 0.08]]){
+        const p0 = artP(u0 + 0.3 + du, v0 + 0.26 + dv, 0), p1 = artP(u0 + 0.3 + du, v0 + 0.26 + dv, 6);
+        ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
+      }
+      artPipe([[u0 + 0.3, v1 - 0.3, 2], [u1 - 0.4, v0 + 0.42, H + 8]], '#3f454b', 2);
+      return H + 18;
+    }
+    case 'glazier': case 'electronics_plant': case 'appliance_factory': {
+      // bâtiments modernes : toit plat, bandeaux vitrés
+      const elec = type === 'electronics_plant', appl = type === 'appliance_factory';
+      artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#9aa0a6');
+      const wall = elec ? '#d9e2ea' : appl ? '#c9d0d8' : '#cfe4ec';
+      const hh = H + (elec ? 6 : 2);
+      artShadow(u0 + 0.12, v0 + 0.12, u1 - 0.14, v1 - 0.14, hh + 4);
+      artBox(u0 + 0.12, v0 + 0.12, u1 - 0.14, v1 - 0.14, 0, hh, wall, { topCol: shade(wall, -0.12) });
+      artWindowGrid(u0 + 0.12, v0 + 0.12, u1 - 0.14, v1 - 0.14, 0, hh, 5, rng,
+        { perTile:3, lit: elec ? 0.5 : 0.25, dark: type === 'glazier' ? 'rgba(120,200,235,.9)' : 'rgba(40,70,100,.85)', glow:'rgba(190,235,255,.95)' });
+      if(elec){
+        artBox(u0 + 0.3, v0 + 0.3, u0 + 0.5, v0 + 0.5, hh, hh + 4, '#8a96a2');
+        const a0 = artP(u1 - 0.3, v0 + 0.28, hh), a1 = artP(u1 - 0.3, v0 + 0.28, hh + 14);
+        ctx.strokeStyle = '#5a6670'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(a0[0], a0[1]); ctx.lineTo(a1[0], a1[1]); ctx.stroke();
+        ctx.fillStyle = '#e8584a'; ctx.beginPath(); ctx.arc(a1[0], a1[1], 1.4, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#3f9a5a'; const s = artP(u1 - 0.14, (v0 + v1) / 2, hh * 0.55); ctx.fillRect(s[0] - 1, s[1] - 3, 3, 6);
+      } else if(appl){
+        for(let k = 0; k < 3; k++) artBox(u1 - 0.12, v0 + 0.2 + k * 0.2, u1 + 0.02, v0 + 0.34 + k * 0.2, 0, 5, '#e8ecef');
+      } else {
+        // vitres en attente de livraison, appuyées contre la façade
+        for(let k = 0; k < 3; k++) artWindow('r', u1 - 0.08, v0 + 0.2 + k * 0.2, v0 + 0.34 + k * 0.2, 0, 7, 'rgba(160,220,245,.85)');
+      }
+      return hh + 6;
+    }
+    case 'ropery': case 'furniture_factory': {
+      const wood = type === 'furniture_factory';
+      artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, wood ? '#8a7656' : '#9a8a6a');
+      hall(wood ? '#a0764a' : '#c9a46a', wood ? '#5c3e26' : '#6a5a3c', { cut:0.3, roofH:7 });
+      if(wood) artLogs(u1 - 0.3, v0 + 0.12, u1 - 0.06, v1 - 0.14);
+      else for(let k = 0; k < 2; k++){
+        const u = u1 - 0.18, v = v0 + 0.28 + k * 0.3;
+        artCylinder(u, v, 0.1, 0, 4, '#c9a46a', { topCol:'#a07a48' });
+        const t = artP(u, v, 4); ctx.strokeStyle = '#8a6a3a'; ctx.lineWidth = 0.7;
+        ctx.beginPath(); ctx.ellipse(t[0], t[1], 3.5, 1.7, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+      if(wood) artChimney(u0 + 0.24, v0 + 0.22, H, 9, '#6c5a48', 0.06);
+      return H + 10;
+    }
+    case 'refinery': {
+      // colonnes de distillation, sphère de gaz, torchère
+      artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#7d8186');
+      artBox(u0 + 0.1, v1 - 0.4, u0 + 0.5, v1 - 0.1, 0, 10, '#8a8f96');
+      const cols = [[0.34, 0.28, 0.08, H + 26], [0.5, 0.22, 0.07, H + 18], [0.62, 0.36, 0.06, H + 12]];
+      for(const [fu, fv, r, h] of cols) artCylinder(u0 + wu * fu, v0 + wv * fv, r * Math.min(2, big), 0, h, '#c4c9cf', { bands:4, topCol:'#9aa0a6' });
+      artPipe([[u0 + wu * 0.34, v0 + wv * 0.28, 14], [u0 + wu * 0.5, v0 + wv * 0.22, 14], [u0 + wu * 0.62, v0 + wv * 0.36, 10]], '#6a7078', 1.4);
+      artSphere(u1 - wu * 0.24, v1 - wv * 0.28, 2, 6 * Math.min(1.6, big * 0.8), '#e8ecef');
+      const fl = artP(u0 + wu * 0.16, v0 + wv * 0.18, H + 30);
+      artChimney(u0 + wu * 0.16, v0 + wv * 0.18, 0, H + 30, '#5a5560', 0.045);
+      artFlame(fl, 1.1);
+      return H + 30;
+    }
+    case 'chem_plant': case 'paint_factory': {
+      const paint = type === 'paint_factory';
+      artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#868b88');
+      hall(paint ? '#d8c690' : '#7fa07a', paint ? '#7a6230' : '#3f5a3c', { cut:0.4 });
+      const tankCol = paint ? '#f2c230' : '#5f8a5a';
+      for(let k = 0; k < 2; k++) artCylinder(u1 - wu * 0.24, v0 + 0.24 + k * (wv - 0.48), 0.12, 0, H + 4, tankCol, { bands:2, topCol: shade(tankCol, 0.2) });
+      artPipe([[u1 - wu * 0.36, v0 + 0.3, H - 2], [u1 - wu * 0.24, v0 + 0.3, H + 2]], '#6a7078', 1.4);
+      if(paint) for(let k = 0; k < 3; k++) artCylinder(u0 + 0.22 + k * 0.12, v1 - 0.1, 0.045, 0, 4, ['#f2c230', '#e8584a', '#3a8fd9'][k], { top:true });
+      else artChimney(u0 + 0.26, v0 + 0.22, H, 14, '#5b6a5a', 0.06);
+      return H + 12;
+    }
+    case 'quantum_lab': {
+      // laboratoire futuriste : socle vitré + dôme lumineux + antenne
+      artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#a6aab5');
+      artShadow(u0 + 0.12, v0 + 0.12, u1 - 0.12, v1 - 0.12, H + 14);
+      artBox(u0 + 0.12, v0 + 0.12, u1 - 0.12, v1 - 0.12, 0, H, '#d8dbe8', { topCol:'#b8bccc' });
+      artWindowGrid(u0 + 0.12, v0 + 0.12, u1 - 0.12, v1 - 0.12, 0, H, 5, rng, { perTile:3, lit:0.7, glow:'rgba(190,160,255,.95)' });
+      const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
+      const c = artP(cu, cv, H);
+      const r = 9 * Math.min(1.8, big * 0.9);
+      const g = ctx.createRadialGradient(c[0] - r * 0.3, c[1] - r * 0.5, 1, c[0], c[1] - r * 0.2, r);
+      g.addColorStop(0, '#f4ecff'); g.addColorStop(0.6, '#b58cff'); g.addColorStop(1, '#5a3aa8');
+      // dôme : demi-ellipse haute + bord avant de la base (perspective iso)
+      ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(c[0], c[1], r, r * 0.95, 0, Math.PI, 2 * Math.PI); ctx.ellipse(c[0], c[1], r, r * 0.5, 0, 0, Math.PI); ctx.fill();
+      ctx.save(); ctx.globalAlpha = 0.35; ctx.fillStyle = '#d9c8ff';
+      ctx.beginPath(); ctx.ellipse(c[0], c[1] - r * 0.9, r * 0.5, r * 0.15, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      const a0 = artP(u1 - 0.22, v0 + 0.22, H), a1 = artP(u1 - 0.22, v0 + 0.22, H + 18);
+      ctx.strokeStyle = '#6a6f80'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(a0[0], a0[1]); ctx.lineTo(a1[0], a1[1]); ctx.stroke();
+      ctx.fillStyle = '#9fe6ff'; ctx.beginPath(); ctx.arc(a1[0], a1[1], 1.6, 0, Math.PI * 2); ctx.fill();
+      return H + r + 6;
+    }
+    case 'space_center': return artSpaceCenter(b, u0, v0, u1, v1, rng);
+    default: {
+      // usine non dessinée spécifiquement : hangar générique à sa couleur
+      if(!d?.ind) return null;
+      artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#8b8f93');
+      hall(shade(d.col || '#7a8088', 0.15), shade(d.col || '#7a8088', -0.4), {});
+      artChimney(u0 + 0.22, v0 + 0.22, H, 12, '#6a6f75', 0.07);
+      return H + 12;
+    }
+  }
+}
+
+// ---------- centre spatial ----------
+// Pas de tir dans l'emprise tournée (fractions de rw/rh) : partagé avec l'animation
+// de décollage (drawRocketFx, 07_rendering.js) pour que la fusée parte du bon endroit.
+const SPACE_PAD_U = 0.68, SPACE_PAD_V = 0.32, SPACE_PAD_Z = 4;
+const rocketHeightPx = b => 20 * Math.max(b.w || 3, b.h || 3);
+// La fusée est-elle visible sur le pas de tir ? (en vol : non ; en attente de pièces : non)
+const spacePadHasRocket = b => b.spacePhase !== 'flight' && (b.prog || 0) > 0;
+// Fusée verticale dont la base est au point écran (x,y), hauteur H px.
+function drawRocketShape(x, y, H){
+  const w = H * 0.17, nose = H * 0.26, body = H - nose;
+  ctx.save();
+  // ailerons
+  ctx.fillStyle = '#c94a3a';
+  ctx.beginPath(); ctx.moveTo(x - w / 2, y - H * 0.22); ctx.lineTo(x - w * 1.15, y); ctx.lineTo(x - w / 2, y); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(x + w / 2, y - H * 0.22); ctx.lineTo(x + w * 1.15, y); ctx.lineTo(x + w / 2, y); ctx.closePath(); ctx.fill();
+  // corps
+  const g = ctx.createLinearGradient(x - w / 2, 0, x + w / 2, 0);
+  g.addColorStop(0, '#b9c0c8'); g.addColorStop(0.45, '#ffffff'); g.addColorStop(1, '#9aa2ab');
+  ctx.fillStyle = g; ctx.fillRect(x - w / 2, y - body, w, body);
+  // bandes et hublot
+  ctx.fillStyle = '#2f3a48'; ctx.fillRect(x - w / 2, y - body * 0.55, w, body * 0.07);
+  ctx.fillStyle = '#c94a3a'; ctx.fillRect(x - w / 2, y - body * 0.18, w, body * 0.06);
+  ctx.fillStyle = '#5ab8e8'; ctx.beginPath(); ctx.arc(x, y - body * 0.78, w * 0.22, 0, Math.PI * 2); ctx.fill();
+  // coiffe
+  ctx.fillStyle = '#c94a3a';
+  ctx.beginPath(); ctx.moveTo(x - w / 2, y - body); ctx.quadraticCurveTo(x - w * 0.42, y - body - nose * 0.7, x, y - H); ctx.quadraticCurveTo(x + w * 0.42, y - body - nose * 0.7, x + w / 2, y - body); ctx.closePath(); ctx.fill();
+  // tuyère
+  ctx.fillStyle = '#3a3f46'; ctx.fillRect(x - w * 0.3, y, w * 0.6, H * 0.04);
+  ctx.restore();
+}
+// Flamme des moteurs (k : 0 → 1 pendant l'allumage).
+function drawRocketFlame(x, y, H, k){
+  const w = H * 0.17, len = H * (0.25 + 0.45 * k) * (0.9 + Math.random() * 0.2);
+  ctx.save();
+  ctx.globalAlpha *= 0.9;
+  const g = ctx.createLinearGradient(0, y, 0, y + len);
+  g.addColorStop(0, '#fff6c8'); g.addColorStop(0.35, '#ffb43c'); g.addColorStop(1, 'rgba(255,90,30,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.moveTo(x - w * 0.36, y + 2); ctx.quadraticCurveTo(x, y + len * 1.1, x + w * 0.36, y + 2); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function artSpaceCenter(b, u0, v0, u1, v1, rng){
+  const wu = u1 - u0, wv = v1 - v0;
+  artGround(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, '#9aa0a6');
+  // allées et marquages
+  ctx.strokeStyle = 'rgba(242,194,48,.75)'; ctx.lineWidth = 1;
+  const m0 = artP(u0 + 0.1, v0 + wv * 0.5, 0.8), m1 = artP(u1 - 0.1, v0 + wv * 0.5, 0.8);
+  ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(m0[0], m0[1]); ctx.lineTo(m1[0], m1[1]); ctx.stroke(); ctx.setLineDash([]);
+  // réservoirs d'ergols (fond)
+  artSphere(u0 + wu * 0.2, v0 + wv * 0.16, 1, 7, '#e8ecef');
+  artSphere(u0 + wu * 0.36, v0 + wv * 0.12, 1, 5.5, '#d8b23a');
+  // pas de tir : dalle, carneau, tour de lancement rouge en treillis
+  const pu = u0 + wu * SPACE_PAD_U, pv = v0 + wv * SPACE_PAD_V;
+  artBox(pu - 0.42, pv - 0.42, pu + 0.42, pv + 0.42, 0, SPACE_PAD_Z, '#b4b8bc', { topCol:'#c9cdd1' });
+  artPoly([artP(pu - 0.12, pv + 0.1, SPACE_PAD_Z + 0.1), artP(pu + 0.12, pv + 0.1, SPACE_PAD_Z + 0.1), artP(pu + 0.12, pv + 0.42, SPACE_PAD_Z + 0.1), artP(pu - 0.12, pv + 0.42, SPACE_PAD_Z + 0.1)], '#2a2e33');
+  const tu = pu - 0.3, tv = pv - 0.3, TH_ = rocketHeightPx(b) + 12;
+  ctx.strokeStyle = '#b8402f'; ctx.lineWidth = 1.4;
+  for(const [du, dv] of [[-0.07, -0.07], [0.07, -0.07], [0.07, 0.07], [-0.07, 0.07]]){
+    const a = artP(tu + du, tv + dv, SPACE_PAD_Z), e = artP(tu + du, tv + dv, SPACE_PAD_Z + TH_);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+  }
+  ctx.lineWidth = 0.7;
+  for(let z = 6; z < TH_; z += 6){
+    const a = artP(tu - 0.07, tv + 0.07, SPACE_PAD_Z + z), c = artP(tu + 0.07, tv + 0.07, SPACE_PAD_Z + z + 6), e = artP(tu + 0.07, tv - 0.07, SPACE_PAD_Z + z);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+  }
+  // bras d'accès vers la fusée
+  const arm0 = artP(tu, tv, SPACE_PAD_Z + TH_ * 0.7), arm1 = artP(pu - 0.04, pv - 0.04, SPACE_PAD_Z + TH_ * 0.7);
+  ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(arm0[0], arm0[1]); ctx.lineTo(arm1[0], arm1[1]); ctx.stroke();
+  const p = artP(pu, pv, SPACE_PAD_Z);
+  if(spacePadHasRocket(b)) drawRocketShape(p[0], p[1], rocketHeightPx(b));
+  // bâtiment d'assemblage (avant-gauche) : grand volume blanc, porte haute, drapeau
+  const vu0 = u0 + 0.12, vv0 = v0 + wv * 0.56, vu1 = u0 + wu * 0.44, vv1 = v1 - 0.1;
+  const VH = 30 + Math.max(b.w, b.h) * 4;
+  artShadow(vu0, vv0, vu1, vv1, VH + 6);
+  artBox(vu0, vv0, vu1, vv1, 0, VH, '#e8ecef', { topCol:'#cdd2d7' });
+  artWindow('r', vu1, vv0 + (vv1 - vv0) * 0.3, vv0 + (vv1 - vv0) * 0.7, 0, VH - 6, '#5a6470');
+  artWindow('l', vv1, vu0 + (vu1 - vu0) * 0.15, vu0 + (vu1 - vu0) * 0.45, VH - 12, VH - 4, '#2f5fa8');
+  artWindow('l', vv1, vu0 + (vu1 - vu0) * 0.55, vu0 + (vu1 - vu0) * 0.85, VH - 12, VH - 4, '#c94a3a');
+  // centre de contrôle (avant-droite) + antenne parabolique
+  const cu0 = u0 + wu * 0.58, cv0 = v0 + wv * 0.66, cu1 = u1 - 0.12, cv1 = v1 - 0.12;
+  artBox(cu0, cv0, cu1, cv1, 0, 10, '#c9d1da', { topCol:'#aeb7c1' });
+  artWindowGrid(cu0, cv0, cu1, cv1, 0, 10, 5, rng, { perTile:4, lit:0.8, glow:'rgba(160,220,255,.95)' });
+  const dish = artP((cu0 + cu1) / 2, (cv0 + cv1) / 2, 18);
+  ctx.strokeStyle = '#7a828c'; ctx.lineWidth = 1.2;
+  const dishFoot = artP((cu0 + cu1) / 2, (cv0 + cv1) / 2, 10);
+  ctx.beginPath(); ctx.moveTo(dishFoot[0], dishFoot[1]); ctx.lineTo(dish[0], dish[1]); ctx.stroke();
+  ctx.fillStyle = '#eef1f4'; ctx.beginPath(); ctx.ellipse(dish[0], dish[1] - 3, 7, 4, -0.5, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#9aa2ab'; ctx.lineWidth = 0.8; ctx.stroke();
+  return Math.max(VH, rocketHeightPx(b) + SPACE_PAD_Z) + 6;
 }
 
 // --- Stockage et transport ------------------------------------------------
@@ -1241,7 +1575,7 @@ function drawBuildingArt(b, rx0, ry0, rw, rh, lift, hgt, bCol){
       if(_artChimneys.length && b.type !== 'plant') BUILDING_CHIMNEYS.set(b, { rot, pts:_artChimneys });
       else BUILDING_CHIMNEYS.delete(b);
       _artChimneys = null;
-      if(tc && d.ic) artSign(tc[0] + 10, tc[1] + 2, d.ic, b.type === 'mine' ? (b.ore === 'iron' ? '#d98a4f' : '#b0b0c0') : '#ffe082');
+      if(tc && d.ic) artSign(tc[0] + 10, tc[1] + 2, d.ic, b.type === 'mine' ? (b.ore === 'coal' ? '#b0b0c0' : (RES[b.ore]?.c || '#d98a4f')) : '#ffe082');
     } else {
       tc = artStorage(b, u0, v0, u1, v1, rng, d, bCol);
       // gares d'aéroport fusionnées : un seul badge, sur la gare principale (comme une gare ferroviaire)

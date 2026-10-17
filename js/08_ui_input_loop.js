@@ -64,57 +64,137 @@ function fusedDepotHtml(linkedDepot){
   h += '<div style="margin-top:10px;color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">📦 Entrepôt fusionné</div>';
   h += '<div style="color:#8fa3bf;font-size:10px;margin-bottom:6px">Rayon d\'action : <b style="color:#ffd700">'+depotRadius+' cases</b></div>';
   if(isOwner){
-    h += '<div style="margin-bottom:8px;padding:8px;background:rgba(91,147,232,.06);border-radius:6px;border-left:3px solid #5b93e8;font-size:11px;color:#8fa3bf">'
-       + '<div style="margin-bottom:4px;font-weight:600;color:#e8eef7">Modes d\'acceptation :</div>'
-       + '<div style="margin:4px 0">🔴 <span style="color:#999">Désactivé</span> — aucune livraison, pas de train</div>'
-       + '<div style="margin:4px 0">🔵 <span style="color:#5b93e8">Accepte uniquement</span> — camions livrent, trains n\'en chargent pas</div>'
-       + '<div style="margin:4px 0">🟢 <span style="color:#4db86a">Accepte & distribue</span> — camions livrent, trains chargent</div>'
-       + '</div>';
-    h += '<div class="depot-cols-3">';
-    for(const k in RES){
-      if(k === 'water') continue;
-      const disabled = linkedDepot.allow?.[k] === false;
-      const trainOn  = !disabled && linkedDepot.trainAllow?.[k] !== false;
-      const stateClass = disabled ? '' : (trainOn ? ' train' : ' on');
-      const val = linkedDepot.storage[k]||0, cap = capOf(linkedDepot,k);
-      const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
-      const stateLabel = disabled ? '<span style="font-size:11px;color:#999">🔴</span>'
-        : trainOn ? '<span style="font-size:11px;color:#4db86a">🟢</span>'
-        : '<span style="font-size:11px;color:#5b93e8">🔵</span>';
-      h += '<div class="depot-res-item'+stateClass+'" style="cursor:pointer;flex-direction:column;align-items:stretch;padding:5px 7px" data-station-depot-toggle-res="'+k+'">'
-         + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
-         + '<span class="dot" style="background:'+RES[k].c+'"></span>'
-         + '<span style="flex:1;font-size:11px;'+(disabled?'opacity:.4':'')+'">' + RES[k].n + '</span>'
-         + (cap>0 ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '')
-         + '</div>'
-         + (cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px;opacity:'+(disabled?'0.3':'1')+'"></i></div>' : '')
-         + '</div>';
-    }
-    h += '</div>';
+    h += depotResPanel(linkedDepot, 'station');
   } else {
     // Gare d'un autre joueur : contenu ressource visible en lecture seule
     // (les trains peuvent s'y arrêter pour le commerce inter-joueurs).
     const _hubOwner = linkedDepot.owner ?? null;
     h += '<div style="color:#8fa3bf;font-size:11px;margin-bottom:6px">Propriétaire : <b style="color:'+playerColor(_hubOwner)+'">'+escHtml(playerName(_hubOwner))+'</b> · commerce au tarif <b style="color:#f0c060">marchand</b></div>';
-    h += '<div class="depot-cols-3">';
-    for(const k in RES){
-      if(k === 'water') continue;
-      const val = linkedDepot.storage[k]||0, cap = capOf(linkedDepot,k);
-      const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
-      const price = TRADE_PRICES[k] || 0;
-      h += '<div class="depot-res-item" style="flex-direction:column;align-items:stretch;padding:5px 7px;opacity:.88">'
-         + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
-         + '<span class="dot" style="background:'+RES[k].c+'"></span>'
-         + '<span style="flex:1;font-size:11px">'+RES[k].n+'</span>'
-         + (cap>0 ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '')
-         + '</div>'
-         + (cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px"></i></div>' : '')
-         + '<div style="font-size:9px;color:#f0c060;margin-top:2px">'+price+' $/u</div>'
-         + '</div>';
-    }
-    h += '</div>';
+    h += depotResPanel(linkedDepot, 'readonly');
   }
       return h;
+}
+
+// ---------- grille compacte des ressources d'un entrepôt ----------
+// Une tuile carrée par ressource (icône, quantité, jauge de remplissage en fond,
+// bordure selon l'état), une ligne par famille avec sa pastille à gauche (clic :
+// toute la famille d'un coup) et un filtre « Toutes / Actives » mémorisé.
+// Modes : 'allow' (entrepôt : accepter / refuser), 'station' (entrepôt lié à une
+// gare ou un port : refusée → acceptée → + chargée par les trains), 'readonly'
+// (entrepôt d'un autre joueur) et 'sell' (vente au marché).
+let depotResView = (()=>{ try { return localStorage.getItem('factopolis_depot_view') === 'active' ? 'active' : 'all'; } catch(e){ return 'all'; } })();
+let marketTab = 'stock';
+function setDepotResView(v){
+  depotResView = v === 'active' ? 'active' : 'all';
+  try { localStorage.setItem('factopolis_depot_view', depotResView); } catch(e){}
+  const p = $('info');
+  if(p){ p._html = null; renderInfo(); }
+}
+// 0 refusée, 1 acceptée, 2 acceptée + chargée par les trains (withTrain)
+function depotResState(depot, k, withTrain){
+  if(depot.allow?.[k] === false) return 0;
+  return withTrain && depot.trainAllow?.[k] !== false ? 2 : 1;
+}
+const compactQty = n => n >= 10000 ? Math.round(n / 1000) + 'k' : n >= 1000 ? (Math.round(n / 100) / 10) + 'k' : String(Math.floor(n));
+
+// Origine et usages d'une ressource (infobulles) : quelle usine la fabrique et avec
+// quoi, qui la consomme, quels chantiers l'exigent. Catalogue statique : calculé
+// une fois par ressource (les dépôts de 05_depots sont déjà enregistrés).
+const _resInfoCache = {};
+const RES_SOURCE_HINTS = { lumber:'près des arbres', farm:'près d’un champ de blé', cotton_farm:'près d’un champ de coton',
+  fisher:'au bord de l’eau', pump:'au bord de l’eau', oil_well:'sur une nappe de pétrole' };
+function resProductionInfo(k){
+  if(_resInfoCache[k]) return _resInfoCache[k];
+  const label = t => BUILD[t].ic + ' ' + BUILD[t].n;
+  const make = [];
+  const resLbl = r => RES[r].ic + ' ' + RES[r].n.toLowerCase();
+  if(Object.values(DEPOSIT_ORES).includes(k)) make.push('⛏️ Mine posée sur un gisement (' + resLbl(k) + ')');
+  for(const t in BUILD){
+    const r = BUILD[t].recipe;
+    if(!r || !(k in (r.out || {}))) continue;
+    const how = Object.keys(r.in || {}).length ? recipeText(r, 'full')
+      : 'extraction ' + (RES_SOURCE_HINTS[t] ? RES_SOURCE_HINTS[t] + ' ' : '') + '→ ' + recipeText({ out:r.out }, 'full');
+    make.push(label(t) + (PLANT_UPGRADES[t] ? ' (usine abandonnée à spécialiser)' : '') + ' : ' + how);
+  }
+  if(k in SPACE_CARGO) make.push('🚀 Centre spatial : rapporté par la capsule (' + SPACE_CARGO[k] + ' ' + resLbl(k) + ' par mission, fusée : ' + resAmountsIcons(SPACE_ROCKET_PARTS) + ')');
+  if(k === 'dirt') make.push('⛏️ Mine : sous-produit occasionnel');
+  const users = [];
+  for(const t in BUILD) if(BUILD[t].recipe?.in && k in BUILD[t].recipe.in) users.push(label(t));
+  if(k in SPACE_ROCKET_PARTS) users.push('🚀 Centre spatial (fusée)');
+  // logements : « tous » plutôt que la liste complète des niveaux
+  // (indispensable : sans précision ; sinon « bonus » et/ou « pour fusionner / s'agrandir »)
+  const homeGroup = (levels, allTxt, lux) => {
+    const why = L => {
+      const rc = BUILD[L.key]?.resid;
+      if(!rc) return null;
+      if(rc.required.includes(k)) return '';
+      const parts = [];
+      if(rc.bonus.includes(k)) parts.push('bonus');
+      if(rc.upgradeTargets[k]) parts.push(lux ? 'pour s’agrandir' : 'pour fusionner');
+      return parts.length ? ' (' + parts.join(', ') + ')' : null;
+    };
+    const hit = levels.filter(L => why(L) != null);
+    if(!hit.length) return null;
+    if(hit.length === levels.length && hit.every(L => why(L) === '')) return allTxt;
+    return hit.map(L => L.ic + ' ' + L.n + why(L)).join(', ');
+  };
+  const homes = [homeGroup(LEVELS, '🏠 tous les logements', false), homeGroup(LUX_LEVELS, '💎 toutes les maisons de luxe', true)].filter(Boolean);
+  const sites = Object.keys(BUILD_MATERIALS).filter(t => BUILD_MATERIALS[t][k] && BUILD[t]).map(t => BUILD[t].ic + ' ' + BUILD[t].n + ' ×' + BUILD_MATERIALS[t][k]);
+  const lines = ['Fabrication :' + (make.length ? '\n  • ' + make.join('\n  • ') : ' —')];
+  if(users.length) lines.push('Utilisé par : ' + users.join(', '));
+  if(homes.length) lines.push('Logements : ' + homes.join(' ; '));
+  if(sites.length) lines.push('🏗️ Chantiers : ' + sites.join(', '));
+  return (_resInfoCache[k] = lines.join('\n'));
+}
+function depotResPanel(depot, mode){
+  const ro = mode === 'readonly';
+  const stateOf = k => mode === 'sell' ? (depot.sellTo?.[k] ? 1 : 0) : ro ? 1 : depotResState(depot, k, mode === 'station');
+  const stock = k => Math.floor(depot.storage[k] || 0);
+  const active = k => stateOf(k) > 0 && !ro || stock(k) > 0;
+  const cats = resKeysByCategory(k => k !== 'water');
+  const all = cats.reduce((n, c) => n + c.keys.length, 0);
+  const nActive = cats.reduce((n, c) => n + c.keys.filter(active).length, 0);
+  const view = ro ? 'active' : depotResView;
+  const legend = mode === 'station' ? '<span style="color:#5b93e8">■</span> acceptée · <span style="color:#4db86a">■</span> + trains'
+    : mode === 'sell' ? 'clic : mettre en vente' : ro ? 'tarif marchand au survol' : 'clic : accepter / refuser';
+  let h = '<div class="rbar">';
+  if(!ro){
+    h += '<span class="rchip'+(view === 'all' ? ' on' : '')+'" data-res-view="all">Toutes '+all+'</span>'
+       + '<span class="rchip'+(view === 'active' ? ' on' : '')+'" data-res-view="active">'+(mode === 'sell' ? 'En vente / stock ' : 'Actives ')+nActive+'</span>';
+  }
+  h += '<span class="rlegend">'+legend+'</span></div><div class="rgrid">';
+  let shown = 0;
+  for(const cat of cats){
+    const keys = view === 'active' ? cat.keys.filter(active) : cat.keys;
+    if(!keys.length) continue;
+    shown += keys.length;
+    const on = cat.keys.filter(k => stateOf(k) > 0).length;
+    const tip = cat.n + (ro ? '' : ' — ' + on + '/' + cat.keys.length + (mode === 'sell' ? ' en vente' : ' acceptées')
+      + ' · clic : ' + (mode === 'station' ? 'faire passer toute la famille à l’état suivant' : on === cat.keys.length ? 'tout retirer' : 'tout ' + (mode === 'sell' ? 'vendre' : 'accepter')));
+    h += '<div class="rfam"><div class="rfam-h'+(ro ? ' ro' : '')+'" title="'+escHtml(tip)+'"'
+       + (ro ? '' : ' data-res-bulk="'+cat.key+'" data-bulk-mode="'+mode+'"') + '>'+cat.ic+(ro ? '' : '<small>'+on+'/'+cat.keys.length+'</small>')+'</div><div class="rtiles">';
+    for(const k of keys){
+      const st = stateOf(k), val = stock(k), cap = capOf(depot, k);
+      const pct = cap > 0 ? Math.min(100, Math.round(100 * val / cap)) : 0;
+      const cls = ro ? ' ro' : mode === 'sell' ? (st ? ' sell' : ' off') : st === 2 ? ' train' : st === 1 ? ' on' : ' off';
+      const attr = mode === 'allow' ? ' data-toggle-res="'+k+'"' : mode === 'station' ? ' data-station-depot-toggle-res="'+k+'"' : mode === 'sell' ? ' data-sell="'+k+'"' : '';
+      const stateTxt = mode === 'sell' ? (st ? 'en vente' : 'pas en vente') : ro ? (TRADE_PRICES[k] || 0) + ' $/u'
+        : ['refusée', 'acceptée', 'acceptée · chargée par les trains'][st];
+      const title = RES[k].ic + ' ' + RES[k].n + ' — ' + val + '/' + cap + ' · ' + stateTxt + (mode === 'sell' ? ' · ' + (TRADE_PRICES[k] || 0) + ' $/u' : '')
+        + '\n\n' + resProductionInfo(k);
+      // quantité (ou prix de vente) en pastille dans le coin, nom court sous l'icône
+      const badge = mode === 'sell' ? (TRADE_PRICES[k] || 0) + '$' : val > 0 ? compactQty(val) : '';
+      h += '<div class="rtile'+cls+(mode === 'sell' ? ' rs sell-toggle' : '')+'"'+attr+' title="'+escHtml(title)+'">'
+         + '<i class="rf" style="height:'+pct+'%;background:'+RES[k].c+'"></i>'
+         + '<span class="ri">'+RES[k].ic+'</span>'
+         + '<span class="rn">'+escHtml(RES[k].s)+'</span>'
+         + (badge ? '<span class="rq">'+badge+'</span>' : '')
+         + '</div>';
+    }
+    h += '</div></div>';
+  }
+  if(!shown) h += '<div class="rempty">'+(ro ? 'Entrepôt vide.' : 'Aucune ressource active : passe en vue « Toutes » pour en accepter.')+'</div>';
+  return h + '</div>';
 }
 
 // Habitants d'une maison : « Habitants » (total) et « Présents à la maison », chacun avec
@@ -164,6 +244,16 @@ function togglePassengerOwners(){ passengerOwnersOpen = !passengerOwnersOpen; re
 // par joueur (les passagers sont comptés par bâtiment : joueur = propriétaire).
 let workersDetailOpen = false;
 function toggleWorkersDetail(){ workersDetailOpen = !workersDetailOpen; if(typeof renderInfo === 'function') renderInfo(); }
+// Catégories dépliées dans le panneau de l'usine abandonnée (clés de PLANT_UPGRADE_CATEGORIES) ; repliées par défaut
+// Recette compacte : entrées en icônes, produits avec leur nom à droite de l'icône
+function plantRecipeLine(rec){
+  const side = (m, named) => Object.keys(m || {}).filter(r => RES[r])
+    .map(r => m[r] + ' ' + RES[r].ic + (named ? ' ' + RES[r].n : '')).join(' + ');
+  const lhs = side(rec?.in, false);
+  return (lhs ? lhs + ' → ' : '') + side(rec?.out, true);
+}
+const plantCatExpanded = new Set();
+function togglePlantCat(key){ if(plantCatExpanded.has(key)) plantCatExpanded.delete(key); else plantCatExpanded.add(key); if(typeof renderInfo === 'function') renderInfo(); }
 const passengerDetailOpen = { in:false, out:false };
 function togglePassengerDetail(kind){ passengerDetailOpen[kind] = !passengerDetailOpen[kind]; if(typeof renderInfo === 'function') renderInfo(); }
 function passengerDetailBlock(kind, b, inKey = 'passengersEntrant'){
@@ -625,6 +715,7 @@ function primeNewsFlags(){
     else if(b.type === 'boat_depot') newsFlags['port:' + b.x + ',' + b.y] = 1;
     else if(b.type === 'air_terminal') newsFlags['aero:' + b.x + ',' + b.y] = 1;
     if(b.type === 'tower' || b.type === 'tower3' || b.type === 'sky') newsFlags['niveau:' + b.type] = 1;
+    if(b.type === 'space_center' && (b.launches || 0) > 0){ newsFlags['fusee:' + b.x + ',' + b.y] = 1; newsFlags['capsule:' + b.x + ',' + b.y] = 1; }
   }
   for(const t of towns){
     const pop = townPopulation(t);
@@ -1469,7 +1560,15 @@ function statusOf(b){
     return pasStr + (depot ? ' · Entrepôt lié' : '');
   }
   if(b.type === 'plant') return 'Usine abandonnée — choisir une spécialisation';
-  if(b.type === 'bakery' && !tankNear(b)) return '⚠️ Aucune citerne proche pour recevoir l’eau';
+  if(usesWater(b) && !tankNear(b)) return '⚠️ Aucune citerne proche pour recevoir l’eau';
+  if(b.type === 'space_center'){
+    if(b.spacePhase === 'flight') return '🛰️ Fusée en mission — la capsule rapportera '+resAmountsIcons(SPACE_CARGO);
+    if(b.paused) return 'En pause — ouvriers libérés';
+    const miss = Object.keys(SPACE_ROCKET_PARTS).filter(k => (b.storage[k] || 0) < SPACE_ROCKET_PARTS[k]);
+    if(miss.length) return 'Pièces de fusée manquantes : '+resNames(miss);
+    if(workersRequiredOf(b) && workersAllocatedOf(b) === 0) return '👷 Aucun ouvrier à portée pour assembler la fusée';
+    return '🔧 Assemblage de la fusée sur le pas de tir';
+  }
   if(b.paused) return 'En pause — ouvriers libérés';
   const r = recipeOf(b);
   if(!r) return '';
@@ -1540,6 +1639,10 @@ function renderInfo(){
         { t:T.COTTON, ic:RES.cotton.ic, n:RES.cotton.n },
         { t:T.SAND,   ic:'🏖️',          n:'Sable'       },
         { t:T.CLAY,   ic:'🧱',          n:'Argile'      },
+        { t:T.COPPER, ic:RES.copper_ore.ic, n:RES.copper_ore.n },
+        { t:T.GOLD,   ic:RES.gold_ore.ic,   n:RES.gold_ore.n },
+        { t:T.LIMESTONE, ic:RES.limestone.ic, n:RES.limestone.n },
+        { t:T.OIL,    ic:'🛢️',          n:'Nappe de pétrole' },
         { t:T.WATER,  ic:'💧',          n:'Eau'         },
       ];
       let h_ = '<div class="panel-head"><h3>🧩 Pièce de puzzle</h3><button class="tbtn" id="infoCloseBtn" aria-label="Fermer">✕</button></div>';
@@ -1809,16 +1912,26 @@ function renderInfo(){
   if(b.type === 'plant'){
     const canUpgrade = !MP.connected || !b.owner || b.owner === MP.myId;
     h += '<div style="margin-top:8px;color:#8fa3bf">Spécialisation</div>';
-    h += '<div style="font-size:11px;color:#8fa3bf;margin-bottom:4px">Choisir une seule fois le type d\'usine.</div>';
-    for(const key in PLANT_UPGRADES){
-      const opt = PLANT_UPGRADES[key];
-      const d2 = BUILD[opt.type];
-      const err = plantUpgradeError(b, opt.type);
-      if(err) continue; // masquer les types impossibles
-      h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:3px" data-plant-upgrade="'+opt.type+'"'
-        + (!canUpgrade ? ' disabled' : '') + '>'
-        + opt.icon+' '+opt.label+' <span style="color:#8fa3bf">— '+(d2.cost||0)+' $</span>'
-        + '</button>';
+    h += '<div style="font-size:11px;color:#8fa3bf;margin-bottom:4px">Choisir une seule fois le type d\'usine. 🏗️ : matériaux de chantier pris dans un entrepôt proche.</div>';
+    for(const cat of PLANT_UPGRADE_CATEGORIES){
+      const opts = Object.values(PLANT_UPGRADES).filter(o => (o.cat || 'build') === cat.key && !plantUpgradeError(b, o.type, false));
+      if(!opts.length) continue; // types impossibles ici (terrain) masqués
+      const collapsed = !plantCatExpanded.has(cat.key);
+      h += '<div style="margin-top:6px;font-size:10px;color:#6e8aa0;text-transform:uppercase;letter-spacing:.06em;cursor:pointer;user-select:none" onclick="togglePlantCat(\''+cat.key+'\')" title="Cliquer pour '+(collapsed ? 'déplier' : 'replier')+'">'
+        + (collapsed ? '▸' : '▾')+' '+cat.n+' <span style="color:#4f667a">('+opts.length+')</span></div>';
+      if(collapsed) continue;
+      for(const opt of opts){
+        const d2 = BUILD[opt.type];
+        const mats = buildMaterialsFor(opt.type);
+        const miss = mats ? buildMaterialsMissing(opt.type, b.x, b.y, b.w, b.h, b.owner ?? null) : null;
+        const tip = recipeText(d2.recipe, 'full') + (mats ? '\n🏗️ Matériaux : ' + resAmountsText(mats) + (miss ? '\n⛔ Manque : ' + resAmountsText(miss) : '') : '');
+        h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:3px'+(miss ? ';opacity:.6' : '')+'" data-plant-upgrade="'+opt.type+'"'
+          + ' title="'+escHtml(tip)+'"' + (!canUpgrade ? ' disabled' : '') + '>'
+          + opt.icon+' '+opt.label+' <span style="color:#8fa3bf">— '+(d2.cost||0)+' $'+(mats ? ' 🏗️' : '')+'</span>'
+          + '<br><span style="font-size:10px;color:#9fb3c8">'+escHtml(plantRecipeLine(d2.recipe))+'</span>'
+          + (miss ? '<br><span style="font-size:10px;color:#ff9a8a">Manque : '+escHtml(resAmountsIcons(miss))+'</span>' : '')
+          + '</button>';
+      }
     }
   }
   if(d.ind && b.name) h += '<div style="color:#8fa3bf;font-size:11px;margin-top:6px;margin-bottom:2px">'+d.n+'</div>';
@@ -1830,7 +1943,7 @@ function renderInfo(){
       if(rows.length) h += '<div style="margin:2px 0 6px;padding:4px 6px;background:#101826;border-radius:6px;font-size:12px;color:#b8d4f0">'+rows.join('')+'</div>';
     }
   }
-  if(d.ind && b.w*b.h>1)
+  if(d.ind && b.w*b.h>1 && !d.noMerge)
     h += '<div class="row"><span>Taille / production</span><b>'+b.w+'×'+b.h
        + ' — ×'+prodMult(b).toFixed(1)+'</b></div>';
   if(d.ind)
@@ -1838,9 +1951,18 @@ function renderInfo(){
        + ' $ / '+IND_UPKEEP_INTERVAL+' s</b></div>';
   if(d.ind)
     h += '<div class="row"><span>Rayon d\'action</span><b style="color:#ff8c42">'+indRadiusOf(b)+' cases</b></div>';
-  if(b.type === 'bakery')
+  if(usesWater(b))
     h += '<div class="row"><span>Citerne proche</span><b style="color:'+(tankNear(b) ? '#9fe8a0' : '#ff9a8a')+'">'
        + (tankNear(b) ? 'oui' : 'non') + ' / '+BAKERY_TANK_RADIUS+' cases</b></div>';
+  if(b.type === 'space_center'){
+    const flight = b.spacePhase === 'flight';
+    const pct = Math.min(100, Math.round(100 * (b.prog || 0) / (flight ? SPACE_MISSION_TIME : SPACE_ASSEMBLY_TIME)));
+    h += '<div class="row"><span>Fusée</span><b style="color:'+(flight ? '#9fe6ff' : '#ffd27a')+'">'
+       + (flight ? '🛰️ En mission — retour dans '+Math.max(0, Math.ceil(SPACE_MISSION_TIME - (b.prog || 0)))+' s'
+                 : (b.prog > 0 ? '🔧 Assemblage '+pct+' %' : '⏳ En attente des pièces')) + '</b></div>';
+    h += '<div class="row"><span>Lancements</span><b>'+(b.launches || 0)+'</b></div>';
+    h += '<div class="row"><span>Durée de mission</span><b>'+SPACE_MISSION_TIME+' s</b></div>';
+  }
   if(d.resid)
     h += homeOccupancyHtml(b);
   if(d.resid){
@@ -1900,7 +2022,7 @@ function renderInfo(){
     // recette
     const fmtRes = obj => Object.entries(obj).map(([k,v]) =>
       (v>1 ? '<span style="color:#8fa3bf;font-weight:normal">'+v+'×</span>' : '')
-      + '<span class="res-ic" title="'+escHtml(RES[k].n)+'">'+(RES[k].ic || RES[k].n)+'</span>'
+      + '<span class="res-ic" title="'+escHtml(RES[k].n + '\n\n' + resProductionInfo(k))+'">'+(RES[k].ic || RES[k].n)+'</span>'
     ).join('<span style="color:#8fa3bf;font-weight:normal"> + </span>');
     const lhs  = inKeys.length ? fmtRes(r2.in)+'<span style="color:#8fa3bf;font-weight:normal"> → </span>' : '';
     const time = Math.round(r2.time*10)/10;
@@ -1967,23 +2089,9 @@ function renderInfo(){
     const depotRadius = BUILD[b.type]?.radiusOf ? BUILD[b.type].radiusOf(b) : depotRadiusOf(b);
     h += '<div style="color:#8fa3bf;font-size:10px;margin-bottom:6px">Rayon d\'action : <b style="color:#ffd700">'+depotRadius+' cases</b>'+(b.w*b.h>1?' · Taille <b>'+b.w+'×'+b.h+'</b>':'')+'</div>';
     if(isOwner){
-      h += '<div style="color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">📦 Ressources stockées</div>';
-      h += '<div class="depot-cols-3">';
-      for(const k in RES){
-        if(k === 'water') continue;
-        const on = b.allow?.[k] !== false;
-        const val = b.storage[k]||0, cap = capOf(b,k);
-        const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
-        h += '<div class="depot-res-item'+(on?' on':'')+'" style="cursor:pointer;flex-direction:column;align-items:stretch;padding:5px 7px" data-toggle-res="'+k+'">'
-           + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
-           + '<span class="dot" style="background:'+RES[k].c+'"></span>'
-           + '<span style="flex:1;font-size:11px;'+(on?'':'opacity:.4')+'">'+RES[k].n+'</span>'
-           + (on ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '<span style="font-size:10px;color:#555">off</span>')
-           + '</div>'
-           + (on && cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px"></i></div>' : '')
-           + '</div>';
-      }
-      h += '</div>';
+      h += '<div style="color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">📦 Ressources stockées'
+         + ' <span style="text-transform:none;letter-spacing:0;color:#6e8aa0" title="Les matériaux de chantier stockés ici servent aux grands bâtiments construits dans le rayon de l’entrepôt.">· 🏗️ chantiers dans le rayon</span></div>';
+      h += depotResPanel(b, 'allow');
     } else {
       h += '<div style="color:#8fa3bf;font-size:12px;font-style:italic">Appartient à un autre joueur.</div>';
     }
@@ -1991,59 +2099,32 @@ function renderInfo(){
   if(b.type==='market'){
     const myOid = MP.myId;
     const isOwner = !b.owner || b.owner === myOid;
-    h += '<div class="depot-cols">';
-
-    // --- Colonne gauche : ressources stockées ---
-    h += '<div>';
-    h += '<div style="color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">📦 Ressources stockées</div>';
     h += '<div style="color:#8fa3bf;font-size:10px;margin-bottom:6px">Rayon : <b style="color:#ffd700">'+depotRadiusOf(b)+' cases</b>'+(b.w*b.h>1?' · <b>'+b.w+'×'+b.h+'</b>':'')+'</div>';
-    h += '<div class="depot-cols-3">';
-    for(const k in RES){
-      if(k === 'water') continue;
-      const on = b.allow?.[k] !== false;
-      const val = b.storage[k]||0, cap = capOf(b,k);
-      const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
-      h += '<div class="depot-res-item'+(on?' on':'')+'" style="'+(isOwner?'cursor:pointer;':'')+'flex-direction:column;align-items:stretch;padding:5px 7px"'
-         + (isOwner ? ' data-toggle-res="'+k+'"' : '') + '>'
-         + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
-         + '<span class="dot" style="background:'+RES[k].c+'"></span>'
-         + '<span style="flex:1;font-size:11px;'+(on?'':'opacity:.4')+'">'+RES[k].n+'</span>'
-         + (on ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '<span style="font-size:10px;color:#555">off</span>')
-         + '</div>'
-         + (on && cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px"></i></div>' : '')
-         + '</div>';
-    }
-    h += '</div>';
-    h += '</div>';
-
-    // --- Colonne droite : vente inter-joueurs ---
-    h += '<div>';
     if(isOwner){
-      h += '<div style="color:#f0c060;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">🛒 Vente aux autres joueurs</div>';
-      h += '<div style="font-size:10px;color:#8fa3bf;margin-bottom:6px">Cliquer pour activer · prix par unité</div>';
-      for(const k in RES){
-        if(k === 'water') continue;
-        const on = !!b.sellTo?.[k];
-        const price = TRADE_PRICES[k];
-        const minStock = b.sellMin?.[k] || 0;
-        h += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">'
-           + '<div class="depot-res-item'+(on?' on':'')+' sell-toggle" data-sell="'+k+'" style="flex:1;cursor:pointer;padding:3px 7px">'
-           + '<span class="dot" style="background:'+RES[k].c+'"></span>'
-           + '<span style="flex:1;font-size:11px">'+RES[k].n+'</span>'
-           + '<span style="color:#f0c060;font-size:10px">'+price+' $</span>'
-           + '</div>';
-        if(on){
-          h += '<button class="tbtn sell-min-dec" data-sell-min="'+k+'" style="padding:2px 5px;margin:0;width:auto">−</button>'
-             + '<span style="min-width:20px;text-align:center;font-size:11px">'+minStock+'</span>'
-             + '<button class="tbtn sell-min-inc" data-sell-min="'+k+'" style="padding:2px 5px;margin:0;width:auto">+</button>';
+      // onglets : stock (ressources acceptées) / vente aux autres joueurs
+      const nSell = Object.keys(RES).filter(k => b.sellTo?.[k]).length;
+      h += '<div class="rtabs"><span class="rtab'+(marketTab === 'stock' ? ' on' : '')+'" data-market-tab="stock">📦 Stock</span>'
+         + '<span class="rtab'+(marketTab === 'sell' ? ' on' : '')+'" data-market-tab="sell">🛒 Vente'+(nSell ? ' · '+nSell : '')+'</span></div>';
+      if(marketTab === 'sell'){
+        h += depotResPanel(b, 'sell');
+        // seuils : stock conservé avant de vendre, pour chaque ressource en vente
+        const selling = Object.keys(RES).filter(k => k !== 'water' && b.sellTo?.[k]);
+        if(selling.length){
+          h += '<div style="margin-top:8px;color:#f0c060;font-size:10px;text-transform:uppercase;letter-spacing:.06em">Stock minimum conservé</div><div class="rsell">';
+          for(const k of selling)
+            h += '<div class="rsell-row" title="'+escHtml(RES[k].n)+'"><span>'+RES[k].ic+'</span><span class="rsell-n">'+escHtml(RES[k].n)+'</span>'
+               + '<span style="color:#f0c060">'+(TRADE_PRICES[k] || 0)+' $</span>'
+               + '<button class="tbtn sell-min-dec" data-sell-min="'+k+'">−</button>'
+               + '<b>'+(b.sellMin?.[k] || 0)+'</b>'
+               + '<button class="tbtn sell-min-inc" data-sell-min="'+k+'">+</button></div>';
+          h += '</div>';
         }
-        h += '</div>';
+      } else {
+        h += depotResPanel(b, 'allow');
       }
     } else {
-      h += '<div style="color:#8fa3bf;font-size:12px;font-style:italic">Appartient à un autre joueur.</div>';
+      h += depotResPanel(b, 'readonly');
     }
-    h += '</div>';
-    h += '</div>'; // fin depot-cols
   }
   if(b.type==='tank'){
     h += '<div class="row"><span>Rayon d\'action</span><b style="color:#64b7e8">'+tankRadiusOf(b)+' cases</b></div>';
@@ -2269,7 +2350,7 @@ function renderInfo(){
     // Pour les mines on expose aussi 'dirt' comme sortie bloquable
     const blockableOuts = b.type === 'mine'
       ? [...allOuts, 'dirt']
-      : allOuts;
+      : b.type === 'space_center' ? [] : allOuts; // la capsule rapporte toute sa cargaison
     if(blockableOuts.length){
       h += '<div style="margin-top:8px;color:#8fa3bf;font-size:11px">Production</div>';
       for(const k of blockableOuts){
@@ -2352,6 +2433,48 @@ function renderInfo(){
       if(!b.allow) b.allow = {};
       b.allow[el.dataset.toggleRes] = b.allow[el.dataset.toggleRes] === false ? undefined : false;
       if(MP.connected) netSend({ type:'set_depot_resource', x:b.x, y:b.y, res:el.dataset.toggleRes, allowed:b.allow[el.dataset.toggleRes] !== false });
+      p._html = null;
+    };
+  });
+  // grille compacte : filtre Toutes / Actives, onglets du marché, famille entière
+  p.querySelectorAll('[data-res-view]').forEach(el=>{ el.onclick = ()=> setDepotResView(el.dataset.resView); });
+  p.querySelectorAll('[data-market-tab]').forEach(el=>{
+    el.onclick = ()=>{ marketTab = el.dataset.marketTab === 'sell' ? 'sell' : 'stock'; p._html = null; renderInfo(); };
+  });
+  p.querySelectorAll('[data-res-bulk]').forEach(el=>{
+    el.onclick = ()=>{
+      const mode = el.dataset.bulkMode;
+      const depot = mode === 'station' ? (isTrainStationPiece(b) ? trainStationLinkedDepot(b) : portFreightHub(b)) : b;
+      if(!depot) return;
+      if(MP.connected && depot.owner && depot.owner !== MP.myId){
+        toast('⛔ Ce bâtiment appartient à un autre joueur','err');
+        return;
+      }
+      const keys = resKeysByCategory(k => k !== 'water').find(c => c.key === el.dataset.resBulk)?.keys || [];
+      if(!keys.length) return;
+      if(mode === 'sell'){
+        if(!depot.sellTo) depot.sellTo = {};
+        const allOn = keys.every(k => depot.sellTo[k]);
+        for(const k of keys) depot.sellTo[k] = !allOn;
+      } else if(mode === 'station'){
+        // toute la famille passe à l'état suivant de la moins avancée : refusée → acceptée → + trains → refusée
+        if(!depot.allow) depot.allow = {};
+        if(!depot.trainAllow) depot.trainAllow = {};
+        const minState = Math.min(...keys.map(k => depotResState(depot, k, true)));
+        const next = minState === 0 ? 1 : minState === 1 ? 2 : 0;
+        for(const k of keys){
+          if(next === 0) depot.allow[k] = false;
+          else { depot.allow[k] = undefined; depot.trainAllow[k] = next === 2 ? undefined : false; }
+          if(MP.connected) netSend({ type:'set_depot_resource', x:depot.x, y:depot.y, res:k, allowed:depot.allow[k] !== false, trainAllowed:depot.trainAllow[k] !== false });
+        }
+      } else {
+        if(!depot.allow) depot.allow = {};
+        const allOn = keys.every(k => depot.allow[k] !== false);
+        for(const k of keys){
+          depot.allow[k] = allOn ? false : undefined;
+          if(MP.connected) netSend({ type:'set_depot_resource', x:depot.x, y:depot.y, res:k, allowed:!allOn });
+        }
+      }
       p._html = null;
     };
   });
@@ -2671,7 +2794,7 @@ let trainToolbarGroup = null;
 let trainToolbarMenu = null;
 let resourceToolbarGroup = null;
 let resourceToolbarMenu = null;
-const RESOURCE_TOOLBAR_TOOLS = ['mine','lumber','fisher','pump'];
+const RESOURCE_TOOLBAR_TOOLS = ['mine','lumber','fisher','pump','oil_well'];
 let airportToolbarGroup = null;
 let airportToolbarMenu = null;
 const AIRPORT_TOOLBAR_TOOLS = ['air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco'];
@@ -2680,7 +2803,24 @@ let storageToolbarMenu = null;
 const STORAGE_TOOLBAR_TOOLS = ['depot','tank'];
 let buildingToolbarGroup = null;
 let buildingToolbarMenu = null;
-const BUILDING_TOOLBAR_TOOLS = ['house','lux_house','plant','market'];
+const BUILDING_TOOLBAR_TOOLS = ['house','lux_house','plant','market','space_center'];
+// Infobulle d'un outil : description + matériaux de chantier exigés (entrepôt proche).
+function toolTitle(k){
+  const d = BUILD[k];
+  if(!d) return '';
+  const mats = k === 'train_station'
+    ? [['Gare', buildMaterialsFor('train_station')], ['Quai', buildMaterialsFor('train_platform')]].filter(e => e[1])
+    : (buildMaterialsFor(k) ? [['', buildMaterialsFor(k)]] : []);
+  if(!mats.length) return d.desc || '';
+  return (d.desc || '') + '\n\n🏗️ Matériaux de chantier (dans un entrepôt dont le rayon couvre le chantier) :\n'
+    + mats.map(([lbl, m]) => (lbl ? lbl + ' : ' : '') + resAmountsText(m)).join('\n');
+}
+// Prix affiché dans la barre d'outils (🏗️ : matériaux de chantier en plus).
+function toolCostLabel(k, unit = ' $'){
+  const d = BUILD[k];
+  if(!d?.cost) return '&nbsp;';
+  return d.cost + unit + (buildMaterialsFor(k) ? ' 🏗️' : '');
+}
 let vehicleToolbarGroup = null;
 let vehicleToolbarMenu = null;
 const VEHICLE_TOOLBAR_TOOLS = ['road','bus_stop'];
@@ -2921,9 +3061,9 @@ function buildToolbar(){
         const choice = document.createElement('button');
         choice.className = 'tool tool-group-item';
         choice.dataset.vehicleTool = toolKey;
-        choice.title = d.desc || '';
+        choice.title = toolTitle(toolKey);
         choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
-          + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
+          + '<span class="cost">'+toolCostLabel(toolKey)+'</span>';
         choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
         menu.appendChild(choice);
       }
@@ -2942,9 +3082,9 @@ function buildToolbar(){
       vehicleToolbarMenu = menu;
       continue;
     }
-    if(k === 'lumber' || k === 'fisher' || k === 'pump') continue; // regroupés sous "Ressources"
+    if(k === 'lumber' || k === 'fisher' || k === 'pump' || k === 'oil_well') continue; // regroupés sous "Ressources"
     if(k === 'tank') continue; // regroupé sous "Stockage"
-    if(k === 'house' || k === 'market') continue; // regroupés sous "Bâtiments"
+    if(k === 'house' || k === 'market' || k === 'space_center') continue; // regroupés sous "Bâtiments"
     if(k === 'terraform_raise' || k === 'terraform_canal') continue; // regroupés sous "Terraforming"
     if(k === 'terraform_dig'){
       const group = document.createElement('div');
@@ -2962,7 +3102,7 @@ function buildToolbar(){
         const choice = document.createElement('button');
         choice.className = 'tool tool-group-item';
         choice.dataset.terraformTool = toolKey;
-        choice.title = d.desc || '';
+        choice.title = toolTitle(toolKey);
         choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
           + '<span class="cost">'+(d.cost ? d.cost+' $/tuile' : '&nbsp;')+'</span>';
         choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
@@ -3012,9 +3152,9 @@ function buildToolbar(){
         const choice = document.createElement('button');
         choice.className = 'tool tool-group-item';
         choice.dataset.buildingTool = toolKey;
-        choice.title = d.desc || '';
+        choice.title = toolTitle(toolKey);
         choice.innerHTML = '<span class="ic">'+d.ic+'</span><span class="bld-name">'+d.n+'</span>'
-          + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
+          + '<span class="cost">'+toolCostLabel(toolKey)+'</span>';
         choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
         if(d.lux) choice.style.display = 'none'; // affichée au déblocage (syncLuxeToolbar)
         menu.appendChild(choice);
@@ -3052,9 +3192,9 @@ function buildToolbar(){
         const choice = document.createElement('button');
         choice.className = 'tool tool-group-item';
         choice.dataset.airportTool = toolKey;
-        choice.title = d.desc || '';
+        choice.title = toolTitle(toolKey);
         choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n.replace(' aéroport','')+'</span>'
-          + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
+          + '<span class="cost">'+toolCostLabel(toolKey)+'</span>';
         choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
         menu.appendChild(choice);
       }
@@ -3089,9 +3229,9 @@ function buildToolbar(){
         const choice = document.createElement('button');
         choice.className = 'tool tool-group-item';
         choice.dataset.storageTool = toolKey;
-        choice.title = d.desc || '';
+        choice.title = toolTitle(toolKey);
         choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
-          + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
+          + '<span class="cost">'+toolCostLabel(toolKey)+'</span>';
         choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
         menu.appendChild(choice);
       }
@@ -3126,9 +3266,9 @@ function buildToolbar(){
         const choice = document.createElement('button');
         choice.className = 'tool tool-group-item';
         choice.dataset.resourceTool = toolKey;
-        choice.title = d.desc || '';
+        choice.title = toolTitle(toolKey);
         choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
-          + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
+          + '<span class="cost">'+toolCostLabel(toolKey)+'</span>';
         choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
         menu.appendChild(choice);
       }
@@ -3162,9 +3302,9 @@ function buildToolbar(){
         const choice = document.createElement('button');
         choice.className = 'tool tool-group-item';
         choice.dataset.trainTool = toolKey;
-        choice.title = d.desc || '';
+        choice.title = toolTitle(toolKey);
         choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
-          + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
+          + '<span class="cost">'+toolCostLabel(toolKey)+'</span>';
         choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
         menu.appendChild(choice);
       }
@@ -3208,9 +3348,9 @@ function buildToolbar(){
         const choice = document.createElement('button');
         choice.className = 'tool tool-group-item';
         choice.dataset.depotTool = item.tool;
-        choice.title = item.desc || d?.desc || '';
+        choice.title = toolTitle(item.tool) || item.desc || '';
         choice.innerHTML = '<span class="ic">'+(item.icon || d?.ic || '◻')+'</span><span>'+item.label+'</span>'
-          + (d?.cost ? '<span class="cost">'+d.cost+' $</span>' : '<span class="cost">&nbsp;</span>');
+          + '<span class="cost">'+toolCostLabel(item.tool)+'</span>';
         choice.onclick = e => {
           e.stopPropagation();
           setTool(item.tool);
@@ -3228,9 +3368,9 @@ function buildToolbar(){
     const btn = document.createElement('button');
     btn.className = 'tool' + (k===tool ? ' on' : '');
     btn.dataset.t = k;
-    btn.title = d.desc || '';
+    btn.title = toolTitle(k);
     btn.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
-      + (d.cost ? '<span class="cost">'+d.cost+' $</span>' : '<span class="cost">&nbsp;</span>');
+      + '<span class="cost">'+toolCostLabel(k)+'</span>';
     btn.onclick = ()=> setTool(k);
     bar.appendChild(btn);
   }
@@ -4012,7 +4152,7 @@ $('finance').addEventListener('pointerdown', e=>{
 $('info').onclick = e=>{ if(e.target.id==='infoCloseBtn') closeInfoPanel(); };
 
 let helpCurrentPage = 0;
-const HELP_PAGES = 5;
+const HELP_PAGES = 6;
 
 function goHelpPage(p){
   helpCurrentPage = Math.max(0, Math.min(HELP_PAGES - 1, p));

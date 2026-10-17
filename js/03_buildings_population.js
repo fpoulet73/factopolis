@@ -10,7 +10,7 @@ function newBuilding(type,x,y,w,h){
   // logements : design tiré au hasard à la pose et à chaque fusion (puis stocké, synchronisé, sauvegardé)
   if(d?.resid) b.design = Math.floor(Math.random() * (typeof ART_VARIANTS !== 'undefined' ? ART_VARIANTS : 8));
   if(type==='air_deco') b.decor = Math.floor(Math.random() * AIR_DECO_STYLES);
-  if(type==='mine')  b.ore = terrain[y*N+x]===T.IRON ? 'iron' : 'coal';
+  if(type==='mine')  b.ore = DEPOSIT_ORES[terrain[y*N+x]] || 'coal';
   if(d?.storageHub && type !== 'tank'){
     b.allow = {}; b.sellTo = {}; b.sellMin = {}; b.trainAllow = {};
     for(const k in RES){ b.allow[k] = false; b.sellTo[k] = false; b.sellMin[k] = 0; b.trainAllow[k] = false; }
@@ -138,9 +138,15 @@ function recipeOf(b){
   const d = BUILD[b.type];
   if(b.type==='mine') return { in:{}, out:{ [b.ore]: d.qty||1 }, time:d.time/prodMult(b) };
   if(b.type==='terrassement') return null; // stockage passif, pas de cycle de production
+  // centre spatial : pièces de fusée → cargaison de retour (cycle géré par updateSpaceCenter)
+  // (time : assemblage sur le pas de tir, ou durée de la mission pendant le vol)
+  if(b.type==='space_center') return { in:SPACE_ROCKET_PARTS, out:SPACE_CARGO, time: b.spacePhase === 'flight' ? SPACE_MISSION_TIME : SPACE_ASSEMBLY_TIME };
   if(d.recipe) return { in:d.recipe.in, out:d.recipe.out, time:d.time/prodMult(b) };
   return null;
 }
+// L'usine consomme-t-elle de l'eau ? (boulangerie, centrale à béton, usine chimique…)
+// L'eau ne lui parvient que par une citerne proche (cf. tankNear).
+const usesWater = b => !!recipeOf(b)?.in?.water;
 
 function adjRoadTiles(b){
   const a = [], w = b.w||1, h = b.h||1;
@@ -173,7 +179,7 @@ function accepts(b,res){
   if(b.paused) return false; // un site en pause ne reçoit plus de livraisons
   if(res === 'water'){
     if(b.type === 'tank') return true;
-    if(b.type === 'bakery') return tankNear(b);
+    if(usesWater(b)) return tankNear(b);
     return false;
   }
   if(b.type==='tank') return false;
@@ -337,6 +343,68 @@ function terrassementNear(x, y, owner, minDirt = FILL_WATER_COST){
     if(dist <= FILL_WATER_RADIUS && dist < bestDist){ best = b; bestDist = dist; }
   }
   return best;
+}
+
+// ---------- matériaux de chantier ----------
+// Les grands bâtiments (gares, port, aéroport, centre spatial, usines avancées)
+// exigent, en plus de leur prix, des matériaux stockés dans un entrepôt du joueur
+// dont le rayon d'action couvre le chantier. Ils sont prélevés à la construction,
+// dans les entrepôts les plus proches d'abord.
+const buildMaterialsActive = () => BUILD_MATERIALS_ON && WORLD?.buildMaterials !== false;
+const buildMaterialsFor = type => buildMaterialsActive() ? buildMaterialsOf(type) : null;
+// type réellement construit par un outil : l'outil « Gare » pose un quai sur un rail
+const materialTypeForTool = (t, x, y) => t === 'train_station' && inMap(x, y) && rail[y*N+x] ? 'train_platform' : t;
+// entrepôts (et marchés) du joueur dont le rayon couvre le centre du chantier, du plus proche au plus loin
+function materialDepotsFor(x, y, w, h, owner){
+  const cx = x + (w || 1) / 2 - 0.5, cy = y + (h || 1) / 2 - 0.5;
+  const out = [];
+  for(const d of buildings){
+    if(d.dead || !isStorageDepot(d) || !ownedBy(d, owner)) continue;
+    const c = centerOfBuilding(d);
+    const dist = Math.max(Math.abs(c.x - cx), Math.abs(c.y - cy));
+    if(dist <= depotRadiusOf(d)) out.push({ d, dist });
+  }
+  return out.sort((a, b) => a.dist - b.dist).map(o => o.d);
+}
+// quantités disponibles dans les entrepôts couvrant le chantier
+function buildMaterialsStock(type, x, y, w, h, owner){
+  const need = buildMaterialsFor(type);
+  const have = {};
+  if(!need) return have;
+  for(const d of materialDepotsFor(x, y, w, h, owner))
+    for(const r in need) have[r] = (have[r] || 0) + Math.floor(d.storage[r] || 0);
+  return have;
+}
+// matériaux manquants { res: quantité } ou null si le chantier est approvisionné
+function buildMaterialsMissing(type, x, y, w, h, owner){
+  const need = buildMaterialsFor(type);
+  if(!need) return null;
+  const have = buildMaterialsStock(type, x, y, w, h, owner);
+  const miss = {};
+  for(const r in need) if((have[r] || 0) < need[r]) miss[r] = need[r] - (have[r] || 0);
+  return Object.keys(miss).length ? miss : null;
+}
+function buildMaterialsError(type, x, y, w, h, owner){
+  const miss = buildMaterialsMissing(type, x, y, w, h, owner);
+  if(!miss) return '';
+  return (materialDepotsFor(x, y, w, h, owner).length ? 'Matériaux de chantier manquants dans les entrepôts proches : '
+    : 'Aucun entrepôt à portée du chantier. Matériaux requis : ') + resAmountsText(miss);
+}
+// prélève les matériaux (false si incomplets : rien n'est prélevé)
+function consumeBuildMaterials(type, x, y, w, h, owner){
+  const need = buildMaterialsFor(type);
+  if(!need) return true;
+  if(buildMaterialsMissing(type, x, y, w, h, owner)) return false;
+  const depots = materialDepotsFor(x, y, w, h, owner);
+  for(const r in need){
+    let left = need[r];
+    for(const d of depots){
+      if(left <= 0) break;
+      const take = Math.min(left, Math.floor(d.storage[r] || 0));
+      if(take > 0){ d.storage[r] -= take; left -= take; }
+    }
+  }
+  return true;
 }
 
 function playerColor(owner){
@@ -537,7 +605,9 @@ function setBuildingPaused(b, pausedState, broadcastChange=true){
   }
 }
 
-function plantUpgradeError(b, targetType){
+// checkMaterials=false : seules les règles de terrain (le panneau affiche alors les
+// spécialisations en attente de matériaux au lieu de les masquer).
+function plantUpgradeError(b, targetType, checkMaterials = true){
   if(!b || b.dead || b.type !== 'plant') return 'Usine déjà spécialisée';
   if(!PLANT_UPGRADES[targetType]) return 'Type d\'usine invalide';
   if(targetType === 'farm'){
@@ -556,14 +626,16 @@ function plantUpgradeError(b, targetType){
     return 'Doit être au bord de l\'eau';
   if(targetType === 'pump' && !waterNear(b.x, b.y, 1))
     return 'Doit être au bord de l\'eau';
-  if(targetType === 'mine' && terrain[b.y*N+b.x] !== T.IRON && terrain[b.y*N+b.x] !== T.COAL)
-    return 'Doit être sur un gisement (fer ou charbon)';
-  return '';
+  if(targetType === 'mine' && !isMineDeposit(terrain[b.y*N+b.x]))
+    return 'Doit être sur un gisement';
+  if(!checkMaterials) return '';
+  return buildMaterialsError(targetType, b.x, b.y, b.w, b.h, b.owner ?? null);
 }
 
 function applyPlantUpgrade(b, targetType){
   const err = plantUpgradeError(b, targetType);
   if(err) return err;
+  consumeBuildMaterials(targetType, b.x, b.y, b.w, b.h, b.owner ?? null);
   b.type = targetType;
   b.storage = {};
   b.inc = {};

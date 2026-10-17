@@ -490,6 +490,13 @@ const ALLOWED_BUILD_TYPES = new Set([
   'road', 'rail', 'mine', 'lumber', 'farm', 'cotton_farm', 'weaver', 'pump', 'fisher', 'mill',
   'bakery', 'fishery', 'smelter', 'factory', 'plant', 'house', 'lux_house', 'depot', 'market',
   'tank', 'garage', 'train_depot', 'train_station', 'boat_depot', 'plane_depot', 'bus_stop', 'terrassement',
+  // pièces d'aéroport
+  'air_terminal', 'air_runway', 'air_taxi', 'air_parking', 'air_tower', 'air_deco',
+  // chaînes de production avancées (pose directe ou spécialisation d'une usine abandonnée)
+  'oil_well', 'space_center', 'copper_smelter', 'wire_mill', 'gold_refinery', 'rolling_mill', 'sheet_mill',
+  'nail_factory', 'cement_plant', 'concrete_plant', 'glassworks', 'glazier', 'ropery', 'refinery',
+  'chem_plant', 'paint_factory', 'electronics_plant', 'furniture_factory', 'appliance_factory',
+  'jeweler', 'quantum_lab',
 ]);
 const ALLOWED_VEHICLE_TYPES = new Set([
   // types achetables actuels

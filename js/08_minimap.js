@@ -77,6 +77,10 @@ const Minimap = (function(){
       case T.COAL:   return [62, 62, 70];
       case T.SAND:   return [214, 196, 132];
       case T.CLAY:   return [160, 110, 86];
+      case T.COPPER: return [72, 150, 122];
+      case T.GOLD:   return [232, 196, 64];
+      case T.LIMESTONE: return [222, 218, 202];
+      case T.OIL:    return [36, 30, 44];
     }
     return [92 + lift, 156 + lift / 2, 72 + lift / 3];
   }

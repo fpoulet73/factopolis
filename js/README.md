@@ -57,7 +57,12 @@ js/pixi/vendor/pixi.min.js, js/pixi/scene.js, js/pixi/sprites.js  ← scène Pix
   helpers (`prodMult`, `upkeepOf`, `indRadiusOf`), noms de villages
   (`generateTownName`, `assignBuildingToTown`, `mergeTowns`), packs
   graphiques (`GRAPHIC_PACKS`, `loadCommunityGraphicPacks`), et
-  `registerDepotTool` pour étendre la toolbar.
+  `registerDepotTool` pour étendre la toolbar. Chaînes avancées :
+  gisements (`DEPOSIT_ORES`, `isMineDeposit`), familles de ressources
+  (`RES_CATEGORIES`, `resKeysByCategory`, `resAmountsText`), usines
+  (`ADVANCED_FACTORIES`, `PLANT_UPGRADE_CATEGORIES`, `recipeText`), centre
+  spatial (`SPACE_*`, `BUILD.space_center`), matériaux de chantier
+  (`BUILD_MATERIALS`, `buildMaterialsOf`).
 - **`02_world_state.js`** : variables globales d'état (`terrain`,
   `road`, `rail`, `railSignals`, `bgrid`, `buildings`, `trucks`,
   `vehicles`, `walkers`, `homeless`, `floats`, `towns`, `expansions`,
@@ -77,7 +82,9 @@ js/pixi/vendor/pixi.min.js, js/pixi/scene.js, js/pixi/sprites.js  ← scène Pix
   `adjRoadTiles`), validation de terrain (`treeNear`, `fieldNear`,
   `farmCapacityError`, `tankNear`, `terrassementNear`), population
   (`assignHomelessToHousing`, `makeResidentsHomeless`,
-  `routeUnhousedResidents`), démollition (`demolishBuilding`), pause
+  `routeUnhousedResidents`), matériaux de chantier (`buildMaterialsFor`,
+  `materialDepotsFor`, `buildMaterialsMissing`, `consumeBuildMaterials`),
+  eau par citerne (`usesWater`), démollition (`demolishBuilding`), pause
   (`setBuildingPaused`), spécialisation des usines abandonnées
   (`plantUpgradeError`, `applyPlantUpgrade`), protection starter homes.
 - **`04_construction.js`** : état `MP` (socket, id, role, players,
@@ -115,7 +122,8 @@ js/pixi/vendor/pixi.min.js, js/pixi/scene.js, js/pixi/sprites.js  ← scène Pix
   - `bateau.js` : `boat_depot` = port (`cargo_ship`, `ferry`).
   - `avion.js` : `plane_depot` = aéroport (`plane`).
 - **`06_simulation.js`** : boucle `update(dt)` (voir l'ordre détaillé
-  dans `SESSION_CONTEXT.md`), objectifs (`OBJECTIVES`, `updateObjectives`). Helpers : `fisherFishBonus`,
+  dans `SESSION_CONTEXT.md`), objectifs (`OBJECTIVES`, `updateObjectives`),
+  cycle des fusées (`updateSpaceCenter`). Helpers : `fisherFishBonus`,
   `checkRect`/`checkRectInd`, `tryMerge`/`tryMergeInd`/`tryMergeDepot`/
   `tryMergeTrainStations`, `growPop`, `pathToEdge` (Dijkstra maison),
   `spawnWalker`, `spawnLeavers`, `residentialSplitPlan` (backtracking),
@@ -138,8 +146,10 @@ js/pixi/vendor/pixi.min.js, js/pixi/scene.js, js/pixi/sprites.js  ← scène Pix
   (`addFloat`).
 - **`07_rendering_art.js`** : art procédural (`drawBuildingArt`,
   `drawStationBuildingArt`) — primitives iso `artBox`, `artGable`, `artHip`,
-  `artCylinder`, `artWindowGrid`… ; relève les cheminées
-  (`BUILDING_CHIMNEYS`) pour la fumée animée.
+  `artCylinder`, `artWindowGrid`, `artSphere`, `artPipe`… ; usines avancées
+  (`artAdvancedIndustry`), centre spatial (`artSpaceCenter`, `drawRocketShape`) ;
+  relève les cheminées (`BUILDING_CHIMNEYS`) pour la fumée animée. L'animation
+  des fusées (`drawRocketFx`, `spaceCenterPhaseChanged`) est dans `07_rendering.js`.
 - **`08_minimap.js`** : `Minimap` (vue d'ensemble iso, clic pour recentrer).
 - **`08_objectives.js`** : `ObjectivesPanel` (objectif courant, annonces).
 - **`08_ui_input_loop.js`** : HUD (`updateHUD`, `formatGameDate`),

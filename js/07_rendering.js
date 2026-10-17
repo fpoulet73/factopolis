@@ -461,7 +461,7 @@ function cliffColorForTile(t, snowy){
 
 function packBuildingColor(b, d){
   const p = graphicBasePack();
-  if(b.type === 'mine' && b.ore) return b.ore === 'iron' ? '#8a5c3a' : '#4a4a5a';
+  if(b.type === 'mine' && b.ore) return b.ore === 'coal' ? '#4a4a5a' : shade(RES[b.ore]?.c || '#8a5c3a', -0.35);
   // Le dépôt de train prend la couleur du joueur, comme les gares et les rails.
   if(b.type === 'train_depot' && b.owner) return playerColor(b.owner);
   if(p.buildings && p.buildings[b.type]) return p.buildings[b.type];
@@ -1016,8 +1016,8 @@ function drawBuildingBody(b){
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.font = (TH*(0.62+0.28*(Math.max(b.w,b.h)-1)))+'px "Segoe UI Emoji",sans-serif';
     if(b.type === 'mine' && b.ore){
-      // Pioche colorée selon le minerai (fer = orange, charbon = gris clair)
-      const oreColor = b.ore === 'iron' ? '#d98a4f' : '#b0b0c0';
+      // Pioche colorée selon le minerai (fer = orange, charbon = gris clair, cuivre, or…)
+      const oreColor = b.ore === 'coal' ? '#b0b0c0' : (RES[b.ore]?.c || '#d98a4f');
       ctx.save();
       ctx.globalAlpha = 1;
       ctx.fillStyle = oreColor;
@@ -1579,6 +1579,71 @@ function drawSmoke(){
   ctx.globalAlpha = 1;
 }
 
+// ---------- fusées du centre spatial ----------
+// Animations purement visuelles (temps réel) : décollage depuis le pas de tir, puis
+// retour de la capsule sous parachute. Déclenchées par spaceCenterPhaseChanged
+// (simulation en solo / chez l'hôte, synchronisation chez l'invité).
+let rocketFx = [];
+const ROCKET_LAUNCH_MS = 7000, CAPSULE_LAND_MS = 4500;
+function spaceCenterPhaseChanged(b, phase){
+  if(!b || b.dead) return;
+  if(rocketFx.length > 8) rocketFx.shift();
+  rocketFx.push({ b, kind: phase === 'flight' ? 'launch' : 'landing', t0: performance.now(), n: 0 });
+}
+// point écran (repère monde iso) du pas de tir, même repère que l'art cuit (SPACE_PAD_*)
+function spacePadIso(b){
+  const [r1x, r1y] = rotIdx(b.x, b.y);
+  const [r2x, r2y] = rotIdx(b.x + b.w - 1, b.y + b.h - 1);
+  const rx0 = Math.min(r1x, r2x), ry0 = Math.min(r1y, r2y);
+  const rw = Math.abs(r1x - r2x) + 1, rh = Math.abs(r1y - r2y) + 1;
+  return liftedIso(rx0 + rw * SPACE_PAD_U, ry0 + rh * SPACE_PAD_V, buildingLiftPx(b) + SPACE_PAD_Z);
+}
+function drawRocketFx(){
+  if(!rocketFx.length) return;
+  const now = performance.now();
+  for(let i = rocketFx.length - 1; i >= 0; i--){
+    const f = rocketFx[i];
+    const age = now - f.t0;
+    if(f.b.dead || age > (f.kind === 'launch' ? ROCKET_LAUNCH_MS : CAPSULE_LAND_MS)){ rocketFx.splice(i, 1); continue; }
+    const [px, py] = spacePadIso(f.b);
+    const H = rocketHeightPx(f.b);
+    ctx.save();
+    if(f.kind === 'launch'){
+      const t = age / 1000, ign = 1.3;
+      const z = t < ign ? 0 : 34 * (t - ign) * (t - ign);   // accélération continue
+      const shake = t < ign ? (Math.random() - 0.5) * 1.4 : 0;
+      // nuage au sol à l'allumage, puis traînée de fumée
+      if(!qualityLow() && smoke.length < 320 && (f.n++ % 2 === 0)){
+        const ground = z < 25;
+        smoke.push({ x: px + (Math.random() - 0.5) * (ground ? 26 : 4), y: py - z + 3,
+          vx: (Math.random() - 0.5) * (ground ? 46 : 6), vy: ground ? -(3 + Math.random() * 6) : 4 + Math.random() * 6,
+          r: ground ? 4 + Math.random() * 3 : 2 + Math.random() * 2, grow: ground ? 15 : 7,
+          life: 1.6 + Math.random(), life0: 2.4, a: 0.5, col: '#dfe2e6' });
+      }
+      ctx.globalAlpha = Math.min(1, (ROCKET_LAUNCH_MS - age) / 900);
+      drawRocketFlame(px + shake, py - z, H, t < ign ? t / ign : 1);
+      drawRocketShape(px + shake, py - z, H);
+    } else {
+      // capsule et parachute qui se posent en douceur sur la dalle
+      const k = age / CAPSULE_LAND_MS;
+      const z = 240 * Math.pow(1 - k, 1.4);
+      const sway = Math.sin(age / 380) * 3 * (1 - k);
+      const cx = px + sway, cy = py - z;
+      ctx.globalAlpha = k > 0.85 ? Math.max(0, (1 - k) / 0.15) : 1;
+      ctx.strokeStyle = 'rgba(80,80,80,.8)'; ctx.lineWidth = 0.7;
+      ctx.beginPath(); ctx.moveTo(cx - 5, cy - 8); ctx.lineTo(cx - 13, cy - 26); ctx.moveTo(cx + 5, cy - 8); ctx.lineTo(cx + 13, cy - 26); ctx.stroke();
+      ctx.fillStyle = '#f08a3a';
+      ctx.beginPath(); ctx.ellipse(cx, cy - 28, 15, 9, 0, Math.PI, 2 * Math.PI); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.moveTo(cx - 5, cy - 28); ctx.lineTo(cx, cy - 37); ctx.lineTo(cx + 5, cy - 28); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#d8dde3';
+      ctx.beginPath(); ctx.moveTo(cx - 6, cy); ctx.lineTo(cx - 3.5, cy - 9); ctx.lineTo(cx + 3.5, cy - 9); ctx.lineTo(cx + 6, cy); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#2f3a48'; ctx.fillRect(cx - 6, cy - 1.5, 12, 1.5);
+    }
+    ctx.restore();
+  }
+}
+
 // Pose d'un camion (position tuile tournée + direction) depuis son état de
 // rendu (interpolé en MP). Réutilisé par le rendu ET le baking de textures Pixi.
 function truckPose(tk){
@@ -1991,6 +2056,10 @@ const RES_SIGN_DEFS = {
   [T.COTTON]: { n: RES.cotton.n, ic: RES.cotton.ic, col:'#e8e4d2' },
   [T.SAND]:   { n:'Sable',       ic:'🏖️',           col:'#e8d28a' },
   [T.CLAY]:   { n:'Argile',      ic:'🧱',           col:'#c07a50' },
+  [T.COPPER]:    { n: 'Cuivre',   ic: RES.copper_ore.ic, col:'#d9804a' },
+  [T.GOLD]:      { n: 'Or',       ic: RES.gold_ore.ic,   col:'#f2c94c' },
+  [T.LIMESTONE]: { n: RES.limestone.n, ic: RES.limestone.ic, col:'#e2ddcc' },
+  [T.OIL]:       { n: RES.oil.n,  ic:'🛢️',               col:'#8a7fa0' },
 };
 const RES_SIGN_ZOOM_HI = 0.58; // début d'apparition (fondu)
 const RES_SIGN_ZOOM_LO = 0.45; // opacité pleine en dessous
@@ -2898,13 +2967,52 @@ function draw(){
           ctx.beginPath(); ctx.moveTo(c[0]+ox, c[1]+oy+5); ctx.lineTo(c[0]+ox, c[1]+oy); ctx.stroke();
         }
       }
-      if(!drawFast && (t===T.IRON || t===T.COAL)){
-        ctx.fillStyle = t===T.IRON ? '#c0763a' : '#23232b';
+      if(!drawFast && (t===T.IRON || t===T.COAL || t===T.COPPER)){
+        ctx.fillStyle = t===T.IRON ? '#c0763a' : t===T.COPPER ? '#3f9a7a' : '#23232b'; // cuivre : affleurements vert-de-gris
         const hs = hash(x,y), c = tileCenterIso(rx, ry, x, y);
         for(let k=0;k<4;k++){
           const ox = ((hs>>(k*4))&7)/7*TW*0.36 - TW*0.18;
           const oy = ((hs>>(k*4+8))&7)/7*TH*0.36 - TH*0.18;
           ctx.beginPath(); ctx.ellipse(c[0]+ox, c[1]+oy, 4.2, 2.6, 0, 0, 7); ctx.fill();
+          if(t===T.COPPER){ ctx.fillStyle = '#c46a3a'; ctx.beginPath(); ctx.ellipse(c[0]+ox+1, c[1]+oy-0.6, 2, 1.2, 0, 0, 7); ctx.fill(); ctx.fillStyle = '#3f9a7a'; }
+        }
+      }
+      if(!drawFast && t===T.GOLD){
+        // pépites dorées scintillantes dans la roche grise
+        const hs = hash(x,y), c = tileCenterIso(rx, ry, x, y);
+        for(let k=0;k<5;k++){
+          const ox = ((hs>>(k*3))&7)/7*TW*0.38 - TW*0.19;
+          const oy = ((hs>>(k*3+6))&7)/7*TH*0.34 - TH*0.17;
+          ctx.fillStyle = '#7d7468';
+          ctx.beginPath(); ctx.ellipse(c[0]+ox, c[1]+oy, 3.6, 2.2, 0, 0, 7); ctx.fill();
+          ctx.fillStyle = '#ffd84a';
+          ctx.beginPath(); ctx.arc(c[0]+ox+0.8, c[1]+oy-0.8, 1.3, 0, 7); ctx.fill();
+        }
+      }
+      if(!drawFast && t===T.LIMESTONE){
+        // blocs de roche calcaire clairs
+        const hs = hash(x,y), c = tileCenterIso(rx, ry, x, y);
+        for(let k=0;k<4;k++){
+          const ox = ((hs>>(k*4))&7)/7*TW*0.38 - TW*0.19;
+          const oy = ((hs>>(k*4+8))&7)/7*TH*0.34 - TH*0.17;
+          const s = 3 + ((hs>>(k*4+12))&3);
+          ctx.fillStyle = '#e4dfcf';
+          ctx.beginPath(); ctx.moveTo(c[0]+ox-s, c[1]+oy); ctx.lineTo(c[0]+ox, c[1]+oy-s*0.7); ctx.lineTo(c[0]+ox+s, c[1]+oy); ctx.lineTo(c[0]+ox, c[1]+oy+s*0.5); ctx.closePath(); ctx.fill();
+          ctx.fillStyle = 'rgba(120,112,95,.45)';
+          ctx.beginPath(); ctx.moveTo(c[0]+ox, c[1]+oy+s*0.5); ctx.lineTo(c[0]+ox+s, c[1]+oy); ctx.lineTo(c[0]+ox+s, c[1]+oy+1.5); ctx.lineTo(c[0]+ox, c[1]+oy+s*0.5+1.5); ctx.closePath(); ctx.fill();
+        }
+      }
+      if(!drawFast && t===T.OIL){
+        // nappe de pétrole : flaques noires irisées
+        const hs = hash(x,y), c = tileCenterIso(rx, ry, x, y);
+        for(let k=0;k<3;k++){
+          const ox = ((hs>>(k*4))&7)/7*TW*0.34 - TW*0.17;
+          const oy = ((hs>>(k*4+8))&7)/7*TH*0.30 - TH*0.15;
+          const rw = 6 + ((hs>>(k*4+12))&3) * 1.5, rh = rw * 0.5;
+          ctx.fillStyle = 'rgba(22,18,28,.82)';
+          ctx.beginPath(); ctx.ellipse(c[0]+ox, c[1]+oy, rw, rh, 0, 0, 7); ctx.fill();
+          ctx.strokeStyle = 'rgba(150,110,220,.45)'; ctx.lineWidth = 0.8;
+          ctx.beginPath(); ctx.ellipse(c[0]+ox-1, c[1]+oy-0.5, rw*0.55, rh*0.45, 0, 3.6, 5.6); ctx.stroke();
         }
       }
       if(!drawFast && t===T.SAND){
@@ -3318,7 +3426,18 @@ function draw(){
   }
 
   // en mode placement d'industrie : afficher tous les rayons industriels existants
-  if(['mine','lumber','farm','cotton_farm','weaver','pump','fisher','mill','bakery','fishery','smelter','factory'].includes(tool) && !drawFast){
+  // en mode placement d'un grand bâtiment : rayons des entrepôts du joueur, qui
+  // doivent couvrir le chantier et contenir ses matériaux
+  if(tool !== 'depot' && buildMaterialsFor(tool) && !drawFast){
+    for(const b of buildings){
+      if(b.dead || !isStorageDepot(b) || !ownedBy(b, myOwner())) continue;
+      ctx.globalAlpha = 0.3;
+      drawWorkRadiusOverlay(centerOfBuilding(b), depotRadiusOf(b), '#ffd700', minRx, maxRx, minRy, maxRy);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  if(['mine','lumber','farm','cotton_farm','weaver','pump','fisher','mill','bakery','fishery','smelter','factory','oil_well'].includes(tool) && !drawFast){
     for(const b of buildings){
       if(!BUILD[b.type]?.ind || b.dead) continue;
       ctx.globalAlpha = 0.35;
@@ -3387,7 +3506,29 @@ function draw(){
     const va = canPlace(tool, mouse.tx, mouse.ty);
     const [grx,gry] = rotIdx(mouse.tx, mouse.ty);
     ctx.fillStyle = va.ok ? 'rgba(110,230,120,.4)' : 'rgba(235,80,80,.4)';
-    tilePolygon(grx, gry, mouse.tx, mouse.ty); ctx.fill();
+    const fp = footprintOf(tool);
+    for(let dy = 0; dy < fp; dy++) for(let dx = 0; dx < fp; dx++){
+      const tx = mouse.tx + dx, ty = mouse.ty + dy;
+      if(!inMap(tx, ty)) continue;
+      const [frx, fry] = rotIdx(tx, ty);
+      tilePolygon(frx, fry, tx, ty); ctx.fill();
+    }
+    // matériaux de chantier : besoin (vert si les entrepôts proches suffisent) ou manque (rouge)
+    const matType = materialTypeForTool(tool, mouse.tx, mouse.ty);
+    const matNeed = buildMaterialsFor(matType);
+    if(matNeed){
+      const c = tileCenterIso(grx, gry, mouse.tx, mouse.ty);
+      const txt = va.materials ? '🏗️ manque ' + resAmountsIcons(va.materials) : '🏗️ ' + resAmountsIcons(matNeed);
+      ctx.save();
+      ctx.font = 'bold 11px "Segoe UI Emoji",sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const tw = ctx.measureText(txt).width + 10;
+      ctx.fillStyle = 'rgba(12,18,28,.86)';
+      ctx.fillRect(c[0] - tw / 2, c[1] + TH * 0.55, tw, 16);
+      ctx.fillStyle = va.materials ? '#ff9a8a' : '#9fe8a0';
+      ctx.fillText(txt, c[0], c[1] + TH * 0.55 + 8.5);
+      ctx.restore();
+    }
     const d = BUILD[tool];
     if(d.resid){
       drawWorkRadiusOverlay(
@@ -3401,8 +3542,11 @@ function draw(){
     }
     if(va.ok && d.hgt){
       ctx.globalAlpha = 0.55;
-      const ghost = { type:tool, x:mouse.tx, y:mouse.ty, w:1, h:1 };
-      const tc = prism(grx, gry, grx+1, gry+1, d.hgt, packBuildingColor(ghost, d), terrainLiftPxAt(mouse.tx, mouse.ty));
+      const ghost = { type:tool, x:mouse.tx, y:mouse.ty, w:fp, h:fp };
+      // emprise tournée : coin minimal des fp×fp cases dans l'espace caméra
+      let gx0 = grx, gy0 = gry;
+      for(const [ex, ey] of [[fp-1,0],[0,fp-1],[fp-1,fp-1]]){ const [qx, qy] = rotIdx(mouse.tx+ex, mouse.ty+ey); gx0 = Math.min(gx0, qx); gy0 = Math.min(gy0, qy); }
+      const tc = prism(gx0, gy0, gx0+fp, gy0+fp, d.hgt, packBuildingColor(ghost, d), terrainLiftPxAt(mouse.tx, mouse.ty));
       ctx.font = (TH*0.62)+'px "Segoe UI Emoji",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(d.ic, tc[0], tc[1]+1);
@@ -3419,6 +3563,8 @@ function draw(){
 
   // fumée des locomotives (au-dessus des sprites, sous les textes)
   drawSmoke();
+  // fusées des centres spatiaux (décollage, retour de capsule)
+  drawRocketFx();
 
   // textes flottants
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';

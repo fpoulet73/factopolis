@@ -59,7 +59,8 @@ Variables globales principales (déclarées pour la plupart dans
 `02_world_state.js`) :
 
 - `terrain` : `Uint8Array(N*N)`, types `GRASS`, `WATER`, `TREE`, `IRON`,
-  `COAL`, `WHEAT`, `COTTON`.
+  `COAL`, `WHEAT`, `COTTON`, `SAND`, `CLAY`, `COPPER`, `GOLD`, `LIMESTONE`,
+  `OIL` (`isMineDeposit`, `isClearableTerrain`).
 - `road` : `Uint8Array`, routes par tuile (8-connues).
 - `rail` : `Uint8Array`, masque bitfield des connexions rail
   (`RAIL_DIRS`, 8 directions).
@@ -96,16 +97,27 @@ La taille par défaut est `N = 64` (redimensionnable 32 → 128 via
 
 ## Ressources
 
-15 ressources (`RES`) : `iron`, `coal`, `wood`, `wheat`, `cotton`,
-`clothes`, `flour`, `water`, `bread`, `fish`, `fish_fillet`, `fish_oil`,
-`steel`, `goods` (outils de construction), `dirt` (terre de remblai).
-`TRADE_PRICES` définit les prix de vente inter-joueurs.
+45 ressources (`RES`, champ `cat` → familles `RES_CATEGORIES`, helper
+`resKeysByCategory`) : les 15 historiques (`iron`, `coal`, `wood`, `wheat`,
+`cotton`, `clothes`, `flour`, `water`, `bread`, `fish`, `fish_fillet`,
+`fish_oil`, `steel`, `goods`, `dirt`) + gisements (`copper_ore`, `gold_ore`,
+`limestone`, `sand`, `clay`, `oil`), métallurgie (`copper`, `copper_wire`,
+`gold`, `nails`), matériaux de chantier (`steel_beam`, `steel_plate`, `cement`,
+`concrete`, `glass`, `window`, `rope`, `paint`), chimie (`chemicals`, `fuel`,
+`plastic`, `glue`), électronique (`circuit`, `quantum_chip`), luxe (`furniture`,
+`appliances`, `jewelry`) et ressources spatiales (`helium3`, `xenite`).
+`TRADE_PRICES` définit les prix commerciaux (marché, fret). Les camions/wagons
+se partagent les familles `CARGO_BULK` (vrac), `CARGO_FLAT` (plateau),
+`CARGO_GOODS` (marchandises) et `CARGO_LIQUID` (citerne).
 
-**Génération** (`genWorld`) : eau, relief, arbres, taches de blé/coton/fer/
-charbon, au moins une zone de chaque ressource dans la zone jouable, puis
+**Génération** (`genWorld`) : eau, relief, arbres, taches de blé/coton puis des
+gisements de `WORLD_DEPOSITS` (fer, charbon, cuivre, calcaire, pétrole, or — clés
+`monde.ressources` de `config.js`), au moins une zone de chaque ressource dans la
+zone jouable, sable/argile sur le littoral, puis
 **zone de départ garantie** (`ensureStarterArea`, résultat dans `starterSite`) :
 site de plaine dégagé proche du centre à ~5 cases d'une rive (étang creusé si
-aucune eau à portée), fer, charbon et bosquet à moins de ~11 cases. Blé et
+aucune eau à portée), fer, charbon et bosquet à moins de ~11 cases, et au moins
+une case de rive plate en herbe (première cabane de pêcheur). Blé et
 coton restent dispersés (transport en milieu de partie). La caméra démarre sur
 ce site.
 
@@ -116,10 +128,11 @@ Outils/bâtiments (catalogue `BUILD`) :
 - **Infrastructure** : `road`, `rail`, `rail_signal`, `train_station`,
   `train_platform`, `garage`, `train_depot`, `boat_depot`, `plane_depot`,
   `bus_stop`, `depot` (entrepôt), `market`, `tank` (citerne d'eau).
-- **Production** : `mine` (fer/charbon selon gisement), `lumber` (bois),
-  `farm`, `cotton_farm`, `pump` (eau), `fisher` (poisson), `weaver`,
-  `mill`, `bakery`, `fishery`, `smelter`, `factory`, `terrassement`
-  (produit `dirt`).
+- **Production** : `mine` (fer/charbon/cuivre/or/calcaire/sable/argile selon
+  gisement), `oil_well`, `lumber` (bois), `farm`, `cotton_farm`, `pump` (eau),
+  `fisher` (poisson), `weaver`, `mill`, `bakery`, `fishery`, `smelter`,
+  `factory`, `terrassement` (produit `dirt`), les 19 usines avancées
+  (cf. « Chaînes avancées ») et `space_center`.
 - **Logement** : `house`, `duplex`, `row`, `residence`, `tower`,
   `bigtower`, `tower3`, `sky` (gratte-ciel) ; luxe : `lux_house` →
   `lux_villa`, `lux_manor`, `lux_estate` (cf. « Maisons de luxe »).
@@ -142,6 +155,54 @@ appliquées ensuite depuis `CONFIG`.
 
 `PROD_CONFIG_KEYS` fait le pont entre clés `CFG.production` (`bucheron`,
 `fonderie`…) et types de bâtiments (`lumber`, `smelter`…).
+
+### Chaînes avancées
+
+- La `mine` extrait la ressource de sa tuile (`DEPOSIT_ORES` : fer, charbon,
+  cuivre, or, calcaire, sable, argile) ; `oil_well` se pose sur `T.OIL`.
+- `ADVANCED_FACTORIES` (01_definitions.js) déclare 19 usines obtenues en
+  spécialisant une usine abandonnée (`PLANT_UPGRADES`, groupées par
+  `PLANT_UPGRADE_CATEGORIES` dans le panneau) : cuivre, tréfilerie, or, laminoir,
+  tôlerie, clouterie, cimenterie, centrale à béton, verrerie, vitrerie, corderie,
+  raffinerie, usine chimique, peinture, électronique, ébénisterie, électroménager,
+  joaillerie, laboratoire quantique. Recettes, temps, coûts et entretien dans
+  `config.js` (`production.<cléFrançaise>`), description générée (`recipeText`).
+- Les usines dont la recette consomme de l'eau (`usesWater` : boulangerie,
+  centrale à béton, usine chimique) ne la reçoivent que par une citerne proche ;
+  les pompes ne livrent qu'aux citernes.
+- `essentialResources()` (priorité des ouvriers) ne compte que les besoins des
+  logements ouvriers : le luxe ne détourne pas la main-d'œuvre alimentaire.
+
+### Matériaux de chantier
+
+`CFG.materiauxChantier.batiments` → `BUILD_MATERIALS` / `buildMaterialsOf(type)`.
+Concernés par défaut : port, pièces d'aéroport (hors déco), centre spatial et usines
+avancées (raffinerie, usine chimique, affinerie d'or, électronique, électroménager,
+labo quantique). Les gares, quais et dépôts de train n'en demandent pas (le code
+les gère si on ajoute leurs clés). Fonctions (03_buildings_population.js) : `buildMaterialsFor` (null si désactivé :
+`actif:false` ou `WORLD.buildMaterials === false`), `materialDepotsFor(x,y,w,h,owner)`
+(entrepôts/marchés du joueur dont `depotRadiusOf` couvre le centre du chantier),
+`buildMaterialsMissing`, `buildMaterialsError`, `consumeBuildMaterials`
+(plus proches d'abord), `materialTypeForTool` (l'outil Gare pose un
+`train_platform` sur un rail). `canPlace` renvoie `{ ok:false, msg, materials }`
+quand il en manque ; `clickAt`, l'action réseau `build` (validée par l'hôte) et
+`applyPlantUpgrade` les prélèvent. Le fantôme affiche besoin/manque et les rayons
+des entrepôts. `WORLD.buildMaterials` voyage dans le snapshot (les tests
+`T_.flatWorld()` le mettent à false).
+
+### Centre spatial
+
+`space_center` (`BUILD.size` 3, `noMerge` : ouvriers/entretien comptés une fois via
+`indAreaOf`). `footprintOf(t)` + `canPlace` vérifient l'emprise plane et libre.
+`updateSpaceCenter` (06_simulation.js) : assemblage (pièces `SPACE_ROCKET_PARTS`
+en stock + ouvriers, `SPACE_ASSEMBLY_TIME`) → décollage (`b.spacePhase='flight'`,
+`b.launches++`, une de la Gazette) → mission (`SPACE_MISSION_TIME`, sans ouvriers)
+→ capsule : `SPACE_CARGO` (hélium-3, xénite) en stock. `recipeOf` renvoie la durée
+de la phase en cours (barre de progression). `spacePhase`/`launches` sont
+sérialisés ; `spaceCenterPhaseChanged` (07_rendering.js) lance l'animation
+(`drawRocketFx` : décollage, capsule sous parachute) côté hôte comme invité.
+L'art (`artSpaceCenter`) montre la fusée sur le pas de tir pendant l'assemblage
+(`spacePadHasRocket`, inclus dans `bldSig`).
 
 ## Boucle de simulation
 
@@ -230,6 +291,10 @@ Niveaux (du plus petit au plus grand) :
 - Niveaux : `lux_house` 1 case (ouvriers) → `lux_villa` 2 cases (employés) →
   `lux_manor` 2×2 (cadres) → `lux_estate` 3×3 (patrons, max). Art dédié
   dans 07_rendering_art.js (jardin, piscine, tennis, fontaine ; un étage max).
+- Biens de luxe (config) : villa → meubles en bonus et pour s'agrandir ; manoir →
+  meubles indispensables, électroménager en bonus, électroménager + bijoux pour
+  s'agrandir ; domaine → meubles + électroménager indispensables, bijoux et
+  processeurs quantiques en bonus.
 - Classes (`RESIDENT_CLASSES`, `CFG.classesHabitants`) : la classe découle
   du type (`residClassOf`, `ouvrier` par défaut pour tous les logements
   basiques). Multiplicateurs `revenu` (consommation) et `taxe`
@@ -441,8 +506,11 @@ Côté client :
   puis l'appliquer localement ; hors room (`mpInRoom()` faux : solo ou lobby)
   le jeu est purement local. Les tracés partent groupés
   (`applyRailPathWithNetwork`, `applyRoadPathWithNetwork`).
-- L'hôte valide les poses reçues (`canPlace(..., actorId)`, fonds) et facture
-  la composition des trains (`configure_train`).
+- L'hôte valide les poses reçues (`canPlace(..., actorId)` : terrain, emprise,
+  matériaux de chantier dans les entrepôts de l'expéditeur ; fonds), prélève les
+  matériaux et facture la composition des trains (`configure_train`).
+  `ALLOWED_BUILD_TYPES` (server.js) inclut les pièces d'aéroport, les usines
+  avancées et le centre spatial.
 - Signature du monde (`worldSignature`, FNV-1a sur terrain, relief, routes,
   rails, tunnels, zones et signaux) jointe à chaque `state_sync` ; un invité
   durablement divergent envoie `resync_request` → snapshot complet.
@@ -548,6 +616,13 @@ Interface principale :
   (langue, pack graphique, marqueurs couleur, feux).
 - **toolbar** : outils + menus déroulants (groupe Ferroviaire,
   groupe Dépôts).
+- **ressources d'un entrepôt** (entrepôt, marché, entrepôt lié à une gare/un
+  port) : grille compacte `depotResPanel(depot, mode)` — une tuile par ressource
+  (icône, nom court `RES[k].s`, quantité en pastille, jauge de remplissage),
+  une ligne par famille dont la pastille bascule toute la famille, filtre
+  « Toutes / Actives » mémorisé (`depotResView`), onglets Stock / Vente pour le
+  marché. L'infobulle (`resProductionInfo`) indique l'usine et la recette qui
+  produisent la ressource, ses consommateurs, logements et chantiers.
 - **panneau info** : universel (bâtiment, véhicule, expansion, gare,
   dépôt), avec édition du nom, filtres de dépôt, spécialisation plant,
   boutons pause/démolition/vente.
@@ -557,8 +632,8 @@ Interface principale :
 - **panneau finances** : totaux et rythme $/min, bilans par catégorie.
 - **panneau multijoueur** injecté par `mpInjectUI()` : connexion,
   auth, lobby des mondes, liste joueurs, sauvegardes, chat.
-- **panneau aide** : 5 pages paginées (intro, bâtiments, logements &
-  fusion, contrôles, transports).
+- **panneau aide** : 6 pages paginées (intro, bâtiments, logements &
+  fusion, contrôles, chaînes avancées, transports).
 - **panneau Partie** (💾), **mini-carte** (`Minimap`, bas-droite) et
   **objectifs** (`ObjectivesPanel`, haut-gauche), activables dans le menu
   Panneaux (🗂️).

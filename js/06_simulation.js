@@ -67,8 +67,17 @@ const OBJECTIVES = [
   { ic:'🚉', txt:'Construis un dépôt de train et deux gares', reward:5000, check:o => countOwned(o, b => b.type === 'train_depot') >= 1
       && new Set(buildings.filter(b => !b.dead && b.type === 'train_station' && ownedBy(b, o)).map(b => b.stationGroupId)).size >= 2 },
   { ic:'🚂', txt:'Mets un train en circulation', reward:8000, check:o => vehicles.some(v => v.vtype === 'train' && v.state !== 'idle' && v.garageRef && ownedBy(v.garageRef, o)) },
-  { ic:'⚓', txt:'Ouvre un port ou un aéroport', reward:5000, check:o => countOwned(o, b => b.type === 'boat_depot' || isActiveAirTerminal(b)) >= 1 },
+  // matériaux de chantier : ports, aéroports et usines avancées en exigent dans un entrepôt proche
+  { ic:'🔲', txt:'Produis du béton : carrière de calcaire, cimenterie + centrale à béton', reward:3000, check:o => countOwned(o, b => b.type === 'concrete_plant') >= 1 },
+  { ic:'🪜', txt:'Lamine l’acier : laminoir (poutrelles) et tôlerie (plaques)', reward:3000, check:o => countOwned(o, b => b.type === 'rolling_mill') >= 1 && countOwned(o, b => b.type === 'sheet_mill') >= 1 },
+  { ic:'🪟', txt:'Fabrique des vitres : verrerie (sable) + vitrerie', reward:3000, check:o => countOwned(o, b => b.type === 'glazier') >= 1 },
+  { ic:'🛢️', txt:'Fore un puits de pétrole et construis une raffinerie', reward:6000, check:o => countOwned(o, b => b.type === 'oil_well') >= 1 && countOwned(o, b => b.type === 'refinery') >= 1 },
+  { ic:'⚓', txt:'Ouvre un port ou un aéroport (matériaux de chantier dans un entrepôt proche)', reward:5000, check:o => countOwned(o, b => b.type === 'boat_depot' || isActiveAirTerminal(b)) >= 1 },
+  { ic:'🛋️', txt:'Meuble les classes aisées : clouterie, usine chimique (colle) + ébénisterie', reward:6000, check:o => countOwned(o, b => b.type === 'furniture_factory') >= 1 },
   { ic:'🌆', txt:'Atteins 400 habitants', reward:20000, check:o => popTotal(o) >= 400 },
+  { ic:'💾', txt:'Fabrique des cartes électroniques (fil de cuivre, plastique, or)', reward:12000, check:o => countOwned(o, b => b.type === 'electronics_plant') >= 1 },
+  { ic:'🚀', txt:'Lance une fusée depuis un centre spatial', reward:50000, check:o => buildings.some(b => !b.dead && b.type === 'space_center' && ownedBy(b, o) && (b.launches || 0) >= 1) },
+  { ic:'🔮', txt:'Produis un processeur quantique (xénite + hélium-3 de l’espace)', reward:80000, check:o => countOwned(o, b => b.type === 'quantum_lab') >= 1 },
 ];
 let objectivesTimer = 0;
 // Après le chargement d'une partie / la réception d'un état de l'hôte, l'état du monde peut
@@ -95,6 +104,47 @@ function updateObjectives(){
     earnMoney(obj.reward, 'primes', w);
     w.objIndex++;
   }
+}
+
+// ---------- centre spatial ----------
+// Cycle d'une fusée : assemblage sur le pas de tir (toutes les pièces en stock +
+// ouvriers) → décollage (pièces consommées) → mission (sans ouvriers, même en
+// pause) → retour de la capsule, dont la cargaison extraterrestre entre en stock.
+function updateSpaceCenter(b, dt, w){
+  if(b.spacePhase === 'flight'){
+    b.prog += dt;
+    if(b.prog < SPACE_MISSION_TIME) return;
+    b.prog = 0;
+    b.spacePhase = null;
+    const got = {};
+    for(const k in SPACE_CARGO){
+      const before = b.storage[k] || 0;
+      b.storage[k] = Math.min(capOf(b, k), before + SPACE_CARGO[k]);
+      if(b.storage[k] > before) got[k] = b.storage[k] - before;
+    }
+    if(typeof spaceCenterPhaseChanged === 'function') spaceCenterPhaseChanged(b, null);
+    addFloat(b.x + (b.w - 1) / 2, b.y, '🪂 +' + resAmountsIcons(got), '#9fe6ff');
+    if(ownedBy(b, myOwner())) toast('🪂 Capsule récupérée : +' + resAmountsText(got), 'win', eventTargetForBuilding(b));
+    if(typeof publishNews === 'function')
+      publishNews('capsule:' + b.x + ',' + b.y, '🪂', 'Retour triomphal : la capsule de ' + (b.name || 'la mission') + ' s’est posée !',
+        'Les ingénieurs ouvrent la soute : ' + resAmountsText(got).toLowerCase() + ', des matériaux inconnus sur Terre.', eventTargetForBuilding(b));
+    return;
+  }
+  if(b.paused) return;
+  for(const k in SPACE_ROCKET_PARTS) if((b.storage[k] || 0) < SPACE_ROCKET_PARTS[k]) return; // pièces manquantes
+  if(Object.keys(SPACE_CARGO).every(k => (b.storage[k] || 0) >= capOf(b, k))) return;   // soute pleine : rien à rapporter
+  b.prog += dt * (workersRequiredOf(b) ? workersAllocatedOf(b) / workersRequiredOf(b) : w.eff);
+  if(b.prog < SPACE_ASSEMBLY_TIME) return;
+  b.prog = 0;
+  for(const k in SPACE_ROCKET_PARTS) b.storage[k] -= SPACE_ROCKET_PARTS[k];
+  b.spacePhase = 'flight';
+  b.launches = (b.launches || 0) + 1;
+  if(typeof spaceCenterPhaseChanged === 'function') spaceCenterPhaseChanged(b, 'flight');
+  addFloat(b.x + (b.w - 1) / 2, b.y, '🚀 Décollage !', '#ffd27a');
+  if(ownedBy(b, myOwner())) toast('🚀 ' + (b.name || 'Centre spatial') + ' : lancement n°' + b.launches + ' réussi ! Retour dans ' + SPACE_MISSION_TIME + ' s.', 'win', eventTargetForBuilding(b));
+  if(typeof publishNews === 'function')
+    publishNews('fusee:' + b.x + ',' + b.y, '🚀', 'Décollage historique depuis ' + (b.name || 'le centre spatial') + ' !',
+      'Dans un grondement assourdissant, la première fusée perce les nuages. Sa capsule doit rapporter des ressources venues de l’espace.', eventTargetForBuilding(b));
 }
 
 // Expédition d'un bâtiment (camions automatiques) — cf. boucle répartie dans update().
@@ -155,7 +205,8 @@ function update(dt){
       }
     }
     const r = recipeOf(b);
-    if(r && !b.paused){
+    if(b.type === 'space_center') updateSpaceCenter(b, dt, w);
+    else if(r && !b.paused){
       let outOK = true, inOK = true;
       const activeOuts = Object.keys(r.out).filter(k => !b.blockedOut?.[k]);
       // si tous les outputs sont bloqués, stopper la production pour ne pas consommer les inputs
@@ -512,7 +563,7 @@ function checkRect(x,y,w,h,targetLevel=null){
 function checkRectInd(x,y,w,h){
   const area = w*h;
   const first = bgrid[y*N+x];
-  if(!first || !BUILD[first.type].ind) return null;
+  if(!first || !BUILD[first.type].ind || BUILD[first.type].noMerge) return null;
   const type = first.type, ore = first.ore;
   const set = [];
   for(let yy=y; yy<y+h; yy++) for(let xx=x; xx<x+w; xx++){
@@ -528,7 +579,7 @@ function checkRectInd(x,y,w,h){
 }
 
 function tryMergeInd(){
-  const anchors = mergeAnchors(b => !!BUILD[b.type]?.ind && !b.paused);
+  const anchors = mergeAnchors(b => !!BUILD[b.type]?.ind && !BUILD[b.type].noMerge && !b.paused);
   if(anchors.length < 2) return false;
   for(const [w,h] of IND_SHAPES_ALL){
     for(const [x, y] of anchors){
