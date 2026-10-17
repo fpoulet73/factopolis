@@ -1576,7 +1576,7 @@ function refreshTransitPassengerCaps(){
     b.townId = t ? t.id : null;
   }
 
-  const terminals = buildings.filter(b => !b.dead && (b.type === 'boat_depot' || b.type === 'plane_depot'));
+  const terminals = buildings.filter(b => !b.dead && (b.type === 'boat_depot' || isActiveAirTerminal(b)));
   for(const t of terminals){
     if(t.townId != null && towns.some(tw => tw.id === t.townId)) continue;
     const tw = getTownOf({ x:t.x, y:t.y, w:t.w, h:t.h, townId:null });
@@ -1699,7 +1699,7 @@ function transitByOwner(townId = null){
     if(b.type === 'bus_stop'){
       r.waiting += b.passengers || 0; r.sortants += b.passagersSortant || 0;
       r.refs.push([b, 'passagersSortant', 0], [b, 'passengers', 1]);
-    } else if(b.type === 'train_station' || b.type === 'boat_depot' || b.type === 'plane_depot'){
+    } else if(isTerminalType(b)){
       r.waiting += (b.passengersEntrant || 0) + (b.passengersEntrantPending || 0);
       r.sortants += b.passagersSortant || 0;
       r.refs.push([b, 'passagersSortant', 0], [b, 'passengersEntrantPending', 1], [b, 'passengersEntrant', 1]);
@@ -1762,7 +1762,7 @@ function sendCommutersAway(job, key, n){
   let hub = null; bd = Infinity;
   for(const h of buildings){
     if(h.dead || !sameOwner(h)) continue;
-    if(h.type !== 'bus_stop' && h.type !== 'train_station' && h.type !== 'boat_depot' && h.type !== 'plane_depot') continue;
+    if(!isTransitHub(h)) continue;
     const d = buildingDistance(h, job);
     if(d < bd){ bd = d; hub = h; }
   }
@@ -1989,7 +1989,7 @@ function refreshWorkerAllocation(){
   // raison. Le surplus (poste rempli par des habitants, mis en pause…) retourne au
   // point d'arrivée. Compteur d'un groupe de gares : stocké sur le représentant.
   const hubRadius = h => h.type === 'train_station' ? TRAIN_STATION_RADIUS
-    : h.type === 'boat_depot' ? PORT_RADIUS : h.type === 'plane_depot' ? AIRPORT_RADIUS : BUS_STOP_RADIUS;
+    : h.type === 'boat_depot' ? PORT_RADIUS : h.type === 'air_terminal' ? AIRPORT_RADIUS : BUS_STOP_RADIUS;
   const hubAt = key => { const [x, y] = key.split(',').map(Number); return bgrid[y*N+x] || null; };
   const giveBack = (job, key, n) => {
     const hub = hubAt(key);
@@ -2028,7 +2028,7 @@ function refreshWorkerAllocation(){
   const needOf = job => workersRequiredOf(job) - workersAllocatedOf(job) - (inbound.get(job.x + ',' + job.y) || 0);
   const hubGroups = new Map(); // représentant -> pièces du groupe
   for(const st of buildings){
-    if(st.dead || (st.type !== 'bus_stop' && st.type !== 'train_station' && st.type !== 'boat_depot' && st.type !== 'plane_depot')) continue;
+    if(st.dead || (!isTransitHub(st))) continue;
     const rep = st.type === 'train_station'
       ? ((typeof trainStationGroupRepresentative === 'function' && trainStationGroupRepresentative(st.stationGroupId)) || st) : st;
     if(!(rep.passagersSortant >= 1)) continue;

@@ -355,7 +355,15 @@ function trainStationLinkedRepresentative(b){
 function transitHubLinkedRepresentative(b){
   const train = trainStationLinkedRepresentative(b);
   if(train || !b || b.dead || (b.type !== 'bus_stop' && b.type !== 'depot')) return train;
-  return buildings.find(o => !o.dead && (o.type === 'boat_depot' || o.type === 'plane_depot') && buildingEdgeGap(b, o) === 0) || null;
+  const port = buildings.find(o => !o.dead && o.type === 'boat_depot' && buildingEdgeGap(b, o) === 0);
+  if(port) return port;
+  // aéroport : arrêt / entrepôt collé à une pièce d'un aéroport fonctionnel → sa gare représentante
+  for(const o of buildings){
+    if(o.dead || !isAirPiece(o) || buildingEdgeGap(b, o) !== 0) continue;
+    const g = airportOf(o);
+    if(g?.functional) return g.rep;
+  }
+  return null;
 }
 
 function trainStationLinkedDepot(b){
@@ -370,7 +378,24 @@ function trainStationLinkedDepot(b){
 }
 
 function trainStationSelectionRepresentative(b){
-  return trainStationLinkedRepresentative(b) || b || null;
+  // aéroport : toutes les pièces (gares, pistes, déco) forment une seule entité, la gare principale
+  if(typeof isAirPiece === 'function' && isAirPiece(b)) return airportRepresentative(b) || b;
+  const train = trainStationLinkedRepresentative(b);
+  if(train) return train;
+  return transitHubSelectionRepresentative(b) || b || null;
+}
+
+// Arrêt de bus / entrepôt collé à un port ou à une pièce d'aéroport : il en fait
+// partie intégrante (comme pour une gare de train), un clic sélectionne le port
+// ou la gare principale de l'aéroport.
+function transitHubSelectionRepresentative(b){
+  if(!b || b.dead || (b.type !== 'bus_stop' && b.type !== 'depot')) return null;
+  for(const o of buildings){
+    if(o.dead || buildingEdgeGap(b, o) !== 0) continue;
+    if(o.type === 'boat_depot') return o;
+    if(typeof isAirPiece === 'function' && isAirPiece(o)) return airportRepresentative(o) || o;
+  }
+  return null;
 }
 
 function trainStationSelectionMatches(a, b){
@@ -687,6 +712,7 @@ function canPlace(t,x,y, actorId = MP.myId){
     return { ok:true };
   }
   if(t==='train_station') return trainStationPlacementInfo(x, y);
+  if(t==='air_parking'){ const pe = airParkingError(x, y); if(pe) return { ok:false, msg:pe }; }
   if(road[i] || rail[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
   if(BUILD[t]?.lux){
     // seule la maison de luxe se pose ; villa, manoir et domaine naissent de son agrandissement
@@ -833,15 +859,28 @@ function clickAt(x,y){
     // Détecter si on clique sur un véhicule en mouvement (priorité sur les bâtiments)
     if(!vehicleRouteMode){
       const clickWx = x * TILE + TILE/2, clickWy = y * TILE + TILE/2;
+      let hit = null, hitD = TILE * 1.5;
       for(const veh of vehicles){
-        if(!veh.pts || !veh.pts.length) continue;
-        const a = veh.pts[veh.seg], bp = veh.pts[Math.min(veh.seg+1, veh.pts.length-1)];
-        const wx = a.x + (bp.x-a.x)*veh.t, wy = a.y + (bp.y-a.y)*veh.t;
-        if(Math.hypot(wx - clickWx, wy - clickWy) < TILE * 1.5){
-          selectedVehicle = veh;
-          selected = null;
-          return;
+        let wx, wy;
+        if(veh.state === 'idle' && VEHICLE_TYPES[veh.vtype]?.mode === 'air'){
+          // avion au repos : dessiné sur sa place de parking (pas sur son ancien trajet)
+          const slot = typeof parkingSlotOf === 'function' ? parkingSlotOf(veh) : null;
+          if(!slot) continue;
+          wx = (slot.x + 0.5) * TILE; wy = (slot.y + 0.5) * TILE;
+        } else {
+          if(!veh.pts || !veh.pts.length) continue;
+          // position affichée (interpolée côté invité), pas la position brute du dernier état reçu
+          const pos = vehicleWorldPos(veh);
+          if(!pos) continue;
+          wx = pos.x; wy = pos.y;
         }
+        const d = Math.hypot(wx - clickWx, wy - clickWy);
+        if(d < hitD){ hit = veh; hitD = d; }   // le plus proche (avions au sol : piste, taxi, parking)
+      }
+      if(hit){
+        selectedVehicle = hit;
+        selected = null;
+        return;
       }
     }
     selectedVehicle = null;
@@ -898,6 +937,14 @@ function clickAt(x,y){
     for(const ti of tiles) terrainHeightMap[ti] += dir;
     rebuildWaterLevels(); markTerrainDirty();
     // netSend géré par l'intercept MP (09_multiplayer.js) pour éviter le double envoi
+    return;
+  }
+  // outil Piste sur une piste existante : inverse le sens de la piste (décollage / atterrissage)
+  if(tool === 'air_runway' && bgrid[i]?.type === 'air_runway'){
+    if(bgrid[i].owner && bgrid[i].owner !== MP.myId){ toast('⛔ Cette piste appartient à un autre joueur','err'); return; }
+    flipRunway(bgrid[i]);
+    if(MP.connected) netSend({ type:'air_runway_flip', x, y });
+    toast('✈️ Sens de la piste inversé', 'win');
     return;
   }
   // outil de construction

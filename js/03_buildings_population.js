@@ -6,6 +6,8 @@ function newBuilding(type,x,y,w,h){
   const b = { type, x, y, w:w||d.size||1, h:h||d.size||1,
               storage:{}, inc:{}, prog:0, trucksOut:0, dead:false, owner:null,
               mpCreatedAt: performance.now(), mpConfirmedAt: null };
+  // décor d'aéroport : style tiré au hasard à la pose (puis stocké, synchronisé, sauvegardé)
+  if(type==='air_deco') b.decor = Math.floor(Math.random() * AIR_DECO_STYLES);
   if(type==='mine')  b.ore = terrain[y*N+x]===T.IRON ? 'iron' : 'coal';
   if(d?.storageHub && type !== 'tank'){
     b.allow = {}; b.sellTo = {}; b.sellMin = {}; b.trainAllow = {};
@@ -23,7 +25,8 @@ function newBuilding(type,x,y,w,h){
     b.passengersEntrant = 0;
     b.passagersSortant = 0;
   }
-  if(type==='train_station' || type==='boat_depot' || type==='plane_depot'){
+  if(AIR_TYPES.includes(type)) airVersion++;
+  if(type==='train_station' || type==='boat_depot' || type==='air_terminal'){
     b.passengersEntrant = 0;
     b.passengersEntrantMax = 0;
     b.passengersEntrantQuota = 0;
@@ -488,6 +491,7 @@ function demolishBuilding(b, refundOwner){
   if(!b || b.dead) return 0;
   const owner = b.owner ?? null;
   const townId = b.townId ?? null;
+  if(AIR_TYPES.includes(b.type)) airVersion++;
   const evicted = makeResidentsHomeless(b);
   // ouvriers venus par transport : ils rejoignent la maison libre / le point de transit le plus proche
   if(b.commuters) for(const key of Object.keys(b.commuters)) sendCommutersAway(b, key, b.commuters[key]);

@@ -33,7 +33,7 @@ const LOCAL_SAVE_KEEP_ZERO = new Set(['x', 'y', 'w', 'h', 'townId', 'stationGrou
 const roundSave = v => Math.round(v * 1e4) / 1e4;
 // champs dont la présence conditionne la restauration des passagers (applySnapshot)
 const transitGateKey = (type, k) => (k === 'passengers' && type === 'bus_stop')
-  || (k === 'passengersEntrant' && (type === 'train_station' || type === 'boat_depot' || type === 'plane_depot'));
+  || (k === 'passengersEntrant' && (type === 'train_station' || type === 'boat_depot' || type === 'air_terminal'));
 function compactBuildingForStorage(o){
   const out = {};
   for(const k in o){
@@ -493,7 +493,7 @@ window.resetTransitPassengers = function(){
   let n = 0;
   for(const b of buildings){
     if(b.dead) continue;
-    if(b.type !== 'bus_stop' && b.type !== 'train_station' && b.type !== 'boat_depot' && b.type !== 'plane_depot') continue;
+    if(b.type !== 'bus_stop' && !isTerminalType(b)) continue;
     b.passengers = 0; b.passengersEntrant = 0; b.passagersSortant = 0; b.passengersEntrantPending = 0;
     b.passengersQuota = null; b.passengersEntrantQuota = null;
     n++;

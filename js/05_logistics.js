@@ -209,8 +209,80 @@ function findWaterPath(fromB, toB){
 
 // Vol direct entre deux aéroports (points intermédiaires pour l'altitude et
 // l'interpolation multijoueur).
-function findAirPath(fromB, toB){
+function findAirPath(fromB, toB, opts){
   if(!fromB || !toB) return null;
+  opts = opts || {};
+  // Décollage / atterrissage sur toute la longueur de la piste : l'avion roule de
+  // l'extrémité la plus éloignée de sa destination jusqu'à l'autre bout (décollage
+  // complet), vole en ligne droite, se pose à l'extrémité côté origine et roule
+  // jusqu'au bout de la piste avant de rejoindre la gare.
+  const g1 = airportOfStop(fromB), g2 = airportOfStop(toB);
+  // Avion déjà en vol (pause) : il rejoint l'axe de la piste d'atterrissage de son aéroport depuis sa
+  // position actuelle (courbe tangente à l'axe), se pose sur toute la piste, puis roule jusqu'au parking / hangar.
+  if(opts.fromPoint && g2 && g2.landing){
+    const tc = (x, y) => ({ x:(x + 0.5) * TILE, y:(y + 0.5) * TILE });
+    const tcC = t => tc(t.x, t.y);
+    const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
+    const unit = (p, q) => { const d = dist(p, q) || 1; return { x:(q.x - p.x) / d, y:(q.y - p.y) / d }; };
+    const add = (p, u, k) => ({ x:p.x + u.x * k * TILE, y:p.y + u.y * k * TILE });
+    const t2 = tc(g2.landing.x0, g2.landing.y0), f2 = tc(g2.landing.x1, g2.landing.y1);
+    const d2 = unit(t2, f2), P2 = add(t2, d2, -6), A = opts.fromPoint;
+    const hd = opts.heading || unit(A, P2);
+    const h = Math.min(dist(A, P2) * 0.4, 14 * TILE);
+    const C1 = { x:A.x + hd.x * h, y:A.y + hd.y * h }, C2 = { x:P2.x - d2.x * h, y:P2.y - d2.y * h };
+    const curve = [];
+    for(let i = 1; i < 12; i++){
+      const u = i / 12, w = 1 - u;
+      curve.push({ x:w*w*w*A.x + 3*w*w*u*C1.x + 3*w*u*u*C2.x + u*u*u*P2.x, y:w*w*w*A.y + 3*w*w*u*C1.y + 3*w*u*u*C2.y + u*u*u*P2.y });
+    }
+    const f2t = { x:Math.round(f2.x / TILE - 0.5), y:Math.round(f2.y / TILE - 0.5) };
+    const a2 = opts.toTile || airAnchorTile(toB, g2);
+    const taxiIn = a2 ? airTaxiTiles(g2, f2t, a2) : null;
+    const out = [A, ...curve, P2, t2, f2];
+    if(taxiIn) out.push(...taxiIn.map(tcC));
+    out.push(opts.toTile ? tcC(opts.toTile) : { x:(toB.x + (toB.w || 1) / 2) * TILE, y:(toB.y + (toB.h || 1) / 2) * TILE });
+    return out;
+  }
+  if(g1 && g2 && g1 !== g2 && g1.takeoff && g2.landing){
+    const ctr = b => ({ x:(b.x + (b.w || 1) / 2) * TILE, y:(b.y + (b.h || 1) / 2) * TILE });
+    const tc = (x, y) => ({ x:(x + 0.5) * TILE, y:(y + 0.5) * TILE });
+    const dist = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
+    // devant une gare d'aéroport l'avion s'arrête sur la case voisine (il n'entre pas dedans) ; un hangar s'entre
+    const stopC = (b, g) => { const t = b.type === 'air_terminal' ? airStopTile(b, g) : null; return t ? { x:(t.x + 0.5) * TILE, y:(t.y + 0.5) * TILE } : ctr(b); };
+    // pause : l'avion s'arrête sur sa case de parking (arrivée) ou en repart (départ) au lieu du hangar
+    const tcC = t => ({ x:(t.x + 0.5) * TILE, y:(t.y + 0.5) * TILE });
+    const A = opts.fromTile ? tcC(opts.fromTile) : stopC(fromB, g1), B = opts.toTile ? tcC(opts.toTile) : stopC(toB, g2);
+    // sens imposé par la piste (x0,y0 → x1,y1) : décollage et atterrissage dans ce sens
+    // piste de décollage de l'aéroport de départ, piste d'atterrissage de l'aéroport d'arrivée
+    const s1 = tc(g1.takeoff.x0, g1.takeoff.y0), e1 = tc(g1.takeoff.x1, g1.takeoff.y1);
+    const t2 = tc(g2.landing.x0, g2.landing.y0), f2 = tc(g2.landing.x1, g2.landing.y1);
+    // Alignement : l'avion se met dans l'axe de la piste bien avant de se poser et reste dans
+    // l'axe après le décollage ; le virage entre les deux pistes est une courbe de Bézier
+    // tangente aux deux axes (pas de cassure au moment de décoller / d'atterrir).
+    const unit = (p, q) => { const d = dist(p, q) || 1; return { x:(q.x - p.x) / d, y:(q.y - p.y) / d }; };
+    const add = (p, u, k) => ({ x:p.x + u.x * k * TILE, y:p.y + u.y * k * TILE });
+    const d1 = unit(s1, e1), d2 = unit(t2, f2);
+    const AL = 6;                                   // longueur d'alignement (cases)
+    const P1 = add(e1, d1, AL), P2 = add(t2, d2, -AL);
+    const h = Math.min(dist(P1, P2) * 0.4, 14 * TILE);
+    const C1 = { x:P1.x + d1.x * h, y:P1.y + d1.y * h }, C2 = { x:P2.x - d2.x * h, y:P2.y - d2.y * h };
+    const curve = [];
+    for(let i = 1; i < 12; i++){
+      const u = i / 12, w = 1 - u;
+      curve.push({ x:w*w*w*P1.x + 3*w*w*u*C1.x + 3*w*u*u*C2.x + u*u*u*P2.x,
+                   y:w*w*w*P1.y + 3*w*w*u*C1.y + 3*w*u*u*C2.y + u*u*u*P2.y });
+    }
+    // au sol : l'avion reste sur les pièces de l'aéroport entre la gare / le dépôt et la piste
+    const tileC = t => ({ x:(t.x + 0.5) * TILE, y:(t.y + 0.5) * TILE });
+    const s1t = { x:Math.round(s1.x / TILE - 0.5), y:Math.round(s1.y / TILE - 0.5) };
+    const f2t = { x:Math.round(f2.x / TILE - 0.5), y:Math.round(f2.y / TILE - 0.5) };
+    const a1 = opts.fromTile || airAnchorTile(fromB, g1), a2 = opts.toTile || airAnchorTile(toB, g2);
+    const taxiOut = a1 ? airTaxiTiles(g1, a1, s1t) : null, taxiIn = a2 ? airTaxiTiles(g2, f2t, a2) : null;
+    const out = [A, ...(taxiOut ? taxiOut.map(tileC) : [add(s1, d1, -1.5)]), s1, e1, P1, ...curve, P2, t2, f2];
+    if(taxiIn) out.push(...taxiIn.map(tileC)); else out.push(add(f2, d2, 1.5));
+    out.push(B);
+    return out;
+  }
   const ax = (fromB.x + (fromB.w || 1) / 2) * TILE, ay = (fromB.y + (fromB.h || 1) / 2) * TILE;
   const bx = (toB.x + (toB.w || 1) / 2) * TILE, by = (toB.y + (toB.h || 1) / 2) * TILE;
   const d = Math.hypot(bx - ax, by - ay);
@@ -221,11 +293,27 @@ function findAirPath(fromB, toB){
   return pts;
 }
 
+// Cheminement au sol d'un hangar à une place de parking (avion qui sort du hangar pour se garer)
+function findAirTaxiPath(depot, slot){
+  const g = planeDepotAirport(depot);
+  if(!g || !slot) return null;
+  const a = airAnchorTile(depot, g);
+  const tiles = a ? airTaxiTiles(g, a, slot) : null;
+  if(!tiles) return null;
+  return [{ x:(depot.x + (depot.w || 1) / 2) * TILE, y:(depot.y + (depot.h || 1) / 2) * TILE }, ...tiles.map(t => ({ x:(t.x + 0.5) * TILE, y:(t.y + 0.5) * TILE }))];
+}
+
 // Itinéraire entre deux bâtiments selon le mode du véhicule.
 function vehiclePathBetween(v, a, b){
   const mode = vehicleMode(v);
   if(mode === 'water') return findWaterPath(a, b);
-  if(mode === 'air') return findAirPath(a, b);
+  if(mode === 'air'){
+    // retour d'un avion en pause vers sa place de parking / départ depuis sa place de parking
+    const o = {};
+    if(b?.type === 'plane_depot' && v.paused && v.parkSlot) o.toTile = v.parkSlot;
+    if(a?.type === 'plane_depot' && v.parkSlot && v.state === 'idle') o.fromTile = v.parkSlot;
+    return findAirPath(a, b, o);
+  }
   return findRoadPath(a, b);
 }
 
@@ -242,7 +330,12 @@ function advanceFreeUnit(unit, move){
 
 // Entrepôt fusionné d'un port ou d'un aéroport : entrepôt collé à l'escale.
 function portFreightHub(b){
-  if(!b || b.dead || (b.type !== 'boat_depot' && b.type !== 'plane_depot')) return null;
+  if(b && !b.dead && b.type === 'air_terminal'){
+    const g = airportOf(b);
+    if(!g) return null;
+    return buildings.find(o => !o.dead && isStorageDepot(o) && g.pieces.some(p => buildingEdgeGap(p, o) === 0)) || null;
+  }
+  if(!b || b.dead || b.type !== 'boat_depot') return null;
   return buildings.find(o => !o.dead && isStorageDepot(o) && buildingEdgeGap(b, o) === 0) || null;
 }
 
@@ -250,6 +343,12 @@ function portFreightHub(b){
 function transportStopProcess(v, stopB, nextB){
   const vt = VEHICLE_TYPES[v.vtype];
   if(!vt || !stopB || stopB.dead) return;
+  if(stopB.type === 'air_terminal'){
+    // les voyageurs d'un aéroport sont portés par sa gare représentante ; hors service : escale ignorée
+    const rep = airportRepresentative(stopB);
+    if(!rep || !airportFunctional(rep)) return;
+    stopB = rep;
+  }
   if(typeof newsOnArrival === 'function') newsOnArrival(v, stopB);
   const wallet = walletOf(v.garageRef?.owner ?? null);
   if(vt.passengers){
@@ -259,10 +358,26 @@ function transportStopProcess(v, stopB, nextB){
       const fare = vehicleMode(v) === 'air' ? PLANE_FARE_FACTOR : SHIP_FARE_FACTOR;
       const revenue = Math.round(v.cargo * d * fare);
       if(revenue > 0){
-        earnMoney(revenue, 'vehicules', wallet);
-        recordVente(wallet, 'veh', v.vtype, revenue);
-        vehicleLedger(v, revenue);
-        addFloat(stopB.x + ((stopB.w || 1) - 1) / 2, stopB.y, '+' + revenue + ' $ ' + vt.icone, '#7fd8ff');
+        // ligne inter-joueurs : le propriétaire du véhicule garde BUS_OWNER_SHARE, le reste est partagé
+        // entre les propriétaires des escales étrangères (comme pour les bus)
+        const vOwner = v.garageRef?.owner ?? null;
+        const foreign = [...new Set([from.owner, stopB.owner].filter(o => o != null && o !== vOwner))];
+        let own = revenue;
+        if(foreign.length){
+          own = Math.max(0, Math.min(revenue, Math.round(revenue * BUS_OWNER_SHARE)));
+          const rest = revenue - own;
+          foreign.forEach((o, i) => {
+            const share = Math.floor(rest / foreign.length) + (i < rest % foreign.length ? 1 : 0);
+            if(share <= 0) return;
+            const fw = walletOf(o);
+            earnMoney(share, 'vehicules', fw);
+            recordVente(fw, 'veh', v.vtype, share);
+          });
+        }
+        earnMoney(own, 'vehicules', wallet);
+        recordVente(wallet, 'veh', v.vtype, own);
+        vehicleLedger(v, own);
+        addFloat(stopB.x + ((stopB.w || 1) - 1) / 2, stopB.y, '+' + own + ' $ ' + vt.icone, '#7fd8ff');
       }
       stopB.passagersSortant = (stopB.passagersSortant || 0) + v.cargo;
     }
@@ -1592,9 +1707,11 @@ function trainCanLeaveDepotNow(v){
 
 function roadCanLeaveDepotNow(v){
   if(!v || v.vtype === 'train') return { ok:false, reason:'not_road_vehicle' };
+  if(v.paused) return { ok:false, reason:'paused' };
   if(!vehiclePresentAtDepot(v)) return { ok:false, reason:'not_in_depot' };
   if(!v.source || !v.dest || v.source.dead || v.dest.dead || !vehicleCanServeRoute(v))
     return { ok:false, reason:'route_missing' };
+  if(vehicleMode(v) === 'air' && !planeDepotAirport(v.garageRef)) return { ok:false, reason:'depot_no_runway' }; // dépôt collé à une piste
   const path = vehiclePathBetween(v, v.garageRef, v.source);
   if(!path?.length) return { ok:false, reason:'no_path' };
   return { ok:true, path };
@@ -2292,8 +2409,12 @@ function vehicleRouteEndpointOk(b, vtype_override, ownerOverride){
   const routeOwner = ownerOverride ?? vehicleRouteMode?.vehicle?.garageRef?.owner ?? MP.myId ?? null;
   const vt = vtype_override || vehicleRouteMode?.vehicle?.vtype;
   // Les bus peuvent desservir les arrêts et gares d'autres joueurs ; les trains
-  // peuvent utiliser leurs gares. Les dépôts restent réservés à leur propriétaire.
+  // peuvent utiliser leurs gares ; les bateaux leurs ports et les avions les gares de leurs aéroports
+  // (aéroport fonctionnel). Les dépôts restent réservés à leur propriétaire.
   if(vt === 'bus' && (b.type === 'bus_stop' || isTrainStationPiece(b))) return true;
+  { const m = VEHICLE_TYPES[vt]?.mode;
+    if(m === 'water' && b.type === 'boat_depot') return true;
+    if(m === 'air' && b.type === 'air_terminal' && airportFunctional(b)) return true; }
   if(vt === 'train' && isTrainStationPiece(b) && b.owner != null && b.owner !== routeOwner){
     return true;
   }
@@ -2302,7 +2423,7 @@ function vehicleRouteEndpointOk(b, vtype_override, ownerOverride){
   if(vt === 'train') return b?.type === 'train_depot' || isTrainStationPiece(b);
   const mode = VEHICLE_TYPES[vt]?.mode;
   if(mode === 'water') return b?.type === 'boat_depot';
-  if(mode === 'air') return b?.type === 'plane_depot';
+  if(mode === 'air') return b?.type === 'air_terminal' && airportFunctional(b); // lignes entre gares d'aéroport
   return isStorageHub(b);
 }
 
@@ -2387,7 +2508,7 @@ function findNearbyTrainStation(busStop){
   // gare ferroviaire à portée, à défaut port / aéroport (mêmes passagers entrants/sortants)
   return buildings.find(b => !b.dead && b.type === 'train_station'
     && buildingChebyshevDistance(busStop, b) <= BUS_STOP_RADIUS)
-    || buildings.find(b => !b.dead && (b.type === 'boat_depot' || b.type === 'plane_depot')
+    || buildings.find(b => !b.dead && (b.type === 'boat_depot' || isActiveAirTerminal(b))
     && buildingChebyshevDistance(busStop, b) <= BUS_STOP_RADIUS);
 }
 
@@ -2501,6 +2622,7 @@ function startVehicleRoute(v){
   v.vizRoute = { fwd: fwd || [], bwd: bwd || [] };
   const pts = vehiclePathBetween(v, v.garageRef, v.source);
   if(!pts){ v.waitTimer = 0; v.currentBuilding = v.garageRef; return false; }
+  v.parkSlot = null; // l'avion quitte sa place de parking
   v.state = 'to_source';
   v.waitTimer = 0;
   v.pts = pts; v.seg = 0; v.t = 0;
@@ -2626,6 +2748,14 @@ function updateVehicles(dt){
     const vt = VEHICLE_TYPES[v.vtype];
     const mode = vt.mode || 'road';
     let move = vt.speed * TILE * dt;
+    if(mode === 'air' && v.pts?.length > 1){
+      // au sol (piste, taxi) l'avion roule lentement ; il accélère en prenant de l'altitude
+      move *= planeSpeedFactor(v);
+      // piste occupée par un autre avion : arrêt (au sol avant la piste, en l'air avant l'approche) pour le laisser passer
+      const mustHold = planeMustHold(v);
+      if(mustHold && (v._holdT || 0) < 90){ v._holdT = (v._holdT || 0) + dt; move = 0; } // au-delà de 90 s : on passe (anti-blocage)
+      else if(!mustHold) v._holdT = 0;
+    }
     if(mode === 'road') advanceRoadUnit(v, move);
     else advanceFreeUnit(v, move);
     if(v.seg >= v.pts.length-1){
@@ -2643,6 +2773,16 @@ function updateVehicles(dt){
         const nextB = v.state === 'to_source' ? v.dest : v.source;
         v.currentBuilding = stopB;
         transportStopProcess(v, stopB, nextB);
+        if(v.paused && mode === 'air'){
+          // pause : après l'escale, l'avion rejoint son aéroport de base (parking, sinon hangar)
+          const back = vehiclePathBetween(v, stopB, v.garageRef);
+          if(back){
+            v.source = null; v.dest = null; v.vizRoute = null;
+            v.state = 'returning'; v.pts = back; v.seg = 0; v.t = 0;
+            v.waitTimer = VEHICLE_DWELL_TIME; v.busReady = true; v.atDepot = false;
+            continue;
+          }
+        }
         const pts = vehiclePathBetween(v, stopB, nextB);
         if(!pts){ v.waitTimer = 5; continue; }
         v.state = v.state === 'to_source' ? 'to_dest' : 'to_source';

@@ -41,6 +41,7 @@ function artRng(seed){
 // lieu d'en cuire une par bâtiment (mémoire GPU et temps de cuisson ÷ ~100).
 const ART_VARIANTS = 8;
 function artVariantOf(b){
+  if(b.type === 'air_deco' && Number.isInteger(b.decor)) return b.decor % ART_VARIANTS;
   return (hash(b.x * 31 + b.w, b.y * 17 + b.h) >>> 0) % ART_VARIANTS;
 }
 
@@ -962,17 +963,185 @@ function artStorage(b, u0, v0, u1, v1, rng, d, bCol){
       ctx.strokeStyle = '#3b3f45'; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(j1[0], j1[1]); ctx.lineTo(j1[0], j1[1] + 14); ctx.stroke();
       return artP(cu, cv, 26);
     }
+    case 'air_runway': {
+      // Piste : bitume, bords, ligne axiale en pointillés, seuil rayé aux extrémités de la file
+      const nk = airNeighborKey(b);                       // [+x, -x, +y, -y]
+      const alongX = nk[0] === 'r' || nk[1] === 'r' || (nk[2] !== 'r' && nk[3] !== 'r');
+      const [wx, wy] = alongX ? [1, 0] : [0, 1];
+      const [du, dv] = rotDir(wx, wy);
+      const cu0 = (u0 + u1) / 2, cv0 = (v0 + v1) / 2;
+      artGround(u0, v0, u1, v1, '#3d4247', 0.4);
+      const pa = artP(cu0 - du * 0.5, cv0 - dv * 0.5, 0.8), pb = artP(cu0 + du * 0.5, cv0 + dv * 0.5, 0.8);
+      ctx.save(); ctx.setLineDash([4, 4]); ctx.strokeStyle = '#f2f2f2'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(pa[0], pa[1]); ctx.lineTo(pb[0], pb[1]); ctx.stroke(); ctx.restore();
+      // bords latéraux (perpendiculaires à l'axe)
+      for(const s of [-1, 1]){
+        const e0 = artP(cu0 - du * 0.5 - dv * 0.42 * s, cv0 - dv * 0.5 + du * 0.42 * s, 0.8);
+        const e1 = artP(cu0 + du * 0.5 - dv * 0.42 * s, cv0 + dv * 0.5 + du * 0.42 * s, 0.8);
+        ctx.strokeStyle = '#d8d8d8'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(e0[0], e0[1]); ctx.lineTo(e1[0], e1[1]); ctx.stroke();
+      }
+      // seuil rayé : extrémité de file (aucune piste dans cette direction)
+      const endPlus = alongX ? nk[0] !== 'r' : nk[2] !== 'r', endMinus = alongX ? nk[1] !== 'r' : nk[3] !== 'r';
+      for(const [on, sg] of [[endPlus, 1], [endMinus, -1]]){
+        if(!on) continue;
+        for(let k = -3; k <= 3; k++){
+          const bu = cu0 + du * 0.38 * sg + (-dv) * 0.1 * k, bv = cv0 + dv * 0.38 * sg + du * 0.1 * k;
+          const s0 = artP(bu, bv, 0.9), s1 = artP(bu + du * 0.1 * sg, bv + dv * 0.1 * sg, 0.9);
+          ctx.strokeStyle = '#f2f2f2'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(s0[0], s0[1]); ctx.lineTo(s1[0], s1[1]); ctx.stroke();
+        }
+      }
+      // sens de la piste : une seule flèche blanche, sur la case de seuil (début de la piste)
+      const run = airportOf(b)?.runs.find(r => r.x0 === b.x && r.y0 === b.y);
+      if(run){
+        const sg = b.runwayRev ? -1 : 1;
+        const tip = artP(cu0 + du * 0.3 * sg, cv0 + dv * 0.3 * sg, 1), base0 = artP(cu0 - du * 0.1 * sg, cv0 - dv * 0.1 * sg, 1);
+        const w1 = artP(cu0 - du * 0.05 * sg - dv * 0.14, cv0 - dv * 0.05 * sg + du * 0.14, 1), w2 = artP(cu0 - du * 0.05 * sg + dv * 0.14, cv0 - dv * 0.05 * sg - du * 0.14, 1);
+        artPoly([tip, w1, base0, w2], '#f2f2f2');
+      }
+      return artP(cu, cv, 2);
+    }
+    case 'air_terminal': {
+      // Gare d'aéroport : tarmac + hall vitré ; les murs se prolongent vers les gares voisines (fusion)
+      const nk = airNeighborKey(b);
+      artGround(u0, v0, u1, v1, '#aeb6be', 0.5);
+      const ju = nk[0] === 't' ? 0 : 0.1, jv = nk[2] === 't' ? 0 : 0.1;
+      const ku = nk[1] === 't' ? 0 : 0.1, kv = nk[3] === 't' ? 0 : 0.1;
+      artHall(u0 + ku, v0 + kv, u1 - ju, v1 - jv, 13, '#c9d3dc', '#56616b', rng, { roofH:3 });
+      artWindow('r', u1 - jv, v0 + 0.15, v1 - 0.15, 3, 8, 'rgba(110,160,200,.85)');
+      return artP(cu, cv, 17);
+    }
+    case 'air_taxi': {
+      // Voie de circulation : bande plus étroite que la piste, ligne jaune au centre,
+      // qui se prolonge vers chaque pièce d'aéroport voisine (4 directions monde)
+      const nk = airNeighborKey(b);
+      artGround(u0, v0, u1, v1, '#8d949b', 0.4);
+      const cu0 = (u0 + u1) / 2, cv0 = (v0 + v1) / 2;
+      const dirs = [[1,0],[-1,0],[0,1],[0,-1]].filter((d, i) => nk[i] !== '-');
+      if(!dirs.length) dirs.push([1,0], [-1,0]);
+      for(const [wx, wy] of dirs){
+        const [du, dv] = rotDir(wx, wy);
+        const pu = -dv, pv = du; // perpendiculaire
+        const a0 = [cu0 - pu * 0.2, cv0 - pv * 0.2], a1 = [cu0 + pu * 0.2, cv0 + pv * 0.2];
+        const e0 = [a0[0] + du * 0.5, a0[1] + dv * 0.5], e1 = [a1[0] + du * 0.5, a1[1] + dv * 0.5];
+        artPoly([artP(a0[0], a0[1], 0.6), artP(a1[0], a1[1], 0.6), artP(e1[0], e1[1], 0.6), artP(e0[0], e0[1], 0.6)], '#4d5259');
+        const l0 = artP(cu0, cv0, 0.9), l1 = artP(cu0 + du * 0.5, cv0 + dv * 0.5, 0.9);
+        ctx.strokeStyle = '#f2c230'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(l0[0], l0[1]); ctx.lineTo(l1[0], l1[1]); ctx.stroke();
+      }
+      artPoly([artP(cu0 - 0.2, cv0 - 0.2, 0.6), artP(cu0 + 0.2, cv0 - 0.2, 0.6), artP(cu0 + 0.2, cv0 + 0.2, 0.6), artP(cu0 - 0.2, cv0 + 0.2, 0.6)], '#4d5259');
+      return artP(cu, cv, 2);
+    }
+    case 'air_tower': {
+      // Tour de contrôle : socle, fût, cabine vitrée débordante, toit ; le radar rotatif est un overlay animé
+      artGround(u0, v0, u1, v1, '#aeb6be', 0.5);
+      artBox(u0 + 0.22, v0 + 0.22, u1 - 0.22, v1 - 0.22, 0, 7, '#b9c2cb');
+      artCylinder(cu, cv, 0.1, 7, 38, '#d8dee4', { top:false });
+      artBox(cu - 0.22, cv - 0.22, cu + 0.22, cv + 0.22, 38, 47, '#7fa8c8', { topCol:'#55606b' });
+      artBox(cu - 0.25, cv - 0.25, cu + 0.25, cv + 0.25, 47, 50, '#4a5560');
+      const m0 = artP(cu, cv, 50), m1 = artP(cu, cv, 57);
+      ctx.strokeStyle = '#6b7580'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(m0[0], m0[1]); ctx.lineTo(m1[0], m1[1]); ctx.stroke();
+      return artP(cu, cv, 57);
+    }
+    case 'air_parking': {
+      // Parking d'avion : aire bétonnée, cadre peint et marquage « P »
+      artGround(u0, v0, u1, v1, '#9aa1a8', 0.4);
+      const pc = [artP(u0 + 0.08, v0 + 0.08, 0.7), artP(u1 - 0.08, v0 + 0.08, 0.7), artP(u1 - 0.08, v1 - 0.08, 0.7), artP(u0 + 0.08, v1 - 0.08, 0.7)];
+      ctx.strokeStyle = '#f2c230'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(pc[0][0], pc[0][1]);
+      for(let k = 1; k < 4; k++) ctx.lineTo(pc[k][0], pc[k][1]);
+      ctx.closePath(); ctx.stroke();
+      const lb = artP(cu, cv, 0.9);
+      ctx.fillStyle = 'rgba(245,245,245,.92)'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('P', lb[0], lb[1]);
+      return artP(cu, cv, 2);
+    }
+    case 'air_deco': {
+      // Décor : pelouse, allée, arbuste, lampadaire
+      const style = Number.isInteger(b.decor) ? b.decor % AIR_DECO_STYLES : artVariantOf(b) % AIR_DECO_STYLES;
+      switch(style){
+        case 1: { // parking : bitume, places marquées, deux voitures
+          artGround(u0, v0, u1, v1, '#5d6268', 0.4);
+          ctx.strokeStyle = 'rgba(245,245,245,.85)'; ctx.lineWidth = 0.9;
+          for(let k = 0; k <= 4; k++){
+            const v = v0 + 0.1 + (v1 - v0 - 0.2) * k / 4, a = artP(u0 + 0.1, v, 0.5), e = artP(u0 + 0.42, v, 0.5);
+            ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+          }
+          const cars = ['#c0392b', '#2e6fb5', '#e8e8e8', '#e0b030'];
+          artBox(u0 + 0.16, v0 + 0.14, u0 + 0.38, v0 + 0.3, 0.6, 3.6, cars[Math.floor(rng() * 4)], { edges:false });
+          artBox(u0 + 0.16, v0 + 0.64, u0 + 0.38, v0 + 0.8, 0.6, 3.6, cars[Math.floor(rng() * 4)], { edges:false });
+          artLamp(u1 - 0.18, v1 - 0.2);
+          return artP(cu, cv, 5);
+        }
+        case 2: { // parterres fleuris entourés de buis
+          artGround(u0, v0, u1, v1, '#79b05a', 0.4);
+          artFlowerBed(u0 + 0.12, v0 + 0.12, u1 - 0.12, v0 + 0.44, rng);
+          artFlowerBed(u0 + 0.12, v0 + 0.56, u1 - 0.12, v1 - 0.12, rng);
+          return artP(cu, cv, 5);
+        }
+        case 3: { // placette avec fontaine
+          artGround(u0, v0, u1, v1, '#d9cfb4', 0.4);
+          artGround(u0 + 0.06, v0 + 0.06, u1 - 0.06, v1 - 0.06, '#8fbf6a', 0.5);
+          artFountain(cu, cv, 0.2);
+          artBush(u0 + 0.16, v1 - 0.16, 3, '#3f8f3a');
+          return artP(cu, cv, 12);
+        }
+        case 4: { // balisage : bandes de gravier, plots et feux orange
+          artGround(u0, v0, u1, v1, '#aab0a0', 0.4);
+          artGround(u0 + 0.4, v0, u1 - 0.4, v1, '#d9cfb4', 0.5);
+          for(const [u, v] of [[0.2, 0.2], [0.8, 0.2], [0.2, 0.5], [0.8, 0.5], [0.2, 0.8], [0.8, 0.8]]){
+            const p = artP(u0 + (u1 - u0) * u, v0 + (v1 - v0) * v, 0.5), q = artP(u0 + (u1 - u0) * u, v0 + (v1 - v0) * v, 5);
+            ctx.strokeStyle = '#5a5f66'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+            ctx.fillStyle = '#ff9a3c'; ctx.beginPath(); ctx.arc(q[0], q[1], 1.7, 0, Math.PI * 2); ctx.fill();
+          }
+          return artP(cu, cv, 5);
+        }
+        case 5: { // manche à air sur pelouse
+          artGround(u0, v0, u1, v1, '#79b05a', 0.4);
+          const p = artP(cu, cv, 0.5), q = artP(cu, cv, 20);
+          ctx.strokeStyle = '#e8e8e8'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+          for(let k = 0; k < 4; k++){
+            ctx.fillStyle = k % 2 ? '#f4f4f4' : '#e8573a';
+            ctx.beginPath(); ctx.moveTo(q[0] + k * 3.2, q[1] + k * 0.6); ctx.lineTo(q[0] + k * 3.2 + 3.2, q[1] + k * 0.6 + 0.7);
+            ctx.lineTo(q[0] + k * 3.2 + 3.2, q[1] + k * 0.6 + 3.1); ctx.lineTo(q[0] + k * 3.2, q[1] + k * 0.6 + 4); ctx.closePath(); ctx.fill();
+          }
+          artBush(u0 + 0.18, v1 - 0.18, 3, '#3f8f3a');
+          return artP(cu, cv, 14);
+        }
+        default: { // pelouse, allée, arbres, lampadaire
+          artGround(u0, v0, u1, v1, '#79b05a', 0.4);
+          artGround(u0 + 0.38, v0, u1 - 0.38, v1, '#d9cfb4', 0.5);
+          artTree(u0 + 0.2, v0 + 0.22, 11 + rng() * 5, '#3f8f3a');
+          if(rng() > 0.45) artTree(u1 - 0.22, v1 - 0.2, 9 + rng() * 4, '#4a9b42');
+          const l0 = artP(u1 - 0.2, v0 + 0.2, 0), l1 = artP(u1 - 0.2, v0 + 0.2, 9);
+          ctx.strokeStyle = '#5a5f66'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(l0[0], l0[1]); ctx.lineTo(l1[0], l1[1]); ctx.stroke();
+          ctx.fillStyle = '#ffe9a0'; ctx.beginPath(); ctx.arc(l1[0], l1[1], 1.6, 0, Math.PI * 2); ctx.fill();
+          return artP(cu, cv, 6);
+        }
+      }
+    }
     case 'plane_depot': {
-      // Aéroport : tarmac, piste balisée, hangar et tour de contrôle
-      artGround(u0 + 0.01, v0 + 0.01, u1 - 0.01, v1 - 0.01, '#6f757b');
-      const r0 = artP(u0 + 0.08, v1 - 0.22, 0.8), r1 = artP(u1 - 0.08, v1 - 0.22, 0.8);
-      ctx.strokeStyle = '#3d4247'; ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(r0[0], r0[1]); ctx.lineTo(r1[0], r1[1]); ctx.stroke();
-      ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = '#f2f2f2'; ctx.lineWidth = 0.9;
-      ctx.beginPath(); ctx.moveTo(r0[0], r0[1]); ctx.lineTo(r1[0], r1[1]); ctx.stroke(); ctx.restore();
-      artHall(u0 + 0.12, v0 + 0.1, u1 - 0.3, v0 + wv * 0.55, 12, '#a9b3bc', '#56616b', rng, { roofH:5 });
-      artCylinder(u1 - 0.18, v0 + 0.22, 0.06, 0, 28, '#d8dde2', { top:false });
-      artBox(u1 - 0.27, v0 + 0.13, u1 - 0.09, v0 + 0.31, 28, 34, '#7fa8c8', { topCol:'#55606b' });
-      return artP(cu, cv, 34);
+      // Dépôt d'aéroport = hangar : grand volume à toit en voûte (nervures), large porte
+      // coulissante côté piste / taxi, aire bétonnée devant
+      artGround(u0 + 0.01, v0 + 0.01, u1 - 0.01, v1 - 0.01, '#8d949b');
+      const hu0 = u0 + 0.08, hv0 = v0 + 0.1, hu1 = u1 - 0.2, hv1 = v1 - 0.1;
+      artBox(hu0, hv0, hu1, hv1, 0, 15, '#b6c1cc', { edges:true });
+      // toit en voûte : bandes de plus en plus hautes vers l'axe central
+      const nb = 7;
+      for(let k = 0; k < nb; k++){
+        const t0 = k / nb, t1 = (k + 1) / nb;
+        const z0 = 15 + 9 * Math.sin(Math.PI * t0), z1 = 15 + 9 * Math.sin(Math.PI * t1);
+        const sv0 = hv0 + (hv1 - hv0) * t0, sv1 = hv0 + (hv1 - hv0) * t1;
+        artPoly([artP(hu0, sv0, z0), artP(hu1, sv0, z0), artP(hu1, sv1, z1), artP(hu0, sv1, z1)], k % 2 ? '#5f7388' : '#6a7f95', 'rgba(20,30,40,.35)', 0.6);
+      }
+      // grande porte sur la face avant (côté u1)
+      artWindow('r', hu1, hv0 + 0.1, hv1 - 0.1, 0, 12, 'rgba(38,46,58,.92)');
+      for(let k = 1; k < 5; k++){
+        const sv = hv0 + 0.1 + (hv1 - hv0 - 0.2) * k / 5;
+        const a = artP(hu1, sv, 0.5), e = artP(hu1, sv, 12);
+        ctx.strokeStyle = 'rgba(190,200,212,.55)'; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+      }
+      // chevron de sécurité jaune au-dessus de la porte
+      const y0 = artP(hu1, hv0 + 0.1, 13), y1 = artP(hu1, hv1 - 0.1, 13);
+      ctx.strokeStyle = '#f2c230'; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(y0[0], y0[1]); ctx.lineTo(y1[0], y1[1]); ctx.stroke();
+      return artP(cu, cv, 26);
     }
     case 'garage': case 'train_depot': {
       const rail = b.type === 'train_depot';
@@ -1074,7 +1243,7 @@ function drawBuildingArt(b, rx0, ry0, rw, rh, lift, hgt, bCol){
       if(tc && d.ic) artSign(tc[0] + 10, tc[1] + 2, d.ic, b.type === 'mine' ? (b.ore === 'iron' ? '#d98a4f' : '#b0b0c0') : '#ffe082');
     } else {
       tc = artStorage(b, u0, v0, u1, v1, rng, d, bCol);
-      if(tc && d.ic && b.type !== 'bus_stop') artSign(tc[0] + 10, tc[1] + 2, d.ic, '#9fd0ff');
+      if(tc && d.ic && b.type !== 'bus_stop' && !AIR_TYPES.includes(b.type) || b.type === 'air_terminal') artSign(tc[0] + 10, tc[1] + 2, d.ic, '#9fd0ff');
     }
   } finally {
     ctx.restore();

@@ -403,6 +403,9 @@ function buildingDepthKey(b){
   // Les quais sont au niveau du sol. Les dessiner avant tous les véhicules
   // empêche une extrémité de quai de masquer un train situé plus loin.
   if(b.type === 'train_platform') return -1e12;
+  // pistes et voies de taxi sont au ras du sol : toujours derrière les avions (sinon un avion
+  // roulant passe « sous » la case voisine)
+  if(b.type === 'air_runway' || b.type === 'air_taxi') return -1e12;
   // Une gare multi-tuiles (plusieurs pièces 'train_station' groupées) est dessinée
   // d'un bloc par sa première pièce, à la taille de tout le groupe (cf.
   // drawTrainStationPiece). Trier sur la seule tuile de cette pièce sous-estimerait
@@ -1070,7 +1073,9 @@ function drawBuildingOverlays(b, g){
     }
   }
   // pas d'accès de transport adjacent
-  const lacksRoadAccess = b.type !== 'train_depot' && !adjRoadTiles(b).length;
+  const lacksRoadAccess = b.type === 'plane_depot' ? !planeDepotAirport(b)
+    : b.type === 'air_terminal' ? !airportHasRoadAccess(b)
+    : b.type !== 'train_depot' && !AIR_TYPES.includes(b.type) && !adjRoadTiles(b).length;
   const lacksRailAccess = b.type === 'train_depot' && !adjRailTiles(b).length;
   if(!drawFast && (lacksRoadAccess || lacksRailAccess)){
     ctx.font = '14px "Segoe UI Emoji",sans-serif';
@@ -2300,10 +2305,11 @@ function planeAltitudePx(veh){
   const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
   const pts = rs.pts;
   if(!pts || pts.length < 2 || veh.state === 'idle' || veh.waitTimer > 0) return 0;
-  const n = pts.length - 1;
-  const segLen = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) / TILE;
-  const s = (Math.min(n, (rs.seg || 0) + (rs.t || 0))) * segLen, total = n * segLen;
-  return Math.min(70, 20 * Math.min(s, total - s));
+  const seg = Math.min(rs.seg || 0, pts.length - 2), a = pts[seg], b = pts[seg + 1], t = rs.t || 0;
+  const px = (a.x + (b.x - a.x) * t) / TILE, py = (a.y + (b.y - a.y) * t) / TILE;
+  // au sol sur les pièces d'aéroport (piste : décollage et atterrissage sur toute sa longueur),
+  // puis l'altitude monte avec la distance à l'aéroport le plus proche
+  return airAltitudeAt(px, py);
 }
 
 function drawTruckParts(u, v, du, dv, cargoCol, lift){

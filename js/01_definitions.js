@@ -1396,5 +1396,5 @@ function tryMergeDepot(){
   for(const L of LUX_LEVELS) BUILD[L.key].cost = Math.round((BUILD.house.cost || 0) * LUX_COST_MULT);
 })();
 
-const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','terraform','fill_water','terraform_dig','terraform_raise'];
+const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco','terraform','fill_water','terraform_dig','terraform_raise'];
 const MILESTONES = [25, 50, 100, 200, 400];

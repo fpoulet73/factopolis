@@ -67,11 +67,18 @@ const OBJECTIVES = [
   { ic:'🚉', txt:'Construis un dépôt de train et deux gares', reward:5000, check:o => countOwned(o, b => b.type === 'train_depot') >= 1
       && new Set(buildings.filter(b => !b.dead && b.type === 'train_station' && ownedBy(b, o)).map(b => b.stationGroupId)).size >= 2 },
   { ic:'🚂', txt:'Mets un train en circulation', reward:8000, check:o => vehicles.some(v => v.vtype === 'train' && v.state !== 'idle' && v.garageRef && ownedBy(v.garageRef, o)) },
-  { ic:'⚓', txt:'Ouvre un port ou un aéroport', reward:5000, check:o => countOwned(o, b => b.type === 'boat_depot' || b.type === 'plane_depot') >= 1 },
+  { ic:'⚓', txt:'Ouvre un port ou un aéroport', reward:5000, check:o => countOwned(o, b => b.type === 'boat_depot' || isActiveAirTerminal(b)) >= 1 },
   { ic:'🌆', txt:'Atteins 400 habitants', reward:20000, check:o => popTotal(o) >= 400 },
 ];
 let objectivesTimer = 0;
+// Après le chargement d'une partie / la réception d'un état de l'hôte, l'état du monde peut
+// être incomplet ou en cours de synchronisation : pendant ce court délai, un objectif déjà
+// rempli est validé SANS prime ni annonce (la prime n'est versée qu'à l'accomplissement réel).
+let objectivesSettleUntil = performance.now() + 6000;
+function objectivesSettle(){ objectivesSettleUntil = performance.now() + 6000; }
 function updateObjectives(){
+  if(typeof MP !== 'undefined' && MP.connected && MP.role === 'guest') return; // l'hôte est seul juge (primes dans son état)
+  const settling = performance.now() < objectivesSettleUntil;
   for(const k in WALLETS){
     const w = WALLETS[k], o = walletOwnerOf(k);
     if(w.objIndex == null){
@@ -84,6 +91,7 @@ function updateObjectives(){
     }
     const obj = OBJECTIVES[w.objIndex];
     if(!obj || !obj.check(o)) continue;
+    if(settling){ w.objIndex++; continue; } // déjà rempli au chargement : validé sans prime
     earnMoney(obj.reward, 'primes', w);
     w.objIndex++;
   }
@@ -293,7 +301,7 @@ function update(dt){
   // Les arrivées bus -> gare sont appliquées après les mouvements du tick,
   // pour éviter qu'un train à quai les embarque immédiatement.
   for(const b of buildings){
-    if(b.dead || (b.type !== 'train_station' && b.type !== 'boat_depot' && b.type !== 'plane_depot')) continue;
+    if(b.dead || (!isTerminalHub(b))) continue;
     if((b.passengersEntrantPending || 0) > 0){
       b.passengersEntrant = (b.passengersEntrant || 0) + b.passengersEntrantPending;
       b.passengersEntrantPending = 0;
@@ -424,7 +432,7 @@ function update(dt){
   {
     const dtc = Math.min(dt, 0.5) * GAME_HOURS_PER_SEC;
     for(const b of buildings){
-      if(b.dead || (b.type !== 'train_station' && b.type !== 'bus_stop' && b.type !== 'boat_depot' && b.type !== 'plane_depot')) continue;
+      if(b.dead || (!isTransitHub(b))) continue;
       if(!(b.passagersSortant >= 1)){ b._sortantAge = 0; continue; }
       // transfert par passagers entiers : les deux compteurs changent ensemble
       b._sortantAge = (b._sortantAge || 0) + b.passagersSortant * Math.min(1, dtc / 72);
@@ -463,7 +471,7 @@ function update(dt){
 
   // Gares : génération de passagers entrants depuis les habitants sans travail de la ville (continu, 3 jours)
   for(const b of buildings){
-    if(b.dead || (b.type !== 'train_station' && b.type !== 'boat_depot' && b.type !== 'plane_depot')) continue;
+    if(b.dead || (!isTerminalHub(b))) continue;
     if(b.passengersEntrant == null){ b.passengersEntrant = 0; b.passengersEntrantMax = 0; b.passagersSortant = 0; }
     const maxE = b.passengersEntrantMax || 0;
     // (le plafond « habitants sans travail » est appliqué par joueur, pas par gare :
@@ -934,10 +942,10 @@ function tickSortantsToHomes(dt){
   sortantsHomeTimer = 0;
   for(const hub of buildings){
     if(hub.dead || !(hub.passagersSortant >= 1)) continue;
-    if(hub.type !== 'bus_stop' && hub.type !== 'train_station' && hub.type !== 'boat_depot' && hub.type !== 'plane_depot') continue;
+    if(!isTransitHub(hub)) continue;
     if(hub.type === 'train_station' && trainStationGroupRepresentative(hub.stationGroupId) !== hub) continue;
     const radius = hub.type === 'train_station' ? TRAIN_STATION_RADIUS
-      : hub.type === 'boat_depot' ? PORT_RADIUS : hub.type === 'plane_depot' ? AIRPORT_RADIUS : BUS_STOP_RADIUS;
+      : hub.type === 'boat_depot' ? PORT_RADIUS : hub.type === 'air_terminal' ? AIRPORT_RADIUS : BUS_STOP_RADIUS;
     let best = null, bd = Infinity;
     for(const h of buildings){
       if(h.dead || !BUILD[h.type]?.resid) continue;

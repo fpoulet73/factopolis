@@ -20,11 +20,12 @@ const ObjectivesPanel = (function(){
     const w = myWallet();
     const idx = w.objIndex;
     // Annonce des objectifs franchis depuis le dernier rendu (y compris côté invité).
-    if(idx != null && lastIdx != null && idx > lastIdx){
-      for(let i = lastIdx; i < idx; i++){
-        const o = OBJECTIVES[i];
-        if(o) toast('🎯 Objectif atteint : '+o.txt+' — prime +'+o.reward.toLocaleString('fr-FR')+' $', 'win');
-      }
+    // Seul un objectif réellement accompli (un cran à la fois, hors chargement / synchronisation
+    // d'état à l'arrivée dans la partie) est annoncé avec sa prime.
+    const settling = typeof objectivesSettleUntil !== 'undefined' && performance.now() < objectivesSettleUntil;
+    if(idx != null && lastIdx != null && idx === lastIdx + 1 && !settling){
+      const o = OBJECTIVES[lastIdx];
+      if(o) toast('🎯 Objectif atteint : '+o.txt+' — prime +'+o.reward.toLocaleString('fr-FR')+' $', 'win');
     }
     if(idx != null) lastIdx = idx;
     if(!visible) return;
@@ -52,5 +53,7 @@ const ObjectivesPanel = (function(){
     if(close) close.onclick = () => setPanelVisibility('panelObjectives', false);
   }
 
-  return { render };
+  // état reçu de l'hôte / partie chargée : on repart de l'avancement reçu sans rien annoncer
+  function resync(){ lastIdx = null; }
+  return { render, resync };
 })();

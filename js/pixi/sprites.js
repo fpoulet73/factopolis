@@ -281,6 +281,16 @@ const PixiSprites = (function(){
     let nc = 0, nl = 0, nw = 0, nov = 0, ns = 0, np = 0, nps = 0;
     for(const veh of vehicles){
       const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
+      if(veh.state === 'idle' && VEHICLE_TYPES[veh.vtype]?.mode === 'air'){
+        // avion au repos : stationné sur une case de parking de son aéroport (s'il y en a une de libre)
+        const slot = parkingSlotOf(veh);
+        if(slot){
+          const [pu, pv] = rotF(slot.x + 0.5, slot.y + 0.5), [pdu, pdv] = rotDir(1, 0);
+          np = placeDir(planePool, np, layer, 'plane', drawPlaneCore, VEHICLE_TYPES[veh.vtype].color, pu, pv, pdu, pdv, 0.6);
+          planePool[np - 1].zIndex = 1e15;
+        }
+        continue;
+      }
       if(veh.state === 'idle' || !rs.pts || !rs.pts.length) continue;
       if(veh.vtype === 'train'){
         for(let i = 0; i < (veh.wagons?.length || 0); i++){
@@ -327,7 +337,7 @@ const PixiSprites = (function(){
           np = placeDir(planePool, np, layer, 'plane', drawPlaneCore, vt.color, p.u, p.v, p.du, p.dv, 0.6);
           const s = planePool[np - 1];
           s.position.y -= alt;
-          if(alt > 2) s.zIndex = 1e15;
+          s.zIndex = 1e15; // toujours devant : au sol aussi, l'avion ne passe pas sous la piste / le taxi
           continue;
         }
         nc = placeDir(carPool, nc, layer, 'car', drawCarCore, vt.color, p.u, p.v, p.du, p.dv, 0.52);
@@ -458,7 +468,10 @@ const PixiSprites = (function(){
   }
 
   function diagMode(){ return typeof UI_OPTIONS !== 'undefined' && UI_OPTIONS.highlightUnderstaffedFactories; }
-  function bldSelected(b){ return b === selected || (typeof trainStationSelectionMatches === 'function' && trainStationSelectionMatches(selected, b)); }
+  function bldSelected(b){
+    return b === selected || (typeof trainStationSelectionMatches === 'function' && trainStationSelectionMatches(selected, b))
+      || (isAirPiece(b) && isAirPiece(selected) && airportOf(b) === airportOf(selected)); // aéroport = une seule entité
+  }
 
   // Signature de ce qui affecte le CORPS (pas les overlays dynamiques). En mode
   // diagnostic, le corps EST le diagnostic (+ contour blanc si sélectionné) → on
@@ -473,6 +486,7 @@ const PixiSprites = (function(){
   }
   function bldSig(b){
     return b.type + '|' + b.w + '|' + b.h + '|' + (b.ore||'') + '|' + (b.owner==null?'':b.owner) + '|' + (b.paused?1:0)
+      + (AIR_TYPES.includes(b.type) ? '|a' + airNeighborKey(b) : '')
       + '|' + _sigTail + ((_sigDiag && bldSelected(b)) ? '|s' : '');
   }
 
@@ -562,16 +576,20 @@ const PixiSprites = (function(){
   // Sélection de gare : groupe sélectionné et pièces de gare, calculés une fois
   // par image (avant : chaque entrepôt/arrêt visible rescannait tous les
   // bâtiments → O(n²) sur une grande ville).
-  let _selGroup = null, _stationPieces = [];
+  let _selGroup = null, _stationPieces = [], _selHub = null;
   function prepareSelection(){
-    _selGroup = null; _stationPieces = [];
+    _selGroup = null; _stationPieces = []; _selHub = null;
     if(!selected || selected.dead) return;
     const rep = typeof trainStationSelectionRepresentative === 'function' ? trainStationSelectionRepresentative(selected) : null;
+    // port / aéroport sélectionné : ses arrêts de bus et entrepôts collés sont mis en évidence
+    if(rep && (rep.type === 'boat_depot' || (typeof isAirPiece === 'function' && isAirPiece(rep)))) _selHub = rep;
     if(!rep || !isTrainStationPiece(rep)) return;
     _selGroup = rep.stationGroupId;
     for(const p of buildings) if(isTrainStationPiece(p)) _stationPieces.push(p);
   }
   function inSelectedStation(b){
+    if(_selHub && (b.type === 'bus_stop' || b.type === 'depot') && b !== _selHub)
+      return transitHubSelectionRepresentative(b) === _selHub;
     if(_selGroup == null) return false;
     if(isTrainStationPiece(b)) return b.stationGroupId === _selGroup;
     if(b.type !== 'bus_stop' && b.type !== 'depot') return false;
@@ -584,10 +602,13 @@ const PixiSprites = (function(){
   }
   // Accès route/rail : ne change qu'avec le réseau → mis en cache par version.
   function lacksAccess(b){
-    const v = groundVersion + ':' + railVersion;
+    const v = groundVersion + ':' + railVersion + ':' + airVersion;
     if(b._accV !== v){
       b._accV = v;
-      b._accLack = b.type === 'train_depot'
+      b._accLack = (AIR_TYPES.includes(b.type) && b.type !== 'air_terminal') ? false // seule la gare d'aéroport doit toucher une route
+        : b.type === 'air_terminal' ? !airportHasRoadAccess(b) // une seule gare reliée suffit
+        : b.type === 'plane_depot' ? !planeDepotAirport(b)     // dépôt collé à une piste, pas relié à une route
+        : b.type === 'train_depot'
         ? (typeof adjRailTiles === 'function' && !adjRailTiles(b).length)
         : (typeof adjRoadTiles === 'function' && !adjRoadTiles(b).length);
     }
@@ -597,6 +618,28 @@ const PixiSprites = (function(){
   // Overlays d'un bâtiment. Toutes les entrées visuelles forment une clé : si
   // elle n'a pas changé depuis l'image précédente pour ce bâtiment, le slot est
   // laissé tel quel (pas de clear/regéométrie Pixi — c'était le 1er poste CPU).
+  // Radar rotatif au sommet d'une tour de contrôle (animé à chaque image, hors texture cuite)
+  const towerRadars = new Map();
+  function updateTowerRadar(b, geom, ovLayer){
+    let g = towerRadars.get(b);
+    if(!g){ g = new PIXI.Graphics(); ovLayer.addChild(g); towerRadars.set(b, g); }
+    const top = liftedIso(geom.rx0 + 0.5, geom.ry0 + 0.5, geom.lift);
+    const cx = top[0], cy = top[1] - 58;
+    const a = performance.now() / 650;
+    g.clear();
+    // mât + socle
+    g.rect(cx - 1, cy - 1, 2, 7).fill({ color:0x6b7580 });
+    g.ellipse(cx, cy + 6, 4, 2).fill({ color:0x55606b });
+    // antenne en barre qui tourne (ellipse écrasée par la perspective)
+    const ex = Math.cos(a) * 11, ey = Math.sin(a) * 5.5;
+    g.moveTo(cx - ex, cy - ey).lineTo(cx + ex, cy + ey).stroke({ width:2.4, color:0xe8eef4 });
+    g.circle(cx + ex, cy + ey, 1.6).fill({ color:0xff5a4a });
+    // petit balayage lumineux
+    const bx = Math.cos(a + 0.9) * 14, by = Math.sin(a + 0.9) * 7;
+    g.moveTo(cx, cy).lineTo(cx + bx, cy + by).stroke({ width:1, color:0x7dffb0, alpha:0.45 });
+    g.zIndex = 1e9;
+  }
+
   function drawBuildingOv(b, geom, ovLayer, idx){
     const d = BUILD[b.type];
     const { tc, rx0, ry0, rw, rh, lift } = geom;
@@ -739,6 +782,11 @@ const PixiSprites = (function(){
       node.body.visible = true;
       // Gares : contours/marqueurs déjà bakés. Sinon overlays live (sauf mode diagnostic).
       if(showOverlays && !station && !node.diag) ovN = drawBuildingOv(b, node.geom, ovLayer, ovN);
+      if(b.type === 'air_tower') updateTowerRadar(b, node.geom, ovLayer);
+    }
+    // Radars de tour de contrôle : masquer ceux hors de vue, libérer ceux des tours disparues
+    for(const [b, g] of towerRadars){
+      if(!seen.has(b)){ g.destroy(); towerRadars.delete(b); }
     }
     // Bâtiments disparus (démolis, fusionnés, snapshot) : libérer sprite + texture.
     for(const [b, node] of bldNodes){

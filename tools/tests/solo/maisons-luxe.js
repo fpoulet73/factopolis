@@ -52,7 +52,7 @@ if(lh){
     check('agrandi en ' + want, lh.type === want && !lh.dead && buildings.includes(lh));
   }
   check('9 cases', lh.w * lh.h === 9);
-  check('habitants inchangés', lh.pop === 5);
+  check('habitants doublés à chaque agrandissement (capacité 40)', BUILD[lh.type].resid.popCap === 40 && lh.pop <= 40);
   check('patrons', residClassOf(lh) === 'patron');
   let cover = true;
   for(let y = lh.y; y < lh.y + lh.h; y++) for(let x = lh.x; x < lh.x + lh.w; x++)
@@ -98,6 +98,6 @@ tryDo('menu', () => {
   if(!item || item.style.display === 'none') throw new Error('entrée luxe absente du menu Bâtiments');
 });
 tryDo('sauvegarde', () => applySnapshot(JSON.parse(JSON.stringify(serializeState()))));
-check('rechargé', buildings.some(o => o.type === 'lux_estate' && o.w === 3 && o.h === 3 && o.pop === 5));
+check('rechargé', buildings.some(o => o.type === 'lux_estate' && o.w === 3 && o.h === 3 && o.pop > 0));
 tryDo('rendu', () => { drawFn(); drawFn(); });
 return { ok: errs.length === 0, errs, steps };

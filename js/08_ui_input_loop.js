@@ -25,8 +25,11 @@ function updateHUD(dt){
   if(townEl) townEl.textContent = town ? town.name : '—';
   $('hPop').textContent = pop + ' / ' + cap;
   $('hJobs').textContent = workers + ' / ' + jobs;
-  $('hVehicles').textContent = vehicles.filter(v => v.vtype !== 'train' && isMyVehicle(v)).length;
-  $('hTrains').textContent = vehicles.filter(v => v.vtype === 'train' && isMyVehicle(v)).length;
+  const countMode = m => vehicles.filter(v => vehicleMode(v) === m && isMyVehicle(v)).length;
+  $('hVehicles').textContent = countMode('road');
+  $('hTrains').textContent = countMode('rail');
+  $('hShips').textContent = countMode('water');
+  $('hPlanes').textContent = countMode('air');
   // Compteur sauvegarde auto
   const cdEl = $('autoSaveCountdown');
   if(cdEl){
@@ -426,7 +429,7 @@ function closeTrainPanel(){
 
 // ---------- panneau liste véhicules / trains ----------
 function openVehicleListPanel(mode){
-  vehicleListMode = (mode === 'train') ? 'train' : 'road';
+  vehicleListMode = ['train', 'water', 'air'].includes(mode) ? mode : 'road';
   const p = $('vehicleListPanel');
   if(!p) return;
   p.style.display = 'block';
@@ -608,7 +611,7 @@ function newsOnArrival(v, stopB){
   } else if(mode === 'water' && stopB.type === 'boat_depot'){
     publishNews('port:' + stopB.x + ',' + stopB.y, '⚓', 'Premier navire à quai : ' + newsPlaceLabel(stopB, 'port', 'le') + ' est ouvert !',
       'Sirènes et cornes de brume : le port est officiellement ouvert au trafic maritime.', eventTargetForBuilding(stopB));
-  } else if(mode === 'air' && stopB.type === 'plane_depot'){
+  } else if(mode === 'air' && stopB.type === 'air_terminal'){
     publishNews('aero:' + stopB.x + ',' + stopB.y, '✈️', 'Premier atterrissage : ' + newsPlaceLabel(stopB, 'aéroport', 'l’').replace('l’ ', 'l’') + ' est en service !',
       'Les curieux se pressent le long des pistes : l’ère de l’aviation commerciale commence.', eventTargetForBuilding(stopB));
   }
@@ -620,7 +623,7 @@ function primeNewsFlags(){
     if(b.dead) continue;
     if(isTrainStationPiece(b) && b.stationGroupId != null) newsFlags['gare:' + b.stationGroupId] = 1;
     else if(b.type === 'boat_depot') newsFlags['port:' + b.x + ',' + b.y] = 1;
-    else if(b.type === 'plane_depot') newsFlags['aero:' + b.x + ',' + b.y] = 1;
+    else if(b.type === 'air_terminal') newsFlags['aero:' + b.x + ',' + b.y] = 1;
     if(b.type === 'tower' || b.type === 'tower3' || b.type === 'sky') newsFlags['niveau:' + b.type] = 1;
   }
   for(const t of towns){
@@ -813,12 +816,12 @@ function vehicleAgeMonths(v){
 function renderVehicleListPanel(){
   const p = $('vehicleListPanel');
   if(!p || p.style.display !== 'block') return;
-  const isTrain = vehicleListMode === 'train';
+  const listMode = { train:'rail', water:'water', air:'air' }[vehicleListMode] || 'road';
   const list = vehicles
-    .filter(v => (isTrain ? v.vtype === 'train' : v.vtype !== 'train') && isMyVehicle(v))
+    .filter(v => vehicleMode(v) === listMode && isMyVehicle(v))
     .slice()
     .sort((a, b) => (a.boughtAtGtime || 0) - (b.boughtAtGtime || 0));
-  const titleKey = isTrain ? 'vehlist.titleTrain' : 'vehlist.titleRoad';
+  const titleKey = { train:'vehlist.titleTrain', water:'vehlist.titleWater', air:'vehlist.titleAir' }[vehicleListMode] || 'vehlist.titleRoad';
   const parts = [
     '<div class="panel-head"><h3>' + t(titleKey) + ' <span class="vehlist-count">(' + list.length + ')</span></h3>',
     '<button class="tbtn" id="bVehListX" aria-label="Fermer" title="' + t('vehlist.close') + '">✕</button></div>'
@@ -1016,6 +1019,7 @@ function renderTrainPanel(){
   const selectedWagonDef = selectedWagon ? trainWagonDef(selectedWagon) : null;
   let h = '<div class="panel-head"><h3><span style="font-size:22px">🚂</span> '+escHtml(v.name || 'Configurer le train')+'</h3>'
     + '<button class="tbtn" id="tpClose" aria-label="Fermer">✕</button></div>';
+  h += ownerRowHtml(v.garageRef?.owner ?? null);
   h += '<div class="row"><span>Présence</span><b>'+(trainPresentAtDepot(v) ? 'Dans le dépôt' : 'En ligne')+'</b></div>';
   if(flagState)
     h += '<div class="row"><span>Drapeau</span><b style="color:'+(flagState.armed ? '#7dda5a' : '#ff7474')+'">'+(flagState.armed ? 'Vert' : 'Rouge')+'</b></div>';
@@ -1497,6 +1501,13 @@ function _updVDyn(p, v){
   el.textContent = lbl + cargo + flagLbl;
 }
 
+// Ligne « Propriétaire » des panneaux de détail (bâtiments et véhicules).
+function ownerRowHtml(owner){
+  const name = owner == null ? (MP.username || 'Joueur') : playerName(owner);
+  const col = owner == null ? '#e0e0e0' : playerColor(owner);
+  return '<div class="row"><span>Propriétaire</span><b style="color:'+col+'">'+escHtml(name)+'</b></div>';
+}
+
 function renderInfo(){
   const p = $('info');
 
@@ -1592,6 +1603,7 @@ function renderInfo(){
       const vehLabel = veh.vtype === 'train' ? (veh.name || 'Train') : vt.nom;
       let h = '<h3><span style="font-size:22px">'+vt.icone+'</span> '+escHtml(vehLabel)+'<span style="margin-left:auto"></span><button class="tbtn" id="infoCloseBtn" aria-label="Fermer" style="width:auto;margin:0;padding:2px 8px">✕</button></h3>';
       h += '<div class="status">'+stateLabel+'</div>';
+      h += ownerRowHtml(veh.garageRef?.owner ?? null);
       h += '<div class="row"><span>Cargaison</span><b>'+cargoStr+'</b></div>';
       if(passengerStr) h += '<div class="row"><span>Voyageurs</span><b style="color:#c8e040">'+passengerStr+'</b></div>';
       h += '<div class="row"><span>Source</span><b style="color:#4dd9ff">'+srcNameDisplay+'</b></div>';
@@ -1671,6 +1683,8 @@ function renderInfo(){
            + '" id="bVehRoute">'+(veh.vtype === 'train' ? '🧭 Configurer' : '🔁 Nouvelle route')+'</button>'
            + (trainFlagState ? trainDepotFlagButtonHtml(veh, ' id="bVehTrainFlag"') : '')
            + '</div>';
+        if(vt.mode === 'air')
+          h += '<button class="tbtn" style="width:100%;margin-top:4px" id="bVehPause">'+(veh.paused ? '▶️ Reprendre le service' : '⏸️ Mettre en pause (parking / hangar)')+'</button>';
         if(veh.state !== 'idle' && veh.state !== 'returning')
           h += '<button class="tbtn" style="width:100%;margin-top:4px" id="bVehReturn">🏪 Retour au dépôt</button>';
         h += '<button class="tbtn" style="width:100%;margin-top:4px;color:#ff9a8a" id="bVehSell">🗑️ Vendre (+'
@@ -1699,6 +1713,14 @@ function renderInfo(){
       };
       const vehFlagBtn = $('bVehTrainFlag');
       if(vehFlagBtn) vehFlagBtn.onclick = ()=> handleTrainDepotFlagClick(veh);
+      const pauseBtn = $('bVehPause');
+      if(pauseBtn) pauseBtn.onclick = ()=>{
+        const paused = !veh.paused;
+        setPlanePaused(veh, paused);
+        if(MP.connected) netSend({ type:'pause_vehicle', id:veh.id, paused });
+        toast(paused ? '⏸️ '+vt.nom+' en pause : il rejoint son aéroport (parking, sinon hangar).' : '▶️ '+vt.nom+' reprend le service.');
+        p._html = null;
+      };
       const retBtn = $('bVehReturn');
       if(retBtn) retBtn.onclick = ()=>{
         returnToGarage(veh);
@@ -1741,6 +1763,7 @@ function renderInfo(){
   }
   h += _hdrBtns+'</h3>';
   h += '<div class="status">'+statusOf(b)+'</div>';
+  h += ownerRowHtml(b.owner ?? null);
   if(isTrainStationPiece(b)){
     const stationPieces = buildings.filter(piece => isTrainStationPiece(piece) && piece.stationGroupId === b.stationGroupId);
     const stationTiles = stationPieces.filter(piece => piece.type === 'train_station').length;
@@ -1776,7 +1799,11 @@ function renderInfo(){
   if(b.type === 'train_depot' || isTrainStationPiece(b)){
     if(!adjRailTiles(b).length)
       h += '<div class="warn">⚠️ Aucun rail adjacent — pas de trains !</div>';
-  } else if(!adjRoadTiles(b).length){
+  } else if(b.type === 'plane_depot'){
+    if(!planeDepotAirport(b))
+      h += '<div class="warn">⚠️ Le dépôt (hangar) doit être collé à une voie de taxi d\'un aéroport fonctionnel — pas d\'avions !</div>';
+  } else if(b.type === 'air_terminal' ? !airportHasRoadAccess(b)
+            : (!AIR_TYPES.includes(b.type) && !adjRoadTiles(b).length)){
     h += '<div class="warn">⚠️ Aucune route adjacente — pas de camions !</div>';
   }
   if(b.type === 'plant'){
@@ -2053,7 +2080,20 @@ function renderInfo(){
       h += '<div class="row"><span>Nom</span><b style="color:#9fd4f0">'+escHtml(b.name)+'</b></div>';
     }
   }
-  if(b.type === 'boat_depot' || b.type === 'plane_depot'){
+  if(isAirPiece(b)){
+    // Aéroport : état (gare + piste) et gare représentante qui porte les voyageurs.
+    const g = airportOf(b);
+    h += '<div style="margin-top:8px;color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em">✈️ Aéroport</div>';
+    h += '<div class="row"><span>Gares</span><b>'+g.terminals.length+'</b></div>';
+    h += '<div class="row"><span>Tour de contrôle</span><b style="color:'+(g.towers.length ? '#7dda5a' : '#ffb04d')+'">'+g.towers.length+'</b></div>';
+    h += '<div class="row"><span>Piste alignée</span><b style="color:'+(g.longest >= AIR_RUNWAY_MIN ? '#7dda5a' : '#ffb04d')+'">'+g.longest+' / '+AIR_RUNWAY_MIN+' cases</b></div>';
+    h += g.functional
+      ? '<div class="status">✅ Aéroport fonctionnel : les avions peuvent desservir sa gare.</div>'
+      : '<div class="warn">⚠️ Non fonctionnel : il faut au moins une gare, une tour de contrôle et '+AIR_RUNWAY_MIN+' cases de piste alignées.</div>';
+    if(b.type === 'air_terminal' && g.rep && g.rep !== b)
+      h += '<div style="color:#8fa3bf;font-size:11px">Cette gare est reliée à la gare principale de l\'aéroport.</div>';
+  }
+  if(b.type === 'boat_depot' || isActiveAirTerminal(b)){
     // Escale : voyageurs du voisinage (+ fret via l'entrepôt collé au port).
     const isPort = b.type === 'boat_depot';
     const pE = Math.floor(b.passengersEntrant || 0), pEMax = b.passengersEntrantMax || 0;
@@ -2081,6 +2121,10 @@ function renderInfo(){
           ? Object.keys(VEHICLE_TYPES).filter(k => !VEHICLE_TYPES[k].buyDisabled && k !== 'train')
           : []);
     h += '<div class="row"><span>Véhicules</span><b>'+shownVehicles.length+'</b></div>';
+    if(b.type === 'plane_depot'){
+      const f = hangarFleet(b);
+      h += '<div class="row"><span>Avions (hangars de l\'aéroport)</span><b style="color:'+(f.planes >= f.capacity ? '#ffb04d' : '#7dda5a')+'">'+f.planes+' / '+f.capacity+' · '+f.hangars+' hangar'+(f.hangars > 1 ? 's' : '')+'</b></div>';
+    }
     // Instruction mode assignation route
     if(vehicleRouteMode && bvehicles.some(v=>v===vehicleRouteMode.vehicle)){
       const step = vehicleRouteMode.step;
@@ -2436,6 +2480,8 @@ function renderInfo(){
           toast('⛔ Ce dépôt appartient à un autre joueur.','err');
           return;
         }
+        const planeErr = planePurchaseError(b, vtype);
+        if(planeErr){ toast('⛔ '+planeErr,'err'); return; }
         if(myWallet().money < vt.cost){ toast('Fonds insuffisants ('+vt.cost+' $)','err'); return; }
         spendMoney(vt.cost, 'construction');
         const v = createPersistentVehicle(vtype, b);
@@ -2598,6 +2644,9 @@ let trainToolbarMenu = null;
 let resourceToolbarGroup = null;
 let resourceToolbarMenu = null;
 const RESOURCE_TOOLBAR_TOOLS = ['mine','lumber','fisher','pump'];
+let airportToolbarGroup = null;
+let airportToolbarMenu = null;
+const AIRPORT_TOOLBAR_TOOLS = ['air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco'];
 let storageToolbarGroup = null;
 let storageToolbarMenu = null;
 const STORAGE_TOOLBAR_TOOLS = ['depot','tank'];
@@ -2615,6 +2664,13 @@ function closeResourceToolbarMenu(){
   if(!resourceToolbarGroup || !resourceToolbarMenu) return;
   resourceToolbarGroup.classList.remove('open');
   resourceToolbarMenu.classList.remove('open');
+  syncToolbarState();
+}
+
+function closeAirportToolbarMenu(){
+  if(!airportToolbarGroup || !airportToolbarMenu) return;
+  airportToolbarGroup.classList.remove('open');
+  airportToolbarMenu.classList.remove('open');
   syncToolbarState();
 }
 
@@ -2686,6 +2742,7 @@ function closeToolbarMenus(){
   closeTrainToolbarMenu();
   closeResourceToolbarMenu();
   closeStorageToolbarMenu();
+  closeAirportToolbarMenu();
   closeBuildingToolbarMenu();
   closeVehicleToolbarMenu();
   closeTerraformToolbarMenu();
@@ -2729,6 +2786,17 @@ function syncToolbarState(){
   if(resourceToolbarMenu){
     resourceToolbarMenu.querySelectorAll('[data-resource-tool]').forEach(b=>{
       b.classList.toggle('on', b.dataset.resourceTool === tool);
+    });
+  }
+  if(airportToolbarGroup){
+    const active = AIRPORT_TOOLBAR_TOOLS.includes(tool);
+    airportToolbarGroup.classList.toggle('on', active);
+    const groupBtn = airportToolbarGroup.querySelector('.tool-group-btn');
+    if(groupBtn) groupBtn.classList.toggle('on', active || airportToolbarGroup.classList.contains('open'));
+  }
+  if(airportToolbarMenu){
+    airportToolbarMenu.querySelectorAll('[data-airport-tool]').forEach(b=>{
+      b.classList.toggle('on', b.dataset.airportTool === tool);
     });
   }
   if(storageToolbarGroup){
@@ -2791,6 +2859,8 @@ function buildToolbar(){
   resourceToolbarMenu = null;
   storageToolbarGroup = null;
   storageToolbarMenu = null;
+  airportToolbarGroup = null;
+  airportToolbarMenu = null;
   buildingToolbarGroup = null;
   buildingToolbarMenu = null;
   vehicleToolbarGroup = null;
@@ -2935,6 +3005,44 @@ function buildToolbar(){
       buildingToolbarGroup = group;
       buildingToolbarMenu = menu;
       luxeToolbarUnlocked = null;
+      continue;
+    }
+    if(k === 'air_runway' || k === 'air_taxi' || k === 'air_parking' || k === 'air_tower' || k === 'air_deco') continue; // regroupés sous "Aéroport"
+    if(k === 'air_terminal'){
+      const group = document.createElement('div');
+      group.className = 'tool-group';
+      const btn = document.createElement('button');
+      btn.className = 'tool tool-group-btn';
+      btn.dataset.t = 'air_terminal';
+      btn.title = 'Aéroport : gare, piste et décor (fusion automatique des cases adjacentes)';
+      btn.innerHTML = '<span class="ic">✈️</span><span>Aéroport</span><span class="hk">▾</span>';
+      const menu = document.createElement('div');
+      menu.className = 'tool-group-menu';
+      for(const toolKey of AIRPORT_TOOLBAR_TOOLS){
+        const d = BUILD[toolKey];
+        if(!d) continue;
+        const choice = document.createElement('button');
+        choice.className = 'tool tool-group-item';
+        choice.dataset.airportTool = toolKey;
+        choice.title = d.desc || '';
+        choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n.replace(' aéroport','')+'</span>'
+          + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
+        choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
+        menu.appendChild(choice);
+      }
+      btn.onclick = e => {
+        e.stopPropagation();
+        const open = !group.classList.contains('open');
+        closeToolbarMenus();
+        group.classList.toggle('open', open);
+        menu.classList.toggle('open', open);
+        syncToolbarState();
+      };
+      group.appendChild(btn);
+      group.appendChild(menu);
+      bar.appendChild(group);
+      airportToolbarGroup = group;
+      airportToolbarMenu = menu;
       continue;
     }
     if(k === 'depot'){
@@ -3773,6 +3881,11 @@ addEventListener('keydown', e=>{
     closeResourceToolbarMenu();
     return;
   }
+  if(e.code==='Escape' && airportToolbarMenu?.classList.contains('open')){
+    e.preventDefault();
+    closeAirportToolbarMenu();
+    return;
+  }
   if(e.code==='Escape' && storageToolbarMenu?.classList.contains('open')){
     e.preventDefault();
     closeStorageToolbarMenu();
@@ -3808,6 +3921,7 @@ addEventListener('click', e=>{
   if(trainToolbarGroup && !trainToolbarGroup.contains(e.target)) closeTrainToolbarMenu();
   if(resourceToolbarGroup && !resourceToolbarGroup.contains(e.target)) closeResourceToolbarMenu();
   if(storageToolbarGroup && !storageToolbarGroup.contains(e.target)) closeStorageToolbarMenu();
+  if(airportToolbarGroup && !airportToolbarGroup.contains(e.target)) closeAirportToolbarMenu();
   if(buildingToolbarGroup && !buildingToolbarGroup.contains(e.target)) closeBuildingToolbarMenu();
   if(vehicleToolbarGroup && !vehicleToolbarGroup.contains(e.target)) closeVehicleToolbarMenu();
   if(terraformToolbarGroup && !terraformToolbarGroup.contains(e.target)) closeTerraformToolbarMenu();
@@ -3857,6 +3971,8 @@ $('ctxShift').onclick = ()=>{
 $('sMoney').onclick = toggleFinance;
 $('sVehicles').onclick = () => openVehicleListPanel('road');
 $('sTrains').onclick  = () => openVehicleListPanel('train');
+$('sShips').onclick   = () => openVehicleListPanel('water');
+$('sPlanes').onclick  = () => openVehicleListPanel('air');
 // délégation : le ✕ survit aux reconstructions du panneau (rafraîchi 5×/s)
 // Le panneau est reconstruit ~5×/s : on agit sur pointerdown (immédiat) plutôt que sur
 // click (mousedown+mouseup), qui se perd quand une reconstruction survient entre les deux.

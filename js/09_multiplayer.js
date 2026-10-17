@@ -130,6 +130,10 @@ function serializeVehicleState(v){
     railPreviousTile: v.railPreviousTile ?? null,
     railTrail: Array.isArray(v.railTrail) ? v.railTrail.map(p => ({ x:p.x, y:p.y })) : null,
     depotDepartureArmed: !!v.depotDepartureArmed,
+    paused: !!v.paused,
+    parkX: v.parkSlot ? v.parkSlot.x : null, parkY: v.parkSlot ? v.parkSlot.y : null,
+    pauseSX: v._pauseRoute?.source?.x ?? null, pauseSY: v._pauseRoute?.source?.y ?? null,
+    pauseDX: v._pauseRoute?.dest?.x ?? null, pauseDY: v._pauseRoute?.dest?.y ?? null,
     atDepot: !!v.atDepot,
     pinnedRes: v.pinnedRes || null,
     wagons: Array.isArray(v.wagons) ? v.wagons.map(w => typeof w === 'string' ? w : ({ type:w.type, resource:w.resource || null })) : null,
@@ -933,7 +937,7 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
     b.passengersEntrant = o.passengersEntrant ?? 0;
     b.passagersSortant = o.passagersSortant ?? 0;
   }
-  if(b.type === 'train_station' || b.type === 'boat_depot' || b.type === 'plane_depot'){
+  if(isTerminalType(b)){
     b.passengersEntrant = o.passengersEntrant ?? 0;
     b.passengersEntrantMax = o.passengersEntrantMax ?? 0;
     b.passagersSortant = o.passagersSortant ?? 0;
@@ -941,6 +945,8 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   }
   b.stationGroupId = o.stationGroupId ?? null;
   b.stationAxis = o.stationAxis || null;
+  b.runwayRev = !!o.runwayRev;
+  if(o.decor != null) b.decor = o.decor;
   const r = recipeOf(b);
   if(r && syncGtime != null && prevSyncGtime != null && syncGtime > prevSyncGtime){
     const deltaG = syncGtime - prevSyncGtime;
@@ -980,6 +986,10 @@ function applyVehicleDynamicState(v, sv){
   v.passengersFromStation = syncBuildingByCoords(sv.passengersFromStationX, sv.passengersFromStationY, 'train_station') || null;
   v.waitTimer = sv.waitTimer || 0;
   v.depotDepartureArmed = !!sv.depotDepartureArmed;
+  v.paused = !!sv.paused;
+  v.parkSlot = sv.parkX != null ? { x:sv.parkX, y:sv.parkY } : null;
+  { const ps = sv.pauseSX != null ? syncBuildingByCoords(sv.pauseSX, sv.pauseSY) : null, pd = sv.pauseDX != null ? syncBuildingByCoords(sv.pauseDX, sv.pauseDY) : null;
+    v._pauseRoute = (ps && pd) ? { source:ps, dest:pd } : null; }
   v.atDepot = !!sv.atDepot;
   v.engineMult = sv.engineMult ?? v.engineMult;
   v.boughtAtGtime = sv.boughtAtGtime ?? v.boughtAtGtime;
@@ -1060,7 +1070,7 @@ function applyStateSync(d){
   busStopTimer = d.busStopTimer || 0;
   passengerCycleTimer = d.passengerCycleTimer || 0;
   WALLETS = {};
-  if(d.wallets){ for(const k in d.wallets) WALLETS[k] = d.wallets[k]; }
+  if(d.wallets){ for(const k in d.wallets) WALLETS[k] = d.wallets[k]; if(typeof objectivesSettle === 'function') objectivesSettle(); if(typeof ObjectivesPanel !== 'undefined') ObjectivesPanel.resync(); }
   applyPauseSpeedFromSync(d);
 
   const townById = new Map((d.towns || []).map(t => [t.id, t]));
@@ -1369,7 +1379,7 @@ function serializeState(opts = {}){
       passengersMax:b.passengersMax??null,
       passengersEntrant:b.passengersEntrant??null, passengersEntrantMax:b.passengersEntrantMax??null, passagersSortant:b.passagersSortant??null,
       passengersEntrantPending:b.passengersEntrantPending??null,
-      stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null,
+      stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null, runwayRev:b.runwayRev ? 1 : 0, decor:b.decor ?? null,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
     news: { flags: Object.keys(newsFlags), log: newsLog, next: nextNewsId },
@@ -1440,6 +1450,11 @@ function inferSavedOwnerIdForUsername(registryId){
   const counts = new Map();
   for(const b of buildings){
     if(b.owner == null || b.owner === MP.myId || registeredToOthers.has(b.owner)) continue;
+    // un propriétaire identifié (wallet) comme un AUTRE joueur n'est jamais « à moi » :
+    // sans ce garde-fou, le registre périmé d'un joueur absent faisait absorber tout
+    // son territoire par le premier qui se reconnectait.
+    const known = WALLETS[b.owner]?.username;
+    if(known && known !== MP.username) continue;
     counts.set(b.owner, (counts.get(b.owner) || 0) + 1);
   }
   if(!counts.size) return null;
@@ -1505,8 +1520,12 @@ function mpSenderControlsOwner(ownerId, msg){
   const senderName = mpSenderUsername(msg);
   const ownerName = mpUsernameOfOwnerId(ownerId);
   const ownerIsConnected = (MP.players || []).some(pl => pl?.id != null && Number(pl.id) === Number(ownerId));
+  // repli « ID périmé sans nom » : réservé aux bâtiments sans AUCUN nom connu et
+  // seulement si l'expéditeur n'a pas déjà son propre territoire (sinon c'est un
+  // autre joueur absent, pas un ancien ID de l'expéditeur)
+  const senderHasOwn = buildings.some(b => b.owner === msg.from);
   const belongsToSender = (senderName && ownerName === senderName)
-    || (!ownerIsConnected && ownerName == null);
+    || (!ownerIsConnected && ownerName == null && !senderHasOwn);
   if(!belongsToSender) return false;
   applyOwnerRemap(Number(ownerId), msg.from);
   return true;
@@ -1651,7 +1670,7 @@ function applySnapshot(d){
   busStopTimer = d.busStopTimer || 0;
   passengerCycleTimer = d.passengerCycleTimer || 0;
   WALLETS  = {};
-  if(d.wallets){ for(const k in d.wallets) WALLETS[k] = d.wallets[k]; }
+  if(d.wallets){ for(const k in d.wallets) WALLETS[k] = d.wallets[k]; if(typeof objectivesSettle === 'function') objectivesSettle(); if(typeof ObjectivesPanel !== 'undefined') ObjectivesPanel.resync(); }
   paused   = d.paused;  speed   = d.speed||1;
   trafficLightsOff = !!d.trafficLightsOff;
   if(typeof refreshOptMenu === 'function') refreshOptMenu();
@@ -1723,7 +1742,7 @@ function applySnapshot(d){
       b.passengersEntrant = o.passengersEntrant ?? 0;
       b.passagersSortant = o.passagersSortant ?? 0;
     }
-    if(o.passengersEntrant != null && (b.type === 'train_station' || b.type === 'boat_depot' || b.type === 'plane_depot')){
+    if(o.passengersEntrant != null && (isTerminalType(b))){
       b.passengersEntrant = o.passengersEntrant;
       b.passengersEntrantMax = o.passengersEntrantMax ?? 0;
       b.passagersSortant = o.passagersSortant ?? 0;
@@ -1731,6 +1750,8 @@ function applySnapshot(d){
     }
     if(o.stationGroupId != null) b.stationGroupId = o.stationGroupId;
     if(o.stationAxis) b.stationAxis = o.stationAxis;
+    if(o.runwayRev != null) b.runwayRev = !!o.runwayRev;
+    if(o.decor != null) b.decor = o.decor;
     buildings.push(b);
     setGrid(b,b);
     if(b.stationGroupId != null) nextTrainStationId = Math.max(nextTrainStationId, b.stationGroupId + 1);
@@ -1791,6 +1812,8 @@ function applySnapshot(d){
       if(sv.engineMult != null) v.engineMult = sv.engineMult;
       v.waitTimer = sv.waitTimer || 0;
       v.depotDepartureArmed = !!sv.depotDepartureArmed;
+      v.paused = !!sv.paused;
+      v.parkSlot = sv.parkX != null ? { x:sv.parkX, y:sv.parkY } : null;
       v.boughtAtGtime = sv.boughtAtGtime ?? v.boughtAtGtime;
       v.maintenanceDaysPaid = sv.maintenanceDaysPaid ?? v.maintenanceDaysPaid;
       v.ledgerYM = sv.ledgerYM ?? v.ledgerYM; v.monthNet = sv.monthNet ?? v.monthNet;
@@ -2150,6 +2173,14 @@ function applyAction(msg){
       if(BUILD[b.type].resid) assignHomelessToHousing(b.owner);
       break;
     }
+    case 'air_runway_flip': {
+      if(!validXY(act.x, act.y)) break;
+      const b = bgrid[act.y*N+act.x];
+      if(!b || b.type !== 'air_runway') break;
+      if(b.owner && b.owner !== msg.from) break;
+      flipRunway(b);
+      break;
+    }
     case 'set_depot_resource': {
       if(!validXY(act.x, act.y) || !Object.prototype.hasOwnProperty.call(RES, act.res) || typeof act.allowed !== 'boolean') break;
       if(act.trainAllowed !== undefined && typeof act.trainAllowed !== 'boolean') break;
@@ -2224,6 +2255,7 @@ function applyAction(msg){
       const cost = VEHICLE_TYPES[act.vtype].cost || 0;
       const wSender = walletOf(msg.from);
       if(VEHICLE_TYPES[act.vtype].buyDisabled || wSender.money < cost) break;
+      if(planePurchaseError(garage, act.vtype)) break; // hangars pleins
       wSender.money -= cost;
       wSender.fin.construction = (wSender.fin.construction||0) + cost;
       const v = createPersistentVehicle(act.vtype, garage, act.id);
@@ -2330,6 +2362,12 @@ function applyAction(msg){
       if(v.res && trainWagonCapacityForRes(v, v.res) < v.cargo){ v.cargo = 0; v.res = null; }
       break;
     }
+    case 'pause_vehicle': {
+      const v = vehicles.find(v=>String(v.id) === String(act.id));
+      if(!v || !mpSenderControlsOwner(v.garageRef?.owner, msg)) break;
+      setPlanePaused(v, !!act.paused);
+      break;
+    }
     case 'return_vehicle': {
       const v = vehicles.find(v=>String(v.id) === String(act.id));
       if(!v || !mpSenderControlsOwner(v.garageRef?.owner, msg)) break;
@@ -2383,10 +2421,17 @@ function applyAction(msg){
       buyExpansion(exp, walletOf(msg.from), true);
       break;
     }
-    case 'owner_remap':
+    case 'owner_remap': {
       if(!Number.isInteger(act.oldId) || !Number.isInteger(act.newId)) break;
+      // un joueur ne peut rapatrier sur son propre ID que des bâtiments qui ne
+      // sont pas identifiés comme appartenant à quelqu'un d'autre
+      if(act.newId !== msg.from) break;
+      const prevName = mpUsernameOfOwnerId(act.oldId);
+      const senderName = mpSenderUsername(msg);
+      if(prevName && senderName && prevName !== senderName) break;
       applyOwnerRemap(act.oldId, act.newId);
       break;
+    }
     case 'pause': togglePause(); break;
     case 'traffic_lights':
       trafficLightsOff = !!act.off;

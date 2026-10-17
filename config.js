@@ -428,9 +428,20 @@ const CONFIG = {
 
     /* ---------- AÉROPORTS ET AVIONS ----------
        Les avions volent en ligne droite d'aéroport en aéroport et transportent des
-       voyageurs (habitants sans emploi dans le rayon de l'aéroport). */
+       voyageurs (habitants sans emploi dans le rayon de l'aéroport).
+       Un aéroport = gares + pistes + déco posées sur des cases adjacentes (fusion
+       automatique). Il est fonctionnel avec au moins une gare, une tour de contrôle et
+       `pisteMin` cases de piste alignées. Le dépôt d'aéroport ne sert qu'à acheter les avions et créer les
+       lignes entre gares d'aéroport. */
     avion: {
-      cout: 3500,
+      cout: 3500,            // dépôt d'aéroport : sert uniquement à acheter les avions et créer les lignes
+      gare:  { cout: 400 },  // gare d'aéroport (terminal) : point d'embarquement des voyageurs
+      piste: { cout: 80 },   // case de piste : il faut au moins `pisteMin` cases alignées
+      parking: { cout: 30 }, // place de parking d'avion (max = capacité des hangars de l'aéroport)
+      tour:  { cout: 300 },  // tour de contrôle (radar rotatif)
+      taxi:  { cout: 40 },   // voie de circulation (taxiway), plus étroite que la piste, ligne jaune centrale
+      deco:  { cout: 25 },   // décor (parking, pelouse, balisage…)
+      pisteMin: 4,
       rayon: 16,
       tarif: 1.1,
       avion: { cout: 18000, capacite: 40, vitesse: 7, coutEntretienJournalier: 45 },
