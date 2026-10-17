@@ -417,7 +417,8 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
       if(dist[t]>=0 && dist[t]<bd){ bd = dist[t]; bt = t; }
     const targetIsInd = !!BUILD[c.type]?.ind;
     // Livraison directe : ind→ind ou via depot (pas de route requise)
-    const directOk = senderIsInd && targetIsInd || isStorageHub(b);
+    // Jamais vers un logement non relié à une route.
+    const directOk = (senderIsInd && targetIsInd || isStorageHub(b)) && !BUILD[c.type]?.resid;
     if(bt<0 && !directOk) continue;
 
     // score pour la distribution équitable
