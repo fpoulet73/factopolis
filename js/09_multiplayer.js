@@ -947,6 +947,7 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   b.stationAxis = o.stationAxis || null;
   b.runwayRev = !!o.runwayRev;
   if(o.decor != null) b.decor = o.decor;
+  if(o.design != null) b.design = o.design;
   const r = recipeOf(b);
   if(r && syncGtime != null && prevSyncGtime != null && syncGtime > prevSyncGtime){
     const deltaG = syncGtime - prevSyncGtime;
@@ -1379,7 +1380,7 @@ function serializeState(opts = {}){
       passengersMax:b.passengersMax??null,
       passengersEntrant:b.passengersEntrant??null, passengersEntrantMax:b.passengersEntrantMax??null, passagersSortant:b.passagersSortant??null,
       passengersEntrantPending:b.passengersEntrantPending??null,
-      stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null, runwayRev:b.runwayRev ? 1 : 0, decor:b.decor ?? null,
+      stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null, runwayRev:b.runwayRev ? 1 : 0, decor:b.decor ?? null, design:b.design ?? null,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
     news: { flags: Object.keys(newsFlags), log: newsLog, next: nextNewsId },
@@ -1752,6 +1753,7 @@ function applySnapshot(d){
     if(o.stationAxis) b.stationAxis = o.stationAxis;
     if(o.runwayRev != null) b.runwayRev = !!o.runwayRev;
     if(o.decor != null) b.decor = o.decor;
+    if(o.design != null) b.design = o.design;
     buildings.push(b);
     setGrid(b,b);
     if(b.stationGroupId != null) nextTrainStationId = Math.max(nextTrainStationId, b.stationGroupId + 1);
@@ -2102,6 +2104,18 @@ function applyAction(msg){
       const depot = bgrid[act.depotY*N+act.depotX];
       if(depot && depot.type === 'terrassement')
         depot.storage['dirt'] = Math.max(0, (depot.storage['dirt']||0) - FILL_WATER_COST);
+      break;
+    }
+    case 'terraform_canal': {
+      if(!validIdx(act.i)) break;
+      const cx = act.i % N, cy = (act.i / N) | 0;
+      if(canalTileError(cx, cy)) break;
+      const cost = BUILD.terraform_canal.cost;
+      const wCan = walletOf(msg.from);
+      if(wCan.money < cost) break;
+      wCan.money -= cost; wCan.fin.construction = (wCan.fin.construction || 0) + cost;
+      applyCanal(act.i);
+      rebuildWaterLevels(); markTerrainDirty();
       break;
     }
     case 'terraform_level': {
@@ -2981,6 +2995,11 @@ clickFn = function(x,y){
         clickAt(x,y); // affiche le message d'erreur
       }
     }
+    return;
+  }
+  if(tool==='terraform_canal'){
+    if(!canalTileError(x, y)) netSend({ type:'terraform_canal', i:y*N+x });
+    clickAt(x,y);
     return;
   }
   if(tool==='terraform_dig' || tool==='terraform_raise'){

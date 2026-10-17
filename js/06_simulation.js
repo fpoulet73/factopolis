@@ -657,6 +657,7 @@ function luxReadyToExpand(b){
 
 function expandLuxuryHouse(b, rect){
   const before = residClassDef(b);
+  b.design = Math.floor(Math.random() * ART_VARIANTS); // nouveau design à chaque agrandissement
   const popCapNext = BUILD[rect.type].resid.popCap;
   for(const o of rect.absorb || []){
     for(const k in o.storage) b.storage[k] = (b.storage[k]||0) + o.storage[k];

@@ -2686,7 +2686,7 @@ let vehicleToolbarMenu = null;
 const VEHICLE_TOOLBAR_TOOLS = ['road','bus_stop'];
 let terraformToolbarGroup = null;
 let terraformToolbarMenu = null;
-const TERRAFORM_TOOLBAR_TOOLS = ['terraform_dig','terraform_raise'];
+const TERRAFORM_TOOLBAR_TOOLS = ['terraform_dig','terraform_raise','terraform_canal'];
 
 function closeResourceToolbarMenu(){
   if(!resourceToolbarGroup || !resourceToolbarMenu) return;
@@ -2945,7 +2945,7 @@ function buildToolbar(){
     if(k === 'lumber' || k === 'fisher' || k === 'pump') continue; // regroupés sous "Ressources"
     if(k === 'tank') continue; // regroupé sous "Stockage"
     if(k === 'house' || k === 'market') continue; // regroupés sous "Bâtiments"
-    if(k === 'terraform_raise') continue; // regroupé sous "Terraforming"
+    if(k === 'terraform_raise' || k === 'terraform_canal') continue; // regroupés sous "Terraforming"
     if(k === 'terraform_dig'){
       const group = document.createElement('div');
       group.className = 'tool-group';
@@ -3618,7 +3618,7 @@ function canvasLeftMove(x, y, shiftKey, oldTx, oldTy){
     updateZoneOverlay(x, y);
     return;
   }
-  if(mouse.lDown && (tool==='terraform'||tool==='fill_water'||tool==='terraform_dig'||tool==='terraform_raise') && (mouse.tx!==oldTx || mouse.ty!==oldTy))
+  if(mouse.lDown && (tool==='terraform'||tool==='fill_water'||tool==='terraform_dig'||tool==='terraform_raise'||tool==='terraform_canal') && (mouse.tx!==oldTx || mouse.ty!==oldTy))
     clickFn(mouse.tx, mouse.ty);
   if(mouse.lDown && (tool==='road' || tool==='rail') && roadDragStart && (mouse.tx!==oldTx || mouse.ty!==oldTy))
     roadPreviewTiles = tool === 'rail'

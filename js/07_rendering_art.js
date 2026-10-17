@@ -42,6 +42,7 @@ function artRng(seed){
 const ART_VARIANTS = 8;
 function artVariantOf(b){
   if(b.type === 'air_deco' && Number.isInteger(b.decor)) return b.decor % ART_VARIANTS;
+  if(Number.isInteger(b.design) && BUILD[b.type]?.resid) return b.design % ART_VARIANTS; // design aléatoire du logement (sauvegardé)
   return (hash(b.x * 31 + b.w, b.y * 17 + b.h) >>> 0) % ART_VARIANTS;
 }
 

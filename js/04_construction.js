@@ -661,6 +661,22 @@ function tunnelMaskUpdates(path){
   return updates;
 }
 
+// Canal : une tuile libre (herbe, sable ou argile) creusée de 3 niveaux puis mise en eau
+const CANAL_DEPTH = 3;
+function canalTileError(x, y){
+  if(!inMap(x, y)) return 'Hors de la carte';
+  const i = y * N + x, ter = terrain[i];
+  if(bgrid[i] || road[i] || rail[i]) return 'Tuile occupée (bâtiment, route ou rail)';
+  if(ter === T.WATER) return 'Cette tuile est déjà en eau';
+  if(ter !== T.GRASS && ter !== T.SAND && ter !== T.CLAY) return 'Un canal se creuse sur une tuile d' + String.fromCharCode(39) + 'herbe, de sable ou d' + String.fromCharCode(39) + 'argile libre';
+  return null;
+}
+// Applique un canal : -3 niveaux (minimum 0) puis eau ; le niveau de l'eau suit les berges (rebuildWaterLevels)
+function applyCanal(i){
+  terrainHeightMap[i] = Math.max(0, (terrainHeightMap[i] || 0) - CANAL_DEPTH);
+  terrain[i] = T.WATER;
+}
+
 function canPlace(t,x,y, actorId = MP.myId){
   if(!inMap(x,y)) return { ok:false };
   const i = y*N+x, ter = terrain[i];
@@ -670,6 +686,7 @@ function canPlace(t,x,y, actorId = MP.myId){
     if(!terrassementNear(x, y, actorId ?? null)) return { ok:false, msg:'Aucune usine de terrassement à portée avec assez de terre ('+FILL_WATER_COST+' terres requises)' };
     return { ok:true };
   }
+  if(t==='terraform_canal') return canalTileError(x, y) ? { ok:false, msg:canalTileError(x, y) } : { ok:true };
   if(t==='terraform_dig' || t==='terraform_raise'){
     if(!terraformLevelTiles(t, x, y, terraformRadius).tiles.length)
       return { ok:false, msg: t==='terraform_dig' ? 'Aucune tuile creusable ici (niveau 0 ou tuile occupée)' : 'Aucune tuile remontable ici (niveau max atteint ou tuile occupée)' };
@@ -923,6 +940,17 @@ function clickAt(x,y){
     depot.storage['dirt'] = (depot.storage['dirt']||0) - FILL_WATER_COST;
     terrain[i] = T.GRASS; rebuildWaterLevels(); markTerrainDirty();
     // netSend géré par l'intercept MP (09_multiplayer.js) pour éviter le double envoi
+    return;
+  }
+  if(tool==='terraform_canal'){
+    const err = canalTileError(x, y);
+    if(err){ toast(err, 'err'); return; }
+    const cost = BUILD.terraform_canal.cost;
+    if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
+    spendMoney(cost, 'construction');
+    applyCanal(y * N + x);
+    rebuildWaterLevels(); markTerrainDirty();
+    // netSend géré par l'intercept MP (09_multiplayer.js)
     return;
   }
   if(tool==='terraform_dig' || tool==='terraform_raise'){

@@ -738,6 +738,8 @@ const BUILD = {
                   desc:'Baisse le niveau du terrain d\'un palier ('+TERRAFORM_LEVEL_COST+' $/tuile impactée). Nécessite un niveau > 0.' },
   terraform_raise:{ n:'Remonter', ic:'⛰️', hk:'', cost: TERRAFORM_LEVEL_COST,
                   desc:'Élève le niveau du terrain d\'un palier ('+TERRAFORM_LEVEL_COST+' $/tuile impactée).' },
+  terraform_canal:{ n:'Canal', ic:'〰️', hk:'', cost: TERRAFORM_LEVEL_COST * 3,
+                  desc:'Creuse une tuile de 3 niveaux et la met en eau, à niveau avec les berges (' + (TERRAFORM_LEVEL_COST * 3) + ' $/tuile). Se raccorde à l\'eau voisine : on peut tracer un canal en glissant.' },
   terrassement: { n:'Usine de terrassement', ic:'🏗️', hk:'', cost: CFG.production?.terrassement?.cout ?? 700,
                   workers:3, time:1, col:'#7a6a52', hgt:20, ind:true,
                   upkeep: CFG.production?.terrassement?.entretien ?? 1.5,
@@ -1416,5 +1418,5 @@ function tryMergeDepot(){
   for(const L of LUX_LEVELS) BUILD[L.key].cost = Math.round((BUILD.house.cost || 0) * LUX_COST_MULT);
 })();
 
-const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco','terraform','fill_water','terraform_dig','terraform_raise'];
+const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco','terraform','fill_water','terraform_dig','terraform_raise','terraform_canal'];
 const MILESTONES = [25, 50, 100, 200, 400];
