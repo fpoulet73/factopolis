@@ -43,6 +43,7 @@ function settleRailToll(v, payerId, fx, fy){
     totalPaid += amount;
   }
   v.railTollOwed = {};
+  vehicleLedger(v, -totalPaid);
   if(totalPaid > 0 && fx != null)
     addFloat(fx, fy - 0.7, '−'+(Math.round(totalPaid*10)/10)+' $ 🛤️', '#ff8c42');
 }
@@ -351,6 +352,7 @@ function update(dt){
     if(!garage || garage.dead) continue;
     const w = walletOf(garage.owner);
     w.money -= cost; w.fin.entretienVehicules += cost;
+    vehicleLedger(v, -cost);
     let fx, fy;
     if(v.pts?.length > 0 && v.state !== 'idle'){
       const seg = Math.min(v.seg || 0, v.pts.length - 1);

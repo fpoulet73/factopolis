@@ -261,6 +261,7 @@ function transportStopProcess(v, stopB, nextB){
       if(revenue > 0){
         earnMoney(revenue, 'vehicules', wallet);
         recordVente(wallet, 'veh', v.vtype, revenue);
+        vehicleLedger(v, revenue);
         addFloat(stopB.x + ((stopB.w || 1) - 1) / 2, stopB.y, '+' + revenue + ' $ ' + vt.icone, '#7fd8ff');
       }
       stopB.passagersSortant = (stopB.passagersSortant || 0) + v.cargo;
@@ -281,6 +282,7 @@ function transportStopProcess(v, stopB, nextB){
   if(v.pendingFreightRevenue > 0){
     earnMoney(v.pendingFreightRevenue, 'vehicules', wallet);
     recordVente(wallet, 'veh', v.vtype, v.pendingFreightRevenue);
+    vehicleLedger(v, v.pendingFreightRevenue);
     addFloat(stopB.x + ((stopB.w || 1) - 1) / 2, stopB.y, '+' + v.pendingFreightRevenue + ' $ ' + vt.icone, '#35ff64');
     v.pendingFreightRevenue = 0;
   }
@@ -1690,6 +1692,7 @@ function trainEarnPassengerRevenue(v, numPassengers, departStop, arrivalStop){
   const ownerWallet = walletOf(owner);
   earnMoney(revenue, 'vehicules', ownerWallet);
   recordVente(ownerWallet, 'veh', 'train', revenue);
+  vehicleLedger(v, revenue);
   addFloat(arrivalStop.x + (arrivalStop.w-1)/2, arrivalStop.y, '+'+revenue+' $ 🚃', '#c8e040');
 }
 
@@ -2011,6 +2014,7 @@ function updateTrainVehicle(v, dt){
       const freightWallet = walletOf(v.garageRef?.owner ?? null);
       earnMoney(v.pendingFreightRevenue, 'vehicules', freightWallet);
       recordVente(freightWallet, 'veh', 'train', v.pendingFreightRevenue);
+      vehicleLedger(v, v.pendingFreightRevenue);
       const lp = v.pts?.[v.pts.length - 1];
       const fx = lp ? lp.x / TILE - 0.5 : (v.currentBuilding?.x ?? 0);
       const fy = lp ? lp.y / TILE - 1.5 : (v.currentBuilding?.y ?? 0);
@@ -2384,6 +2388,25 @@ function findNearbyTrainStation(busStop){
     && buildingChebyshevDistance(busStop, b) <= BUS_STOP_RADIUS);
 }
 
+// Bilan net du mois de jeu en cours pour un véhicule (gains − entretien − péages).
+function gameYearMonth(){
+  const d = new Date(GAME_EPOCH_MS + (gtime||0) * GAME_HOURS_PER_SEC * 3600000);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+}
+function vehicleLedger(v, amount){
+  if(!v || !amount) return;
+  const ym = gameYearMonth();
+  if(v.ledgerYM !== ym){ v.ledgerYM = ym; v.monthNet = 0; }
+  v.monthNet = (v.monthNet || 0) + amount;
+}
+function vehicleMonthNet(v){
+  return v.ledgerYM === gameYearMonth() ? Math.round(v.monthNet || 0) : 0;
+}
+function vehicleMonthNetHtml(v){
+  const n = vehicleMonthNet(v);
+  return '<b style="color:' + (n >= 0 ? '#7dda5a' : '#ff9a8a') + '">' + (n >= 0 ? '+' : '−') + Math.abs(n) + ' $</b>';
+}
+
 function busEarnRevenue(v, numPassengers, routeLen, departStop, arrivalStop){
   if(numPassengers <= 0 || !departStop || !arrivalStop) return;
   const dist = Math.max(1, routeLen ?? 1);
@@ -2400,6 +2423,7 @@ function busEarnRevenue(v, numPassengers, routeLen, departStop, arrivalStop){
     const busWallet = walletOf(busOwner);
     earnMoney(busShare, 'vehicules', busWallet);
     recordVente(busWallet, 'veh', 'bus', busShare);
+    vehicleLedger(v, busShare);
     const remainder = revenue - busShare;
     for(let i = 0; i < stopOwners.length; i++){
       const share = Math.floor(remainder / stopOwners.length) + (i < remainder % stopOwners.length ? 1 : 0);
@@ -2413,6 +2437,7 @@ function busEarnRevenue(v, numPassengers, routeLen, departStop, arrivalStop){
     const busWallet = walletOf(busOwner);
     earnMoney(revenue, 'vehicules', busWallet);
     recordVente(busWallet, 'veh', 'bus', revenue);
+    vehicleLedger(v, revenue);
     addFloat(arrivalStop.x + 0.5, arrivalStop.y, '+'+revenue+' $ 🚌', sameCity ? '#a0c8e8' : '#ffe9a0');
   }
 }

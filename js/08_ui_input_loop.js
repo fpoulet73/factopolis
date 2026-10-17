@@ -683,7 +683,7 @@ function renderVehicleListPanel(){
         + '<span class="vehlist-icon">' + (vt.icone || '🚗') + '</span>'
         + '<span class="vehlist-info"><span class="vehlist-name"><b>' + nom + '</b><span class="vehlist-res">' + resLabel + '</span></span>'
         + '<span class="vehlist-date">#' + v.id + ' · ' + ageLabel + '</span>'
-        + '</span></div>'
+        + '</span><span class="vehlist-net" title="Gain net du mois en cours (entretien déduit)">' + vehicleMonthNetHtml(v) + '</span></div>'
       );
     }
     parts.push('</div>');
@@ -880,6 +880,7 @@ function renderTrainPanel(){
     h += '<div class="row"><span>Entretien journalier</span><b style="color:#ff9a8a">'+_nextCost+' $'+(_completedMonths > 0 ? ' <span style="font-size:11px;color:#8fa3bf">(mois '+(_completedMonths+1)+')</span>' : '')+'</b></div>';
     h += '<div class="row"><span>Prochain paiement</span><b style="color:#8fa3bf">'+_nextDue+'</b></div>';
   }
+  h += '<div class="row"><span>Gain net du mois (entretien déduit)</span>'+vehicleMonthNetHtml(v)+'</div>';
   // Distribution du cargo par wagon (pour affichage)
   const _totalFreightCap = wagons.reduce((s, w) => {
     const d = trainWagonDef(w);
@@ -1460,6 +1461,7 @@ function renderInfo(){
         h += '<div class="row"><span>Entretien journalier</span><b style="color:#ff9a8a">'+_c+' $'+(_cm > 0 ? ' <span style="color:#8fa3bf;font-size:11px">(mois '+(_cm+1)+')</span>' : '')+'</b></div>';
         h += '<div class="row"><span>Prochain paiement</span><b style="color:#8fa3bf">'+_nextDue+'</b></div>';
       }
+      h += '<div class="row"><span>Gain net du mois (entretien déduit)</span>'+vehicleMonthNetHtml(veh)+'</div>';
       h += '<div class="row"><span>Vitesse</span><b>'+vt.speed+' cases/s</b></div>';
       // Section État des wagons pour les trains
       if(veh.vtype === 'train'){

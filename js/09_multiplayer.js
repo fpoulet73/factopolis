@@ -143,6 +143,7 @@ function serializeVehicleState(v){
     engineMult: v.engineMult ?? null,
     boughtAtGtime: v.boughtAtGtime ?? null,
     maintenanceDaysPaid: v.maintenanceDaysPaid ?? 0,
+    ledgerYM: v.ledgerYM ?? null, monthNet: v.monthNet ?? 0,
     signalWaitTime: v.signalWaitTime ?? 0,
     missingRailTimer: v.missingRailTimer ?? 0,
     currentRailBlock: v.currentRailBlock ?? -1,
@@ -978,6 +979,7 @@ function applyVehicleDynamicState(v, sv){
   v.engineMult = sv.engineMult ?? v.engineMult;
   v.boughtAtGtime = sv.boughtAtGtime ?? v.boughtAtGtime;
   v.maintenanceDaysPaid = sv.maintenanceDaysPaid ?? v.maintenanceDaysPaid;
+  v.ledgerYM = sv.ledgerYM ?? v.ledgerYM; v.monthNet = sv.monthNet ?? v.monthNet;
   v.signalWaitTime = sv.signalWaitTime || 0;
   v.missingRailTimer = sv.missingRailTimer || 0;
   v.currentRailBlock = sv.currentRailBlock ?? -1;
@@ -1784,6 +1786,7 @@ function applySnapshot(d){
       v.depotDepartureArmed = !!sv.depotDepartureArmed;
       v.boughtAtGtime = sv.boughtAtGtime ?? v.boughtAtGtime;
       v.maintenanceDaysPaid = sv.maintenanceDaysPaid ?? v.maintenanceDaysPaid;
+      v.ledgerYM = sv.ledgerYM ?? v.ledgerYM; v.monthNet = sv.monthNet ?? v.monthNet;
       v.signalWaitTime = sv.signalWaitTime || 0;
       v.missingRailTimer = sv.missingRailTimer || 0;
       v.currentRailBlock = sv.currentRailBlock ?? -1;
