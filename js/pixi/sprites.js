@@ -569,6 +569,47 @@ const PixiSprites = (function(){
     return s;
   }
 
+  // Bord extérieur d'une pièce d'aéroport : les côtés mitoyens d'une autre pièce du MÊME aéroport
+  // et du même propriétaire ne sont pas tracés. Côtés monde → côtés de l'écran via la rotation.
+  function airOuterEdges(g, b, rx0, ry0, lift, color, width){
+    const grp = airportOf(b);
+    for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+      const nx = b.x + dx, ny = b.y + dy;
+      const o = (nx >= 0 && ny >= 0 && nx < N && ny < N) ? bgrid[ny * N + nx] : null;
+      if(o && o !== b && isAirPiece(o) && airportOf(o) === grp && (o.owner ?? null) === (b.owner ?? null)) continue;
+      const [du, dv] = rotDir(dx, dy);
+      let p, q;
+      if(du === 1){ p = liftedIso(rx0 + 1, ry0, lift); q = liftedIso(rx0 + 1, ry0 + 1, lift); }
+      else if(du === -1){ p = liftedIso(rx0, ry0, lift); q = liftedIso(rx0, ry0 + 1, lift); }
+      else if(dv === 1){ p = liftedIso(rx0, ry0 + 1, lift); q = liftedIso(rx0 + 1, ry0 + 1, lift); }
+      else { p = liftedIso(rx0, ry0, lift); q = liftedIso(rx0 + 1, ry0, lift); }
+      g.moveTo(p[0], p[1]).lineTo(q[0], q[1]);
+    }
+    g.stroke({ color, width });
+  }
+
+  // Contour couleur du joueur, à la base du bloc, dans la couche TRIÉE en profondeur : juste sous le
+  // corps du bâtiment, donc recouvert par son propre volume et par les bâtiments devant lui (les bords
+  // cachés par la 3D ne sont pas montrés).
+  const ownerOutlines = new Map();
+  function updateOwnerOutline(b, geom, sortLayer, node, show){
+    let o = ownerOutlines.get(b);
+    const ownerCol = (show && b.owner && !(typeof UI_OPTIONS !== 'undefined' && UI_OPTIONS.hideColorMarkers)) ? playerColor(b.owner) : null;
+    if(ownerCol == null){ if(o) o.g.visible = false; return; }
+    if(!o){ o = { g:new PIXI.Graphics(), sig:null }; sortLayer.addChild(o.g); ownerOutlines.set(b, o); }
+    const sel = bldSelected(b);
+    const sig = ownerCol + '|' + (sel ? 1 : 0) + '|' + rot + '|' + geom.lift + '|' + geom.rx0 + ',' + geom.ry0 + ',' + geom.rw + ',' + geom.rh + (isAirPiece(b) ? '|a' + airVersion : '');
+    if(o.sig !== sig){
+      o.sig = sig;
+      o.g.clear();
+      const w = sel ? 3.5 : 2.5;
+      if(isAirPiece(b)) airOuterEdges(o.g, b, geom.rx0, geom.ry0, geom.lift, ownerCol, w);
+      else { diamondPath(o.g, geom.rx0, geom.ry0, geom.rw, geom.rh, geom.lift); o.g.stroke({ color:ownerCol, width:w }); }
+    }
+    o.g.visible = true;
+    o.g.zIndex = node.body.zIndex - 0.15;
+  }
+
   function diamondPath(g, rx0, ry0, rw, rh, lift){
     const A=liftedIso(rx0,ry0,lift), B=liftedIso(rx0+rw,ry0,lift),
           C=liftedIso(rx0+rw,ry0+rh,lift), D=liftedIso(rx0,ry0+rh,lift);
@@ -679,7 +720,7 @@ const PixiSprites = (function(){
     }
     const key = progPx + '|' + (showPop ? b.pop : -1) + (idle ? 'i' : '') + '|' + (sel ? 1 : 0) + '|' + ownerCol
       + '|' + (paused ? 1 : 0) + '|' + (lack ? 1 : 0) + '|' + (noWorkers ? workersRequiredOf(b) : -1)
-      + '|' + (sale ? 1 : 0) + '|' + pass + (passFull ? 'f' : '') + '|' + rc;
+      + '|' + (sale ? 1 : 0) + '|' + pass + (passFull ? 'f' : '') + '|' + rc + (AIR_TYPES.includes(b.type) ? '|a' + airVersion : '');
     if(!RENDER_SAFE && s.b === b && s.geom === geom && s.key === key) return idx + 1;
     s.b = b; s.geom = geom; s.key = key;
 
@@ -704,8 +745,10 @@ const PixiSprites = (function(){
     }
     // contour propriétaire (MP) + drapeau, ou sélection solo
     if(ownerCol != null){
-      diamondPath(s.g, rx0, ry0, rw, rh, lift); s.g.stroke({ color:ownerCol, width: sel?3:1.5 });
-      s.g.circle(tc[0]-TW*rw*0.28, tc[1]-4, 4).fill({ color:ownerCol });
+      // le trait de couleur est dessiné dans la couche triée (updateOwnerOutline) pour que les
+      // bords cachés par les volumes 3D le restent ; ici seulement le repère sur le toit
+      if(!isAirPiece(b) || (b.type === 'air_terminal' && airportRepresentative(b) === b))
+        s.g.circle(tc[0]-TW*rw*0.28, tc[1]-4, 4).fill({ color:ownerCol });
     } else if(sel){
       diamondPath(s.g, rx0, ry0, rw, rh, lift); s.g.stroke({ color:0xffffff, width:2 });
     }
@@ -786,6 +829,10 @@ const PixiSprites = (function(){
       // Gares : contours/marqueurs déjà bakés. Sinon overlays live (sauf mode diagnostic).
       if(showOverlays && !station && !node.diag) ovN = drawBuildingOv(b, node.geom, ovLayer, ovN);
       if(b.type === 'air_tower') updateTowerRadar(b, node.geom, ovLayer);
+      if(!station) updateOwnerOutline(b, node.geom, sortLayer, node, showOverlays && !node.diag);
+    }
+    for(const [b, o] of ownerOutlines){
+      if(!seen.has(b)){ o.g.destroy(); ownerOutlines.delete(b); }
     }
     // Radars de tour de contrôle : masquer ceux hors de vue, libérer ceux des tours disparues
     for(const [b, g] of towerRadars){
