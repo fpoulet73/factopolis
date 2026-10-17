@@ -143,7 +143,13 @@ const PixiScene = (function(){
       _bgTexW = groundCache.width; _bgTexH = groundCache.height; needUpload = true;
     }
     if(groundCache.width !== _bgTexW || groundCache.height !== _bgTexH){
-      _bgSource.resize(groundCache.width, groundCache.height, 1);
+      // Source NEUVE plutôt que _bgSource.resize() : après un redimensionnement (zoom navigateur
+      // Ctrl +/-), la texture GPU redimensionnée restait au mauvais format → terrain décalé
+      // (très visible sur le relief) tant qu'on ne la recréait pas.
+      const old = bgTerrain.texture;
+      _bgSource = new PIXI.CanvasSource({ resource: groundCache, resolution: 1 });
+      bgTerrain.texture = new PIXI.Texture({ source: _bgSource });
+      if(old && old !== PIXI.Texture.EMPTY){ try { old.destroy(true); } catch(e){} }
       _bgTexW = groundCache.width; _bgTexH = groundCache.height; needUpload = true;
     }
     if(_bgTexVer !== groundTexVersion){ _bgTexVer = groundTexVersion; needUpload = true; }
@@ -217,7 +223,20 @@ const PixiScene = (function(){
 
   function resize(){
     if(!ready) return;
+    // Zoom navigateur : la taille en px PHYSIQUES peut rester identique (ex. 1284×805 à 100 % comme
+    // à 125 %) alors que la résolution change. Pixi ignore alors le resize et garde renderer.screen
+    // aux anciennes valeurs → tout le rendu Pixi (terrain, arbres, bâtiments) est mis à l'échelle
+    // et rogné (décalage visible surtout sur le relief). On force le recalcul via une taille
+    // intermédiaire différente.
+    if(app.renderer.resolution !== DPR) app.renderer.resize(W + 1, H + 1, DPR);
     app.renderer.resize(W, H, DPR);
+    // Zoom navigateur (Ctrl +/-) : W/H (px CSS) et DPR changent ensemble, mais autoDensity ne
+    // remet pas toujours le style CSS à jour → le canvas WebGL gardait l'ancienne taille CSS et
+    // se retrouvait étiré/décalé par rapport à #cv (100vw×100vh) et à la souris.
+    const el = app.canvas;
+    if(el){ el.style.width = W + 'px'; el.style.height = H + 'px'; }
+    // Le buffer-sol (groundCache) est cuit à l'ancien DPR : reconstruction au prochain draw().
+    if(typeof markGroundDirty === 'function') markGroundDirty();
     render();
   }
   addEventListener('resize', resize);

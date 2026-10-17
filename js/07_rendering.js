@@ -2771,7 +2771,9 @@ function draw(){
   const contentKey = cam.z + '|' + rot + '|' + groundVersion + '|'
     + cv.width + '|' + cv.height + '|'
     + expansions.indexOf(hoveredExpansion) + '|' + expansions.indexOf(selectedExpansion);
-  const bufW = (W + 2*M) * DPR, bufH = (H + 2*M) * DPR;
+  // Arrondi : un canvas a une taille entière ; avec un DPR fractionnaire (zoom navigateur)
+  // la comparaison à groundCache.width échouait toujours → reconstruction à CHAQUE frame.
+  const bufW = Math.round((W + 2*M) * DPR), bufH = Math.round((H + 2*M) * DPR);
   // Offset de blit buffer→principal (en px device). Le buffer couvre une zone centrée
   // sur cacheCam ; le viewport courant y pioche à srcX/srcY.
   let srcX = ((cam.x - cacheCamX) * z + M) * DPR;

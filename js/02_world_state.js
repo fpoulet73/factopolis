@@ -637,7 +637,7 @@ const qualityLow = () => UI_OPTIONS.quality === 'low' || (UI_OPTIONS.quality ===
 function resize(){
   DPR = qualityLow() ? 1 : (window.devicePixelRatio || 1);
   W = innerWidth; H = innerHeight;
-  cv.width = W*DPR; cv.height = H*DPR;
+  cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
 }
 // Changement de qualité à chaud : recalcule DPR, redimensionne #cv et la scène Pixi.
 function applyQuality(){
@@ -645,7 +645,30 @@ function applyQuality(){
   if(typeof PixiScene !== 'undefined' && PixiScene.resize) PixiScene.resize();
   if(typeof markGroundDirty === 'function') markGroundDirty();
 }
-addEventListener('resize', resize); resize();
+// Au redimensionnement (fenêtre, zoom navigateur Ctrl +/-), cam.x/cam.y est le coin haut-gauche :
+// sans correction, le contenu reste ancré en haut à gauche et le centre de l'écran dérive d'un
+// cran à chaque zoom. On garde donc le CENTRE de la vue fixe en décalant la caméra de la
+// moitié de la variation de taille (en unités monde : / z).
+let lastDevDpr = window.devicePixelRatio || 1;
+addEventListener('resize', () => {
+  const ow = W, oh = H;
+  resize();
+  if(ow > 0 && oh > 0 && (ow !== W || oh !== H)){
+    for(const c of [cam, targetCam]){
+      c.x += (ow - W) / (2 * c.z);
+      c.y += (oh - H) / (2 * c.z);
+    }
+    // Le pointeur n'a pas bougé à l'écran (px physiques) mais ses coordonnées CSS ont changé :
+    // mouse.x/y (dernier mousemove, relu à chaque frame pour le survol) sont périmés → losange
+    // de survol décalé. On les remet à l'échelle du rapport de zoom navigateur.
+    const dev = window.devicePixelRatio || 1;
+    if(typeof mouse !== 'undefined' && lastDevDpr !== dev){
+      mouse.x *= lastDevDpr / dev; mouse.y *= lastDevDpr / dev;
+    }
+  }
+  lastDevDpr = window.devicePixelRatio || 1;
+});
+resize();
 
 // ---------- cache de la couche sol (terrain/eau/routes/rails) ----------
 // Scroll-buffer à marge : on rend le sol dans un canvas offscreen PLUS GRAND que
