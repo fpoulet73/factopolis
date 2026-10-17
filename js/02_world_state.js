@@ -1110,6 +1110,46 @@ function ensureStarterArea(){
   return { x: sx, y: sy };
 }
 
+// Garantit au moins une case de chaque ressource (bois, blé, coton, gisements, sable, argile)
+// dans la zone `inScope(x,y)` : zone jouable initiale ou région neuve d'une extension de carte.
+// Les ressources manquantes sont posées en petite tache sur de l'herbe (sable/argile : sur une
+// rive). Sans effet pour un type déjà présent ou si la zone n'a aucune herbe disponible.
+function ensureAllResourcesInScope(inScope){
+  const present = new Set();
+  const grass = [];
+  for(let y = 0; y < N; y++) for(let x = 0; x < N; x++){
+    if(!inScope(x, y)) continue;
+    const t = terrain[y*N+x];
+    present.add(t);
+    if(t === T.GRASS) grass.push(y*N+x);
+  }
+  if(!grass.length) return;
+  const pickGrass = pool => {
+    for(let tries = 0; tries < 200; tries++){
+      const i = pool[(Math.random()*pool.length)|0];
+      if(terrain[i] === T.GRASS) return i;
+    }
+    return -1;
+  };
+  for(const type of [T.TREE, T.WHEAT, T.COTTON, ...WORLD_DEPOSITS.map(dep => dep.t)]){
+    if(present.has(type)) continue;
+    const idx = pickGrass(grass);
+    if(idx < 0) continue;
+    const cx = idx % N, cy = (idx / N) | 0;
+    for(let dy = -1; dy <= 1; dy++) for(let dx = -1; dx <= 1; dx++){
+      const x = cx+dx, y = cy+dy;
+      if(x < 0 || y < 0 || x >= N || y >= N || !inScope(x, y)) continue;
+      if(terrain[y*N+x] === T.GRASS) terrain[y*N+x] = type;
+    }
+  }
+  const shore = grass.filter(i => tileTouchesWater(i % N, (i / N) | 0));
+  for(const type of [T.SAND, T.CLAY]){
+    if(present.has(type) || !shore.length) continue;
+    const idx = pickGrass(shore);
+    if(idx >= 0) terrain[idx] = type;
+  }
+}
+
 function genWorld(config){
   WORLD = normalizeWorldConfig(config || WORLD);
   const N_PLAY = WORLD.size;
@@ -1200,6 +1240,7 @@ function genWorld(config){
   };
   [T.TREE, T.WHEAT, T.COTTON, ...WORLD_DEPOSITS.map(dep => dep.t)].forEach(ensureResourceZoneInPlayArea);
   applyShoreResources(tn, (x, y) => !!mapMask[y*N+x]);
+  ensureAllResourcesInScope((x, y) => !!mapMask[y*N+x]); // dont sable et argile
   // zone de départ jouable : rive, fer, charbon et bois à portée (façon Factorio)
   const start = ensureStarterArea();
   starterSite = start;
@@ -1311,6 +1352,7 @@ function generateExpansionTerrain(){
   pp(T.COTTON,cnt(WORLD.resources?.cotton??2),{maxRadius:1,fillChance:0.65});
   for(const dep of WORLD_DEPOSITS) pp(dep.t, cnt(WORLD.resources?.[dep.key] ?? WORLD_DEFAULTS.resources[dep.key] ?? 0), dep.opts);
   applyShoreResources(tn, (x, y) => !inPlay(x, y));
+  ensureAllResourcesInScope((x, y) => !inPlay(x, y));
   rebuildWaterLevels();
   markTerrainDirty();
 }
@@ -1378,6 +1420,7 @@ function generateNewMapRegion(oldN, dx, dy){
   pp(T.COTTON,cnt(WORLD.resources?.cotton??2),{maxRadius:1,fillChance:0.65});
   for(const dep of WORLD_DEPOSITS) pp(dep.t, cnt(WORLD.resources?.[dep.key] ?? WORLD_DEFAULTS.resources[dep.key] ?? 0), dep.opts);
   applyShoreResources(tn, isNew);
+  ensureAllResourcesInScope(isNew);
   rebuildWaterLevels();
   markTerrainDirty();
 }
