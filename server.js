@@ -488,7 +488,7 @@ const ALLOWED_ACTIONS = new Set([
 const EXPANSION_SIDES = new Set(['left','right','top','bottom','top-left','top-right','bottom-left','bottom-right']);
 const ALLOWED_BUILD_TYPES = new Set([
   'road', 'rail', 'mine', 'lumber', 'farm', 'cotton_farm', 'weaver', 'pump', 'fisher', 'mill',
-  'bakery', 'fishery', 'smelter', 'factory', 'plant', 'house', 'depot', 'market',
+  'bakery', 'fishery', 'smelter', 'factory', 'plant', 'house', 'lux_house', 'depot', 'market',
   'tank', 'garage', 'train_depot', 'train_station', 'boat_depot', 'plane_depot', 'bus_stop', 'terrassement',
 ]);
 const ALLOWED_VEHICLE_TYPES = new Set([

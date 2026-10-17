@@ -63,6 +63,7 @@ window.FACTOPOLIS_TRANSLATIONS.es = {
   'help.building6': 'Las fábricas necesitan <b>trabajadores</b>: sin suficientes habitantes, producen más lento.',
   'help.building7': 'El almacén 📦 guarda todo y redistribuye entre edificios.',
   'help.building8': 'La industria tiene un <b>coste de mantenimiento</b> periódico que crece más rápido que su tamaño: ¡un imperio industrial debe ser rentable!',
+  'help.building9': 'A partir de 100 habitantes, elige una <b>casa básica</b> o una <b>💎 casa de lujo</b> (5× más cara). Llena y abastecida de herramientas, la casa de lujo se amplía sobre las casillas libres vecinas (2, 4 y luego 9 casillas): los mismos habitantes, pero pasan a empleados, ejecutivos y luego patrones, que pagan más.',
   'help.housingTitle': '🏠 Viviendas y fusión',
   'help.housing1': 'Las casas consumen <b>filetes de pescado</b> → <b>+1 habitante</b> y dinero. El <b>aceite de pescado</b> entregado da un bono. Los edificios también piden <b>pan</b> y las torres <b>ropa</b>.',
   'help.housing2': 'Sin sus recursos esenciales durante demasiado tiempo, las viviendas se <b>degradan</b>: los edificios fusionados se separan y los habitantes sobrantes se marchan a pie.',

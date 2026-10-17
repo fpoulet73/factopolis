@@ -63,6 +63,7 @@ window.FACTOPOLIS_TRANSLATIONS.fr = {
   'help.building6': 'Les usines ont besoin d’<b>ouvriers</b> : sans assez d’habitants, elles tournent au ralenti.',
   'help.building7': 'L’📦 entrepôt stocke tout et redistribue entre les bâtiments.',
   'help.building8': 'L’industrie a un <b>coût d’entretien</b> périodique qui grandit plus vite que sa taille — un empire industriel doit être rentable !',
+  'help.building9': 'Dès 100 habitants, choisis <b>maison basique</b> ou <b>💎 maison de luxe</b> (5× plus chère). Pleine et livrée en outils, la maison de luxe s’agrandit sur les cases libres voisines (2, 4 puis 9 cases) : mêmes habitants, mais ils deviennent employés, cadres puis patrons, qui paient plus.',
   'help.housingTitle': '🏠 Logements & Fusion',
   'help.housing1': 'Les maisons consomment des <b>filets de poisson</b> → <b>+1 habitant</b> et de l’argent. L’<b>huile de poisson</b> livrée rapporte un bonus. Les immeubles demandent aussi du <b>pain</b>, les tours des <b>vêtements</b>.',
   'help.housing2': 'Sans leurs ressources indispensables trop longtemps, les logements se <b>dégradent</b> : les bâtiments fusionnés se séparent et les habitants en trop quittent la ville à pied.',

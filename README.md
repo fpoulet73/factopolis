@@ -219,6 +219,13 @@ marchandise (pas de rente en navette).
   fusionnent en niveau supérieur.
 - En cas de pénurie prolongée (`STARVE_DELAY`) : un bâtiment fusionné se
   sépare ; une maison simple perd un habitant (qui quitte la carte à pied).
+- 💎 **Maisons de luxe** (dès 100 habitants, 5× le prix d'une maison) :
+  pleines et livrées en outils, elles s'agrandissent sur les cases libres
+  voisines (2, 4 puis 9 cases : villa, manoir, domaine avec piscine et tennis)
+  sans gagner d'habitants. Leurs habitants changent de **classe** — ouvriers
+  → employés → cadres → patrons — et paient plus de taxes et d'achats
+  (`maisonLuxe` et `classesHabitants` dans `config.js`). Les logements
+  basiques abritent toujours des ouvriers.
 
 ### Villages / villes
 

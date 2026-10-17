@@ -168,6 +168,79 @@ const CONFIG = {
     ressourcesBonus: ['fish_oil'],
   },
 
+  /* ---------- MAISONS DE LUXE ----------
+     Débloquées quand le joueur atteint `seuilHabitants` habitants (déblocage
+     définitif). Une maison de luxe coûte `multiplicateurCout` × le prix d'une
+     maison basique (batiments.maison.cout).
+     Agrandissement : il se déclenche comme pour une maison basique (logement
+     plein + ressources d'upgrade livrées), mais la maison s'étend sur les cases
+     LIBRES voisines (herbe plate au même niveau, sans route, rail ni bâtiment)
+     au lieu de fusionner avec ses voisines. Pas d'immeuble : la maison s'étale
+     (jardin, piscine, tennis…) et gagne au plus un étage. Le nombre d'habitants
+     ne change pas, seule leur classe progresse (cf. classesHabitants) :
+       maison  1 case  → ouvriers
+       villa   2 cases → employés
+       manoir  4 cases → cadres
+       domaine 9 cases → patrons (taille maximale)
+     Chaque niveau accepte les mêmes clés que les logements basiques, plus
+     `classe` (clé de classesHabitants). */
+  maisonLuxe: {
+    seuilHabitants: 100,
+    multiplicateurCout: 5,
+    maison: {
+      classe: 'ouvrier',
+      intervalleConsommation: 60,
+      habitantsMax: 5,
+      stockMax: 10,
+      ressourcesIndispensables: ['fish_fillet'],
+      ressourcesUpgrade: { goods: 60 },
+      ressourcesBonus: ['fish_oil'],
+    },
+    villa: {
+      classe: 'employe',
+      formes: [[2,1],[1,2]],
+      intervalleConsommation: 40,
+      habitantsMax: 5,
+      stockMax: 14,
+      ressourcesIndispensables: ['fish_fillet','bread'],
+      ressourcesUpgrade: { goods: 150 },
+      ressourcesBonus: ['fish_oil'],
+    },
+    manoir: {
+      classe: 'cadre',
+      formes: [[2,2]],
+      intervalleConsommation: 30,
+      habitantsMax: 5,
+      stockMax: 20,
+      ressourcesIndispensables: ['fish_fillet','bread','clothes'],
+      ressourcesUpgrade: { goods: 300 },
+      ressourcesBonus: ['fish_oil'],
+    },
+    domaine: {
+      classe: 'patron',
+      formes: [[3,3]],
+      intervalleConsommation: 20,
+      habitantsMax: 5,
+      stockMax: 30,
+      ressourcesIndispensables: ['fish_fillet','bread','clothes'],
+      ressourcesUpgrade: {},
+      ressourcesBonus: ['fish_oil'],
+    },
+  },
+
+  /* ---------- CLASSES D'HABITANTS ----------
+     Les logements basiques (maisons et toutes leurs fusions) abritent des
+     ouvriers. Les maisons de luxe font monter la classe de leurs habitants à
+     chaque agrandissement (cf. maisonLuxe).
+       taxe   : multiplicateur de la taxe par habitant (economie.taxeParHabitant)
+       revenu : multiplicateur du revenu des ressources consommées par le logement */
+  classesHabitants: {
+    ouvrier: { nom: 'Ouvrier', pluriel: 'Ouvriers', icone: '👷', taxe: 1, revenu: 1 },
+    employe: { nom: 'Employé', pluriel: 'Employés', icone: '👔', taxe: 2, revenu: 2 },
+    cadre:   { nom: 'Cadre',   pluriel: 'Cadres',   icone: '💼', taxe: 4, revenu: 4 },
+    patron:  { nom: 'Patron',  pluriel: 'Patrons',  icone: '🎩', taxe: 8, revenu: 8 },
+  },
+
   /* ---------- FUSION INDUSTRIELLE ----------
      Les bâtiments de production IDENTIQUES (même type, même minerai pour les
      mines) couvrant un rectangle (2×1, 3×1, 4×1, 2×2, 3×2, 4×4…) fusionnent.

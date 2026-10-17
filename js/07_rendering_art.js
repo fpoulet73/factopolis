@@ -358,6 +358,383 @@ function artTower(b, u0, v0, u1, v1, rng, d, floors){
   return artP(cu, cv, z + 2);
 }
 
+// --- Maisons de luxe -------------------------------------------------------
+// Pas d'immeuble : en s'agrandissant le logement s'étale (ailes, jardin, piscine,
+// tennis, fontaine…) et ne gagne au plus qu'un étage. Comme le reste de l'art,
+// le dessin se fait dans l'espace TOURNÉ (u,v) : éléments plats d'abord, puis
+// volumes de l'arrière (petit u+v) vers l'avant, haies de façade en dernier.
+const ART_LUX_WALLS = ['#f4ecdc', '#efe3c8', '#f7f3ea', '#ecdcc2', '#e8e4dc', '#f1e6d6'];
+const ART_LUX_ROOFS = ['#4b5563', '#5a5f6b', '#7a4a3a', '#3e4a5c', '#8a5a44', '#56606e'];
+const ART_LAWN = '#6fb04c';
+const ART_GRAVEL = '#dacfb4';
+
+function artLine(a, b, col, lw){
+  ctx.strokeStyle = col; ctx.lineWidth = lw || 1;
+  ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+}
+
+// Repère d'un lot allongé : a le long du grand côté, b en travers.
+function artLotFrame(u0, v0, u1, v1){
+  const alongU = (u1 - u0) >= (v1 - v0);
+  return {
+    R: (a0, b0, a1, b1) => alongU ? [u0 + a0, v0 + b0, u0 + a1, v0 + b1] : [u0 + b0, v0 + a0, u0 + b1, v0 + a1],
+    P: (a, b) => alongU ? [u0 + a, v0 + b] : [u0 + b, v0 + a],
+  };
+}
+
+// Pelouse, tondue en bandes sur les grands domaines.
+function artLawn(u0, v0, u1, v1, rng, stripes){
+  const base = shade(ART_LAWN, -0.04 + rng() * 0.06);
+  artGround(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, base);
+  if(!stripes) return;
+  const n = Math.round((u1 - u0) * 4);
+  for(let k = 0; k < n; k += 2){
+    const a = u0 + 0.02 + (u1 - u0 - 0.04) * k / n, c = u0 + 0.02 + (u1 - u0 - 0.04) * (k + 1) / n;
+    artGround(a, v0 + 0.02, c, v1 - 0.02, shade(base, 0.07), 0.65);
+  }
+}
+
+function artHedge(u0, v0, u1, v1, h = 3.4){
+  artBox(u0, v0, u1, v1, 0, h, '#3d7d38', { edges:false });
+}
+// Haies du fond (côtés u0 et v0) : dessinées avant les volumes.
+function artHedgesBack(u0, v0, u1, v1){
+  artHedge(u0 + 0.03, v0 + 0.03, u0 + 0.09, v1 - 0.03);
+  artHedge(u0 + 0.03, v0 + 0.03, u1 - 0.03, v0 + 0.09);
+}
+// Haies de façade (côtés u1 et v1), avec une ouverture optionnelle sur le côté
+// u1 (gap = [v début, v fin]) pour le portail.
+function artHedgesFront(u0, v0, u1, v1, gap){
+  if(gap){
+    artHedge(u1 - 0.09, v0 + 0.03, u1 - 0.03, gap[0]);
+    artHedge(u1 - 0.09, gap[1], u1 - 0.03, v1 - 0.03);
+  } else {
+    artHedge(u1 - 0.09, v0 + 0.03, u1 - 0.03, v1 - 0.03);
+  }
+  artHedge(u0 + 0.03, v1 - 0.09, u1 - 0.03, v1 - 0.03);
+}
+
+function artTree(u, v, h, col){
+  const b = artP(u, v, 0), t = artP(u, v, h * 0.5), c = artP(u, v, h * 0.75), r = h * 0.3;
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  ctx.beginPath(); ctx.ellipse(b[0] - 2, b[1] + 1, r * 1.1, r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+  artLine(b, t, '#6b4a2e', 1.6);
+  ctx.fillStyle = shade(col, -0.12);
+  ctx.beginPath(); ctx.arc(c[0], c[1], r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = shade(col, 0.12);
+  ctx.beginPath(); ctx.arc(c[0] + r * 0.3, c[1] - r * 0.3, r * 0.55, 0, Math.PI * 2); ctx.fill();
+}
+
+function artCypress(u, v, h){
+  const b = artP(u, v, 0), c = artP(u, v, h * 0.55);
+  ctx.fillStyle = 'rgba(0,0,0,.16)';
+  ctx.beginPath(); ctx.ellipse(b[0] - 2, b[1] + 1, 3.2, 1.4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#2d6636';
+  ctx.beginPath(); ctx.ellipse(c[0], c[1], 2.8, h * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#3f8445';
+  ctx.beginPath(); ctx.ellipse(c[0] + 0.9, c[1] - h * 0.08, 1.3, h * 0.36, 0, 0, Math.PI * 2); ctx.fill();
+}
+
+// Buis taillé en cône (jardin à la française).
+function artTopiary(u, v, h){
+  const b = artP(u, v, 0), t = artP(u, v, h);
+  ctx.fillStyle = 'rgba(0,0,0,.16)';
+  ctx.beginPath(); ctx.ellipse(b[0] - 1, b[1] + 0.5, 3, 1.3, 0, 0, Math.PI * 2); ctx.fill();
+  artPoly([[b[0] - 3, b[1] - 1], [b[0] + 3, b[1] - 1], [t[0], t[1]]], '#2f7134');
+  artPoly([[b[0], b[1] - 1], [b[0] + 3, b[1] - 1], [t[0], t[1]]], '#3f8a44');
+}
+
+function artFlowerBed(u0, v0, u1, v1, rng){
+  artGround(u0, v0, u1, v1, '#7a5a3a', 0.8);
+  const cols = ['#e84a5f', '#f7d046', '#f4f4f4', '#c86fd8', '#ff8c42'];
+  const n = Math.round((u1 - u0) * (v1 - v0) * 120) + 5;
+  for(let k = 0; k < n; k++){
+    const p = artP(u0 + (u1 - u0) * (0.1 + rng() * 0.8), v0 + (v1 - v0) * (0.1 + rng() * 0.8), 1.6);
+    ctx.fillStyle = cols[Math.floor(rng() * cols.length)];
+    ctx.beginPath(); ctx.arc(p[0], p[1], 1.1, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function artDeck(u0, v0, u1, v1){
+  artGround(u0, v0, u1, v1, '#b98b5b', 0.7);
+  ctx.strokeStyle = 'rgba(90,60,30,.35)'; ctx.lineWidth = 0.5;
+  const n = Math.max(2, Math.round((u1 - u0) * 10));
+  for(let k = 1; k < n; k++){
+    const u = u0 + (u1 - u0) * k / n, a = artP(u, v0, 0.75), c = artP(u, v1, 0.75);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(c[0], c[1]); ctx.stroke();
+  }
+}
+
+// Piscine : margelle claire, bassin, reflets et échelle chromée.
+function artPool(u0, v0, u1, v1){
+  artGround(u0, v0, u1, v1, '#ebe5d6', 0.9);
+  const i = 0.05;
+  artGround(u0 + i, v0 + i, u1 - i, v1 - i, '#2f86b8', 0.5);
+  artGround(u0 + i + 0.025, v0 + i + 0.025, u1 - i, v1 - i, '#4fb8e3', 0.5);
+  const alongU = (u1 - u0) >= (v1 - v0);
+  ctx.strokeStyle = 'rgba(235,250,255,.6)'; ctx.lineWidth = 0.8;
+  for(const s of [0.3, 0.62]){
+    const p = alongU
+      ? [artP(u0 + (u1 - u0) * 0.2, v0 + (v1 - v0) * s, 0.6), artP(u0 + (u1 - u0) * 0.55, v0 + (v1 - v0) * s, 0.6)]
+      : [artP(u0 + (u1 - u0) * s, v0 + (v1 - v0) * 0.2, 0.6), artP(u0 + (u1 - u0) * s, v0 + (v1 - v0) * 0.55, 0.6)];
+    ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]); ctx.lineTo(p[1][0], p[1][1]); ctx.stroke();
+  }
+  const lu = alongU ? u1 - i : u0 + (u1 - u0) * 0.5, lv = alongU ? v0 + (v1 - v0) * 0.5 : v1 - i;
+  for(const d of [-0.04, 0.04]){
+    const q0 = alongU ? artP(lu, lv + d, 0.9) : artP(lu + d, lv, 0.9);
+    artLine(q0, [q0[0], q0[1] - 4], '#d9e1e8', 0.9);
+  }
+}
+
+function artLounger(u0, v0, u1, v1){
+  artBox(u0, v0, u1, v1, 0.8, 2.4, '#f2f2f0', { edges:false });
+}
+
+function artParasol(u, v, col){
+  const b = artP(u, v, 0.8), t = artP(u, v, 12);
+  artLine(b, t, '#e9e9e9', 1);
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.moveTo(t[0] - 8, t[1] + 3); ctx.quadraticCurveTo(t[0], t[1] - 5, t[0] + 8, t[1] + 3); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.35)';
+  ctx.beginPath(); ctx.moveTo(t[0], t[1] - 1); ctx.quadraticCurveTo(t[0] + 4, t[1] - 2, t[0] + 8, t[1] + 3); ctx.lineTo(t[0] + 3, t[1] + 3); ctx.closePath(); ctx.fill();
+}
+
+function artLamp(u, v){
+  const b = artP(u, v, 0), t = artP(u, v, 12);
+  artLine(b, t, '#2b2f36', 1);
+  ctx.fillStyle = 'rgba(255,226,150,.95)';
+  ctx.beginPath(); ctx.arc(t[0], t[1], 1.7, 0, Math.PI * 2); ctx.fill();
+}
+
+function artFountain(u, v, r){
+  artCylinder(u, v, r, 0, 3.5, '#d9d2c3', { topCol:'#cfc6b4' });
+  const c = artP(u, v, 3.5);
+  ctx.fillStyle = '#5bb8e0';
+  ctx.beginPath(); ctx.ellipse(c[0], c[1], r * 0.8 * Math.SQRT2 * TW2, r * 0.8 * Math.SQRT2 * TH2, 0, 0, Math.PI * 2); ctx.fill();
+  artCylinder(u, v, r * 0.16, 3.5, 9, '#e3dccd', { top:false });
+  artCylinder(u, v, r * 0.42, 9, 10.2, '#d6cebd', { topCol:'#7cc6e6' });
+  const t = artP(u, v, 10.2);
+  ctx.strokeStyle = 'rgba(205,238,255,.9)'; ctx.lineWidth = 1;
+  for(const dx of [-1, 1]){
+    ctx.beginPath(); ctx.moveTo(t[0], t[1] - 5); ctx.quadraticCurveTo(t[0] + dx * 5, t[1] - 8, t[0] + dx * 8, t[1] + 4); ctx.stroke();
+  }
+}
+
+// Court de tennis allongé selon son grand côté : surface, lignes, et, dessinés
+// plus tard au bon rang de profondeur, le filet et le grillage avant.
+function artTennisCourt(u0, v0, u1, v1, surface){
+  const alongU = (u1 - u0) >= (v1 - v0);
+  const L = alongU ? u1 - u0 : v1 - v0, W = alongU ? v1 - v0 : u1 - u0;
+  const P = (a, b, z) => alongU ? artP(u0 + a, v0 + b, z) : artP(u0 + b, v0 + a, z);
+  artGround(u0, v0, u1, v1, '#3f7a52', 0.7);
+  const a0 = L * 0.1, a1 = L * 0.9, b0 = W * 0.14, b1 = W * 0.86;
+  artPoly([P(a0, b0, 0.8), P(a1, b0, 0.8), P(a1, b1, 0.8), P(a0, b1, 0.8)], surface);
+  const seg = (pa, pb, qa, qb) => artLine(P(pa, pb, 0.9), P(qa, qb, 0.9), 'rgba(255,255,255,.92)', 0.8);
+  seg(a0, b0, a1, b0); seg(a1, b0, a1, b1); seg(a1, b1, a0, b1); seg(a0, b1, a0, b0);
+  const sb = (b1 - b0) * 0.125, am = (a0 + a1) / 2, sl = (a1 - a0) * 0.27;
+  seg(a0, b0 + sb, a1, b0 + sb); seg(a0, b1 - sb, a1, b1 - sb);
+  seg(am - sl, b0 + sb, am - sl, b1 - sb); seg(am + sl, b0 + sb, am + sl, b1 - sb);
+  seg(am - sl, (b0 + b1) / 2, am + sl, (b0 + b1) / 2);
+  return { P, L, W, am, b0, b1 };
+}
+function artTennisFence(c, front){
+  const { P, L, W } = c, H = 9;
+  const side = (pa, pb, qa, qb) => {
+    artPoly([P(pa, pb, 0.8), P(qa, qb, 0.8), P(qa, qb, H), P(pa, pb, H)], 'rgba(40,72,52,.2)');
+    artLine(P(pa, pb, H), P(qa, qb, H), 'rgba(30,50,36,.85)', 0.7);
+    for(const t of [0, 0.5, 1]){
+      const a = pa + (qa - pa) * t, b = pb + (qb - pb) * t;
+      artLine(P(a, b, 0.8), P(a, b, H), 'rgba(30,50,36,.85)', 0.8);
+    }
+  };
+  if(front){ side(L, 0, L, W); side(0, W, L, W); }
+  else { side(0, 0, L, 0); side(0, 0, 0, W); }
+}
+function artTennisNet(c){
+  const { P, am, b0, b1 } = c;
+  const p0 = P(am, b0 - 0.03, 0.9), p1 = P(am, b1 + 0.03, 0.9), q1 = P(am, b1 + 0.03, 4.2), q0 = P(am, b0 - 0.03, 4.2);
+  artPoly([p0, p1, q1, q0], 'rgba(28,32,38,.45)');
+  artLine(q0, q1, '#ffffff', 1);
+  artLine(p0, [q0[0], q0[1] - 1], '#2c3036', 1.2);
+  artLine(p1, [q1[0], q1[1] - 1], '#2c3036', 1.2);
+}
+
+// Corps de logis : murs clairs, soubassement, hautes fenêtres à encadrement,
+// bandeau d'étage, corniche, puis toit en croupe ou toit-terrasse (opts.flat).
+// opts.z0 : posé sur un volume inférieur. Retourne la hauteur du sommet.
+function artLuxBlock(u0, v0, u1, v1, floors, wall, roof, rng, opts = {}){
+  const fh = opts.fh || 11.5, Z = opts.z0 || 0, H = Z + floors * fh;
+  if(!Z) artShadow(u0, v0, u1, v1, H + 8);
+  artBox(u0, v0, u1, v1, Z, H, wall, { top: !!opts.flat });
+  if(!Z) artBox(u0 - 0.005, v0 - 0.005, u1 + 0.005, v1 + 0.005, 0, 2.2, shade(wall, -0.28), { top:false, edges:false });
+  const glow = 'rgba(255,226,150,.92)', dark = opts.glass ? 'rgba(126,176,210,.92)' : 'rgba(46,64,88,.88)';
+  const doFace = (face, k, a0, a1) => {
+    const cols = Math.max(1, Math.round((a1 - a0) * (opts.glass ? 2 : 3)));
+    for(let f = 0; f < floors; f++){
+      const z0 = Z + f * fh + 3.2, z1 = z0 + (opts.glass ? 6 : 5.4);
+      for(let c = 0; c < cols; c++){
+        const s0 = a0 + (a1 - a0) * (c + (opts.glass ? 0.12 : 0.24)) / cols, s1 = a0 + (a1 - a0) * (c + (opts.glass ? 0.88 : 0.76)) / cols;
+        if(!opts.glass) artWindow(face, k, s0 - 0.012, s1 + 0.012, z0 - 0.7, z1 + 0.7, shade(wall, 0.14));
+        artWindow(face, k, s0, s1, z0, z1, rng() < 0.3 ? glow : dark);
+      }
+    }
+  };
+  doFace('r', u1, v0, v1);
+  doFace('l', v1, u0, u1);
+  if(floors > 1) artBox(u0 - 0.01, v0 - 0.01, u1 + 0.01, v1 + 0.01, Z + fh - 0.6, Z + fh + 0.4, shade(wall, 0.18), { top:false, edges:false });
+  artBox(u0 - 0.02, v0 - 0.02, u1 + 0.02, v1 + 0.02, H - 1.2, H, shade(wall, 0.2), { top: !!opts.flat, topCol: shade(wall, -0.08), edges:false });
+  if(opts.flat){
+    // acrotère du toit-terrasse
+    artBox(u0 - 0.02, v0 - 0.02, u1 + 0.02, v1 + 0.02, H, H + 1.6, shade(wall, 0.1), { top:false, edges:false });
+    return H + 1.6;
+  }
+  const roofH = opts.roofH || 9;
+  artHip(u0, v0, u1, v1, H, H + roofH, roof, 0.3);
+  return H + roofH;
+}
+
+// Porche / portique sur la face u = k : colonnes, entablement, fronton optionnel.
+function artPortico(k, s0, s1, depth, h, wall, cols, pediment){
+  for(let i = 0; i < cols; i++){
+    const s = s0 + 0.03 + (s1 - s0 - 0.06) * i / Math.max(1, cols - 1);
+    artCylinder(k + depth - 0.04, s, 0.028, 0, h, '#f5f2ea', { top:false });
+  }
+  artBox(k, s0, k + depth, s1, h, h + 1.6, shade(wall, 0.12), { edges:false });
+  if(pediment){
+    const sm = (s0 + s1) / 2;
+    artPoly([artP(k + depth, s0, h + 1.6), artP(k + depth, s1, h + 1.6), artP(k + depth, sm, h + 7)], shade(wall, 0.06), 'rgba(0,0,0,.15)', 0.6);
+  }
+}
+
+// 1 case — ouvriers : maison bourgeoise, porche, massif de fleurs, haies.
+function artLuxHouse(b, u0, v0, u1, v1, rng){
+  const wall = ART_LUX_WALLS[Math.floor(rng() * ART_LUX_WALLS.length)];
+  const roof = ART_LUX_ROOFS[Math.floor(rng() * ART_LUX_ROOFS.length)];
+  const hu0 = u0 + 0.15, hv0 = v0 + 0.14, hu1 = u1 - 0.27, hv1 = v1 - 0.24, hvm = (hv0 + hv1) / 2;
+  artLawn(u0, v0, u1, v1, rng, false);
+  artGround(hu1, hvm - 0.06, u1 - 0.02, hvm + 0.06, ART_GRAVEL, 0.7);   // allée vers le portillon
+  artFlowerBed(hu0 + 0.02, hv1 + 0.04, hu1 - 0.04, v1 - 0.11, rng);
+  artHedgesBack(u0, v0, u1, v1);
+  const top = artLuxBlock(hu0, hv0, hu1, hv1, 1, wall, roof, rng, { roofH:13, fh:13 });
+  artWindow('r', hu1, hvm - 0.07, hvm + 0.07, 0, 8, '#5a3a2a');
+  artPortico(hu1, hvm - 0.15, hvm + 0.15, 0.12, 8.5, wall, 2, false);
+  const cu = hu0 + (hu1 - hu0) * 0.3, cv = hv0 + (hv1 - hv0) * 0.3;
+  artBox(cu - 0.05, cv - 0.05, cu + 0.05, cv + 0.05, top - 7, top + 2, '#8a6a58');
+  artTree(u1 - 0.13, v0 + 0.15, 18, '#4f9a3f');
+  artLamp(u1 - 0.12, hvm + 0.14);
+  artHedgesFront(u0, v0, u1, v1, [hvm - 0.08, hvm + 0.08]);
+  return artP((u0 + u1) / 2, (v0 + v1) / 2, top);
+}
+
+// 2 cases — employés : villa moderne (toits plats, étage en retrait bardé de
+// bois), terrasse en bois et piscine.
+function artLuxVilla(b, u0, v0, u1, v1, rng){
+  const F = artLotFrame(u0, v0, u1, v1);
+  const wall = ['#f6f4ef', '#f1ede4', '#ece8e0'][Math.floor(rng() * 3)];
+  const wood = ['#a8754a', '#9a6a42', '#b5845a'][Math.floor(rng() * 3)];
+  const sun = ['#e8574a', '#f2c94c', '#3f8fd9', '#f4f4f4'][Math.floor(rng() * 4)];
+  artLawn(u0, v0, u1, v1, rng, false);
+  artDeck(...F.R(1.0, 0.1, 1.9, 0.9));
+  artPool(...F.R(1.1, 0.2, 1.72, 0.64));
+  artHedgesBack(u0, v0, u1, v1);
+  artTree(...F.P(0.16, 0.16), 22, '#4f9a3f');
+  artLuxBlock(...F.R(0.14, 0.16, 0.96, 0.84), 1, wall, '#555', rng, { flat:true, glass:true });
+  const top = artLuxBlock(...F.R(0.2, 0.22, 0.62, 0.6), 1, wood, '#555', rng, { flat:true, glass:true, z0:11.5 });
+  artTree(...F.P(1.9, 0.12), 18, '#5aa04a');
+  artLounger(...F.R(1.18, 0.72, 1.4, 0.84));
+  artLounger(...F.R(1.48, 0.72, 1.7, 0.84));
+  artParasol(...F.P(1.44, 0.82), sun);
+  artBush(...F.P(0.2, 0.9), 3, '#3f8f3a');
+  artHedgesFront(u0, v0, u1, v1);
+  return artP((u0 + u1) / 2, (v0 + v1) / 2, top);
+}
+
+// 4 cases — cadres : manoir à un étage, aile basse, piscine, parterre et fontaine.
+function artLuxManor(b, u0, v0, u1, v1, rng){
+  const wall = ART_LUX_WALLS[Math.floor(rng() * ART_LUX_WALLS.length)];
+  const roof = ART_LUX_ROOFS[Math.floor(rng() * ART_LUX_ROOFS.length)];
+  const sun = ['#e8574a', '#f2c94c', '#3f8fd9'][Math.floor(rng() * 3)];
+  const U = (s) => u0 + s, V = (s) => v0 + s;
+  artLawn(u0, v0, u1, v1, rng, true);
+  artDeck(U(1.32), V(0.14), U(1.9), V(1.0));
+  artPool(U(1.42), V(0.24), U(1.74), V(0.88));
+  artGround(U(1.12), V(1.2), U(1.8), V(1.86), ART_GRAVEL, 0.7);
+  artFlowerBed(U(1.18), V(1.26), U(1.34), V(1.42), rng);
+  artFlowerBed(U(1.58), V(1.26), U(1.74), V(1.42), rng);
+  artFlowerBed(U(1.18), V(1.64), U(1.34), V(1.8), rng);
+  artFlowerBed(U(1.58), V(1.64), U(1.74), V(1.8), rng);
+  artFlowerBed(U(0.2), V(1.56), U(0.86), V(1.82), rng);
+  artHedgesBack(u0, v0, u1, v1);
+  for(let s = 0.35; s < 1.9; s += 0.38) artCypress(U(0.1), V(s), 20);
+  for(let s = 0.35; s < 1.3; s += 0.38) artCypress(U(s), V(0.1), 20);
+  const top = artLuxBlock(U(0.2), V(0.2), U(1.2), V(0.92), 2, wall, roof, rng, { roofH:10 });
+  artWindow('r', U(1.2), V(0.48), V(0.64), 0, 9, '#5a3a2a');
+  artPortico(U(1.2), V(0.4), V(0.72), 0.1, 10, wall, 3, true);
+  artLuxBlock(U(0.2), V(0.92), U(0.8), V(1.42), 1, wall, roof, rng, { roofH:7 });
+  artLounger(U(1.78), V(0.3), U(1.86), V(0.52));
+  artLounger(U(1.78), V(0.6), U(1.86), V(0.82));
+  artParasol(U(1.82), V(0.56), sun);
+  artFountain(U(1.46), V(1.53), 0.17);
+  artBush(U(0.96), V(1.3), 3.2, '#3f8f3a');
+  artTree(U(1.86), V(1.12), 22, '#4f9a3f');
+  artLamp(U(1.08), V(1.12));
+  artHedgesFront(u0, v0, u1, v1);
+  return artP((u0 + u1) / 2, (v0 + v1) / 2, top);
+}
+
+// 9 cases — patrons : demeure à un étage et portique, aile, orangerie, piscine,
+// court de tennis, jardin à la française avec fontaine, portail.
+function artLuxEstate(b, u0, v0, u1, v1, rng){
+  const wall = ART_LUX_WALLS[Math.floor(rng() * ART_LUX_WALLS.length)];
+  const roof = ART_LUX_ROOFS[Math.floor(rng() * ART_LUX_ROOFS.length)];
+  const court = ['#3a6ea8', '#c4643c', '#4a8a5a'][Math.floor(rng() * 3)];
+  const U = (s) => u0 + s, V = (s) => v0 + s;
+  artLawn(u0, v0, u1, v1, rng, true);
+  // sols : cour d'honneur, allée du portail, terrasse de piscine, tennis, parterres
+  artGround(U(1.85), V(0.3), U(2.18), V(1.8), ART_GRAVEL, 0.7);
+  artGround(U(2.18), V(1.52), U(2.97), V(1.78), ART_GRAVEL, 0.7);
+  artDeck(U(2.24), V(0.16), U(2.88), V(1.4));
+  artPool(U(2.32), V(0.26), U(2.64), V(1.3));
+  const tc = artTennisCourt(U(0.14), V(2.08), U(1.92), V(2.9), court);
+  artGround(U(2.08), V(1.92), U(2.9), V(2.88), ART_GRAVEL, 0.7);
+  for(const [a, c] of [[2.14, 1.98], [2.56, 1.98], [2.14, 2.46], [2.56, 2.46]])
+    artFlowerBed(U(a), V(c), U(a + 0.28), V(c + 0.34), rng);
+  artHedgesBack(u0, v0, u1, v1);
+  artTennisFence(tc, false);
+  for(let s = 0.35; s < 2.0; s += 0.36) artCypress(U(0.1), V(s), 22);
+  for(let s = 0.35; s < 2.1; s += 0.36) artCypress(U(s), V(0.1), 22);
+  // demeure : corps de logis à un étage, portique à fronton face à la cour
+  const top = artLuxBlock(U(0.2), V(0.22), U(1.85), V(1.3), 2, wall, roof, rng, { roofH:11 });
+  artWindow('r', U(1.85), V(0.68), V(0.86), 0, 9.5, '#4a2e22');
+  artPortico(U(1.85), V(0.52), V(1.02), 0.12, 11, wall, 4, true);
+  artLuxBlock(U(0.2), V(1.3), U(0.85), V(1.92), 1, wall, roof, rng, { roofH:7 });
+  // orangerie vitrée
+  artBox(U(1.0), V(1.4), U(1.62), V(1.84), 0, 9, '#a9d4e6', { topCol:'#d2eaf4' });
+  for(let s = 1.0; s <= 1.62; s += 0.124) artLine(artP(U(s), V(1.84), 0), artP(U(s), V(1.84), 9), 'rgba(255,255,255,.8)', 0.7);
+  for(let s = 1.4; s <= 1.84; s += 0.11) artLine(artP(U(1.62), V(s), 0), artP(U(1.62), V(s), 9), 'rgba(255,255,255,.8)', 0.7);
+  artTree(U(2.92), V(0.1), 22, '#4f9a3f');
+  artLounger(U(2.72), V(0.34), U(2.82), V(0.56));
+  artLounger(U(2.72), V(0.66), U(2.82), V(0.88));
+  artLounger(U(2.72), V(0.98), U(2.82), V(1.2));
+  artParasol(U(2.78), V(0.62), '#f4f4f4');
+  artParasol(U(2.78), V(1.04), '#e8574a');
+  artTennisNet(tc);
+  artTennisFence(tc, true);
+  // buis d'angle : ceux de l'arrière avant la fontaine, les autres après
+  const topiaries = [[2.12, 1.96], [2.86, 1.96], [2.12, 2.84], [2.86, 2.84]];
+  for(const [a, c] of topiaries) if(a + c < 4.89) artTopiary(U(a), V(c), 9);
+  artFountain(U(2.49), V(2.4), 0.2);
+  for(const [a, c] of topiaries) if(a + c >= 4.89) artTopiary(U(a), V(c), 9);
+  artLamp(U(2.2), V(1.5)); artLamp(U(2.2), V(1.8));
+  artHedgesFront(u0, v0, u1, v1, [V(1.5), V(1.8)]);
+  // piliers du portail
+  for(const s of [1.44, 1.8]){
+    artBox(U(2.9), V(s), U(2.98), V(s + 0.07), 0, 11, '#d8d0c0', { edges:false });
+    artBox(U(2.89), V(s - 0.01), U(2.99), V(s + 0.08), 11, 12.5, '#c6bdab', { edges:false });
+  }
+  return artP((u0 + u1) / 2, (v0 + v1) / 2, top);
+}
+
 // --- Industrie -----------------------------------------------------------
 function artHall(u0, v0, u1, v1, H, wall, roof, rng, opts = {}){
   artShadow(u0, v0, u1, v1, H + 8);
@@ -683,6 +1060,10 @@ function drawBuildingArt(b, rx0, ry0, rw, rh, lift, hgt, bCol){
         case 'bigtower':  tc = artApartment(b, u0, v0, u1, v1, rng, d, 9, { perTile:2.4, greenRoof:true }); break;
         case 'tower3':    tc = artTower(b, u0, v0, u1, v1, rng, d, 12); break;
         case 'sky':       tc = artTower(b, u0, v0, u1, v1, rng, d, 16); break;
+        case 'lux_house':  tc = artLuxHouse(b, u0, v0, u1, v1, rng); break;
+        case 'lux_villa':  tc = artLuxVilla(b, u0, v0, u1, v1, rng); break;
+        case 'lux_manor':  tc = artLuxManor(b, u0, v0, u1, v1, rng); break;
+        case 'lux_estate': tc = artLuxEstate(b, u0, v0, u1, v1, rng); break;
       }
     } else if(d.ind || b.type === 'plant'){
       _artChimneys = [];

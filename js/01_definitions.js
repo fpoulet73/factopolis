@@ -788,6 +788,82 @@ const LEVELS = [
   }
 })();
 
+// ---------- classes d'habitants ----------
+// Logements basiques : ouvriers. Maisons de luxe : la classe monte à chaque
+// agrandissement (ouvriers → employés → cadres → patrons).
+const RESIDENT_CLASS_ORDER = ['ouvrier', 'employe', 'cadre', 'patron'];
+const RESIDENT_CLASSES = (()=>{
+  const def = {
+    ouvrier: { nom:'Ouvrier', pluriel:'Ouvriers', icone:'👷', taxe:1, revenu:1 },
+    employe: { nom:'Employé', pluriel:'Employés', icone:'👔', taxe:2, revenu:2 },
+    cadre:   { nom:'Cadre',   pluriel:'Cadres',   icone:'💼', taxe:4, revenu:4 },
+    patron:  { nom:'Patron',  pluriel:'Patrons',  icone:'🎩', taxe:8, revenu:8 },
+  };
+  const c = CFG.classesHabitants || {};
+  const out = {};
+  for(const k of RESIDENT_CLASS_ORDER) out[k] = { key:k, ...def[k], ...(c[k] || {}) };
+  return out;
+})();
+function residClassOf(b){
+  const type = typeof b === 'string' ? b : b?.type;
+  const k = BUILD[type]?.classe;
+  return RESIDENT_CLASSES[k] ? k : 'ouvrier';
+}
+function residClassDef(b){ return RESIDENT_CLASSES[residClassOf(b)]; }
+
+// ---------- maisons de luxe ----------
+// Ligne résidentielle à part : une maison de luxe ne fusionne jamais avec ses
+// voisines, elle s'agrandit sur les cases libres autour d'elle (tryExpandLuxury,
+// 06_simulation.js). Ses habitants restent aussi nombreux ; seule leur classe
+// progresse. Débloquée à LUX_UNLOCK_POP habitants (wallet.luxeUnlocked).
+const LUX_CFG = CFG.maisonLuxe || {};
+const LUX_UNLOCK_POP = LUX_CFG.seuilHabitants ?? 100;
+const LUX_COST_MULT = LUX_CFG.multiplicateurCout ?? 5;
+const LUX_LEVELS = [
+  { key:'lux_house',  cfg:LUX_CFG.maison,  n:'Maison de luxe', ic:'💎', shapes:[[1,1]],       col:'#b08a5a', hgt:22, classe:'ouvrier',
+    def:{ interval:60, popCap:5, stockCap:10, required:['fish_fillet'], upgradeTargets:{ goods:60 }, bonus:['fish_oil'] } },
+  { key:'lux_villa',  cfg:LUX_CFG.villa,   n:'Villa',          ic:'🏡', shapes:[[2,1],[1,2]], col:'#c09a62', hgt:26, classe:'employe',
+    def:{ interval:40, popCap:5, stockCap:14, required:['fish_fillet','bread'], upgradeTargets:{ goods:150 }, bonus:['fish_oil'] } },
+  { key:'lux_manor',  cfg:LUX_CFG.manoir,  n:'Manoir',         ic:'🏰', shapes:[[2,2]],       col:'#a88a66', hgt:34, classe:'cadre',
+    def:{ interval:30, popCap:5, stockCap:20, required:['fish_fillet','bread','clothes'], upgradeTargets:{ goods:300 }, bonus:['fish_oil'] } },
+  { key:'lux_estate', cfg:LUX_CFG.domaine, n:'Domaine',        ic:'⛲', shapes:[[3,3]],       col:'#9a8a70', hgt:36, classe:'patron',
+    def:{ interval:20, popCap:5, stockCap:30, required:['fish_fillet','bread','clothes'], upgradeTargets:{}, bonus:['fish_oil'] } },
+].map((L, rank) => ({ key:L.key, n:L.n, ic:L.ic, col:L.col, hgt:L.hgt, rank,
+             classe: RESIDENT_CLASSES[L.cfg?.classe] ? L.cfg.classe : L.classe,
+             shapes: normalizeLuxShapes(L.cfg?.formes ?? L.shapes),
+             resid: _resid(L.cfg, L.def) }));
+function normalizeLuxShapes(list){
+  const out = [];
+  for(const s of list || []){
+    const w = Math.max(1, Math.floor(+s?.[0] || 0)), h = Math.max(1, Math.floor(+s?.[1] || 0));
+    for(const [a, c] of [[w, h], [h, w]]) if(!out.some(o => o[0] === a && o[1] === c)) out.push([a, c]);
+  }
+  return out.length ? out : [[1,1]];
+}
+(function applyLuxLevels(){
+  for(const L of LUX_LEVELS){
+    const sizes = L.shapes.filter(s => s[0] <= s[1]).map(s => s[0]+'×'+s[1]).join(' ou ');
+    const cls = RESIDENT_CLASSES[L.classe];
+    BUILD[L.key] = { n:L.n, ic:L.ic, col:L.col, hgt:L.hgt, area:L.shapes[0][0]*L.shapes[0][1],
+      resid:L.resid, lux:true, luxRank:L.rank, classe:L.classe,
+      desc: L.rank === 0
+        ? 'Logement haut de gamme (débloqué à '+LUX_UNLOCK_POP+' habitants). Plein et approvisionné en outils, il s\'agrandit sur les cases libres voisines : '
+          + LUX_LEVELS.slice(1).map(o => o.n.toLowerCase()+' '+o.shapes[0][0]*o.shapes[0][1]+' cases ('+RESIDENT_CLASSES[o.classe].pluriel.toLowerCase()+')').join(', ')
+          + '. Le nombre d\'habitants reste '+L.resid.popCap+'.'
+        : 'Maison de luxe agrandie ('+sizes+'). '+L.resid.popCap+' '+cls.pluriel.toLowerCase()+'.' };
+  }
+})();
+function luxNextLevelOf(b){
+  const d = BUILD[typeof b === 'string' ? b : b?.type];
+  return d?.lux ? (LUX_LEVELS[d.luxRank + 1] || null) : null;
+}
+// Déblocage par joueur, définitif une fois le seuil franchi (cf. update()).
+function luxuryUnlocked(owner = myOwner()){
+  const w = WALLETS[owner ?? currentWalletOwner()];
+  if(w?.luxeUnlocked) return true;
+  return Array.isArray(buildings) && popTotal(owner ?? null) >= LUX_UNLOCK_POP; // monde pas encore créé au démarrage
+}
+
 function _residCfgOf(b){
   const type = typeof b === 'string' ? b : b?.type;
   return BUILD[type]?.resid || null;
@@ -1315,6 +1391,9 @@ function tryMergeDepot(){
   if(bats.maison?.cout         != null) BUILD.house.cost  = bats.maison.cout;
   if(bats.entrepot?.cout       != null) BUILD.depot.cost  = bats.entrepot.cout;
   if(bats.citerne?.cout        != null) BUILD.tank.cost   = bats.citerne.cout;
+  // maisons de luxe : multiple du prix (final) d'une maison basique ; les niveaux
+  // agrandis gardent ce prix (remboursement à la démolition)
+  for(const L of LUX_LEVELS) BUILD[L.key].cost = Math.round((BUILD.house.cost || 0) * LUX_COST_MULT);
 })();
 
 const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','plant','house','depot','market','tank','pump','garage','bus_stop','terraform','fill_water','terraform_dig','terraform_raise'];

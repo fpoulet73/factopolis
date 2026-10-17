@@ -680,6 +680,12 @@ function canPlace(t,x,y, actorId = MP.myId){
   }
   if(t==='train_station') return trainStationPlacementInfo(x, y);
   if(road[i] || rail[i] || bgrid[i]) return { ok:false, msg:'Case occupée' };
+  if(BUILD[t]?.lux){
+    // seule la maison de luxe se pose ; villa, manoir et domaine naissent de son agrandissement
+    if(t !== 'lux_house') return { ok:false };
+    if(!luxuryUnlocked(actorId ?? null))
+      return { ok:false, msg:'Maisons de luxe : débloquées à '+LUX_UNLOCK_POP+' habitants' };
+  }
   if(ter===T.WATER) return { ok:false, msg:"Impossible de construire sur l'eau" };
   if(t==='mine'){
     if(ter!==T.IRON && ter!==T.COAL) return { ok:false, msg:'La mine doit être sur un gisement' };

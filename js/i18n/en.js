@@ -63,6 +63,7 @@ window.FACTOPOLIS_TRANSLATIONS.en = {
   'help.building6': 'Factories need <b>workers</b>: without enough residents, production slows down.',
   'help.building7': 'The 📦 warehouse stores everything and redistributes between buildings.',
   'help.building8': 'Industry has a periodic <b>upkeep cost</b> that grows faster than size — an industrial empire must be profitable!',
+  'help.building9': 'From 100 inhabitants, choose a <b>basic house</b> or a <b>💎 luxury house</b> (5× the price). Once full and supplied with tools, a luxury house grows onto the free tiles next to it (2, 4 then 9 tiles): same residents, but they become employees, executives, then bosses, who pay more.',
   'help.housingTitle': '🏠 Housing & Merge',
   'help.housing1': 'Houses consume <b>fish fillets</b> → <b>+1 resident</b> and money. Delivered <b>fish oil</b> gives a bonus. Apartment blocks also need <b>bread</b>, towers need <b>clothes</b>.',
   'help.housing2': 'Without their essential goods for too long, homes <b>decay</b>: merged buildings split up and extra residents leave town on foot.',

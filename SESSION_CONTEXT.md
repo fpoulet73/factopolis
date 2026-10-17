@@ -121,7 +121,8 @@ Outils/bâtiments (catalogue `BUILD`) :
   `mill`, `bakery`, `fishery`, `smelter`, `factory`, `terrassement`
   (produit `dirt`).
 - **Logement** : `house`, `duplex`, `row`, `residence`, `tower`,
-  `bigtower`, `tower3`, `sky` (gratte-ciel).
+  `bigtower`, `tower3`, `sky` (gratte-ciel) ; luxe : `lux_house` →
+  `lux_villa`, `lux_manor`, `lux_estate` (cf. « Maisons de luxe »).
 - **Outils** : `select`, `bulldoze`, `terraform`, `fill_water`.
 - **Usine abandonnée** `plant` : à spécialiser en
   farm/cotton_farm/lumber/fisher/pump/mine via `applyPlantUpgrade`.
@@ -211,6 +212,28 @@ Niveaux (du plus petit au plus grand) :
 - `bigtower` 3×2 / 2×3 ;
 - `tower3` 3×3 ;
 - `sky` gratte-ciel 4×4 (180 hab).
+
+### Maisons de luxe et classes d'habitants
+
+- Débloquées par joueur à `LUX_UNLOCK_POP` habitants (`CFG.maisonLuxe.seuilHabitants`,
+  100) ; déblocage définitif (`wallet.luxeUnlocked`, posé dans `update()`).
+  Le menu Bâtiments affiche alors « Maison basique » / « Maison de luxe »
+  (`syncLuxeToolbar`) ; `canPlace` refuse `lux_house` avant le seuil.
+- Prix : `multiplicateurCout` (5) × prix de `house`, appliqué après la config.
+- Ligne `LUX_LEVELS` séparée de `LEVELS` (01_definitions.js) : jamais de
+  fusion (`checkRect`/`tryMerge` les ignorent) ni de défusion (pénurie →
+  `leaveOne`). `tryExpandLuxury` (06_simulation.js) : logement plein + quota
+  d'outils atteint → la maison s'étend **en place** (même objet) sur les cases
+  libres voisines (`luxExpansionTileFree` : herbe plate au même niveau, sans
+  route/rail/bâtiment), rectangle choisi par `luxExpansionRect` (le plus de
+  route le long). Population inchangée, compteur d'upgrade remis à zéro.
+- Niveaux : `lux_house` 1 case (ouvriers) → `lux_villa` 2 cases (employés) →
+  `lux_manor` 2×2 (cadres) → `lux_estate` 3×3 (patrons, max). Art dédié
+  dans 07_rendering_art.js (jardin, piscine, tennis, fontaine ; un étage max).
+- Classes (`RESIDENT_CLASSES`, `CFG.classesHabitants`) : la classe découle
+  du type (`residClassOf`, `ouvrier` par défaut pour tous les logements
+  basiques). Multiplicateurs `revenu` (consommation) et `taxe`
+  (`popTaxMultiplier`). Pas d'effet sur l'allocation des ouvriers aux usines.
 
 ## Villages / villes
 
