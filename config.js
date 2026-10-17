@@ -328,7 +328,7 @@ const CONFIG = {
 
   /* ---------- ENTREPÔT ---------- */
   entrepot: {
-    stockParCase: 20,           // capacité par ressource et par case de l'entrepôt
+    stockParCase: 40,           // capacité par ressource et par case de l'entrepôt (le marché garde 20 : marche.stockParCase)
     rayonBase:    5,            // rayon minimal (entrepôt 1×1)
     rayonFacteur: 3,            // ajout par racine carrée de l'aire (formule : base + √aire × facteur)
     // formes de fusion (largeur × hauteur, les deux orientations sont gérées automatiquement)

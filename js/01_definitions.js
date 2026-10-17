@@ -1239,7 +1239,8 @@ function reassignBuildingsInRect(dstId, x1, y1, x2, y2, owner){
 }
 
 
-const DEPOT_STOCK_PER_CELL  = CFG.entrepot?.stockParCase ?? 20;
+const DEPOT_STOCK_PER_CELL  = CFG.entrepot?.stockParCase ?? 40;
+const MARKET_STOCK_PER_CELL = CFG.marche?.stockParCase ?? 20; // le marché n'est pas concerné par le doublement des entrepôts
 const DEPOT_RADIUS_BASE     = CFG.entrepot?.rayonBase    ?? 5;
 const DEPOT_RADIUS_FACTOR   = CFG.entrepot?.rayonFacteur ?? 3;
 const depotRadiusOf = b => Math.round(DEPOT_RADIUS_BASE + Math.sqrt(b.w * b.h) * DEPOT_RADIUS_FACTOR);
@@ -1285,7 +1286,7 @@ function depotVehicleValue(b){
 }
 
 BUILD.depot.stockPerCell = DEPOT_STOCK_PER_CELL;
-BUILD.market.stockPerCell = DEPOT_STOCK_PER_CELL;
+BUILD.market.stockPerCell = MARKET_STOCK_PER_CELL;
 BUILD.tank.stockPerCell = TANK_STOCK_PER_CELL;
 BUILD.depot.radiusOf = depotRadiusOf;
 BUILD.market.radiusOf = depotRadiusOf;
