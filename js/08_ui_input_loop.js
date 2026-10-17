@@ -43,6 +43,7 @@ function updateHUD(dt){
     const hr  = pad(d.getUTCHours()), min = pad(d.getUTCMinutes());
     gdEl.textContent = `📅 ${day}/${mon}/${yr} 🕐 ${hr}:${min}`;
   }
+  syncLuxeToolbar();
   renderInfo();
   renderFinance();
   renderVehicleListPanel();
@@ -1246,6 +1247,13 @@ function statusOf(b){
     const bonusMissing = residBonusOf(b).filter(r => (b.storage[r]||0) <= 0);
     if(missingReq.length === 0){
       const txt = 'Consomme '+resNames(req)+'…';
+      if(BUILD[b.type].lux && luxNextLevelOf(b)){
+        if(upgradePending.length) return txt+' — agrandissement : '+upgradePending.join(' · ');
+        if(b.pop < BUILD[b.type].resid.popCap) return txt+' — agrandissement prêt (logement à remplir)';
+        return txt + (luxExpansionRect(b)
+          ? ' — agrandissement imminent'
+          : ' — ⚠️ agrandissement bloqué : aucune case libre autour');
+      }
       if(upgradePending.length) return txt+' — upgrade : '+upgradePending.join(' · ');
       if(residUpgradeResourcesOf(b).length) return txt + (b.pop >= BUILD[b.type].resid.popCap
         ? ' — prêt pour fusionner'
@@ -1295,7 +1303,7 @@ function statusOf(b){
     const pEMax = main.passengersEntrantMax || 0;
     const pS = Math.floor(main.passagersSortant || 0);
     const parts = [];
-    if(pEMax > 0) parts.push('↑ '+pE+'/'+pEMax);
+    if(pEMax > 0 || pE > 0) parts.push('↑ '+pE);
     if(pS > 0) parts.push('↓ '+pS);
     const pasStr = parts.length ? 'Passagers : '+parts.join(' · ') : 'Gare ferroviaire';
     return pasStr + (depot ? ' · Entrepôt lié' : '');
@@ -1600,7 +1608,7 @@ function renderInfo(){
       const pE = Math.floor(mainStation.passengersEntrant || 0);
       const pEMax = mainStation.passengersEntrantMax || 0;
       const pS = Math.floor(mainStation.passagersSortant || 0);
-      h += '<div class="row"><span>Passagers entrants</span><b style="color:#c8e040">🚶 '+pE+(pEMax>0?' / '+pEMax:'')+'</b></div>';
+      h += '<div class="row"><span>Passagers entrants</span><b style="color:#c8e040">🚶 '+pE+'</b></div>';
       h += '<div class="row"><span>Passagers sortants</span><b style="color:#9fd4f0">🚶 '+pS+'</b></div>';
       h += '<div class="row"><span>Rayon</span><b>'+TRAIN_STATION_RADIUS+' cases</b></div>';
       h += '<div class="row"><span>Tarif</span><b style="color:#ffe9a0">'+TRAIN_FARE_FACTOR+' $/passager/case</b></div>';
@@ -1703,6 +1711,23 @@ function renderInfo(){
   if(d.resid)
     h += '<div class="row"><span>Habitants</span><b>'+b.pop+' / '+d.resid.popCap+'</b></div>';
   if(d.resid){
+    const cls = residClassDef(b);
+    h += '<div class="row"><span>Classe</span><b style="color:#f0d890">'+cls.icone+' '+escHtml(cls.pluriel)+'</b></div>';
+  }
+  if(d.lux){
+    // palier suivant de la maison de luxe (agrandissement sur les cases libres)
+    const next = luxNextLevelOf(b);
+    if(next){
+      const nc = RESIDENT_CLASSES[next.classe];
+      h += '<div class="row"><span>Agrandissement</span><b>'+next.ic+' '+escHtml(next.n)+' — '
+        + next.shapes[0][0]*next.shapes[0][1]+' cases, '+nc.icone+' '+escHtml(nc.pluriel.toLowerCase())+'</b></div>';
+      if(!b.starterHome && luxReadyToExpand(b) && !luxExpansionRect(b))
+        h += '<div class="warn">⚠️ Pas de place pour s\'agrandir : il faut des cases d\'herbe plate libres (sans route ni bâtiment) autour de la maison.</div>';
+    } else {
+      h += '<div class="row"><span>Agrandissement</span><b style="color:#9fe8a0">taille maximale atteinte</b></div>';
+    }
+  }
+  if(d.resid){
     const town = getTownOf(b);
     if(town) h += '<div class="row"><span>Village</span><b style="color:#e8d48b">🏘️ '+escHtml(town.name)
       +'</b></div>';
@@ -1710,8 +1735,9 @@ function renderInfo(){
   if(d.resid && !b.starterHome){
     const pop = Math.max(1, b.pop);
     const priceSum = list => list.reduce((a,r)=>a+(RESID_PRICES[r]||0),0);
-    const reqIncome = Math.round(priceSum(residRequiredOf(b)) * pop);
-    const maxIncome = Math.round((priceSum(residRequiredOf(b)) + priceSum(residBonusOf(b))) * pop);
+    const classMult = residClassDef(b).revenu;
+    const reqIncome = Math.round(priceSum(residRequiredOf(b)) * pop * classMult);
+    const maxIncome = Math.round((priceSum(residRequiredOf(b)) + priceSum(residBonusOf(b))) * pop * classMult);
     const ratePerMin = b.pop > 0 ? Math.round(reqIncome / d.resid.interval * 60) : 0;
     h += '<div class="row"><span>Revenu / cycle</span><b>'+reqIncome+(maxIncome>reqIncome ? ' à '+maxIncome : '')+' $</b></div>';
     h += '<div class="row"><span>Besoins indispensables</span><b>'+escHtml(resNames(residRequiredOf(b)))+'</b></div>';
@@ -1771,7 +1797,7 @@ function renderInfo(){
     if(d.resid && !b.starterHome){
       const upgradeResources = residUpgradeResourcesOf(b);
       if(upgradeResources.length){
-        h += '<div style="margin-top:8px;color:#8fa3bf">Demande pour fusion</div>';
+        h += '<div style="margin-top:8px;color:#8fa3bf">'+(d.lux ? 'Demande pour agrandissement' : 'Demande pour fusion')+'</div>';
         for(const r of upgradeResources){
           const paused = residUpgradePaused(b, r);
           h += '<div class="row"><span>'+(RES[r].ic ? RES[r].ic+' ' : '')+RES[r].n+'</span><b style="display:flex;align-items:center;gap:6px">'
@@ -1926,7 +1952,7 @@ function renderInfo(){
     const isPort = b.type === 'boat_depot';
     const pE = Math.floor(b.passengersEntrant || 0), pEMax = b.passengersEntrantMax || 0;
     h += '<div style="margin-top:8px;color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em">'+(isPort ? '⚓ Escale' : '🛫 Escale')+'</div>';
-    h += '<div class="row"><span>Voyageurs en attente</span><b style="color:#c8e040">🚶 '+pE+(pEMax>0?' / '+pEMax:'')+'</b></div>';
+    h += '<div class="row"><span>Voyageurs en attente</span><b style="color:#c8e040">🚶 '+pE+'</b></div>';
     h += '<div class="row"><span>Voyageurs arrivés</span><b style="color:#9fd4f0">🚶 '+Math.floor(b.passagersSortant || 0)+'</b></div>';
     h += '<div class="row"><span>Rayon</span><b>'+(isPort ? PORT_RADIUS : AIRPORT_RADIUS)+' cases</b></div>';
     h += '<div class="row"><span>Tarif</span><b style="color:#ffe9a0">'+(isPort ? SHIP_FARE_FACTOR : PLANE_FARE_FACTOR)+' $/voyageur/case</b></div>';
@@ -2470,7 +2496,7 @@ let storageToolbarMenu = null;
 const STORAGE_TOOLBAR_TOOLS = ['depot','tank'];
 let buildingToolbarGroup = null;
 let buildingToolbarMenu = null;
-const BUILDING_TOOLBAR_TOOLS = ['house','plant','market'];
+const BUILDING_TOOLBAR_TOOLS = ['house','lux_house','plant','market'];
 let vehicleToolbarGroup = null;
 let vehicleToolbarMenu = null;
 const VEHICLE_TOOLBAR_TOOLS = ['road','bus_stop'];
@@ -2490,6 +2516,27 @@ function closeStorageToolbarMenu(){
   storageToolbarGroup.classList.remove('open');
   storageToolbarMenu.classList.remove('open');
   syncToolbarState();
+}
+
+// Choix « maison basique / maison de luxe » du menu Bâtiments : l'entrée luxe
+// apparaît quand le joueur franchit LUX_UNLOCK_POP habitants (déblocage définitif).
+// L'annonce n'est faite qu'en cours de partie, pas au chargement d'une sauvegarde
+// déjà débloquée (saut de gtime).
+let luxeToolbarUnlocked = null, luxeToolbarGtime = 0;
+function syncLuxeToolbar(){
+  if(!buildingToolbarMenu) return;
+  const unlocked = luxuryUnlocked(myOwner());
+  const continuous = Math.abs((gtime || 0) - luxeToolbarGtime) < 5;
+  luxeToolbarGtime = gtime || 0;
+  if(unlocked === luxeToolbarUnlocked) return;
+  const announce = unlocked && luxeToolbarUnlocked === false && continuous;
+  luxeToolbarUnlocked = unlocked;
+  const lux = buildingToolbarMenu.querySelector('[data-building-tool="lux_house"]');
+  if(lux) lux.style.display = unlocked ? '' : 'none';
+  const basic = buildingToolbarMenu.querySelector('[data-building-tool="house"] .bld-name');
+  if(basic) basic.textContent = unlocked ? 'Maison basique' : BUILD.house.n;
+  if(!unlocked && tool === 'lux_house') setTool('select');
+  if(announce) toast('💎 '+LUX_UNLOCK_POP+' habitants : les maisons de luxe sont disponibles (menu Bâtiments) !', 'win');
 }
 
 function closeBuildingToolbarMenu(){
@@ -2761,9 +2808,10 @@ function buildToolbar(){
         choice.className = 'tool tool-group-item';
         choice.dataset.buildingTool = toolKey;
         choice.title = d.desc || '';
-        choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
+        choice.innerHTML = '<span class="ic">'+d.ic+'</span><span class="bld-name">'+d.n+'</span>'
           + '<span class="cost">'+(d.cost ? d.cost+' $' : '&nbsp;')+'</span>';
         choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
+        if(d.lux) choice.style.display = 'none'; // affichée au déblocage (syncLuxeToolbar)
         menu.appendChild(choice);
       }
       btn.onclick = e => {
@@ -2779,6 +2827,7 @@ function buildToolbar(){
       bar.appendChild(group);
       buildingToolbarGroup = group;
       buildingToolbarMenu = menu;
+      luxeToolbarUnlocked = null;
       continue;
     }
     if(k === 'depot'){
@@ -2944,6 +2993,7 @@ function buildToolbar(){
   }
 
   syncToolbarState();
+  syncLuxeToolbar();
 }
 function setTool(k){
   tool = k;
@@ -3041,6 +3091,14 @@ function renderTownPanel(tid){
         + '<button class="tbtn" id="tpClose" aria-label="Fermer">✕</button>'
         + '</div>';
   h += '<div class="row"><span style="color:#8fa3bf">Population</span><b>'+pop+'</b></div>';
+  // répartition par classe d'habitants (ouvriers, employés, cadres, patrons)
+  const byClass = {};
+  for(const b of members) if(BUILD[b.type]?.resid && b.pop > 0) byClass[residClassOf(b)] = (byClass[residClassOf(b)] || 0) + b.pop;
+  for(const k of RESIDENT_CLASS_ORDER){
+    if(!byClass[k]) continue;
+    const c = RESIDENT_CLASSES[k];
+    h += '<div class="row"><span style="color:#8fa3bf;padding-left:10px">'+c.icone+' '+escHtml(c.pluriel)+'</span><b>'+byClass[k]+'</b></div>';
+  }
   h += '<div class="row"><span style="color:#8fa3bf">Maisons</span><b>'+resCount+'</b></div>';
   h += '<div class="row"><span style="color:#8fa3bf">Industries</span><b>'+indCount+'</b></div>';
 
