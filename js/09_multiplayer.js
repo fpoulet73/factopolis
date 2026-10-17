@@ -1539,6 +1539,15 @@ function mpSenderControlsOwner(ownerId, msg){
   return true;
 }
 
+// Réglages de monde envoyés par le serveur (config de la room) : on garde l'identité du
+// terrain déjà chargé (graine, décalage du bruit, biomes). La remplacer par celle de la
+// room — défauts sans graine pour une room neuve, valeurs figées depuis — effaçait les
+// biomes de la carte affichée et décalait le terrain des futures expansions.
+function mpAdoptWorldConfig(cfg){
+  if(!cfg) return;
+  WORLD = normalizeWorldConfig({ ...cfg, seed: WORLD.seed, noiseOx: WORLD.noiseOx, noiseOy: WORLD.noiseOy, biomes: WORLD.biomes });
+}
+
 function applySnapshot(d){
   // États compactés (grilles RLE, bâtiments sans champs par défaut) : format des
   // sauvegardes locales ET des transferts réseau/serveur — cf. packStateForStorage.
@@ -2611,7 +2620,7 @@ function mpConnect(url){
         mpResetGuestSnapshotBuffer();
         mpStateSyncTimer = 0;
         document.title = MP.roomName ? 'Factopolis — ' + MP.roomName : 'Factopolis';
-        if(msg.worldConfig) WORLD = normalizeWorldConfig(msg.worldConfig);
+        mpAdoptWorldConfig(msg.worldConfig);
         adoptSoloHomeless(MP.myId);
         if(msg.role === 'host') adoptSoloBuildings(MP.myId);
         ensureHomelessForOwner(MP.myId);
@@ -2627,7 +2636,7 @@ function mpConnect(url){
         MP.role = 'host';
         MP.isAdmin = false;
         mpStateSyncTimer = 0;
-        if(msg.worldConfig) WORLD = normalizeWorldConfig(msg.worldConfig);
+        mpAdoptWorldConfig(msg.worldConfig);
         toast('👑 Tu es maintenant l\'hôte de la partie');
         mpUpdateUI();
         mpRenderSaves();
@@ -2851,7 +2860,7 @@ function mpConnect(url){
         applySnapshot(msg.state);
         if(MP.role === 'guest') mpRefreshVehPathCache();
         MP.awaitingSnapshot = false;
-        if(msg.config) WORLD = normalizeWorldConfig(msg.config);
+        mpAdoptWorldConfig(msg.config); // la graine et les biomes viennent du snapshot appliqué
         resetSelectedTown();
         focusCameraOnWorld();
         toast('🌍 Nouvelle carte créée par '+msg.createdBy);
@@ -3331,7 +3340,8 @@ function mpInjectUI(){
       resourceFactor: Number($('mpResourceFactor').value) / 100,
     });
     genWorld(config);
-    MP.ws.send(JSON.stringify({ type:'new_world', config, state:packStateForStorage(serializeState()) }));
+    // WORLD (et non `config`) : genWorld y a fixé les biomes et la graine de la carte générée
+    MP.ws.send(JSON.stringify({ type:'new_world', config:WORLD, state:packStateForStorage(serializeState()) }));
     $('mpWorldErr').textContent = '';
   };
 

@@ -179,7 +179,7 @@ function tilePolygon(rx, ry, x, y){
 function drawWaterBankFaces(rx, ry, x, y, t, snowAmount){
   if(t === T.WATER) return;
   const p = terrainTilePoints(rx, ry, x, y);
-  const bank = cliffColorForTile(t, snowAmount > 0.55);
+  const bank = cliffColorForTile(t, snowAmount > 0.55, x, y);
 
   if(ry < N - 1){
     const [nx, ny] = invRotIdx(rx, ry + 1);
@@ -433,6 +433,8 @@ function graphicBasePack(){
 
 function packTerrain(kind, x, y){
   const p = graphicBasePack();
+  // sol herbeux d'un monde à biomes : teinte du biome (aperçu des pièces d'expansion)
+  if(kind !== T.WATER && kind !== T.SAND && kind !== T.CLAY && biomesActive()) return groundToneAt(x, y, 4, p);
   const cols = kind === T.WATER ? p.water
     : kind === T.SAND ? (p.sand || p.grass)
     : kind === T.CLAY ? (p.clay || p.grass)
@@ -451,11 +453,17 @@ function snowAmountForTile(x, y){
   return Math.max(0.15, Math.min(1, base + grain));
 }
 
-function cliffColorForTile(t, snowy){
+function cliffColorForTile(t, snowy, x, y){
   if(snowy) return '#d8e2ea';
   if(t === T.WATER) return '#1c557f';
   if(t === T.SAND) return '#b28f5a';
   if(t === T.CLAY) return '#7b4e3a';
+  if(x != null && biomesActive()){
+    const b = biomeIdAt(x, y);
+    if(b === BIOME.CANYON) return '#8e4428';   // falaises rouges
+    if(b === BIOME.DESERT) return '#ad8550';   // grès
+    if(b === BIOME.TOUNDRA) return '#7d8a8c';  // roche gelée
+  }
   return '#6f5236';
 }
 
@@ -680,39 +688,170 @@ function drawBuildingSprite(b, rx0, ry0, rw, rh, d, lift){
   ];
 }
 
-// Arbre : sapin étagé ou feuillu arrondi selon la tuile (8 variantes cuites
-// par js/pixi/sprites.js). Lumière haut-droite : moitié droite plus claire.
-function drawTree(rx,ry,x,y){
+// Arbre : essence selon le biome (style), variante selon la tuile (8 variantes
+// cuites par style dans js/pixi/sprites.js). Lumière haut-droite : moitié droite
+// plus claire. Styles : mixed (prairie), conifer (forêt), snowpine (toundra),
+// jungle (marais), acacia (savane), cactus / palm (désert, oasis), shrub (canyon).
+function drawTree(rx, ry, x, y, style = biomeTreeStyleAt(x, y)){
   const c = tileCenterIso(rx, ry, x, y);
   const hs = hash(x,y);
   const h = 13 + (hs&7);
-  const kind = (hs >>> 3) & 3;           // 0-1 sapin, 2-3 feuillu
-  ctx.fillStyle = 'rgba(0,0,0,.18)';
-  ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, 10, 4.5, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = '#6b4a2a';
-  ctx.fillRect(c[0]-1.5, c[1]-h*0.45, 3, h*0.45+1);
-  if(kind < 2){
-    const base = ['#2c6e33', '#2f7a3a', '#285f34', '#336b2c'][(hs >>> 6) & 3];
+  const kind = (hs >>> 3) & 3;
+  const pick = arr => arr[(hs >>> 6) & 3];
+  ctx.save(); // lineCap/lineJoin modifiés ci-dessous : ne pas polluer le contexte de cuisson
+  const shadow = (rx_, ry_) => {
+    ctx.fillStyle = 'rgba(0,0,0,.18)';
+    ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]+2, rx_, ry_, 0, 0, 7); ctx.fill();
+  };
+  const trunk = (hh, col = '#6b4a2a', w = 3) => {
+    ctx.fillStyle = col;
+    ctx.fillRect(c[0]-w/2, c[1]-hh, w, hh+1);
+  };
+  // Sapin étagé : trois triangles, moitié gauche à l'ombre ; neige optionnelle sur les pointes.
+  const pine = (base, hh, snow) => {
     const tier = (top, bot, hw)=>{
       ctx.fillStyle = shade(base, -0.12);
       ctx.beginPath(); ctx.moveTo(c[0], c[1]-top); ctx.lineTo(c[0], c[1]-bot+1.5); ctx.lineTo(c[0]-hw, c[1]-bot); ctx.closePath(); ctx.fill();
       ctx.fillStyle = shade(base, 0.12);
       ctx.beginPath(); ctx.moveTo(c[0], c[1]-top); ctx.lineTo(c[0]+hw, c[1]-bot); ctx.lineTo(c[0], c[1]-bot+1.5); ctx.closePath(); ctx.fill();
+      if(snow){
+        const k = 0.42, sy = top - (top - bot) * k;
+        ctx.fillStyle = '#eef5fb';
+        ctx.beginPath(); ctx.moveTo(c[0], c[1]-top); ctx.lineTo(c[0]+hw*k, c[1]-sy); ctx.lineTo(c[0], c[1]-sy+1);
+        ctx.lineTo(c[0]-hw*k, c[1]-sy); ctx.closePath(); ctx.fill();
+      }
     };
-    tier(h+6,  h*0.30, 9.5);
-    tier(h+11, h*0.62, 7.5);
-    tier(h+16, h*0.92, 5);
-  } else {
-    const base = ['#4f9a3a', '#5ea53f', '#46883a', '#6aa844'][(hs >>> 6) & 3];
-    const blob = (ox, oy, r, f)=>{
+    tier(hh+6,  hh*0.30, 9.5);
+    tier(hh+11, hh*0.62, 7.5);
+    tier(hh+16, hh*0.92, 5);
+  };
+  // Feuillu : grappe de boules, la plus haute éclairée.
+  const leafy = (base, hh, r = 1) => {
+    const blob = (ox, oy, rr, f)=>{
       ctx.fillStyle = shade(base, f);
-      ctx.beginPath(); ctx.arc(c[0]+ox, c[1]-h+oy, r, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(c[0]+ox*r, c[1]-hh+oy*r, rr*r, 0, Math.PI*2); ctx.fill();
     };
     blob(-4, 2, 6.5, -0.18);
     blob(4, 2, 6.5, -0.05);
     blob(0, -3, 7.5, 0.04);
     blob(2.5, -5, 4, 0.20);
+  };
+  const stroke = (col, w, pts) => {
+    ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(c[0]+pts[0], c[1]+pts[1]);
+    for(let k = 2; k < pts.length; k += 2) ctx.lineTo(c[0]+pts[k], c[1]+pts[k+1]);
+    ctx.stroke();
+  };
+
+  if(style === 'conifer'){
+    // forêt dense : surtout des sapins sombres et hauts
+    shadow(10, 4.5); trunk(h*0.45);
+    if(kind < 3) pine(pick(['#22592b', '#26632f', '#1f5229', '#2b5f2a']), h + 2, false);
+    else leafy(pick(['#3f8a34', '#468f36', '#3a7d32', '#4c9238']), h);
+  } else if(style === 'snowpine'){
+    shadow(9, 4); trunk(h*0.45, '#5a4632');
+    pine(pick(['#2b5a4c', '#2f6450', '#28524a', '#33604f']), kind === 3 ? h - 3 : h, true);
+  } else if(style === 'jungle'){
+    shadow(11, 5);
+    trunk(h*0.55, '#4f3a24', 3.5);
+    const base = pick(['#2e7a34', '#236a2c', '#357f2a', '#1f5e2c']);
+    if(kind < 3){
+      leafy(base, h, 1.2);
+      // lianes pendantes
+      for(let k = 0; k < 3; k++){
+        const ox = -6 + k * 6 + ((hs >> (k * 3)) & 3) - 1.5;
+        stroke(shade(base, -0.3), 1, [ox, -h + 4, ox + 0.5, -h + 9 + ((hs >> (k * 2 + 9)) & 3) * 2]);
+      }
+    } else {
+      // saule pleureur : couronne et rideau de branches
+      leafy(base, h + 2, 0.9);
+      for(let k = 0; k < 7; k++){
+        const ox = -8 + k * 2.7;
+        stroke(shade(base, (k & 1) ? 0.08 : -0.14), 1.6, [ox, -h - 1, ox * 1.15, -h * 0.35 + ((hs >> k) & 3)]);
+      }
+    }
+  } else if(style === 'acacia'){
+    shadow(12, 3.5);
+    // tronc penché qui se divise, couronne plate en parasol
+    stroke('#5c4129', 2.4, [0, 1, 1.5, -h * 0.55, 3, -h - 1]);
+    stroke('#5c4129', 1.6, [1.5, -h * 0.55, -4, -h - 1]);
+    const base = pick(['#6a8a30', '#5f7f2e', '#73903a', '#667f2c']);
+    ctx.fillStyle = shade(base, -0.15);
+    ctx.beginPath(); ctx.ellipse(c[0]+1, c[1]-h-1, 13, 3.8, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = shade(base, 0.08);
+    ctx.beginPath(); ctx.ellipse(c[0]+2, c[1]-h-3, 10.5, 2.8, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = shade(base, 0.22);
+    ctx.beginPath(); ctx.ellipse(c[0]+4, c[1]-h-4, 5, 1.5, 0, 0, 7); ctx.fill();
+  } else if(style === 'cactus'){
+    const base = pick(['#4e8a4a', '#548f46', '#47804a', '#5a9450']);
+    if(kind < 3){
+      // saguaro : colonne et bras relevés
+      shadow(6, 2.6);
+      const top = h + 3;
+      stroke(base, 5, [0, 0, 0, -top]);
+      const armL = -top * (0.35 + ((hs >> 10) & 3) * 0.05);
+      stroke(base, 3.4, [0, armL, -5.5, armL, -5.5, armL - 6]);
+      if(kind !== 1){
+        const armR = -top * (0.5 + ((hs >> 12) & 3) * 0.05);
+        stroke(base, 3.4, [0, armR, 5, armR, 5, armR - 5]);
+      }
+      stroke(shade(base, 0.25), 1.2, [1.2, -1, 1.2, -top + 1]);
+    } else {
+      // figuier de Barbarie : raquettes et fleurs
+      shadow(8, 3);
+      const pad = (ox, oy, rw, rh, a, f) => {
+        ctx.fillStyle = shade(base, f);
+        ctx.beginPath(); ctx.ellipse(c[0]+ox, c[1]+oy, rw, rh, a, 0, 7); ctx.fill();
+      };
+      pad(-3, -4, 4, 5.5, -0.3, -0.1);
+      pad(3, -5, 4, 6, 0.25, 0.05);
+      pad(0, -11, 3.5, 4.5, 0.05, 0.15);
+      ctx.fillStyle = '#f2c94c';
+      ctx.beginPath(); ctx.arc(c[0]+1, c[1]-15.5, 1.3, 0, 7); ctx.fill();
+      ctx.fillStyle = '#e8607a';
+      ctx.beginPath(); ctx.arc(c[0]+5, c[1]-10.5, 1.2, 0, 7); ctx.fill();
+    }
+  } else if(style === 'palm'){
+    shadow(9, 3.5);
+    const lean = (kind & 1) ? 5 : -4, tx = lean, ty = -h - 7;
+    ctx.strokeStyle = '#8a6a3e'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(c[0], c[1]); ctx.quadraticCurveTo(c[0], c[1]+ty*0.6, c[0]+tx, c[1]+ty); ctx.stroke();
+    const base = pick(['#3f8f3a', '#368534', '#46963e', '#2f7a2e']);
+    for(let k = 0; k < 6; k++){
+      const a = -Math.PI * 0.95 + k * Math.PI * 0.38;
+      const ex = Math.cos(a) * 12, ey = Math.sin(a) * 6 + 6;
+      ctx.strokeStyle = shade(base, (k & 1) ? 0.12 : -0.12); ctx.lineWidth = 2.6;
+      ctx.beginPath(); ctx.moveTo(c[0]+tx, c[1]+ty);
+      ctx.quadraticCurveTo(c[0]+tx+ex*0.6, c[1]+ty+ey*0.2-4, c[0]+tx+ex, c[1]+ty+ey); ctx.stroke();
+    }
+    ctx.fillStyle = '#6b4a2a';
+    ctx.beginPath(); ctx.arc(c[0]+tx, c[1]+ty+1.5, 1.8, 0, 7); ctx.fill();
+  } else if(style === 'shrub'){
+    if(kind < 2){
+      // buisson sec
+      shadow(8, 3);
+      const base = pick(['#7d7a3c', '#86803f', '#706d36', '#8a7a44']);
+      const blob = (ox, oy, r, f) => { ctx.fillStyle = shade(base, f); ctx.beginPath(); ctx.arc(c[0]+ox, c[1]+oy, r, 0, 7); ctx.fill(); };
+      blob(-3.5, -3, 4.2, -0.15); blob(3, -3.5, 4.5, -0.02); blob(0, -6.5, 4, 0.12);
+    } else if(kind === 2){
+      // arbre mort aux branches nues
+      shadow(7, 3);
+      stroke('#6b4a2a', 2.4, [0, 1, 0, -h]);
+      stroke('#6b4a2a', 1.5, [0, -h * 0.55, -6, -h * 0.85]);
+      stroke('#6b4a2a', 1.5, [0, -h * 0.7, 5, -h - 3]);
+      stroke('#7d5a36', 1, [-6, -h * 0.85, -8, -h * 0.85 - 3]);
+    } else {
+      // genévrier trapu
+      shadow(7, 3); trunk(h*0.3, '#5c4129');
+      pine(pick(['#4f5e34', '#56663a', '#48552f', '#5b6a3c']), h * 0.7, false);
+    }
+  } else {
+    // prairie (mixte) : sapins et feuillus
+    shadow(10, 4.5); trunk(h*0.45);
+    if(kind < 2) pine(pick(['#2c6e33', '#2f7a3a', '#285f34', '#336b2c']), h, false);
+    else leafy(pick(['#4f9a3a', '#5ea53f', '#46883a', '#6aa844']), h);
   }
+  ctx.restore();
 }
 
 function isUnderstaffedOwnFactory(b){
@@ -2161,6 +2300,42 @@ function drawResourceSigns(){
   ctx.restore();
 }
 
+// ---- Noms des régions (biomes), façon carte de géographe, en dézoom ----
+const BIOME_LABEL_ZOOM_HI = 0.8;  // début d'apparition (fondu)
+const BIOME_LABEL_ZOOM_LO = 0.6;  // opacité pleine en dessous
+const BIOME_LABEL_COLS = ['#eef7d8', '#d6f0c8', '#fff0c8', '#eaf6ff', '#d8f0dc', '#fbefc4', '#ffe0cc'];
+function drawBiomeLabels(){
+  const z = cam.z;
+  if(z >= BIOME_LABEL_ZOOM_HI || !biomesActive()) return;
+  const regions = biomeRegions();
+  if(!regions.length) return;
+  const alpha = z <= BIOME_LABEL_ZOOM_LO ? 1 : (BIOME_LABEL_ZOOM_HI - z) / (BIOME_LABEL_ZOOM_HI - BIOME_LABEL_ZOOM_LO);
+  ctx.save();
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  for(const r of regions){
+    const [ru, rv] = rotF(r.x + 0.5, r.y + 0.5);
+    const [ix, iy] = liftedIso(ru, rv, terrainLiftPxAtRot(ru, rv));
+    const cssX = (ix - cam.x) * z, cssY = (iy - cam.y) * z;
+    if(cssX < -240 || cssX > W + 240 || cssY < -40 || cssY > H + 40) continue;
+    // taille selon l'étendue de la région ; capitales espacées
+    const size = Math.round(Math.max(13, Math.min(22, 9 + Math.sqrt(r.count) * 0.22)));
+    const text = r.name.toUpperCase().split('').join(' ');
+    ctx.font = 'italic 600 ' + size + 'px Georgia,"Times New Roman",serif';
+    ctx.globalAlpha = 0.85 * alpha;
+    ctx.strokeStyle = 'rgba(12,20,30,.75)'; ctx.lineWidth = 3.5;
+    ctx.strokeText(text, cssX, cssY);
+    ctx.fillStyle = BIOME_LABEL_COLS[r.b] || '#f2ecd8';
+    ctx.fillText(text, cssX, cssY);
+    ctx.font = (size - 2) + 'px "Segoe UI Emoji",sans-serif';
+    ctx.globalAlpha = 0.9 * alpha;
+    ctx.fillText(BIOMES[r.b].ic, cssX, cssY - size - 2);
+  }
+  ctx.restore();
+}
+
 function drawTownLabels(){
   townLabelHits = [];
   if(!towns.length) return;
@@ -2600,6 +2775,74 @@ function grassTones(pack){
   _grassTonesKey = key;
   return _grassTones;
 }
+// Teintes de sol par biome (8 nuances sombre → clair) ; la prairie garde celles du pack.
+const _biomeTones = [];
+function biomeGrassTones(b, pack){
+  const sol = BIOMES[b]?.sol;
+  if(!sol) return grassTones(pack);
+  return _biomeTones[b] || (_biomeTones[b] = Array.from({ length:8 }, (_, i) => mixColor(sol[0], sol[1], i / 7)));
+}
+// Nuance k (0..7) du sol en (x,y), fondue avec le biome voisin près des frontières.
+function groundToneAt(x, y, k, pack){
+  if(!biomesActive()) return grassTones(pack)[k];
+  ensureBiomeGrid();
+  const i = y * N + x;
+  const col = biomeGrassTones(biomeGrid[i], pack)[k], bl = biomeBlend[i];
+  return bl ? mixColor(col, biomeGrassTones(biomeAlt[i], pack)[k], bl / 16) : col;
+}
+// Petits détails d'une tuile d'herbe selon son biome (1 tuile sur 3 à 4).
+function drawGrassDetail(rx, ry, x, y, col){
+  const b = biomesActive() ? biomeIdAt(x, y) : BIOME.PRAIRIE;
+  const hs = hash(x + 11, y - 5), c = tileCenterIso(rx, ry, x, y);
+  const spot = k => [
+    c[0] + ((hs >> (k * 4)) & 15) / 15 * TW * 0.5 - TW * 0.25,
+    c[1] + ((hs >> (k * 4 + 2)) & 15) / 15 * TH * 0.44 - TH * 0.22,
+  ];
+  ctx.lineWidth = 1;
+  if(b === BIOME.DESERT){
+    // rides de sable
+    ctx.strokeStyle = shade(col, -0.10);
+    for(let k = 0; k < 2; k++){
+      const [px, py] = spot(k);
+      ctx.beginPath(); ctx.moveTo(px - 6, py + 1); ctx.quadraticCurveTo(px, py - 2, px + 6, py + 1); ctx.stroke();
+    }
+  } else if(b === BIOME.TOUNDRA){
+    // givre et cailloux
+    ctx.fillStyle = 'rgba(255,255,255,.6)';
+    for(let k = 0; k < 4; k++){ const [px, py] = spot(k); ctx.fillRect(px, py, 2, 1.2); }
+    ctx.fillStyle = 'rgba(90,100,104,.55)';
+    const [px, py] = spot(3); ctx.beginPath(); ctx.ellipse(px + 3, py + 2, 1.8, 1.1, 0, 0, 7); ctx.fill();
+  } else if(b === BIOME.MARAIS){
+    // flaque et roseaux
+    const [px, py] = spot(0);
+    ctx.fillStyle = 'rgba(46,92,96,.38)';
+    ctx.beginPath(); ctx.ellipse(px, py, 5, 2.2, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = shade(col, -0.28);
+    for(let k = 0; k < 3; k++){ ctx.beginPath(); ctx.moveTo(px + 5 + k * 1.6, py + 1); ctx.lineTo(px + 5.5 + k * 1.8, py - 4 - (k & 1) * 2); ctx.stroke(); }
+  } else if(b === BIOME.SAVANE){
+    // hautes herbes sèches
+    ctx.strokeStyle = 'rgba(214,186,100,.85)';
+    for(let k = 0; k < 3; k++){
+      const [px, py] = spot(k);
+      ctx.beginPath(); ctx.moveTo(px - 2, py); ctx.lineTo(px - 1, py - 5); ctx.moveTo(px, py); ctx.lineTo(px + 0.5, py - 6);
+      ctx.moveTo(px + 2, py); ctx.lineTo(px + 2.5, py - 4); ctx.stroke();
+    }
+  } else if(b === BIOME.CANYON){
+    // strates de roche
+    ctx.strokeStyle = shade(col, -0.16);
+    const [px, py] = spot(0);
+    ctx.beginPath(); ctx.moveTo(px - 8, py); ctx.lineTo(px + 6, py - 3); ctx.moveTo(px - 5, py + 3); ctx.lineTo(px + 8, py); ctx.stroke();
+  } else {
+    // prairie / forêt : touffes d'herbe
+    ctx.strokeStyle = shade(col, -0.22);
+    for(let k = 0; k < 3; k++){
+      const [px, py] = spot(k);
+      ctx.beginPath();
+      ctx.moveTo(px - 1.5, py); ctx.lineTo(px, py - 3);
+      ctx.lineTo(px + 1.5, py); ctx.stroke();
+    }
+  }
+}
 function shadeHex(hex, f){
   const n = parseInt(hex.slice(1), 16);
   let r = n >> 16 & 255, g = n >> 8 & 255, b = n & 255;
@@ -2687,9 +2930,8 @@ function drawGroundTileBase(rx, ry, x, y, t, pack){
   } else if(t === T.SAND || t === T.CLAY){
     col = packTerrain(t, x, y);
   } else {
-    const tones = grassTones(pack);
     const n = meadowTone(x, y) * 0.82 + ((hash(x, y) & 255) / 255) * 0.18;
-    col = tones[Math.max(0, Math.min(7, Math.round(n * 7)))];
+    col = groundToneAt(x, y, Math.max(0, Math.min(7, Math.round(n * 7))), pack);
   }
   const light = t === T.WATER ? 0 : tileSlopeLight(p, rx, ry);
   if(light) col = shade(col, Math.round(light * 25) / 25);
@@ -2723,16 +2965,8 @@ function drawGroundTileBase(rx, ry, x, y, t, pack){
         ctx.beginPath(); ctx.moveTo(c[0] - 6, c[1]); ctx.lineTo(c[0] + 4, c[1] - 1); ctx.stroke();
       }
     } else if(t === T.GRASS && (hash(x + 7, y + 3) & 3) === 0){
-      // Touffes d'herbe
-      const hs = hash(x + 11, y - 5), c = tileCenterIso(rx, ry, x, y);
-      ctx.strokeStyle = shade(col, -0.22); ctx.lineWidth = 1;
-      for(let k = 0; k < 3; k++){
-        const ox = ((hs >> (k * 4)) & 15) / 15 * TW * 0.5 - TW * 0.25;
-        const oy = ((hs >> (k * 4 + 2)) & 15) / 15 * TH * 0.44 - TH * 0.22;
-        ctx.beginPath();
-        ctx.moveTo(c[0] + ox - 1.5, c[1] + oy); ctx.lineTo(c[0] + ox, c[1] + oy - 3);
-        ctx.lineTo(c[0] + ox + 1.5, c[1] + oy); ctx.stroke();
-      }
+      // Touffes d'herbe, rides de sable, givre… selon le biome
+      drawGrassDetail(rx, ry, x, y, col);
     }
   }
   return p;
@@ -3465,6 +3699,8 @@ function draw(){
   if(focusVehicle && focusVehicle !== selectedVehicle && !focusVehicle.garageRef?.dead)
     drawVehicleRoute(focusVehicle);
 
+  // Noms des régions (biomes) en dézoom, sous les panneaux de ressources
+  drawBiomeLabels();
   // Panneaux de ressources en fort dézoom, sous les labels de villes
   drawResourceSigns();
   // Noms des villages au centre de chaque groupe de maisons

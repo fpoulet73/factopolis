@@ -475,6 +475,14 @@ function sanitizeWorldConfig(config = {}) {
       iron:   clampPercent(baseRes.iron   * resourceFactor, baseRes.iron),
       coal:   clampPercent(baseRes.coal   * resourceFactor, baseRes.coal),
     },
+    // Identité du terrain : sans elle, les clients tiraient une graine au hasard (biomes et
+    // terrain des expansions différents d'une machine à l'autre) et perdaient les biomes.
+    biomes: config.biomes === true,
+    buildMaterials: config.buildMaterials !== false,
+    noiseOx: clampInt(config.noiseOx, -1e6, 1e6, 0),
+    noiseOy: clampInt(config.noiseOy, -1e6, 1e6, 0),
+    ...(Number.isFinite(Number(config.seed)) && config.seed !== null && config.seed !== ''
+      ? { seed: clampInt(config.seed, 0, 4294967295, 0) } : {}),
   };
 }
 

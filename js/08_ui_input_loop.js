@@ -1654,6 +1654,15 @@ function renderInfo(){
       h_ += '<div class="row"><span>Prix pièce</span><b style="color:'+(canAfford?'#ffe9a0':'#ff9a8a')+'">'+exp.cost.toLocaleString()+' $</b></div>';
       if(!isCorner && (expansionLevels[exp.side]||0)>0)
         h_ += '<div class="row"><span>Bande n°</span><b>'+((expansionLevels[exp.side]||0)+1)+'</b></div>';
+      // Biomes de la pièce (le climat oriente les gisements qu'on y trouve)
+      const biomeRows = biomesActive() ? biomeComposition(exp.x0, exp.y0, exp.x1, exp.y1, exp.inPiece).filter(e => e.pct >= 5) : [];
+      if(biomeRows.length){
+        h_ += '<div class="row" style="margin-top:4px;border-top:1px solid #334;padding-top:4px"><span style="font-weight:600">Biomes</span></div>';
+        for(const e of biomeRows){
+          const B = BIOMES[e.b];
+          h_ += '<div class="row" title="Riche en '+B.atout+'"><span>'+B.ic+' '+B.n+' <small style="opacity:.7">('+B.atout+')</small></span><b>'+e.pct+' %</b></div>';
+        }
+      }
       const resRows = terrainResTypes.filter(r => resCounts[r.t] > 0);
       if(resRows.length > 0){
         h_ += '<div class="row" style="margin-top:4px;border-top:1px solid #334;padding-top:4px"><span style="font-weight:600">Ressources dans la pièce</span></div>';

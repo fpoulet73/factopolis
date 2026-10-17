@@ -135,6 +135,7 @@ global — **l'ordre numérique des prefixes doit rester stable**.
 |---|---|
 | `01_definitions.js` | Constantes, catalogue de bâtiments `BUILD`, ressources `RES`, types de véhicules, recettes, fusions (résidentielles, industrielles, entrepôts), helpers de villages, packs graphiques |
 | `02_world_state.js` | État global (terrain, routes, rails, buildings, vehicles, towns…), wallets multi-joueurs, génération du monde, projection iso rotative, expansion de carte, allocation des travailleurs |
+| `02b_biomes.js` | Biomes (prairie, forêt, désert, toundra, marais, savane, canyon) : climat déterministe par graine, influence sur lacs/relief/forêts/gisements, teintes et essences d'arbres, régions nommées |
 | `03_buildings_population.js` | Création de bâtiments, stock, capacité, population/logement, spécialisation des usines, démollition |
 | `04_construction.js` | Validation `canPlace`, placement `clickAt`, routes, masques rails 8-dir, signaux et cantons, gares/quais fusionnables, zone multi `MP_ZONE=20` |
 | `05_logistics.js` | Camions auto (dispatch BFS), véhicules persistants, bus, trains + wagons, pathfinding ferroviaire, signaux, réservation de quais, feux de carrefour |

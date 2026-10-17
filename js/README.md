@@ -18,6 +18,7 @@ js/i18n.js
 js/01_definitions.js
 js/05_depots/*.js       ← enregistrent les dépôts dans BUILD / toolbar
 js/02_world_state.js
+js/02b_biomes.js        ← biomes (climat, régions, poids des ressources)
 js/03_buildings_population.js
 js/04_construction.js
 js/05_logistics.js
@@ -77,6 +78,17 @@ js/pixi/vendor/pixi.min.js, js/pixi/scene.js, js/pixi/sprites.js  ← scène Pix
   et transit (`refreshWorkerAllocation` 2 passes,
   `refreshTransitPassengerCaps` — gares, arrêts, ports, aéroports),
   conversions solo (`walletOwnerOf`).
+- **`02b_biomes.js`** : 7 biomes (`BIOMES` : prairie, forêt, désert,
+  toundra, marais, savane, canyon) déduits de deux champs de bruit
+  (température, humidité) dans le repère absolu du monde (`WORLD.seed`,
+  `noiseOx/noiseOy`) : rien n'est sauvegardé ni synchronisé, la grille
+  (`biomeGrid`, `biomeAlt`, `biomeBlend`) est recalculée à la demande
+  (`ensureBiomeGrid`). Pilote la génération (`biomeMix` : eau, relief,
+  arbres ; `biomeResWeight`/`biomeResMean` : taches de ressources ;
+  `applyBiomeFeatures` : dunes, tourbières), le rendu (`biomeTreeStyleAt`,
+  teintes `sol`, couleurs de mini-carte) et les régions nommées
+  (`biomeRegions`, `biomeComposition`). `WORLD.biomes` absent (mondes
+  anciens) → prairie partout, comportement d'avant.
 - **`03_buildings_population.js`** : création de bâtiments (`newBuilding`,
   `setGrid`, `recipeOf`), stock/capacité (`capOf`, `accepts`, `space`,
   `adjRoadTiles`), validation de terrain (`treeNear`, `fieldNear`,

@@ -473,6 +473,10 @@ if(typeof Minimap !== 'undefined') Minimap.setVisible(!!UI_OPTIONS.panelMinimap)
 
 buildToolbar();
 genWorld();
+// Vue d'accueil (avant connexion) : toute la carte dézoomée au maximum, biomes et noms de
+// régions en vue d'ensemble
+cam.z = ZOOM_MIN;
+centerOn((mapBounds.x0 + mapBounds.x1) / 2 * TILE, (mapBounds.y0 + mapBounds.y1) / 2 * TILE);
 renderAutoSaves();
 requestAnimationFrame(frame);   // rendu (suspendu si onglet en arrière-plan)
 startSimClock();                 // simulation (continue en arrière-plan)

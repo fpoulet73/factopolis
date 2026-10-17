@@ -166,6 +166,13 @@ const CONFIG = {
       oil:       0.05,  // nappes de pétrole (chimie, carburant)
       gold:      0.025, // minerai d'or : précieux et rare (électronique, bijoux)
     },
+    // Biomes : prairie, forêt, désert, toundra, marais, savane, canyon. Chacun oriente
+    // lacs, relief, forêts et gisements (détail dans js/02b_biomes.js). Les cartes
+    // créées avant leur activation restent en prairie.
+    biomes: {
+      actif: true,
+      echelle: 1,   // taille des régions (0.4 = petites et nombreuses, 3 = immenses)
+    },
   },
 
   /* ---------- MAISONS ---------- */

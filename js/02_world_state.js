@@ -239,6 +239,8 @@ function normalizeWorldConfig(config){
     },
     // Matériaux de chantier exigés pour les grands bâtiments (false : bac à sable, cf. tests)
     buildMaterials: c.buildMaterials !== false,
+    // Monde découpé en biomes (js/02b_biomes.js) — absent des mondes plus anciens
+    biomes: c.biomes === true,
     seed: Number.isFinite(c.seed) ? c.seed : Math.floor(Math.random() * 2 ** 31),
     // Décalage cumulé de l'origine de la grille (growMap) — repère absolu du bruit
     noiseOx: Number.isFinite(c.noiseOx) ? c.noiseOx : 0,
@@ -918,8 +920,9 @@ function applyBaseTerrain(noiseA, noiseB, noiseC, waterPct, inScope){
     const base = terrainNoiseScore(noiseA, noiseB, noiseC, x, y);
     const ridge = 1 - Math.abs(ridgeNoise(x, y) * 2 - 1);
     const plateau = (plateauNoise(x, y) - 0.5) * cfg.plateauNoise;
-    const mountain = mountainNoise(x, y) * 0.7 + ridge * 0.3;
-    candidates.push({ i, x, y, water: base, land: base * 0.7 + ridge * 0.3 + plateau, mountain });
+    const mountain = mountainNoise(x, y) * 0.7 + ridge * 0.3 + biomeMix(x, y, 'relief');
+    // Biome : lacs plus rares au désert, plus nombreux au marais (quota d'eau global inchangé)
+    candidates.push({ i, x, y, water: base + biomeMix(x, y, 'eau'), land: base * 0.7 + ridge * 0.3 + plateau, mountain });
   }
   if(!candidates.length) return;
   const waterTiles = Math.min(candidates.length, Math.max(0, Math.round(candidates.length * waterPct / 100)));
@@ -1030,7 +1033,8 @@ function ensureStarterArea(){
     for(let dy = -3; dy <= 3; dy++) for(let dx = -3; dx <= 3; dx++) if(plainGrass(x+dx, y+dy)) free++;
     if(free < 34) continue;
     const ds = dShore[y*N+x] < 0 ? 40 : dShore[y*N+x];
-    const score = Math.abs(ds - 5) * 2 + Math.max(Math.abs(x - mcx), Math.abs(y - mcy)) * 0.5;
+    // biomes rudes (désert, toundra, canyon…) pénalisés : on démarre plutôt en terre clémente
+    const score = Math.abs(ds - 5) * 2 + Math.max(Math.abs(x - mcx), Math.abs(y - mcy)) * 0.5 + biomeMix(x, y, 'depart');
     if(score < bestScore){ bestScore = score; best = { x, y, ds }; }
   }
   if(!best) return null;
@@ -1124,16 +1128,22 @@ function ensureAllResourcesInScope(inScope){
     if(t === T.GRASS) grass.push(y*N+x);
   }
   if(!grass.length) return;
-  const pickGrass = pool => {
+  // Tire une case d'herbe, de préférence dans un biome propice à la ressource `key`.
+  const pickGrass = (pool, key) => {
+    let fallback = -1;
     for(let tries = 0; tries < 200; tries++){
       const i = pool[(Math.random()*pool.length)|0];
-      if(terrain[i] === T.GRASS) return i;
+      if(terrain[i] !== T.GRASS) continue;
+      if(!key || Math.random() < biomeResWeight(key, i % N, (i / N) | 0)) return i;
+      if(fallback < 0) fallback = i;
     }
-    return -1;
+    return fallback;
   };
-  for(const type of [T.TREE, T.WHEAT, T.COTTON, ...WORLD_DEPOSITS.map(dep => dep.t)]){
+  const kinds = [{ t:T.TREE }, { t:T.WHEAT, key:'wheat' }, { t:T.COTTON, key:'cotton' },
+    ...WORLD_DEPOSITS.map(dep => ({ t:dep.t, key:dep.key }))];
+  for(const { t:type, key } of kinds){
     if(present.has(type)) continue;
-    const idx = pickGrass(grass);
+    const idx = pickGrass(grass, key);
     if(idx < 0) continue;
     const cx = idx % N, cy = (idx / N) | 0;
     for(let dy = -1; dy <= 1; dy++) for(let dx = -1; dx <= 1; dx++){
@@ -1152,6 +1162,7 @@ function ensureAllResourcesInScope(inScope){
 
 function genWorld(config){
   WORLD = normalizeWorldConfig(config || WORLD);
+  WORLD.biomes = BIOME_CFG.actif; // tout nouveau monde suit la config (pas le monde précédent)
   const N_PLAY = WORLD.size;
   const N_FULL_MAP = N_PLAY + 2 * EXP_MARGIN;
   setMapSize(N_FULL_MAP);
@@ -1189,23 +1200,27 @@ function genWorld(config){
   const treeCandidates = [];
   for(let y=0;y<N;y++) for(let x=0;x<N;x++){
     if(terrain[y*N+x] !== T.GRASS) continue;
-    treeCandidates.push({ x, y, score: tn(x,y) + Math.random()*0.25 });
+    treeCandidates.push({ x, y, score: tn(x,y) + Math.random()*0.25 + biomeMix(x, y, 'arbres') });
   }
   treeCandidates.sort((a,b)=> b.score - a.score);
-  for(let i=0, n=Math.min(treeCandidates.length, Math.round(N*N*WORLD.resources.tree/100)); i<n; i++){
+  const treeQuota = biomeTreeQuota(Math.round(N*N*WORLD.resources.tree/100), treeCandidates);
+  for(let i=0, n=Math.min(treeCandidates.length, treeQuota); i<n; i++){
     const c = treeCandidates[i];
     terrain[c.y*N+c.x] = T.TREE;
   }
   markTerrainDirty(); // nouveau terrain → invalider cache sol + décor (arbres/poissons)
-  // champs et gisements en taches
-  const placePatch = (type, count, opts={})=>{
+  // champs et gisements en taches ; chaque tache ne prend qu'avec la probabilité du
+  // biome (biomeResWeight), le nombre d'essais étant compensé (biomeResMean)
+  const placePatch = (type, key, count, opts={})=>{
     const minRadius = opts.minRadius ?? 1;
     const maxRadius = opts.maxRadius ?? 2;
     const fillChance = opts.fillChance ?? 0.85;
-    for(let k=0;k<count;k++){
+    const attempts = Math.round(count / biomeResMean(key));
+    for(let k=0;k<attempts;k++){
       let cx, cy, tries = 0;
       do { cx = 3+(Math.random()*(N-6))|0; cy = 3+(Math.random()*(N-6))|0; }
       while(terrain[cy*N+cx] === T.WATER && ++tries < 300);
+      if(Math.random() >= biomeResWeight(key, cx, cy)) continue;
       const r = minRadius + (Math.random()*(maxRadius-minRadius+1))|0;
       for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
         const x = cx+dx, y = cy+dy;
@@ -1216,31 +1231,14 @@ function genWorld(config){
     }
   };
   const patchCount = pct => Math.round(N*N * pct / 100 / 8);
-  placePatch(T.WHEAT, patchCount(WORLD.resources.wheat));
-  placePatch(T.COTTON, patchCount(WORLD.resources.cotton), { maxRadius:1, fillChance:0.65 });
-  for(const dep of WORLD_DEPOSITS) placePatch(dep.t, patchCount(WORLD.resources[dep.key] ?? 0), dep.opts);
-  // Garantit une zone de chaque ressource indispensable dans la zone jouable initiale
-  // (les taches ci-dessus peuvent toutes tomber dans la marge d'expansion non achetée)
-  const ensureResourceZoneInPlayArea = (type) => {
-    for(let y=mapBounds.y0; y<mapBounds.y1; y++)
-      for(let x=mapBounds.x0; x<mapBounds.x1; x++)
-        if(terrain[y*N+x] === type) return;
-    const spots = [];
-    for(let y=mapBounds.y0; y<mapBounds.y1; y++)
-      for(let x=mapBounds.x0; x<mapBounds.x1; x++)
-        if(terrain[y*N+x] === T.GRASS) spots.push(y*N+x);
-    if(!spots.length) return;
-    const idx = spots[(Math.random()*spots.length)|0];
-    const cx = idx % N, cy = (idx / N) | 0;
-    for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++){
-      const x = cx+dx, y = cy+dy;
-      if(x<mapBounds.x0||y<mapBounds.y0||x>=mapBounds.x1||y>=mapBounds.y1) continue;
-      if(terrain[y*N+x] === T.GRASS) terrain[y*N+x] = type;
-    }
-  };
-  [T.TREE, T.WHEAT, T.COTTON, ...WORLD_DEPOSITS.map(dep => dep.t)].forEach(ensureResourceZoneInPlayArea);
+  placePatch(T.WHEAT, 'wheat', patchCount(WORLD.resources.wheat));
+  placePatch(T.COTTON, 'cotton', patchCount(WORLD.resources.cotton), { maxRadius:1, fillChance:0.65 });
+  for(const dep of WORLD_DEPOSITS) placePatch(dep.t, dep.key, patchCount(WORLD.resources[dep.key] ?? 0), dep.opts);
+  applyBiomeFeatures(null); // dunes du désert, tourbières des marais
   applyShoreResources(tn, (x, y) => !!mapMask[y*N+x]);
-  ensureAllResourcesInScope((x, y) => !!mapMask[y*N+x]); // dont sable et argile
+  // Garantit au moins une zone de chaque ressource dans la zone jouable initiale (les
+  // taches ci-dessus peuvent toutes tomber dans la marge d'expansion non achetée)
+  ensureAllResourcesInScope((x, y) => !!mapMask[y*N+x]);
   // zone de départ jouable : rive, fer, charbon et bois à portée (façon Factorio)
   const start = ensureStarterArea();
   starterSite = start;
@@ -1324,20 +1322,22 @@ function generateExpansionTerrain(){
   // Arbres
   const tc=[];
   for(let y=0;y<N;y++) for(let x=0;x<N;x++){
-    if(!inPlay(x,y)&&terrain[y*N+x]===T.GRASS) tc.push({x,y,s:tn(x,y)+Math.random()*0.25});
+    if(!inPlay(x,y)&&terrain[y*N+x]===T.GRASS) tc.push({x,y,s:tn(x,y)+Math.random()*0.25+biomeMix(x,y,'arbres')});
   }
   tc.sort((a,b)=>b.s-a.s);
   const mTiles=N*N-(mapBounds.x1-mapBounds.x0)*(mapBounds.y1-mapBounds.y0);
-  for(let i=0,lim=Math.round(mTiles*(WORLD.resources?.tree??20)/100);i<lim&&i<tc.length;i++)
+  for(let i=0,lim=biomeTreeQuota(Math.round(mTiles*(WORLD.resources?.tree??20)/100),tc);i<lim&&i<tc.length;i++)
     terrain[tc[i].y*N+tc[i].x]=T.TREE;
-  // Gisements et champs
-  const pp=(type,count,opts={})=>{
+  // Gisements et champs (pondérés par biome, cf. genWorld)
+  const pp=(type,key,count,opts={})=>{
     const minRadius=opts.minRadius??1,maxRadius=opts.maxRadius??2,fillChance=opts.fillChance??0.85;
-    for(let k=0;k<count;k++){
+    const attempts=Math.round(count/biomeResMean(key));
+    for(let k=0;k<attempts;k++){
       let cx,cy,tries=0;
       do{cx=(1+Math.random()*(N-2))|0;cy=(1+Math.random()*(N-2))|0;}
       while((inPlay(cx,cy)||terrain[cy*N+cx]===T.WATER)&&++tries<400);
       if(tries>=400)continue;
+      if(Math.random()>=biomeResWeight(key,cx,cy))continue;
       const r=minRadius+(Math.random()*(maxRadius-minRadius+1))|0;
       for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
         const px=cx+dx,py=cy+dy;
@@ -1348,9 +1348,10 @@ function generateExpansionTerrain(){
     }
   };
   const cnt=pct=>Math.round(mTiles*pct/100/8);
-  pp(T.WHEAT,cnt(WORLD.resources?.wheat??8));
-  pp(T.COTTON,cnt(WORLD.resources?.cotton??2),{maxRadius:1,fillChance:0.65});
-  for(const dep of WORLD_DEPOSITS) pp(dep.t, cnt(WORLD.resources?.[dep.key] ?? WORLD_DEFAULTS.resources[dep.key] ?? 0), dep.opts);
+  pp(T.WHEAT,'wheat',cnt(WORLD.resources?.wheat??8));
+  pp(T.COTTON,'cotton',cnt(WORLD.resources?.cotton??2),{maxRadius:1,fillChance:0.65});
+  for(const dep of WORLD_DEPOSITS) pp(dep.t, dep.key, cnt(WORLD.resources?.[dep.key] ?? WORLD_DEFAULTS.resources[dep.key] ?? 0), dep.opts);
+  applyBiomeFeatures((x, y) => !inPlay(x, y));
   applyShoreResources(tn, (x, y) => !inPlay(x, y));
   ensureAllResourcesInScope((x, y) => !inPlay(x, y));
   rebuildWaterLevels();
@@ -1391,20 +1392,23 @@ function generateNewMapRegion(oldN, dx, dy){
   // Arbres
   const tc=[];
   for(let y=0;y<N;y++) for(let x=0;x<N;x++){
-    if(isNew(x,y)&&terrain[y*N+x]===T.GRASS) tc.push({x,y,s:tn(x,y)+Math.random()*0.25});
+    if(isNew(x,y)&&terrain[y*N+x]===T.GRASS) tc.push({x,y,s:tn(x,y)+Math.random()*0.25+biomeMix(x,y,'arbres')});
   }
   tc.sort((a,b)=>b.s-a.s);
   const mTiles=totalArea;
-  for(let i=0,lim=Math.round(mTiles*(WORLD.resources?.tree??20)/100);i<lim&&i<tc.length;i++)
+  for(let i=0,lim=biomeTreeQuota(Math.round(mTiles*(WORLD.resources?.tree??20)/100),tc);i<lim&&i<tc.length;i++)
     terrain[tc[i].y*N+tc[i].x]=T.TREE;
-  // Gisements et champs
-  const pp=(type,count,opts={})=>{
+  // Gisements et champs (pondérés par biome, cf. genWorld) : une bande neuve entièrement
+  // désertique reçoit surtout du pétrole et de l'or, presque pas de blé
+  const pp=(type,key,count,opts={})=>{
     const minRadius=opts.minRadius??1,maxRadius=opts.maxRadius??2,fillChance=opts.fillChance??0.85;
-    for(let k=0;k<count;k++){
+    const attempts=Math.round(count/biomeResMean(key));
+    for(let k=0;k<attempts;k++){
       let c=null,tries=0;
       do{c=pickCell();tries++;}
       while(c&&terrain[c.y*N+c.x]===T.WATER&&tries<20);
       if(!c||terrain[c.y*N+c.x]===T.WATER)continue;
+      if(Math.random()>=biomeResWeight(key,c.x,c.y))continue;
       const cx=c.x,cy=c.y;
       const r=minRadius+(Math.random()*(maxRadius-minRadius+1))|0;
       for(let ddy=-r;ddy<=r;ddy++)for(let ddx=-r;ddx<=r;ddx++){
@@ -1416,9 +1420,10 @@ function generateNewMapRegion(oldN, dx, dy){
     }
   };
   const cnt=pct=>Math.round(mTiles*pct/100/8);
-  pp(T.WHEAT,cnt(WORLD.resources?.wheat??8));
-  pp(T.COTTON,cnt(WORLD.resources?.cotton??2),{maxRadius:1,fillChance:0.65});
-  for(const dep of WORLD_DEPOSITS) pp(dep.t, cnt(WORLD.resources?.[dep.key] ?? WORLD_DEFAULTS.resources[dep.key] ?? 0), dep.opts);
+  pp(T.WHEAT,'wheat',cnt(WORLD.resources?.wheat??8));
+  pp(T.COTTON,'cotton',cnt(WORLD.resources?.cotton??2),{maxRadius:1,fillChance:0.65});
+  for(const dep of WORLD_DEPOSITS) pp(dep.t, dep.key, cnt(WORLD.resources?.[dep.key] ?? WORLD_DEFAULTS.resources[dep.key] ?? 0), dep.opts);
+  applyBiomeFeatures(isNew);
   applyShoreResources(tn, isNew);
   ensureAllResourcesInScope(isNew);
   rebuildWaterLevels();
@@ -1530,11 +1535,17 @@ function buyExpansion(exp, payer = null, remote = false){
   wallet.money -= exp.cost;
   wallet.fin.expansion = (wallet.fin.expansion || 0) + exp.cost;
 
+  // Biomes déjà connus avant l'achat (annonce des découvertes, joueur local seulement)
+  const knownBiomes = remote ? null : biomesInPlayArea();
   // Remplir les tuiles de cette pièce dans le masque
   const s = exp.strip || exp;
   for(let y=s.y0; y<s.y1; y++)
     for(let x=s.x0; x<s.x1; x++)
       if(x>=0&&y>=0&&x<N&&y<N && exp.inPiece(x,y)) mapMask[y*N+x] = 1;
+  // (avant un éventuel growMap qui décalerait les coordonnées de la pièce)
+  const discovered = knownBiomes && biomesActive()
+    ? biomeComposition(s.x0, s.y0, s.x1, s.y1, (x, y) => exp.inPiece(x, y)).filter(e => e.pct >= 15 && !knownBiomes.has(e.b))
+    : [];
 
   if(exp.strip){
     // Pièce latérale : marquer achetée, vérifier si bande complète
@@ -1576,6 +1587,17 @@ function buyExpansion(exp, payer = null, remote = false){
     'bottom-left':'bas-gauche','bottom-right':'bas-droite'}[exp.side];
   if(!remote) toast('🧩 Pièce achetée vers '+dirLabel+'.','win');
   addFloat(exp.cx, exp.cy, '🧩', '#60d8a0');
+  for(const { b } of discovered){
+    // nom de la région la plus proche de ce biome (si elle est assez grande pour en avoir un)
+    let region = null, best = Infinity;
+    for(const r of biomeRegions()){
+      if(r.b !== b) continue;
+      const d = Math.hypot(r.x - exp.cx, r.y - exp.cy);
+      if(d < best){ best = d; region = r; }
+    }
+    const B = BIOMES[b];
+    toast(B.ic + ' Nouveau biome : ' + (region ? region.name : B.n) + ' — riche en ' + B.atout + ' !', 'win');
+  }
   return true;
 }
 

@@ -69,8 +69,11 @@ const Minimap = (function(){
     if(road[i]) return [96, 101, 109];
     if(rail[i]) return [86, 62, 40];
     const lift = Math.min(40, lv * 6);
+    const biome = biomesActive() ? biomeAt(x, y) : null;
     switch(t){
-      case T.TREE:   return [44 + lift / 3, 106 + lift / 2, 46];
+      case T.TREE:
+        if(biome){ const c = biome.miniArbre; return [c[0] + lift / 3, c[1] + lift / 2, c[2]]; }
+        return [44 + lift / 3, 106 + lift / 2, 46];
       case T.WHEAT:  return [196, 172, 76];
       case T.COTTON: return [226, 222, 204];
       case T.IRON:   return [176, 112, 70];
@@ -82,6 +85,7 @@ const Minimap = (function(){
       case T.LIMESTONE: return [222, 218, 202];
       case T.OIL:    return [36, 30, 44];
     }
+    if(biome){ const c = biome.mini; return [Math.min(255, c[0] + lift), Math.min(255, c[1] + lift / 2), Math.min(255, c[2] + lift / 3)]; }
     return [92 + lift, 156 + lift / 2, 72 + lift / 3];
   }
 

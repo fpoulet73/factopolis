@@ -66,24 +66,33 @@ const PixiSprites = (function(){
 
   // --- Arbres -------------------------------------------------------------
   const TREE_W = 36, TREE_H = 48, TREE_AX = 18, TREE_AY = 40;
-  let treeTex = null;
+  // Textures cuites par essence (style de biome, cf. drawTree) : 8 variantes chacune,
+  // cuites à la première rencontre de l'essence.
+  const treeTexByStyle = new Map();
+  let treeSeeds = null;
   let treePool = [], treeCount = 0;
   // Les arbres ne dépendent QUE du terrain/mapMask → gate sur terrainVersion (pas
   // groundVersion) pour ne PAS rescanner toute la carte à chaque pose de route/rail.
-  let treeBuiltVersion = -1, treeBuiltRot = -1, treeBuiltN = -1;
+  let treeBuiltVersion = -1, treeBuiltRot = -1, treeBuiltN = -1, treeBuiltBiomes = -1;
 
-  function bakeTrees(){
-    const seeds = new Array(8).fill(null);
-    let found = 0;
-    for(let y = 0; y < N && found < 8; y++) for(let x = 0; x < N; x++){
-      const r = hash(x, y) & 7;
-      if(!seeds[r]){ seeds[r] = { x, y }; if(++found === 8) break; }
+  function treeTexFor(style){
+    let tex = treeTexByStyle.get(style);
+    if(tex) return tex;
+    if(!treeSeeds){
+      treeSeeds = new Array(8).fill(null);
+      let found = 0;
+      for(let y = 0; y < N && found < 8; y++) for(let x = 0; x < N; x++){
+        const r = hash(x, y) & 7;
+        if(!treeSeeds[r]){ treeSeeds[r] = { x, y }; if(++found === 8) break; }
+      }
     }
-    treeTex = seeds.map((s) => {
+    tex = treeSeeds.map((s) => {
       const sx = s ? s.x : 0, sy = s ? s.y : 0;
       const c = tileCenterIso(0, 0, sx, sy);
-      return bake(TREE_W, TREE_H, TREE_AX, TREE_AY, c[0], c[1], () => drawTree(0, 0, sx, sy));
+      return bake(TREE_W, TREE_H, TREE_AX, TREE_AY, c[0], c[1], () => drawTree(0, 0, sx, sy, style));
     });
+    treeTexByStyle.set(style, tex);
+    return tex;
   }
 
   function rebuildTrees(layer){
@@ -96,7 +105,7 @@ const PixiSprites = (function(){
       const pos = tileCenterIso(rx, ry, x, y);
       let s = treePool[n];
       if(!s){ s = new PIXI.Sprite(); s.scale.set(1 / SS); layer.addChild(s); treePool[n] = s; }
-      applyBaked(s, treeTex[hash(x, y) & 7]);
+      applyBaked(s, treeTexFor(biomeTreeStyleAt(x, y))[hash(x, y) & 7]);
       s.visible = true;
       s.position.set(pos[0], pos[1]);
       s.zIndex = spriteDepthKey(rx + 0.5, ry + 0.5);
@@ -105,11 +114,13 @@ const PixiSprites = (function(){
     for(let i = n; i < treePool.length; i++) treePool[i].visible = false;
     treeCount = n;
     treeBuiltVersion = terrainVersion; treeBuiltRot = rot; treeBuiltN = N;
+    treeBuiltBiomes = typeof biomeGridVersion !== 'undefined' ? biomeGridVersion : 0;
   }
 
   function updateTrees(layer){
-    if(!treeTex) bakeTrees();
-    if(treeBuiltVersion !== terrainVersion || treeBuiltRot !== rot || treeBuiltN !== N)
+    if(typeof ensureBiomeGrid === 'function') ensureBiomeGrid();
+    const bgv = typeof biomeGridVersion !== 'undefined' ? biomeGridVersion : 0;
+    if(treeBuiltVersion !== terrainVersion || treeBuiltRot !== rot || treeBuiltN !== N || treeBuiltBiomes !== bgv)
       rebuildTrees(layer);
     // Culling : seuls les arbres à l'écran restent rendus.
     for(let i = 0; i < treeCount; i++){

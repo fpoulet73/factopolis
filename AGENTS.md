@@ -45,6 +45,7 @@ npm test           # tests headless (Playwright requis, serveur isolé)
 | Équilibrage (coûts, temps, capacités, tarifs) | `config.js` |
 | Définitions de bâtiments, ressources, fusions | `js/01_definitions.js` |
 | État monde, génération terrain, projection iso | `js/02_world_state.js` |
+| Biomes (climat, ressources par biome, régions nommées) | `js/02b_biomes.js` |
 | Logique bâtiment (stock, pop, démollition) | `js/03_buildings_population.js` |
 | Validation/Placement, rails, signaux, gares | `js/04_construction.js` |
 | Camions, bus, trains, pathfinding | `js/05_logistics.js` |
