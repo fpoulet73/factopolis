@@ -60,7 +60,7 @@ const OBJECTIVES = [
   { ic:'👥', txt:'Atteins 25 habitants', reward:800, check:o => popTotal(o) >= 25 },
   { ic:'🔥', txt:'Produis de l’acier : mines de fer et de charbon + aciérie', reward:1200, check:o => countOwned(o, b => b.type === 'smelter') >= 1 },
   { ic:'🔧', txt:'Fabrique des outils : bûcheron + usine d’outils', reward:1500, check:o => countOwned(o, b => b.type === 'factory') >= 1 },
-  { ic:'🏡', txt:'Fais fusionner des maisons pleines (outils livrés)', reward:2000, check:o => countOwned(o, b => BUILD[b.type].resid && b.type !== 'house') >= 1 },
+  { ic:'🏡', txt:'Fais fusionner des maisons pleines (outils livrés)', reward:2000, check:o => countOwned(o, b => BUILD[b.type].resid && b.type !== 'house' && !BUILD[b.type].lux) >= 1 },
   { ic:'🚚', txt:'Achète un camion ou un bus (dépôt de véhicules)', reward:1000, check:o => vehicles.some(v => VEHICLE_TYPES[v.vtype]?.mode === 'road' && v.garageRef && ownedBy(v.garageRef, o)) },
   { ic:'🏙️', txt:'Atteins 100 habitants', reward:3000, check:o => popTotal(o) >= 100 },
   { ic:'🚉', txt:'Construis un dépôt de train et deux gares', reward:5000, check:o => countOwned(o, b => b.type === 'train_depot') >= 1
@@ -182,9 +182,11 @@ function update(dt){
         residConsumeAll(b, residRequiredOf(b));
         const bonusResources = residBonusOf(b).filter(r => (b.storage[r]||0) > 0);
         for(const r of bonusResources){ b.storage[r]--; consumed.push(r); }
+        // les classes aisées (maisons de luxe) dépensent davantage par habitant
+        const classMult = residClassDef(b).revenu;
         let income = 0;
         for(const r of consumed){
-          const part = Math.round((RESID_PRICES[r]||0) * pop);
+          const part = Math.round((RESID_PRICES[r]||0) * pop * classMult);
           if(part){ income += part; recordVente(w, 'res', r, part); }
         }
         earnMoney(income, 'ventes', w);
@@ -237,12 +239,13 @@ function update(dt){
   }
   if(starved) for(const b of starved){
     if(b.dead) continue;
-    if(b.w*b.h > 1) splitBuilding(b);
+    // une maison de luxe garde son domaine : ses habitants partent un à un
+    if(b.w*b.h > 1 && !BUILD[b.type].lux) splitBuilding(b);
     else leaveOne(b);
   }
 
   mergeTimer += dt;
-  if(mergeTimer >= 1){ mergeTimer = 0; tryMerge(); tryMergeInd(); tryMergeDepot(); tryMergeTrainStations(); }
+  if(mergeTimer >= 1){ mergeTimer = 0; tryMerge(); tryExpandLuxury(); tryMergeInd(); tryMergeDepot(); tryMergeTrainStations(); }
 
   // Expédition automatique : TOUS les bâtiments étaient traités d'un coup toutes les
   // 0,7 s (une recherche de route par ressource) → une image longue à chaque cycle,
@@ -315,7 +318,8 @@ function update(dt){
       const total   = popTotal(oid);
       const working = Math.min(total, activeWorkers);
       const idle    = total - working;
-      const t = ECO.taxe * working + (ECO.taxe / 3) * idle;
+      // multiplicateur moyen de taxe des classes d'habitants (1 si que des ouvriers)
+      const t = (ECO.taxe * working + (ECO.taxe / 3) * idle) * popTaxMultiplier(oid, total);
       earnMoney(t, 'taxes', w);
     }
   }
@@ -394,6 +398,8 @@ function update(dt){
         toast('🎉 '+MILESTONES[w.mi]+' habitants ! Ta ville prospère.','win');
       w.mi++;
     }
+    // déblocage définitif des maisons de luxe (l'annonce est faite par l'UI)
+    if(!w.luxeUnlocked && popTotal(oid) >= LUX_UNLOCK_POP) w.luxeUnlocked = true;
   }
 
   for(let i=floats.length-1;i>=0;i--){
@@ -451,7 +457,8 @@ function update(dt){
       b.passengersEntrantQuota -= fillAmount;
     }
     // Passagers qui attendent depuis trop longtemps : deviennent sortants après 3 jours
-    if((b.passengersEntrant || 0) > 0){
+    // (pas pour les gares : leurs entrants ne diminuent que lorsqu'un train les embarque)
+    if(b.type !== 'train_station' && (b.passengersEntrant || 0) > 0){
       const timeout = 3 * 24 / GAME_HOURS_PER_SEC;
       const leave = (b.passengersEntrant / timeout) * Math.min(dt, 0.5);
       b.passengersEntrant = Math.max(0, b.passengersEntrant - leave);
@@ -470,6 +477,7 @@ function checkRect(x,y,w,h,targetLevel=null){
     if(!b) return null;
     const rc = BUILD[b.type].resid;
     if(!rc) return null;                                        // pas un logement
+    if(BUILD[b.type].lux) return null;                          // le luxe s'agrandit seul (tryExpandLuxury)
     if((b.owner ?? null) !== owner) return null;                // jamais entre deux joueurs
     if(b.w*b.h >= area) return null;                            // pas plus petit
     if(b.x<x || b.y<y || b.x+b.w>x+w || b.y+b.h>y+h) return null; // déborde du rectangle
@@ -535,7 +543,7 @@ function tryMergeInd(){
 
 function tryMerge(){
   // Seuls les logements pleins peuvent fusionner : origines candidates = ceux-là.
-  const anchors = mergeAnchors(b => !!BUILD[b.type]?.resid && b.pop >= BUILD[b.type].resid.popCap);
+  const anchors = mergeAnchors(b => !!BUILD[b.type]?.resid && !BUILD[b.type].lux && b.pop >= BUILD[b.type].resid.popCap);
   if(anchors.length < 2) return;
   for(const L of MERGE_ORDER){
     for(const [w,h] of L.shapes){
@@ -582,6 +590,97 @@ function tryMerge(){
       }
     }
   }
+}
+
+// ---------- maisons de luxe : agrandissement sur place ----------
+// Même déclencheur qu'une fusion (logement plein + outils livrés), mais la maison
+// s'étend sur les cases LIBRES voisines au lieu d'absorber d'autres logements :
+// le bâtiment est modifié en place (mêmes habitants, stocks et références des
+// camions), seuls son type, son emprise et la classe de ses habitants changent.
+
+// Case libre : herbe plate au niveau de la maison, sans route, rail ni bâtiment.
+function luxExpansionTileFree(x, y, level){
+  if(!inMap(x, y)) return false;
+  const i = y*N+x;
+  if(road[i] || rail[i] || bgrid[i] || terrain[i] !== T.GRASS) return false;
+  return tileIsFlat(x, y) && terrainCornerLevelAt(x, y) === level;
+}
+
+// Emprise du niveau suivant : rectangle contenant l'emprise actuelle dont les
+// cases ajoutées sont libres. On préfère celui qui longe le plus de route
+// (façade sur rue), puis le moins décalé par rapport à la maison d'origine.
+// null : niveau maximal, ou pas assez de place autour de la maison.
+function luxExpansionRect(b){
+  const next = luxNextLevelOf(b);
+  if(!next) return null;
+  const level = terrainCornerLevelAt(b.x, b.y);
+  let best = null, bestScore = -Infinity;
+  for(const [W, H] of next.shapes){
+    if(W < b.w || H < b.h || W*H <= b.w*b.h) continue;
+    for(let y = b.y + b.h - H; y <= b.y; y++) for(let x = b.x + b.w - W; x <= b.x; x++){
+      let ok = true;
+      for(let yy = y; yy < y+H && ok; yy++) for(let xx = x; xx < x+W; xx++){
+        if(xx >= b.x && xx < b.x+b.w && yy >= b.y && yy < b.y+b.h) continue;
+        if(!luxExpansionTileFree(xx, yy, level)){ ok = false; break; }
+      }
+      if(!ok) continue;
+      const score = adjRoadTiles({ x, y, w:W, h:H }).length * 100 - (b.x - x) - (b.y - y);
+      if(score > bestScore){ bestScore = score; best = { x, y, w:W, h:H, type:next.key }; }
+    }
+  }
+  return best;
+}
+
+// Prête à s'agrandir dès qu'il y a la place : pleine, compteur d'upgrade atteint.
+function luxReadyToExpand(b){
+  if(!BUILD[b.type]?.lux || b.starterHome || !luxNextLevelOf(b)) return false;
+  return b.pop >= BUILD[b.type].resid.popCap && residUpgradeSatisfied(b);
+}
+
+function expandLuxuryHouse(b, rect){
+  const before = residClassDef(b);
+  setGrid(b, null);
+  b.type = rect.type; b.x = rect.x; b.y = rect.y; b.w = rect.w; b.h = rect.h;
+  setGrid(b, b);
+  // nouveau palier : compteur d'upgrade repris à zéro (les outils en route
+  // compteront pour le suivant), stocks bornés par la nouvelle capacité
+  b.upgradeProgress = {};
+  b.upgradePaused = {};
+  for(const k in b.storage){
+    const cap = capOf(b, k);
+    if(cap > 0) b.storage[k] = Math.min(cap, b.storage[k]);
+    else delete b.storage[k];
+  }
+  normalizeResidentialUpgradeState(b);
+  b._accV = null; // cache d'accès routier des sprites (js/pixi/sprites.js)
+  const d = BUILD[b.type], cls = residClassDef(b);
+  toast('💎 '+d.n+' ('+b.w+'×'+b.h+') : les '+before.pluriel.toLowerCase()+' deviennent '
+    + cls.pluriel.toLowerCase()+' '+cls.icone+' !', 'win', eventTargetForBuilding(b));
+  if(!luxNextLevelOf(b) && typeof publishNews === 'function'){
+    const town = typeof newsTownName === 'function' ? newsTownName(b) : '';
+    publishNews('niveau:' + b.type, '⛲', 'Un premier domaine de prestige ouvre ses grilles' + (town ? ' à ' + town : '') + ' !',
+      'Piscine, court de tennis et jardins à la française : les patrons de la région ont trouvé leur adresse.', eventTargetForBuilding(b));
+  }
+}
+
+function tryExpandLuxury(){
+  for(const b of buildings){
+    if(b.dead || !luxReadyToExpand(b)) continue;
+    const rect = luxExpansionRect(b);
+    if(rect) expandLuxuryHouse(b, rect);
+  }
+}
+
+// Multiplicateur moyen de la taxe par habitant selon les classes (cf.
+// CFG.classesHabitants) : 1 tant que la ville ne compte que des ouvriers.
+function popTaxMultiplier(oid, total = popTotal(oid)){
+  if(!(total > 0)) return 1;
+  let weighted = 0;
+  for(const b of buildings){
+    if(b.dead || !b.pop || !ownedBy(b, oid)) continue;
+    weighted += b.pop * residClassDef(b).taxe;
+  }
+  return weighted / total;
 }
 
 // ---------- piétons (nouveaux habitants) ----------
