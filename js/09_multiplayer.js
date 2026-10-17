@@ -102,6 +102,7 @@ function serializeWalkerState(wk){
     protectedResident: !!wk.protectedResident,
     col: wk.col || null,
     phase: Number.isFinite(wk.phase) ? wk.phase : 0,
+    cj: wk.cj || null, // ouvriers en marche vers un poste
   };
 }
 
@@ -352,6 +353,7 @@ function reconcileGuestWalkers(prevWalkers, snapWalkers){
       wk.fromHomeless = !!sw.fromHomeless;
       wk.protectedResident = !!sw.protectedResident;
       wk.col = col; wk.phase = phase;
+      wk.cj = sw.cj || null;
     } else {
       wk = {
         id: sw.id ?? null,
@@ -360,7 +362,7 @@ function reconcileGuestWalkers(prevWalkers, snapWalkers){
         leaving: !!sw.leaving,
         fromHomeless: !!sw.fromHomeless,
         protectedResident: !!sw.protectedResident,
-        col, phase,
+        col, phase, cj: sw.cj || null,
       };
     }
     out.push(wk);

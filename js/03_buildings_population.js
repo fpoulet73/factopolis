@@ -489,6 +489,8 @@ function demolishBuilding(b, refundOwner){
   const owner = b.owner ?? null;
   const townId = b.townId ?? null;
   const evicted = makeResidentsHomeless(b);
+  // ouvriers venus par transport : ils rejoignent la maison libre / le point de transit le plus proche
+  if(b.commuters) for(const key of Object.keys(b.commuters)) sendCommutersAway(b, key, b.commuters[key]);
   b.dead = true;
   buildings.splice(buildings.indexOf(b),1);
   setGrid(b,null);

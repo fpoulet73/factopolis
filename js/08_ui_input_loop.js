@@ -114,6 +114,34 @@ function fusedDepotHtml(linkedDepot){
       return h;
 }
 
+// Habitants d'une maison : « Habitants » (total) et « Présents à la maison », chacun avec
+// un détail par joueur au clic (une ligne par joueur ayant des habitants, jamais à 0).
+// Les habitants d'une maison appartiennent tous à son propriétaire.
+const homeDetailOpen = { pop:false, present:false };
+function toggleHomeDetail(kind){ homeDetailOpen[kind] = !homeDetailOpen[kind]; if(typeof renderInfo === 'function') renderInfo(); }
+function homeOccupancyHtml(home){
+  const key = home.x + ',' + home.y;
+  const pop = Math.floor(home.pop || 0);
+  let working = 0, walking = 0;
+  for(const j of buildings){
+    const n = j.homeCommuters?.[key];
+    if(n > 0 && !j.dead) working += n;
+  }
+  for(const wk of walkers) if(wk.cj && wk.cj.field === 'home' && wk.cj.key === key) walking += wk.cj.n;
+  working = Math.min(pop, Math.floor(working));
+  walking = Math.min(pop - working, Math.floor(walking));
+  const present = Math.max(0, pop - working - walking);
+  const box = rows => rows.length ? '<div style="margin:2px 0 6px;padding:4px 6px;background:#101826;border-radius:6px;font-size:12px;color:#b8d4f0">'+rows.map(r => '<div>'+r+'</div>').join('')+'</div>' : '';
+  const name = escHtml(playerName(home.owner));
+  let h = '';
+  h += '<div class="row" style="cursor:pointer" onclick="toggleHomeDetail(\'pop\')" title="Cliquer : détail par joueur"><span>Habitants</span><b>'+pop+' / '+(BUILD[home.type]?.resid?.popCap ?? pop)+'</b></div>'
+    + (homeDetailOpen.pop && pop > 0 ? box([name+' : <b>'+pop+'</b>']) : '');
+  h += '<div class="row" style="cursor:pointer" onclick="toggleHomeDetail(\'present\')" title="Cliquer : détail par joueur"><span>Présents à la maison</span><b>🏠 '+present+' / '+pop+'</b></div>';
+  if(homeDetailOpen.present && pop > 0)
+    h += box([name+' : <b>'+present+'</b> présents · <b>'+working+'</b> au travail · <b>'+walking+'</b> passagers']);
+  return h;
+}
+
 // Clic sur le compteur d'habitants : répartition au travail / en passager / à la maison.
 function popBreakdown(){
   const town = ensureSelectedTown();
@@ -1787,7 +1815,7 @@ function renderInfo(){
     h += '<div class="row"><span>Citerne proche</span><b style="color:'+(tankNear(b) ? '#9fe8a0' : '#ff9a8a')+'">'
        + (tankNear(b) ? 'oui' : 'non') + ' / '+BAKERY_TANK_RADIUS+' cases</b></div>';
   if(d.resid)
-    h += '<div class="row"><span>Habitants</span><b>'+b.pop+' / '+d.resid.popCap+'</b></div>';
+    h += homeOccupancyHtml(b);
   if(d.resid){
     const cls = residClassDef(b);
     h += '<div class="row"><span>Classe</span><b style="color:#f0d890">'+cls.icone+' '+escHtml(cls.pluriel)+'</b></div>';
@@ -3088,12 +3116,35 @@ const mouse = { x:0, y:0, tx:-1, ty:-1, lDown:false, rDown:false, rMoved:0, last
 // Bascule tactile du mode "angle droit" pour les routes (équivalent de Maj au clavier).
 let shiftToggle = false;
 
+// Tuile sous un point écran (coordonnées iso) en tenant compte du relief : une tuile
+// en hauteur est dessinée décalée vers le haut de sa « lift », donc le point peut tomber
+// sur une tuile plus éloignée que celle lue à plat. On teste chaque altitude possible et
+// on garde, parmi les tuiles dont l'altitude correspond, la plus proche de la caméra.
+function pickTileUnderIso(ix, iy){
+  const flat = l => {
+    const iyl = iy + l;
+    const u = (ix/TW2 + iyl/TH2)/2, v = (iyl/TH2 - ix/TW2)/2;
+    const [tx, ty] = invRotF(u, v);
+    return { tx: Math.floor(tx), ty: Math.floor(ty), depth: u + v };
+  };
+  const base = flat(0);
+  const cfg = reliefCfg();
+  if(!cfg.enabled || !terrainHeightMap) return [base.tx, base.ty];
+  const step = cfg.stepPx, maxLift = (cfg.levels + 1) * step;
+  let best = null;
+  for(let l = 0; l <= maxLift; l += 2){
+    const c = flat(l);
+    if(!inMap(c.tx, c.ty)) continue;
+    if(Math.abs(terrainLiftPxAt(c.tx, c.ty) - l) > Math.max(3, step * 0.5)) continue;
+    if(!best || c.depth > best.depth) best = c;
+  }
+  return best ? [best.tx, best.ty] : [base.tx, base.ty];
+}
 function updateMouseTileAt(x,y){
   mouse.x = x; mouse.y = y;
   const ix = cam.x + x/cam.z, iy = cam.y + y/cam.z;
-  const u = (ix/TW2 + iy/TH2)/2, v = (iy/TH2 - ix/TW2)/2;
-  const [tx,ty] = invRotF(u,v);
-  mouse.tx = Math.floor(tx); mouse.ty = Math.floor(ty);
+  const [tx, ty] = pickTileUnderIso(ix, iy);
+  mouse.tx = tx; mouse.ty = ty;
   hoveredExpansion = expansions.find(e=>e.inPiece(mouse.tx,mouse.ty)) || null;
 }
 function updateMouseTile(e){

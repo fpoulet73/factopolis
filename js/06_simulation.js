@@ -265,6 +265,7 @@ function update(dt){
   updateTrucks(dt);
   updateVehicles(dt);
   updateWalkers(dt);
+  tickSortantsToHomes(dt);
 
   // Rapatrier sur la gare les compteurs éventuellement accumulés sur un arrêt
   // de bus fusionné (notamment dans les sauvegardes créées avant cette règle).
@@ -923,6 +924,34 @@ function leaveOne(b){
   spawnLeavers(b, 1);
 }
 
+// Voyageurs arrivés (sortants) d'un arrêt / gare / port / aéroport : s'il y a une maison
+// non pleine du même joueur à portée, ils la rejoignent à pied (1 par seconde et par
+// point de transit). Ils y sont déjà comptés comme habitants : ils quittent le compteur.
+let sortantsHomeTimer = 0;
+function tickSortantsToHomes(dt){
+  sortantsHomeTimer += dt;
+  if(sortantsHomeTimer < 1) return;
+  sortantsHomeTimer = 0;
+  for(const hub of buildings){
+    if(hub.dead || !(hub.passagersSortant >= 1)) continue;
+    if(hub.type !== 'bus_stop' && hub.type !== 'train_station' && hub.type !== 'boat_depot' && hub.type !== 'plane_depot') continue;
+    if(hub.type === 'train_station' && trainStationGroupRepresentative(hub.stationGroupId) !== hub) continue;
+    const radius = hub.type === 'train_station' ? TRAIN_STATION_RADIUS
+      : hub.type === 'boat_depot' ? PORT_RADIUS : hub.type === 'plane_depot' ? AIRPORT_RADIUS : BUS_STOP_RADIUS;
+    let best = null, bd = Infinity;
+    for(const h of buildings){
+      if(h.dead || !BUILD[h.type]?.resid) continue;
+      if(hub.owner != null && h.owner != null && h.owner !== hub.owner) continue;
+      if((h.pop || 0) + (h.pending || 0) >= BUILD[h.type].resid.popCap) continue;
+      const d = buildingDistance(h, hub);
+      if(d <= radius && d < bd){ bd = d; best = h; }
+    }
+    if(!best) continue;
+    hub.passagersSortant -= 1;
+    spawnTransitWalkers(hub, best, 1);
+  }
+}
+
 function updateWalkers(dt){
   for(let i=walkers.length-1;i>=0;i--){
     const wk = walkers[i];
@@ -935,7 +964,7 @@ function updateWalkers(dt){
       else { wk.t += move/d; move = 0; }
     }
     if(wk.seg >= wk.pts.length-1){
-      if(wk.leaving){ walkers.splice(i,1); continue; } // parti pour de bon
+      if(wk.leaving){ if(wk.cj) deliverCommuters(wk.cj.jx, wk.cj.jy, wk.cj.key, wk.cj.n, wk.cj.field); walkers.splice(i,1); continue; } // parti pour de bon
       let tg = wk.target;
       if(tg.dead){
         // bâtiment disparu (fusion ou split) : chercher un logement incomplet proche

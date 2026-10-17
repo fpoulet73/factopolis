@@ -1739,6 +1739,99 @@ function enforceTransitCoherence(){
   }
 }
 
+// ---------- ouvriers venus par transport : départ d'un poste ----------
+// Retourne n ouvriers du poste `job` (origine `key` = « x,y » du point d'arrivée) :
+//  1. à la maison non pleine la plus proche du même joueur (ils y sont déjà comptés
+//     comme habitants : ils quittent simplement le compteur de voyageurs) ;
+//  2. sinon à l'arrêt de bus / la gare / le port / l'aéroport le plus proche, en
+//     passagers entrants ;
+//  3. sinon au point d'arrivée d'origine, en passagers sortants.
+// Un piéton (purement visuel) fait le trajet.
+function sendCommutersAway(job, key, n){
+  if(!(n > 0) || !job.commuters) return;
+  const take = () => { job.commuters[key] -= n; if(job.commuters[key] <= 0) delete job.commuters[key]; };
+  const sameOwner = h => !(job.owner != null && h.owner != null && h.owner !== job.owner);
+  let best = null, bd = Infinity;
+  for(const h of buildings){
+    if(h.dead || !BUILD[h.type]?.resid || !sameOwner(h)) continue;
+    if((h.pop || 0) + (h.pending || 0) >= BUILD[h.type].resid.popCap) continue;
+    const d = buildingDistance(h, job);
+    if(d < bd){ bd = d; best = h; }
+  }
+  if(best){ take(); spawnTransitWalkers(job, best, n); return; }
+  let hub = null; bd = Infinity;
+  for(const h of buildings){
+    if(h.dead || !sameOwner(h)) continue;
+    if(h.type !== 'bus_stop' && h.type !== 'train_station' && h.type !== 'boat_depot' && h.type !== 'plane_depot') continue;
+    const d = buildingDistance(h, job);
+    if(d < bd){ bd = d; hub = h; }
+  }
+  if(hub){
+    const rep = hub.type === 'train_station'
+      ? ((typeof trainStationGroupRepresentative === 'function' && trainStationGroupRepresentative(hub.stationGroupId)) || hub) : hub;
+    const inKey = rep.type === 'bus_stop' ? 'passengers' : 'passengersEntrant'; // passagers entrants
+    rep[inKey] = (rep[inKey] || 0) + n;
+    take(); spawnTransitWalkers(job, rep, n);
+    return;
+  }
+  const [x, y] = key.split(',').map(Number);
+  const origin = bgrid[y*N+x];
+  if(origin && !origin.dead) origin.passagersSortant = (origin.passagersSortant || 0) + n;
+  take();
+}
+// Envoie `n` voyageurs du point de transit `hub` vers l'usine `job` : au plus 3 piétons,
+// chacun porte une part ; ils sont embauchés à leur arrivée (deliverCommuters).
+function dispatchCommuters(hub, job, n, key, field = 'commuters'){
+  const A = { x:(hub.x + (hub.w||1)/2)*TILE, y:(hub.y + (hub.h||1)/2)*TILE };
+  const B = { x:(job.x + (job.w||1)/2)*TILE, y:(job.y + (job.h||1)/2)*TILE };
+  const k = Math.max(1, Math.min(3, n, 81 - walkers.length));
+  if(walkers.length > 80){ deliverCommuters(job.x, job.y, key, n, field); return; }
+  for(let i = 0; i < k; i++){
+    const share = Math.floor(n / k) + (i < n % k ? 1 : 0);
+    walkers.push({ id: nextWalkerId++, pts:[A, B], seg:0, t:-i*0.12, target:null, leaving:true,
+                   cj:{ jx:job.x, jy:job.y, key, n:share, field },
+                   col: playerColor(hub.owner ?? job.owner), phase: Math.random()*7 });
+  }
+}
+// Arrivée des ouvriers à l'usine : ils prennent leur poste (sinon : retour au point de transit).
+function deliverCommuters(jx, jy, key, n, field = 'commuters'){
+  const job = bgrid[jy*N+jx];
+  if(field === 'home'){ // habitants d'une maison : ils prennent leur poste, sinon ils rentrent
+    if(job && !job.dead && !job.paused && workersRequiredOf(job) > 0){
+      if(!job.homeCommuters) job.homeCommuters = {};
+      job.homeCommuters[key] = (job.homeCommuters[key] || 0) + n;
+      _workerAllocAt = -Infinity;
+    }
+    return;
+  }
+  if(job && !job.dead && !job.paused && workersRequiredOf(job) > 0){
+    if(!job.commuters) job.commuters = {};
+    job.commuters[key] = (job.commuters[key] || 0) + n;
+    _workerAllocAt = -Infinity; // recalcul immédiat : l'usine repart
+    return;
+  }
+  if(job && !job.dead){
+    if(!job.commuters) job.commuters = {};
+    job.commuters[key] = (job.commuters[key] || 0) + n;
+    sendCommutersAway(job, key, n);
+    return;
+  }
+  const [x, y] = key.split(',').map(Number);
+  const origin = bgrid[y*N+x];
+  if(origin && !origin.dead) origin.passagersSortant = (origin.passagersSortant || 0) + n;
+}
+// Piétons purement visuels (au plus 3 par déplacement) entre deux bâtiments.
+function spawnTransitWalkers(from, to, n){
+  if(!from || !to) return;
+  const A = { x:(from.x + (from.w||1)/2)*TILE, y:(from.y + (from.h||1)/2)*TILE };
+  const B = { x:(to.x + (to.w||1)/2)*TILE,   y:(to.y + (to.h||1)/2)*TILE };
+  const owner = from.owner ?? to.owner ?? null;
+  for(let i = 0; i < Math.min(3, Math.ceil(n)) && walkers.length <= 80; i++){
+    walkers.push({ id: nextWalkerId++, pts:[A, B], seg:0, t:-i*0.12, target:null, leaving:true,
+                   col: playerColor(owner), phase: Math.random()*7 });
+  }
+}
+
 // Allocation des ouvriers : coûteuse (chaque poste cherche les logements à
 // portée). Recalculée seulement quand la structure change (bâtiments, population,
 // pauses) ou au plus tard toutes les WORKER_ALLOC_PERIOD secondes de jeu.
@@ -1840,19 +1933,50 @@ function refreshWorkerAllocation(){
     candidates.sort((a,b)=> (a._wd - b._wd) || (a.y - b.y) || (a.x - b.x));
     return candidates;
   };
-  // approche centrée sur le poste : chaque poste recrute depuis les maisons les plus proches
-  // null owner = bâtiment solo/non assigné, peut travailler avec n'importe quel propriétaire
+  // Pass 1 : habitants des logements. Physique et persistant : job.homeCommuters
+  // [« x,y » de la maison] = habitants ARRIVÉS à l'usine. Ceux qui marchent encore
+  // (piétons cj) ne comptent qu'à l'arrivée et ne sont plus « à la maison ».
+  const jobInbound = new Map(), homeInbound = new Map();
+  for(const wk of walkers){
+    if(!wk.cj) continue;
+    const jk = wk.cj.jx + ',' + wk.cj.jy;
+    jobInbound.set(jk, (jobInbound.get(jk) || 0) + wk.cj.n);
+    if(wk.cj.field === 'home') homeInbound.set(wk.cj.key, (homeInbound.get(wk.cj.key) || 0) + wk.cj.n);
+  }
+  for(const h of homes) avail.set(h, Math.max(0, h.pop - (homeInbound.get(h.x + ',' + h.y) || 0)));
+  const homeAtKey = key => { const [x, y] = key.split(',').map(Number); const h = bgrid[y*N+x]; return h && !h.dead && BUILD[h.type]?.resid ? h : null; };
+  const jobSetAll = new Set(jobs);
+  // 1a : ceux déjà en poste le restent tant que le poste a besoin d'eux et que la maison est à portée
+  for(const job of buildings){
+    if(!job.homeCommuters) continue;
+    for(const key of Object.keys(job.homeCommuters)){
+      const n = job.homeCommuters[key], home = homeAtKey(key);
+      let keep = 0;
+      if(home && jobSetAll.has(job) && avail.has(home) && !(job.owner != null && home.owner != null && job.owner !== home.owner)
+         && Math.max(Math.abs(home._wcx - (job.x + (job.w||1)/2 - 0.5)), Math.abs(home._wcy - (job.y + (job.h||1)/2 - 0.5))) <= home._wr){
+        keep = Math.min(n, Math.max(0, workersRequiredOf(job) - workersAllocatedOf(job)), Math.floor(avail.get(home)));
+      }
+      if(n - keep > 0 && home) spawnTransitWalkers(job, home, n - keep); // le reste rentre à la maison
+      if(keep > 0){
+        job.homeCommuters[key] = keep;
+        job.workersAssigned = (job.workersAssigned||0) + keep;
+        if(home.townId != null) job.workersByTown[home.townId] = (job.workersByTown[home.townId]||0) + keep;
+        addWorkersOwner(job, home.owner, keep);
+        avail.set(home, avail.get(home) - keep);
+      } else delete job.homeCommuters[key];
+    }
+  }
+  // 1b : nouveaux recrutés : ils quittent leur maison et marchent jusqu'à l'usine
   for(const job of jobs){
-    const nearbyHomes = homesNear(job);
-    for(const home of nearbyHomes){
-      const need = workersRequiredOf(job) - workersAllocatedOf(job);
+    const jk = job.x + ',' + job.y;
+    for(const home of homesNear(job)){
+      const need = workersRequiredOf(job) - workersAllocatedOf(job) - (jobInbound.get(jk) || 0);
       if(need <= 0) break;
-      const take = Math.min(avail.get(home), need);
-      job.workersAssigned = (job.workersAssigned||0) + take;
-      if(home.townId != null)
-        job.workersByTown[home.townId] = (job.workersByTown[home.townId]||0) + take;
-      addWorkersOwner(job, home.owner, take);
+      const take = Math.floor(Math.min(avail.get(home), need));
+      if(take < 1) continue;
       avail.set(home, avail.get(home) - take);
+      jobInbound.set(jk, (jobInbound.get(jk) || 0) + take);
+      dispatchCommuters(home, job, take, home.x + ',' + home.y, 'home');
     }
   }
   for(const [home, remaining] of avail) home.workersIdle = remaining;
@@ -1873,10 +1997,12 @@ function refreshWorkerAllocation(){
     job.commuters[key] -= n;
     if(job.commuters[key] <= 0) delete job.commuters[key];
   };
+  const sendHome = (job, key, n) => sendCommutersAway(job, key, n);
   const jobSet = new Set(jobs);
   for(const b of buildings){
     if(!b.commuters) continue;
-    if(!jobSet.has(b)) for(const key of Object.keys(b.commuters)) giveBack(b, key, b.commuters[key]);
+    if(!jobSet.has(b)) for(const key of Object.keys(b.commuters))
+      (b.paused ? sendHome : giveBack)(b, key, b.commuters[key]);
   }
   const addCommuters = (job, key, n) => {
     if(n <= 0) return;
@@ -1895,7 +2021,11 @@ function refreshWorkerAllocation(){
       addCommuters(job, key, keep);
     }
   }
-  // 2b : nouveaux arrivants
+  // 2b : nouveaux arrivants. Ils marchent jusqu'à l'usine : ils ne comptent comme
+  // ouvriers (job.commuters) qu'à leur ARRIVÉE (updateWalkers) ; en route, ils sont
+  // déduits des besoins (inbound) pour ne pas en envoyer trop.
+  const inbound = jobInbound; // piétons en route (maisons et points de transit)
+  const needOf = job => workersRequiredOf(job) - workersAllocatedOf(job) - (inbound.get(job.x + ',' + job.y) || 0);
   const hubGroups = new Map(); // représentant -> pièces du groupe
   for(const st of buildings){
     if(st.dead || (st.type !== 'bus_stop' && st.type !== 'train_station' && st.type !== 'boat_depot' && st.type !== 'plane_depot')) continue;
@@ -1907,7 +2037,7 @@ function refreshWorkerAllocation(){
   }
   if(hubGroups.size){
     for(const job of jobs){
-      if(workersRequiredOf(job) - workersAllocatedOf(job) <= 0) continue;
+      if(needOf(job) <= 0) continue;
       const near = [];
       for(const [rep, group] of hubGroups){
         if(!(rep.passagersSortant >= 1)) continue;
@@ -1918,15 +2048,14 @@ function refreshWorkerAllocation(){
       }
       near.sort((a, b) => a.d - b.d);
       for(const { rep } of near){
-        const remaining = workersRequiredOf(job) - workersAllocatedOf(job);
+        const remaining = needOf(job);
         if(remaining <= 0) break;
         const take = Math.min(Math.floor(rep.passagersSortant), remaining);
         if(take < 1) continue;
         rep.passagersSortant -= take;
         const key = rep.x + ',' + rep.y;
-        if(!job.commuters) job.commuters = {};
-        job.commuters[key] = (job.commuters[key] || 0) + take;
-        addCommuters(job, key, take);
+        inbound.set(job.x + ',' + job.y, (inbound.get(job.x + ',' + job.y) || 0) + take);
+        dispatchCommuters(rep, job, take, key);
       }
     }
   }
