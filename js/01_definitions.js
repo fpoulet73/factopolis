@@ -821,11 +821,11 @@ const LUX_UNLOCK_POP = LUX_CFG.seuilHabitants ?? 100;
 const LUX_COST_MULT = LUX_CFG.multiplicateurCout ?? 5;
 const LUX_LEVELS = [
   { key:'lux_house',  cfg:LUX_CFG.maison,  n:'Maison de luxe', ic:'💎', shapes:[[1,1]],       col:'#b08a5a', hgt:22, classe:'ouvrier',
-    def:{ interval:60, popCap:5, stockCap:10, required:['fish_fillet'], upgradeTargets:{ goods:60 }, bonus:['fish_oil'] } },
+    def:{ interval:60, popCap:5, stockCap:10, required:['fish_fillet'], upgradeTargets:{ goods:60, clothes:30 }, bonus:['fish_oil'] } },
   { key:'lux_villa',  cfg:LUX_CFG.villa,   n:'Villa',          ic:'🏡', shapes:[[2,1],[1,2]], col:'#c09a62', hgt:26, classe:'employe',
-    def:{ interval:40, popCap:5, stockCap:14, required:['fish_fillet','bread'], upgradeTargets:{ goods:150 }, bonus:['fish_oil'] } },
+    def:{ interval:40, popCap:5, stockCap:14, required:['fish_fillet','bread'], upgradeTargets:{ goods:150, clothes:75 }, bonus:['fish_oil'] } },
   { key:'lux_manor',  cfg:LUX_CFG.manoir,  n:'Manoir',         ic:'🏰', shapes:[[2,2]],       col:'#a88a66', hgt:34, classe:'cadre',
-    def:{ interval:30, popCap:5, stockCap:20, required:['fish_fillet','bread','clothes'], upgradeTargets:{ goods:300 }, bonus:['fish_oil'] } },
+    def:{ interval:30, popCap:5, stockCap:20, required:['fish_fillet','bread','clothes'], upgradeTargets:{ goods:300, clothes:150 }, bonus:['fish_oil'] } },
   { key:'lux_estate', cfg:LUX_CFG.domaine, n:'Domaine',        ic:'⛲', shapes:[[3,3]],       col:'#9a8a70', hgt:36, classe:'patron',
     def:{ interval:20, popCap:5, stockCap:30, required:['fish_fillet','bread','clothes'], upgradeTargets:{}, bonus:['fish_oil'] } },
 ].map((L, rank) => ({ key:L.key, n:L.n, ic:L.ic, col:L.col, hgt:L.hgt, rank,

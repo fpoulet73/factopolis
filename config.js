@@ -193,7 +193,7 @@ const CONFIG = {
       habitantsMax: 5,
       stockMax: 10,
       ressourcesIndispensables: ['fish_fillet'],
-      ressourcesUpgrade: { goods: 60 },
+      ressourcesUpgrade: { goods: 60, clothes: 30 },
       ressourcesBonus: ['fish_oil'],
     },
     villa: {
@@ -203,7 +203,7 @@ const CONFIG = {
       habitantsMax: 5,
       stockMax: 14,
       ressourcesIndispensables: ['fish_fillet','bread'],
-      ressourcesUpgrade: { goods: 150 },
+      ressourcesUpgrade: { goods: 150, clothes: 75 },
       ressourcesBonus: ['fish_oil'],
     },
     manoir: {
@@ -213,7 +213,7 @@ const CONFIG = {
       habitantsMax: 5,
       stockMax: 20,
       ressourcesIndispensables: ['fish_fillet','bread','clothes'],
-      ressourcesUpgrade: { goods: 300 },
+      ressourcesUpgrade: { goods: 300, clothes: 150 },
       ressourcesBonus: ['fish_oil'],
     },
     domaine: {
