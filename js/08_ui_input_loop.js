@@ -53,44 +53,100 @@ function updateHUD(dt){
   if(trainConfigVehicle) renderTrainPanel();
 }
 
+// Panneau « Entrepôt fusionné » commun aux gares, ports et aéroports.
+function fusedDepotHtml(linkedDepot){
+  let h = '';
+  const isOwner = !linkedDepot.owner || linkedDepot.owner === (MP.myId ?? null);
+  const depotRadius = depotRadiusOf(linkedDepot);
+  h += '<div style="margin-top:10px;color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">📦 Entrepôt fusionné</div>';
+  h += '<div style="color:#8fa3bf;font-size:10px;margin-bottom:6px">Rayon d\'action : <b style="color:#ffd700">'+depotRadius+' cases</b></div>';
+  if(isOwner){
+    h += '<div style="margin-bottom:8px;padding:8px;background:rgba(91,147,232,.06);border-radius:6px;border-left:3px solid #5b93e8;font-size:11px;color:#8fa3bf">'
+       + '<div style="margin-bottom:4px;font-weight:600;color:#e8eef7">Modes d\'acceptation :</div>'
+       + '<div style="margin:4px 0">🔴 <span style="color:#999">Désactivé</span> — aucune livraison, pas de train</div>'
+       + '<div style="margin:4px 0">🔵 <span style="color:#5b93e8">Accepte uniquement</span> — camions livrent, trains n\'en chargent pas</div>'
+       + '<div style="margin:4px 0">🟢 <span style="color:#4db86a">Accepte & distribue</span> — camions livrent, trains chargent</div>'
+       + '</div>';
+    h += '<div class="depot-cols-3">';
+    for(const k in RES){
+      if(k === 'water') continue;
+      const disabled = linkedDepot.allow?.[k] === false;
+      const trainOn  = !disabled && linkedDepot.trainAllow?.[k] !== false;
+      const stateClass = disabled ? '' : (trainOn ? ' train' : ' on');
+      const val = linkedDepot.storage[k]||0, cap = capOf(linkedDepot,k);
+      const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
+      const stateLabel = disabled ? '<span style="font-size:11px;color:#999">🔴</span>'
+        : trainOn ? '<span style="font-size:11px;color:#4db86a">🟢</span>'
+        : '<span style="font-size:11px;color:#5b93e8">🔵</span>';
+      h += '<div class="depot-res-item'+stateClass+'" style="cursor:pointer;flex-direction:column;align-items:stretch;padding:5px 7px" data-station-depot-toggle-res="'+k+'">'
+         + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
+         + '<span class="dot" style="background:'+RES[k].c+'"></span>'
+         + '<span style="flex:1;font-size:11px;'+(disabled?'opacity:.4':'')+'">' + RES[k].n + '</span>'
+         + (cap>0 ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '')
+         + '</div>'
+         + (cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px;opacity:'+(disabled?'0.3':'1')+'"></i></div>' : '')
+         + '</div>';
+    }
+    h += '</div>';
+  } else {
+    // Gare d'un autre joueur : contenu ressource visible en lecture seule
+    // (les trains peuvent s'y arrêter pour le commerce inter-joueurs).
+    const _hubOwner = linkedDepot.owner ?? null;
+    h += '<div style="color:#8fa3bf;font-size:11px;margin-bottom:6px">Propriétaire : <b style="color:'+playerColor(_hubOwner)+'">'+escHtml(playerName(_hubOwner))+'</b> · commerce au tarif <b style="color:#f0c060">marchand</b></div>';
+    h += '<div class="depot-cols-3">';
+    for(const k in RES){
+      if(k === 'water') continue;
+      const val = linkedDepot.storage[k]||0, cap = capOf(linkedDepot,k);
+      const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
+      const price = TRADE_PRICES[k] || 0;
+      h += '<div class="depot-res-item" style="flex-direction:column;align-items:stretch;padding:5px 7px;opacity:.88">'
+         + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
+         + '<span class="dot" style="background:'+RES[k].c+'"></span>'
+         + '<span style="flex:1;font-size:11px">'+RES[k].n+'</span>'
+         + (cap>0 ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '')
+         + '</div>'
+         + (cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px"></i></div>' : '')
+         + '<div style="font-size:9px;color:#f0c060;margin-top:2px">'+price+' $/u</div>'
+         + '</div>';
+    }
+    h += '</div>';
+  }
+      return h;
+}
+
 // Clic sur le compteur d'habitants : répartition au travail / en passager / à la maison.
 function popBreakdown(){
   const town = ensureSelectedTown();
   const pop = town ? townPopTotal(town.id) : popTotal();
   const jobs = town ? townReachableJobs(town.id) : jobsTotal();
   const working = Math.min(pop, town ? townAllocatedWorkers(town.id) : Math.min(popTotal(), jobs));
-  let riding = 0;
-  for(const b of buildings){
-    if(b.dead || (town && b.townId !== town.id)) continue;
-    if(b.type === 'bus_stop') riding += (b.passengers || 0) + (b.passagersSortant || 0);
-    else if(b.type === 'train_station' || b.type === 'boat_depot' || b.type === 'plane_depot')
-      riding += (b.passengersEntrant || 0) + (b.passagersSortant || 0);
-  }
-  for(const v of vehicles){
-    if(v.vtype === 'train') riding += v.passengersOnBoard || 0;
-    else if(v.vtype === 'bus' || VEHICLE_TYPES[v.vtype]?.passengers) riding += v.cargo || 0;
-  }
+  let riding = 0, onboard = 0;
+  for(const r of transitByOwner(town ? town.id : null).values()){ riding += r.passengers; onboard += r.onboard; }
   riding = Math.min(Math.round(riding), Math.max(0, pop - working));
-  return { pop, working, riding, home: Math.max(0, pop - working - riding) };
+  onboard = Math.min(Math.round(onboard), riding);
+  return { pop, working, riding, onboard, waiting: riding - onboard, home: Math.max(0, pop - working - riding) };
 }
 // Répartition des passagers par joueur (propriétaire des arrêts/gares/véhicules).
 let passengerOwnersOpen = false;
 function togglePassengerOwners(){ passengerOwnersOpen = !passengerOwnersOpen; renderPopPanel(); if(typeof renderInfo === 'function') renderInfo(); }
 // Détail d'une gare / d'un arrêt : un bloc sous « entrants » et un sous « sortants »,
 // par joueur (les passagers sont comptés par bâtiment : joueur = propriétaire).
+let workersDetailOpen = false;
+function toggleWorkersDetail(){ workersDetailOpen = !workersDetailOpen; if(typeof renderInfo === 'function') renderInfo(); }
 const passengerDetailOpen = { in:false, out:false };
 function togglePassengerDetail(kind){ passengerDetailOpen[kind] = !passengerDetailOpen[kind]; if(typeof renderInfo === 'function') renderInfo(); }
-function passengerDetailBlock(kind, b){
+function passengerDetailBlock(kind, b, inKey = 'passengersEntrant'){
   if(!passengerDetailOpen[kind]) return '';
-  const n = Math.floor(kind === 'in' ? (b.passengersEntrant || 0) : (b.passagersSortant || 0));
+  const n = Math.floor(kind === 'in' ? (b[inKey] || 0) : (b.passagersSortant || 0));
   if(n <= 0) return '';
   return '<div style="margin:2px 0 6px;padding:4px 6px;background:#101826;border-radius:6px;font-size:12px;color:#b8d4f0">'
     + '<div>'+escHtml(playerName(b.owner))+' : <b>'+n+'</b></div></div>';
 }
 function passengerOwnersHtml(){
   let h = '';
-  for(const r of transitByOwner().values()){
-    if(r.pop <= 0 && r.passengers < 0.5) continue;
+  const town = ensureSelectedTown();
+  for(const r of transitByOwner(town ? town.id : null).values()){
+    if(r.passengers < 0.5) continue;
     h += '<div style="padding-left:14px;font-size:12px;color:#b8d4f0">• '+escHtml(playerName(r.owner))+' : <b>'+Math.round(r.passengers)+'</b>'
       + ' <span style="opacity:.75">(attente '+Math.round(r.waiting)+' · arrivés '+Math.round(r.sortants)+' · à bord '+Math.round(r.onboard)+')</span>'
       + ' <span style="opacity:.75">/ '+Math.round(r.allowed)+' sans travail</span></div>';
@@ -116,8 +172,7 @@ function renderPopPanel(){
   if(!popPanelOpen){ el.style.display = 'none'; return; }
   const p = popBreakdown();
   el.innerHTML = '<div>🏭 Au travail : <b>'+p.working+'</b></div>'
-    + '<div style="cursor:pointer" onclick="togglePassengerOwners()" title="Cliquer : répartition par joueur">🚌 En passager : <b>'+p.riding+'</b> '+(passengerOwnersOpen?'▾':'▸')+'</div>'
-    + (passengerOwnersOpen ? passengerOwnersHtml() : '')
+    + '<div>🚌 Voyageurs : <b>'+p.riding+'</b> <span style="opacity:.75">(attente '+p.waiting+' · à bord '+p.onboard+')</span></div>'
     + '<div>🏠 À la maison : <b>'+p.home+'</b></div>'
     + '<div style="border-top:1px solid #36465e;margin-top:3px;padding-top:3px">👥 Total : <b>'+p.pop+'</b></div>';
   el.style.display = 'block';
@@ -1357,17 +1412,15 @@ function statusOf(b){
   if(b.type==='bus_stop'){
     const max = b.passengersMax || 0;
     const cur = Math.floor(b.passengers || 0);
-    const pE = Math.floor(b.passengersEntrant || 0);
     const pS = Math.floor(b.passagersSortant || 0);
     const parts = [];
-    const linked = trainStationLinkedRepresentative(b);
+    const linked = transitHubLinkedRepresentative(b);
     if(linked){
       const out = Math.floor(linked.passagersSortant || 0);
-      return '🚉 Gare liée · 👥 '+out+' habitant'+(out>1?'s':'')+' (sortants de la gare)';
+      return '🚉 Gare liée · 👥 '+out+' habitant'+(out>1?'s':'')+' (sortants du point de transit)';
     }
-    if(max > 0) parts.push('↑ '+cur+'/'+max+' départ');
-    if(pE > 0) parts.push(pE+' arrivant'+(pE>1?'s':''));
-    if(pS > 0) parts.push('↓ '+pS+' retour');
+    if(cur > 0) parts.push('🚶 '+cur+' entrant'+(cur>1?'s':''));
+    if(pS > 0) parts.push('🚶 '+pS+' sortant'+(pS>1?'s':''));
     if(parts.length === 0) return 'Aucun habitant à portée (rayon '+BUS_STOP_RADIUS+' cases)';
     return parts.join(' · ');
   }
@@ -1397,12 +1450,6 @@ function statusOf(b){
   for(const k in r.in)  if((b.storage[k]||0) <  r.in[k]) return 'Manque : '+RES[k].n;
   if(req && workersAllocatedOf(b) < req)
     return "Production à "+Math.round(workersAllocatedOf(b)/req*100)+" % (manque d'ouvriers à portée)";
-  if(req && (b.workersByBusStop||0) > 0){
-    const byBus = b.workersByBusStop, total = workersAllocatedOf(b);
-    const byHome = total - byBus;
-    if(byHome === 0) return 'En production · '+byBus+'/'+req+' ouvriers via arrêt de bus 🚌';
-    return 'En production · '+byBus+'/'+req+' ouvrier'+(byBus>1?'s':'')+' via arrêt de bus 🚌';
-  }
   if(b.type === 'fisher'){
     const bonus = fisherFishBonus(b);
     if(bonus > 0) return 'En production · +'+bonus+' poisson'+(bonus>1?'s':'')+' (zones poissonneuses)';
@@ -1693,61 +1740,7 @@ function renderInfo(){
     }
     const linkedDepot = trainStationLinkedDepot(b);
     if(linkedDepot){
-      const isOwner = !linkedDepot.owner || linkedDepot.owner === (MP.myId ?? null);
-      const depotRadius = depotRadiusOf(linkedDepot);
-      h += '<div style="margin-top:10px;color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">📦 Entrepôt fusionné</div>';
-      h += '<div style="color:#8fa3bf;font-size:10px;margin-bottom:6px">Rayon d\'action : <b style="color:#ffd700">'+depotRadius+' cases</b></div>';
-      if(isOwner){
-        h += '<div style="margin-bottom:8px;padding:8px;background:rgba(91,147,232,.06);border-radius:6px;border-left:3px solid #5b93e8;font-size:11px;color:#8fa3bf">'
-           + '<div style="margin-bottom:4px;font-weight:600;color:#e8eef7">Modes d\'acceptation :</div>'
-           + '<div style="margin:4px 0">🔴 <span style="color:#999">Désactivé</span> — aucune livraison, pas de train</div>'
-           + '<div style="margin:4px 0">🔵 <span style="color:#5b93e8">Accepte uniquement</span> — camions livrent, trains n\'en chargent pas</div>'
-           + '<div style="margin:4px 0">🟢 <span style="color:#4db86a">Accepte & distribue</span> — camions livrent, trains chargent</div>'
-           + '</div>';
-        h += '<div class="depot-cols-3">';
-        for(const k in RES){
-          if(k === 'water') continue;
-          const disabled = linkedDepot.allow?.[k] === false;
-          const trainOn  = !disabled && linkedDepot.trainAllow?.[k] !== false;
-          const stateClass = disabled ? '' : (trainOn ? ' train' : ' on');
-          const val = linkedDepot.storage[k]||0, cap = capOf(linkedDepot,k);
-          const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
-          const stateLabel = disabled ? '<span style="font-size:11px;color:#999">🔴</span>'
-            : trainOn ? '<span style="font-size:11px;color:#4db86a">🟢</span>'
-            : '<span style="font-size:11px;color:#5b93e8">🔵</span>';
-          h += '<div class="depot-res-item'+stateClass+'" style="cursor:pointer;flex-direction:column;align-items:stretch;padding:5px 7px" data-station-depot-toggle-res="'+k+'">'
-             + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
-             + '<span class="dot" style="background:'+RES[k].c+'"></span>'
-             + '<span style="flex:1;font-size:11px;'+(disabled?'opacity:.4':'')+'">' + RES[k].n + '</span>'
-             + (cap>0 ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '')
-             + '</div>'
-             + (cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px;opacity:'+(disabled?'0.3':'1')+'"></i></div>' : '')
-             + '</div>';
-        }
-        h += '</div>';
-      } else {
-        // Gare d'un autre joueur : contenu ressource visible en lecture seule
-        // (les trains peuvent s'y arrêter pour le commerce inter-joueurs).
-        const _hubOwner = linkedDepot.owner ?? null;
-        h += '<div style="color:#8fa3bf;font-size:11px;margin-bottom:6px">Propriétaire : <b style="color:'+playerColor(_hubOwner)+'">'+escHtml(playerName(_hubOwner))+'</b> · commerce au tarif <b style="color:#f0c060">marchand</b></div>';
-        h += '<div class="depot-cols-3">';
-        for(const k in RES){
-          if(k === 'water') continue;
-          const val = linkedDepot.storage[k]||0, cap = capOf(linkedDepot,k);
-          const pct = cap>0 ? Math.min(100,Math.round(100*val/cap)) : 0;
-          const price = TRADE_PRICES[k] || 0;
-          h += '<div class="depot-res-item" style="flex-direction:column;align-items:stretch;padding:5px 7px;opacity:.88">'
-             + '<div style="display:flex;align-items:center;gap:5px;margin-bottom:3px">'
-             + '<span class="dot" style="background:'+RES[k].c+'"></span>'
-             + '<span style="flex:1;font-size:11px">'+RES[k].n+'</span>'
-             + (cap>0 ? '<span style="font-size:10px;color:#8fa3bf">'+val+'/'+cap+'</span>' : '')
-             + '</div>'
-             + (cap>0 ? '<div style="height:4px;border-radius:2px;background:#1a2535"><i style="display:block;height:100%;width:'+pct+'%;background:'+RES[k].c+';border-radius:2px"></i></div>' : '')
-             + '<div style="font-size:9px;color:#f0c060;margin-top:2px">'+price+' $/u</div>'
-             + '</div>';
-        }
-        h += '</div>';
-      }
+      h += fusedDepotHtml(linkedDepot);
     } else {
       h += '<div style="margin-top:8px;color:#8fa3bf;font-size:11px;font-style:italic">Aucun entrepôt adjacent — les trains ne peuvent pas charger de ressources.</div>';
     }
@@ -1774,7 +1767,14 @@ function renderInfo(){
     }
   }
   if(d.ind && b.name) h += '<div style="color:#8fa3bf;font-size:11px;margin-top:6px;margin-bottom:2px">'+d.n+'</div>';
-  if(d.workers) h += '<div class="row"><span>Ouvriers</span><b>'+workersAllocatedOf(b)+' / '+workersRequiredOf(b)+'</b></div>';
+  if(d.workers){
+    h += '<div class="row" style="cursor:pointer" onclick="toggleWorkersDetail()" title="Cliquer : ouvriers par joueur"><span>Ouvriers</span><b>'+workersAllocatedOf(b)+' / '+workersRequiredOf(b)+'</b></div>';
+    if(workersDetailOpen){
+      const rows = Object.entries(b.workersByOwner || {}).filter(([, n]) => Math.floor(n) > 0)
+        .map(([o, n]) => '<div>'+escHtml(playerName(o === 'null' ? null : (isNaN(+o) ? o : +o)))+' : <b>'+Math.floor(n)+'</b></div>');
+      if(rows.length) h += '<div style="margin:2px 0 6px;padding:4px 6px;background:#101826;border-radius:6px;font-size:12px;color:#b8d4f0">'+rows.join('')+'</div>';
+    }
+  }
   if(d.ind && b.w*b.h>1)
     h += '<div class="row"><span>Taille / production</span><b>'+b.w+'×'+b.h
        + ' — ×'+prodMult(b).toFixed(1)+'</b></div>';
@@ -1998,19 +1998,17 @@ function renderInfo(){
     const canRename = !b.owner || b.owner === (MP.myId ?? null);
     const town = getTownOf(b);
     if(town) h += '<div class="row"><span>Village</span><b style="color:#e8d48b">🏘️ '+escHtml(town.name)+'</b></div>';
-    const linkedSt = trainStationLinkedRepresentative(b);
+    const linkedSt = transitHubLinkedRepresentative(b);
     if(linkedSt){
-      h += '<div class="row"><span>Habitants (sortants de la gare)</span><b style="color:#7dd8ff">👥 '+Math.floor(linkedSt.passagersSortant||0)+'</b></div>';
+      h += '<div class="row"><span>Habitants (sortants du point de transit)</span><b style="color:#7dd8ff">👥 '+Math.floor(linkedSt.passagersSortant||0)+'</b></div>';
     } else {
-      const pCur = Math.floor(b.passengers||0), pMax = b.passengersMax||0;
-      h += '<div class="row"><span>Départs</span><b style="color:#7dd8ff">👥 '+pCur+(pMax>0?' / '+pMax:'')+'</b></div>';
+      // même principe que les gares : passagers entrants (en attente) / sortants (arrivés)
+      const pE = Math.floor(b.passengers||0), pS = Math.floor(b.passagersSortant||0);
+      h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'in\')" title="Cliquer : détail par joueur"><span>Passagers entrants</span><b style="color:#c8e040">🚶 '+pE+'</b></div>';
+      h += passengerDetailBlock('in', b, 'passengers');
+      h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'out\')" title="Cliquer : détail par joueur"><span>Passagers sortants</span><b style="color:#9fd4f0">🚶 '+pS+'</b></div>';
+      h += passengerDetailBlock('out', b);
     }
-    const pE = Math.floor(b.passengersEntrant||0);
-    const pS = Math.floor(b.passagersSortant||0);
-    if(pE > 0) h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'in\')" title="Cliquer : détail par joueur"><span>Arrivants (travailleurs)</span><b style="color:#a0e890">👷 '+pE+'</b></div>';
-    h += passengerDetailBlock('in', b);
-    if(pS > 0) h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'out\')" title="Cliquer : détail par joueur"><span>Retours (en attente bus)</span><b style="color:#f0c060">🔄 '+pS+'</b></div>';
-    h += passengerDetailBlock('out', b);
     h += '<div class="row"><span>Rayon</span><b>'+BUS_STOP_RADIUS+' cases</b></div>';
     h += '<div class="row"><span>Tarif</span><b style="color:#ffe9a0">'+BUS_FARE_FACTOR+' $/passager/tuile</b></div>';
     h += '<div class="row"><span>Intra-ville</span><b style="color:#a0c8e8">÷'+BUS_INTRA_CITY_DIV+' du tarif</b></div>';
@@ -2032,16 +2030,17 @@ function renderInfo(){
     const isPort = b.type === 'boat_depot';
     const pE = Math.floor(b.passengersEntrant || 0), pEMax = b.passengersEntrantMax || 0;
     h += '<div style="margin-top:8px;color:#8fa3bf;font-size:11px;text-transform:uppercase;letter-spacing:.06em">'+(isPort ? '⚓ Escale' : '🛫 Escale')+'</div>';
-    h += '<div class="row"><span>Voyageurs en attente</span><b style="color:#c8e040">🚶 '+pE+'</b></div>';
-    h += '<div class="row"><span>Voyageurs arrivés</span><b style="color:#9fd4f0">🚶 '+Math.floor(b.passagersSortant || 0)+'</b></div>';
+    h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'in\')" title="Cliquer : détail par joueur"><span>Passagers entrants</span><b style="color:#c8e040">🚶 '+pE+'</b></div>';
+    h += passengerDetailBlock('in', b);
+    h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'out\')" title="Cliquer : détail par joueur"><span>Passagers sortants</span><b style="color:#9fd4f0">🚶 '+Math.floor(b.passagersSortant || 0)+'</b></div>';
+    h += passengerDetailBlock('out', b);
     h += '<div class="row"><span>Rayon</span><b>'+(isPort ? PORT_RADIUS : AIRPORT_RADIUS)+' cases</b></div>';
     h += '<div class="row"><span>Tarif</span><b style="color:#ffe9a0">'+(isPort ? SHIP_FARE_FACTOR : PLANE_FARE_FACTOR)+' $/voyageur/case</b></div>';
     if(isPort){
-      const hub = portFreightHub(b);
-      h += hub
-        ? '<div class="status">📦 Fret : entrepôt collé au port — les cargos chargent les ressources en mode 🟢 « distribue » de l\'entrepôt.</div>'
-        : '<div class="warn">⚠️ Aucun entrepôt collé au port : les cargos ne peuvent ni charger ni décharger.</div>';
+      if(!portFreightHub(b)) h += '<div class="warn">⚠️ Aucun entrepôt collé au port : les cargos ne peuvent ni charger ni décharger.</div>';
     }
+    const termDepot = portFreightHub(b);
+    if(termDepot) h += fusedDepotHtml(termDepot);
   }
   if(isVehicleDepot(b)){
     const bvehicles = b.vehicles || [];
@@ -2246,7 +2245,7 @@ function renderInfo(){
   });
   p.querySelectorAll('[data-station-depot-toggle-res]').forEach(el=>{
     el.onclick = ()=>{
-      const depot = isTrainStationPiece(b) ? trainStationLinkedDepot(b) : null;
+      const depot = isTrainStationPiece(b) ? trainStationLinkedDepot(b) : portFreightHub(b);
       if(!depot || !depot.allow) return;
       if(MP.connected && depot.owner && depot.owner !== MP.myId){
         toast('⛔ Ce dépôt appartient à un autre joueur','err');

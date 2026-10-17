@@ -240,9 +240,9 @@ function advanceFreeUnit(unit, move){
   }
 }
 
-// Entrepôt de fret d'une escale de bateau : entrepôt collé au port.
+// Entrepôt fusionné d'un port ou d'un aéroport : entrepôt collé à l'escale.
 function portFreightHub(b){
-  if(!b || b.dead || b.type !== 'boat_depot') return null;
+  if(!b || b.dead || (b.type !== 'boat_depot' && b.type !== 'plane_depot')) return null;
   return buildings.find(o => !o.dead && isStorageDepot(o) && buildingEdgeGap(b, o) === 0) || null;
 }
 
@@ -2384,8 +2384,27 @@ function findRoadPath(fromB, toB){
 }
 
 function findNearbyTrainStation(busStop){
+  // gare ferroviaire à portée, à défaut port / aéroport (mêmes passagers entrants/sortants)
   return buildings.find(b => !b.dead && b.type === 'train_station'
+    && buildingChebyshevDistance(busStop, b) <= BUS_STOP_RADIUS)
+    || buildings.find(b => !b.dead && (b.type === 'boat_depot' || b.type === 'plane_depot')
     && buildingChebyshevDistance(busStop, b) <= BUS_STOP_RADIUS);
+}
+
+// Les voyageurs arrivés ne quittent une gare / un arrêt que si un poste à proximité
+// manque d'ouvriers ou si une maison proche n'est pas pleine.
+function stopHasDemand(stop, owner){
+  if(!stop) return false;
+  const radius = isTrainStationPiece(stop) ? TRAIN_STATION_RADIUS : BUS_STOP_RADIUS;
+  for(const b of buildings){
+    if(b.dead || b === stop) continue;
+    if(owner != null && b.owner != null && b.owner !== owner) continue;
+    const rc = BUILD[b.type]?.resid;
+    const open = rc ? (b.pop || 0) + (b.pending || 0) < rc.popCap
+      : (!b.paused && workersRequiredOf(b) > workersAllocatedOf(b));
+    if(open && buildingDistance(b, stop) <= radius) return true;
+  }
+  return false;
 }
 
 // Bilan net du mois de jeu en cours pour un véhicule (gains − entretien − péages).
@@ -2638,10 +2657,13 @@ function updateVehicles(dt){
           if(v.cargo > 0){
             const sourceStation = isTrainStationPiece(v.source)
               ? (trainStationGroupRepresentative(v.source.stationGroupId) || v.source)
-              : trainStationLinkedRepresentative(v.source);
+              : transitHubLinkedRepresentative(v.source);
             if(sourceStation){
               // Dépose à la gare : passagers entrants pour prendre un train
               sourceStation.passengersEntrantPending = (sourceStation.passengersEntrantPending || 0) + v.cargo;
+            } else {
+              // Arrêt de bus : les voyageurs sont arrivés (passagers sortants)
+              v.source.passagersSortant = (v.source.passagersSortant || 0) + v.cargo;
             }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.dest, v.source);
             v.cargo = 0;
@@ -2651,14 +2673,15 @@ function updateVehicles(dt){
           if(isTrainStationPiece(v.source)){
             // Source = gare : prend les passagersSortant du train
             const srcMain = trainStationGroupRepresentative(v.source.stationGroupId) || v.source;
-            const availSrc = Math.floor(srcMain.passagersSortant || 0);
+            const availSrc = stopHasDemand(v.dest, v.garageRef?.owner ?? null) ? Math.floor(srcMain.passagersSortant || 0) : 0;
             takeSrc = Math.min(vt.capacite, availSrc);
             srcMain.passagersSortant = Math.max(0, (srcMain.passagersSortant || 0) - takeSrc);
           } else {
             // Source = arrêt de bus : priorité passagersSortant locaux → gare proche → passagers en attente
             const nearSourceTrain = findNearbyTrainStation(v.source);
-            const stopSortants = Math.floor(v.source.passagersSortant || 0);
-            const trainSortants = Math.floor(nearSourceTrain?.passagersSortant || 0);
+            const srcDemand = stopHasDemand(v.dest, v.garageRef?.owner ?? null);
+            const stopSortants = srcDemand ? Math.floor(v.source.passagersSortant || 0) : 0;
+            const trainSortants = srcDemand ? Math.floor(nearSourceTrain?.passagersSortant || 0) : 0;
             let availableSrc, sourceFrom;
             if(stopSortants >= trainSortants && stopSortants > 0){ availableSrc = stopSortants; sourceFrom = 'stop'; }
             else if(trainSortants > 0){ availableSrc = trainSortants; sourceFrom = 'train'; }
@@ -2735,13 +2758,13 @@ function updateVehicles(dt){
           if(v.cargo > 0){
             const destMain = isTrainStationPiece(v.dest)
               ? (trainStationGroupRepresentative(v.dest.stationGroupId) || v.dest)
-              : trainStationLinkedRepresentative(v.dest);
+              : transitHubLinkedRepresentative(v.dest);
             if(destMain){
               // Destination = gare ou arrêt fusionné : passagers en correspondance train
               destMain.passengersEntrantPending = (destMain.passengersEntrantPending || 0) + v.cargo;
             } else {
-              // Destination = arrêt de bus : les voyageurs deviennent passagers entrants
-              v.dest.passengersEntrant = (v.dest.passengersEntrant || 0) + v.cargo;
+              // Destination = arrêt de bus : les voyageurs deviennent passagers sortants (arrivés)
+              v.dest.passagersSortant = (v.dest.passagersSortant || 0) + v.cargo;
             }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.source, v.dest);
             v.cargo = 0;
@@ -2751,14 +2774,15 @@ function updateVehicles(dt){
           if(isTrainStationPiece(v.dest)){
             // Dest = gare : prend les passagersSortant
             const destMain = trainStationGroupRepresentative(v.dest.stationGroupId) || v.dest;
-            const avail = Math.floor(destMain.passagersSortant || 0);
+            const avail = stopHasDemand(v.source, v.garageRef?.owner ?? null) ? Math.floor(destMain.passagersSortant || 0) : 0;
             take = Math.min(vt.capacite, avail);
             destMain.passagersSortant = Math.max(0, (destMain.passagersSortant || 0) - take);
           } else {
             // Dest = arrêt de bus : priorité passagersSortant → gare proche → passagers en attente
             const nearDestReturn = findNearbyTrainStation(v.dest);
-            const stopSortants = Math.floor(v.dest.passagersSortant || 0);
-            const trainSortants = Math.floor(nearDestReturn?.passagersSortant || 0);
+            const dstDemand = stopHasDemand(v.source, v.garageRef?.owner ?? null);
+            const stopSortants = dstDemand ? Math.floor(v.dest.passagersSortant || 0) : 0;
+            const trainSortants = dstDemand ? Math.floor(nearDestReturn?.passagersSortant || 0) : 0;
             let available, returnFrom;
             if(stopSortants >= trainSortants && stopSortants > 0){ available = stopSortants; returnFrom = 'stop'; }
             else if(trainSortants > 0){ available = trainSortants; returnFrom = 'train'; }

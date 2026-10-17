@@ -272,7 +272,7 @@ function update(dt){
     if(b.dead || b.type !== 'bus_stop') continue;
     // (avant : recherche de gare liée sur TOUS les bâtiments, pour chaque arrêt, à chaque pas)
     if(!((b.passengersEntrant || 0) > 0 || (b.passagersSortant || 0) > 0 || (b.passengers || 0) > 0)) continue;
-    const station = trainStationLinkedRepresentative(b);
+    const station = transitHubLinkedRepresentative(b);
     if(!station) continue;
     if((b.passengers || 0) > 0){
       // habitants déjà en attente à l'arrêt → cumulés aux passagers entrants de la gare
@@ -292,7 +292,7 @@ function update(dt){
   // Les arrivées bus -> gare sont appliquées après les mouvements du tick,
   // pour éviter qu'un train à quai les embarque immédiatement.
   for(const b of buildings){
-    if(b.dead || b.type !== 'train_station') continue;
+    if(b.dead || (b.type !== 'train_station' && b.type !== 'boat_depot' && b.type !== 'plane_depot')) continue;
     if((b.passengersEntrantPending || 0) > 0){
       b.passengersEntrant = (b.passengersEntrant || 0) + b.passengersEntrantPending;
       b.passengersEntrantPending = 0;
@@ -418,12 +418,12 @@ function update(dt){
   if(updateBusMax) busStopTimer = 0;
   if(updateBusMax){ refreshTransitPassengerCaps(); enforceTransitCoherence(); }
   // Passagers arrivés qui n'ont trouvé aucun bus :
-  // gare : ils redeviennent passagers entrants (ils reprennent le train) après 3 jours.
-  // (pas de retour à la maison pour le moment : arrêts, ports et aéroports les gardent)
+  // Arrêt de bus, gare, port, aéroport : les voyageurs arrivés qui ne sont pas partis
+  // redeviennent passagers entrants après 3 jours (pas de retour à la maison pour le moment).
   {
     const dtc = Math.min(dt, 0.5) * GAME_HOURS_PER_SEC;
     for(const b of buildings){
-      if(b.dead || b.type !== 'train_station') continue;
+      if(b.dead || (b.type !== 'train_station' && b.type !== 'bus_stop' && b.type !== 'boat_depot' && b.type !== 'plane_depot')) continue;
       if(!(b.passagersSortant >= 1)){ b._sortantAge = 0; continue; }
       // transfert par passagers entiers : les deux compteurs changent ensemble
       b._sortantAge = (b._sortantAge || 0) + b.passagersSortant * Math.min(1, dtc / 72);
@@ -431,7 +431,8 @@ function update(dt){
       if(moved >= 1){
         b._sortantAge -= moved;
         b.passagersSortant -= moved;
-        b.passengersEntrant = (b.passengersEntrant || 0) + moved;
+        const key = b.type === 'bus_stop' ? 'passengers' : 'passengersEntrant'; // « entrants » d'un arrêt de bus
+        b[key] = (b[key] || 0) + moved;
       }
     }
   }
@@ -443,8 +444,7 @@ function update(dt){
   if(resetPassengerCycle) passengerCycleTimer = 0;
   for(const b of buildings){
     if(b.dead || b.type !== 'bus_stop') continue;
-    if(updateBusMax && (b.passengers || 0) > (b.passengersMax || 0))
-      b.passengers = b.passengersMax || 0; // cap si le nombre d'inactifs a baissé
+    // (plafond par joueur : enforceTransitCoherence, pas par arrêt)
     const max = b.passengersMax || 0;
     if(resetPassengerCycle || b.passengersQuota == null) b.passengersQuota = max;
     if(max > 0 && (b.passengersQuota || 0) > 0 && (b.passengers || 0) < max){
@@ -453,14 +453,10 @@ function update(dt){
       b.passengers = (b.passengers || 0) + fillAmount;
       b.passengersQuota -= fillAmount;
     }
-    // Travailleurs navetteurs : quittent leur poste et retournent à l'arrêt bus après 1 jour de jeu
-    if(b.passengersEntrant == null) b.passengersEntrant = 0;
-    if(b.passagersSortant == null) b.passagersSortant = 0;
-    if(b.passengersEntrant > 0){
-      const shiftDuration = 24 / GAME_HOURS_PER_SEC;
-      const leave = (b.passengersEntrant / shiftDuration) * Math.min(dt, 0.5);
-      b.passengersEntrant = Math.max(0, b.passengersEntrant - leave);
-      b.passagersSortant = b.passagersSortant + leave;
+    // ancien compteur « travailleurs » des sauvegardes d'avant : simples voyageurs arrivés
+    if((b.passengersEntrant || 0) > 0){
+      b.passagersSortant = (b.passagersSortant || 0) + b.passengersEntrant;
+      b.passengersEntrant = 0;
     }
   }
 
@@ -478,14 +474,6 @@ function update(dt){
       const fillAmount = Math.min(b.passengersEntrantQuota, rate * Math.min(dt, 0.5), maxE - (b.passengersEntrant || 0));
       b.passengersEntrant = (b.passengersEntrant || 0) + fillAmount;
       b.passengersEntrantQuota -= fillAmount;
-    }
-    // Passagers qui attendent depuis trop longtemps : deviennent sortants après 3 jours
-    // (pas pour les gares : leurs entrants ne diminuent que lorsqu'un train les embarque)
-    if(b.type !== 'train_station' && (b.passengersEntrant || 0) > 0){
-      const timeout = 3 * 24 / GAME_HOURS_PER_SEC;
-      const leave = (b.passengersEntrant / timeout) * Math.min(dt, 0.5);
-      b.passengersEntrant = Math.max(0, b.passengersEntrant - leave);
-      b.passagersSortant = (b.passagersSortant || 0) + leave;
     }
   }
 }

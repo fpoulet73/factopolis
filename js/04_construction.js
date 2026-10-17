@@ -350,6 +350,14 @@ function trainStationLinkedRepresentative(b){
   return best;
 }
 
+// Arrêt de bus ou entrepôt collé à une gare, à défaut à un port / aéroport : ses
+// passagers sont reportés sur ce point de transit (mêmes compteurs entrants/sortants).
+function transitHubLinkedRepresentative(b){
+  const train = trainStationLinkedRepresentative(b);
+  if(train || !b || b.dead || (b.type !== 'bus_stop' && b.type !== 'depot')) return train;
+  return buildings.find(o => !o.dead && (o.type === 'boat_depot' || o.type === 'plane_depot') && buildingEdgeGap(b, o) === 0) || null;
+}
+
 function trainStationLinkedDepot(b){
   if(!b || b.dead || b.stationGroupId == null) return null;
   const pieces = trainStationGroupPieces(b.stationGroupId);
