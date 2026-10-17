@@ -79,7 +79,12 @@ const OBJECTIVES = [
   { ic:'🚀', txt:'Lance une fusée depuis un centre spatial', reward:50000, check:o => buildings.some(b => !b.dead && b.type === 'space_center' && ownedBy(b, o) && (b.launches || 0) >= 1) },
   { ic:'🔮', txt:'Produis un processeur quantique (xénite + hélium-3 de l’espace)', reward:80000, check:o => countOwned(o, b => b.type === 'quantum_lab') >= 1 },
 ];
-let objectivesTimer = 0;
+// Déphasé d'une demi-seconde des fusions (mergeTimer) : les deux tâches périodiques
+// ne tombent plus dans la même image.
+let objectivesTimer = 0.5;
+const MERGE_PASSES = [() => tryMerge(), () => tryMergeHangars(), () => tryExpandLuxury(),
+  () => tryMergeInd(), () => tryMergeDepot(), () => tryMergeTrainStations()];
+let mergeQueue = [];
 // Après le chargement d'une partie / la réception d'un état de l'hôte, l'état du monde peut
 // être incomplet ou en cours de synchronisation : pendant ce court délai, un objectif déjà
 // rempli est validé SANS prime ni annonce (la prime n'est versée qu'à l'accomplissement réel).
@@ -304,8 +309,11 @@ function update(dt){
     else leaveOne(b);
   }
 
+  // Fusions : une passe par pas de simulation plutôt que les six dans la même image
+  // (≈20 ms cumulés sur une grande ville = à-coup visible chaque seconde).
   mergeTimer += dt;
-  if(mergeTimer >= 1){ mergeTimer = 0; tryMerge(); tryMergeHangars(); tryExpandLuxury(); tryMergeInd(); tryMergeDepot(); tryMergeTrainStations(); }
+  if(mergeTimer >= 1){ mergeTimer = 0; mergeQueue = MERGE_PASSES.slice(); }
+  if(mergeQueue.length) mergeQueue.shift()();
 
   // Expédition automatique : TOUS les bâtiments étaient traités d'un coup toutes les
   // 0,7 s (une recherche de route par ressource) → une image longue à chaque cycle,
@@ -985,8 +993,9 @@ function leaveOne(b){
 }
 
 // Voyageurs arrivés (sortants) d'un arrêt / gare / port / aéroport : s'il y a une maison
-// non pleine du même joueur à portée, ils la rejoignent à pied (1 par seconde et par
-// point de transit). Ils y sont déjà comptés comme habitants : ils quittent le compteur.
+// non pleine à portée, ils la rejoignent à pied (1 par seconde et par point de transit).
+// Maison du même joueur : ils y sont déjà comptés comme habitants, ils quittent le compteur.
+// Maison d'un autre joueur : ils s'y installent (nouvel habitant à leur arrivée).
 let sortantsHomeTimer = 0;
 function tickSortantsToHomes(dt){
   sortantsHomeTimer += dt;
@@ -1001,15 +1010,25 @@ function tickSortantsToHomes(dt){
     let best = null, bd = Infinity;
     for(const h of buildings){
       if(h.dead || !BUILD[h.type]?.resid) continue;
-      if(hub.owner != null && h.owner != null && h.owner !== hub.owner) continue;
       if((h.pop || 0) + (h.pending || 0) >= BUILD[h.type].resid.popCap) continue;
       const d = buildingDistance(h, hub);
       if(d <= radius && d < bd){ bd = d; best = h; }
     }
     if(!best) continue;
     hub.passagersSortant -= 1;
-    spawnTransitWalkers(hub, best, 1);
+    if(hub.owner != null && best.owner != null && best.owner !== hub.owner) moveInFromHub(hub, best);
+    else spawnTransitWalkers(hub, best, 1);
   }
+}
+// Un voyageur du point de transit `hub` emménage dans la maison `home` (d'un autre joueur) :
+// piéton réservant une place (pending), habitant ajouté à son arrivée (updateWalkers).
+function moveInFromHub(hub, home){
+  if(walkers.length > 80){ growPop(home); return; }
+  const A = { x:(hub.x + (hub.w||1)/2)*TILE, y:(hub.y + (hub.h||1)/2)*TILE };
+  const B = { x:(home.x + (home.w||1)/2)*TILE, y:(home.y + (home.h||1)/2)*TILE };
+  home.pending = (home.pending || 0) + 1;
+  walkers.push({ id: nextWalkerId++, pts:[A, B], seg:0, t:0, target:home,
+                 col: playerColor(home.owner), phase: Math.random()*7 });
 }
 
 function updateWalkers(dt){

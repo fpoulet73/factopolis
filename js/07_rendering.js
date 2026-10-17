@@ -3124,8 +3124,12 @@ function draw(){
       groundCacheCtx.setTransform(1,0,0,1,0,0);
       groundCacheCtx.clearRect(0,0,bufW,bufH); // void transparent (ciel transparaît)
     }
-    cacheCamX = cam.x; cacheCamY = cam.y; cacheCamZ = cam.z; // zoom au moment du bake
-    srcX = M * DPR; srcY = M * DPR; // cam == cacheCam → blit centré
+    // Origine de cuisson calée sur la grille des px device (cacheCam·z·DPR entier) : avec la
+    // translation calée de PixiScene, le sol tombe pixel pour pixel à l'écran (net, sans
+    // rééchantillonnage). Le défilement incrémental conserve cette propriété (décalages entiers).
+    const kz = z * DPR;
+    cacheCamX = Math.round(cam.x * kz) / kz; cacheCamY = Math.round(cam.y * kz) / kz; cacheCamZ = cam.z;
+    srcX = ((cam.x - cacheCamX) * z + M) * DPR; srcY = ((cam.y - cacheCamY) * z + M) * DPR;
     ctx = groundCacheCtx;
   }
 

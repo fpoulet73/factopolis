@@ -164,9 +164,10 @@ const PixiScene = (function(){
     const M = (typeof GROUND_BUFFER_MARGIN !== 'undefined') ? GROUND_BUFFER_MARGIN : 320;
     const zr = cam.z / cacheCamZ;
     bgTerrain.scale.set(cam.z / (cacheCamZ * DPR));
+    // même translation (calée) que le monde : sol et sprites restent solidaires au pixel près
     bgTerrain.position.set(
-      (cacheCamX - cam.x) * cam.z - M * zr,
-      (cacheCamY - cam.y) * cam.z - M * zr
+      camOffset(cam.x) + cacheCamX * cam.z - M * zr,
+      camOffset(cam.y) + cacheCamY * cam.z - M * zr
     );
   }
 
@@ -202,9 +203,19 @@ const PixiScene = (function(){
 
   // Synchronise le conteneur monde sur la caméra (identique au setTransform du
   // Canvas2D : écran = (monde - cam) * z ; resolution=DPR gère le HiDPI).
+  // Translation calée sur le pixel PHYSIQUE quand le zoom est stable : à position
+  // fractionnaire, chaque image rééchantillonne sprites et sol différemment
+  // (scintillement / tremblement au pan lent). Pendant un zoom, pas de calage (le
+  // facteur d'échelle varie de toute façon à chaque image).
+  function camOffset(v){
+    const o = -v * cam.z;
+    if(typeof targetCam !== 'undefined' && targetCam.z !== cam.z) return o;
+    const d = (typeof DPR === 'number' && DPR > 0) ? DPR : 1;
+    return Math.round(o * d) / d;
+  }
   function syncCamera(){
     world.scale.set(cam.z);
-    world.position.set(-cam.x * cam.z, -cam.y * cam.z);
+    world.position.set(camOffset(cam.x), camOffset(cam.y));
   }
 
   // Modules (arbres, entités, bâtiments…) qui se mettent à jour chaque frame.

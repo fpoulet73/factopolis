@@ -108,3 +108,28 @@ Coût par événement ≈ 2 à 4× moindre, étalé sur des événements plus fr
 `tools/tests/solo/defilement-sol.js` vérifie l'identité pixel avec une reconstruction complète.
 Reconstruction complète inchangée pour : zoom, rotation, mutation du sol, saut de caméra
 (> ½ buffer), survol d'expansion.
+
+## Audit de fluidité (2026-10) — pics de simulation et calage au pixel
+
+Mesure sur une ville de 3 700 bâtiments (`update(1/60)` × 1 800) : médiane 1,7 ms mais
+41 pas > 16 ms (jusqu'à 75 ms), soit un à-coup toutes les ~0,7 s même caméra immobile.
+Corrigé :
+- `refreshWorkerAllocation` (12 ms en régime stable, 41 ms en pic) : les postes déjà
+  pourvus ne cherchent/trient plus les logements à portée.
+- `updateNews` : population des villes en un seul passage (au lieu de `townPopulation`
+  par ville, O(villes × bâtiments)).
+- Fusions (`tryMerge*`, ~20 ms cumulés) : une passe par pas de simulation (`MERGE_PASSES`)
+  au lieu des six dans la même image ; objectifs déphasés de 0,5 s.
+- Sauvegarde auto (25-40 ms) : repoussée tant que la caméra bouge ou qu'un bouton est
+  tenu (au plus 30 s, `AUTO_SAVE_MAX_DEFER`).
+Résultat : 3 pas > 16 ms (tous au chargement), p99 29 ms → 3,5 ms.
+
+Rendu : translation du monde Pixi et du sol calée sur le pixel physique hors zoom
+(`camOffset` dans js/pixi/scene.js), origine de cuisson du buffer-sol alignée sur la grille
+des px device → plus de rééchantillonnage/scintillement pendant un pan lent.
+
+Reste à faire (le plus gros écart aux bonnes pratiques) : **terrain en tuiles GPU
+(chunks)**. Le sol est encore un grand canvas Canvas2D ré-uploadé EN ENTIER vers le GPU à
+chaque glissement (~14 Mo à DPR 1, ~55-70 Mo à DPR 2). Des chunks de terrain cuits une
+fois et positionnés par le GPU supprimeraient tout upload pendant le pan.
+Ensuite : simulation dans un Web Worker (le thread d'affichage ne ferait plus que dessiner).

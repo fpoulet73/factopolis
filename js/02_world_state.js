@@ -2106,6 +2106,9 @@ function refreshWorkerAllocation(){
   // 1b : nouveaux recrutés : ils quittent leur maison et marchent jusqu'à l'usine
   for(const job of jobs){
     const jk = job.x + ',' + job.y;
+    // poste déjà pourvu (cas courant d'une ville stable) : inutile de chercher et trier
+    // les logements à portée — c'était l'essentiel du coût de cette fonction
+    if(workersRequiredOf(job) - workersAllocatedOf(job) - (jobInbound.get(jk) || 0) <= 0) continue;
     for(const home of homesNear(job)){
       const need = workersRequiredOf(job) - workersAllocatedOf(job) - (jobInbound.get(jk) || 0);
       if(need <= 0) break;

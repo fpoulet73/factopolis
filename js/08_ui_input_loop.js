@@ -727,8 +727,15 @@ function primeNewsFlags(){
 const NEWS_TOWN_STEPS = [250, 500, 1000, 2500, 5000, 10000];
 function updateNews(){
   if(typeof MP !== 'undefined' && MP.connected && MP.role === 'guest') return;
+  // population de toutes les villes en UN passage (townPopulation par ville parcourait
+  // tous les bâtiments pour chacune : ~20 ms par seconde sur une grande carte)
+  const popByTown = new Map();
+  for(const b of buildings){
+    if(b.dead || b.townId == null || !BUILD[b.type]?.resid) continue;
+    popByTown.set(b.townId, (popByTown.get(b.townId) || 0) + (b.pop || 0));
+  }
   for(const t of towns){
-    const pop = townPopulation(t);
+    const pop = popByTown.get(t.id) || 0;
     for(const step of NEWS_TOWN_STEPS){
       if(pop < step) break;
       if(newsFlags['ville:' + t.id + ':' + step]) continue;
@@ -4456,6 +4463,7 @@ function frame(now){
   panKeys(rdt);
   trackCamera();
   smoothCamera(rdt);
+  noteCameraMove(now);
   if(typeof mpUpdateGuestVisuals === 'function') mpUpdateGuestVisuals(rdt, gdt);
   drawFn();
   if(typeof Minimap !== 'undefined') Minimap.draw();
@@ -4487,11 +4495,25 @@ function simStep(now, maxDt = 1){
     }
   }
   if(typeof mpMaybeBroadcastState === 'function') mpMaybeBroadcastState(rdt);
-  // Décompte sauvegarde auto (temps réel, pas affecté par speed/pause)
+  // Décompte sauvegarde auto (temps réel, pas affecté par speed/pause). La sérialisation
+  // bloque plusieurs dizaines de ms sur une grande partie : on la repousse tant que le
+  // joueur déplace/zoome la caméra ou tient un bouton (au plus AUTO_SAVE_MAX_DEFER s).
   autoSaveTimer -= rdt;
   if(autoSaveTimer <= 0){
-    autoSaveTimer = AUTO_SAVE_INTERVAL;
-    performAutoSave();
+    const busy = now - lastCameraMoveAt < 1500 || mouse.lDown || mouse.rDown;
+    if(!busy || autoSaveTimer < -AUTO_SAVE_MAX_DEFER){
+      autoSaveTimer = AUTO_SAVE_INTERVAL;
+      performAutoSave();
+    }
+  }
+}
+const AUTO_SAVE_MAX_DEFER = 30;
+// Dernier mouvement de caméra (pan/zoom), relevé à chaque image par frame().
+let lastCameraMoveAt = -Infinity, _lastCamX = 0, _lastCamY = 0, _lastCamZ = 0;
+function noteCameraMove(now){
+  if(cam.x !== _lastCamX || cam.y !== _lastCamY || cam.z !== _lastCamZ){
+    lastCameraMoveAt = now;
+    _lastCamX = cam.x; _lastCamY = cam.y; _lastCamZ = cam.z;
   }
 }
 
