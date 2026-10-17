@@ -2985,6 +2985,44 @@ const RENDER_SAFE = typeof location !== 'undefined' && /[?&]safe(?:[=&#]|$)/.tes
 
 // Feux tricolores relevés à la dernière reconstruction du sol (cf. draw, passe 2).
 let _cachedTrafficLights = [];
+
+// ---- défilement incrémental du buffer-sol ----
+// Marge (px CSS) restant avant le bord du buffer à partir de laquelle on le fait glisser.
+const GROUND_SCROLL_COMFORT = 96;
+let _stripRect = null, _stripBusy = false;
+// Décale le contenu cuit de (dx,dy) px device puis redessine seulement les bandes découvertes
+// (un appel interne de draw() par bande, cf. _stripRect). Alignement au pixel près : la
+// nouvelle origine de cuisson est avancée d'un nombre ENTIER de px device, donc les tuiles
+// de la bande tombent exactement sur la grille du contenu conservé. Retourne false si le
+// glissement est impossible (l'appelant retombe alors sur la reconstruction complète).
+function scrollGroundBuffer(dx, dy, bufW, bufH, M, z){
+  if(!dx && !dy) return false;
+  const g = groundCacheCtx;
+  g.save();
+  g.setTransform(1,0,0,1,0,0);
+  g.globalCompositeOperation = 'copy'; // remplace tout, bandes découvertes comprises (vidées)
+  g.drawImage(groundCache, -dx, -dy);
+  g.restore();
+  cacheCamX += dx / (z * DPR);
+  cacheCamY += dy / (z * DPR);
+  const rects = [];
+  if(dy > 0) rects.push({ x0:0, y0:bufH - dy, x1:bufW, y1:bufH });
+  else if(dy < 0) rects.push({ x0:0, y0:0, x1:bufW, y1:-dy });
+  const ya = dy < 0 ? -dy : 0, yb = dy > 0 ? bufH - dy : bufH; // lignes non couvertes par la bande horizontale
+  if(dx > 0) rects.push({ x0:bufW - dx, y0:ya, x1:bufW, y1:yb });
+  else if(dx < 0) rects.push({ x0:0, y0:ya, x1:-dx, y1:yb });
+  _stripBusy = true;
+  try {
+    for(const r of rects){ _stripRect = r; draw(); }
+  } catch(err){
+    _bufContentKey = null; // buffer à moitié refait : reconstruction complète à l'image suivante
+    throw err;
+  } finally {
+    _stripRect = null; _stripBusy = false;
+    ctx = cv.getContext('2d');
+  }
+  return true;
+}
 function draw(){
   // Sécurité : si une frame précédente a jeté pendant le rendu du buffer-sol, `ctx`
   // pourrait être resté pointé sur groundCacheCtx. getContext('2d') renvoie le contexte
@@ -3012,9 +3050,24 @@ function draw(){
   // sur cacheCam ; le viewport courant y pioche à srcX/srcY.
   let srcX = ((cam.x - cacheCamX) * z + M) * DPR;
   let srcY = ((cam.y - cacheCamY) * z + M) * DPR;
-  const bufferReusable = !drawFast
+  const bufferKeyOk = !drawFast
     && _bufContentKey === contentKey
-    && groundCache.width === bufW && groundCache.height === bufH
+    && groundCache.width === bufW && groundCache.height === bufH;
+  // Défilement incrémental : quand la caméra approche du bord du buffer (zone de confort
+  // GROUND_SCROLL_COMFORT), on DÉCALE le contenu déjà cuit et on ne redessine que les
+  // bandes découvertes (≈10 % de la surface) au lieu de tout reconstruire d'un coup :
+  // plus de gros à-coup toutes les quelques secondes de déplacement.
+  if(bufferKeyOk && !_stripBusy && cacheCamZ === z){
+    const lo = GROUND_SCROLL_COMFORT * DPR, hiX = 2*M*DPR - lo;
+    if(srcX < lo || srcX > hiX || srcY < lo || srcY > hiX){
+      const dx = Math.round((cam.x - cacheCamX) * z * DPR), dy = Math.round((cam.y - cacheCamY) * z * DPR);
+      if(Math.abs(dx) < bufW * 0.5 && Math.abs(dy) < bufH * 0.5 && scrollGroundBuffer(dx, dy, bufW, bufH, M, z)){
+        srcX = ((cam.x - cacheCamX) * z + M) * DPR;
+        srcY = ((cam.y - cacheCamY) * z + M) * DPR;
+      }
+    }
+  }
+  const bufferReusable = bufferKeyOk
     && srcX >= 0 && srcX <= 2*M*DPR && srcY >= 0 && srcY <= 2*M*DPR;
   // Terrain sur Pixi UNIQUEMENT si la scène Pixi est prête (sinon fallback Canvas2D).
   const usePixiTerrain = PIXI_TERRAIN && typeof PixiScene !== 'undefined' && PixiScene.ready;
@@ -3033,7 +3086,7 @@ function draw(){
       && cam.y >= cacheCamY - M / zc && cam.y + H / z <= cacheCamY + (H + M) / zc;
     zoomRebuild = !covered || ratio < 0.72 || ratio > 1.55;
   }
-  const rebuildBuffer = (!drawFast && !bufferReusable) || zoomRebuild;
+  const rebuildBuffer = (!drawFast && !bufferReusable) || zoomRebuild || !!_stripRect;
   // Tracés coûteux du sol : en reconstruction, ou en zoom Canvas2D (rendu direct).
   const groundDirty = rebuildBuffer || (drawFast && !usePixiTerrain);
 
@@ -3055,7 +3108,16 @@ function draw(){
   // Pendant une reconstruction, on dessine le sol DANS le buffer : on bascule le
   // global `ctx` vers groundCacheCtx (restauré plus bas). cacheCam = caméra courante.
   const mainCtx = ctx;
-  if(rebuildBuffer){
+  if(_stripRect){
+    // Bande découverte par scrollGroundBuffer : on ne dessine QUE dans ce rectangle
+    // (clip en px du buffer), le reste du buffer est le contenu décalé, déjà à jour.
+    const r = _stripRect;
+    ctx = groundCacheCtx;
+    ctx.save();
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.beginPath(); ctx.rect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0); ctx.clip();
+    srcX = M * DPR; srcY = M * DPR;
+  } else if(rebuildBuffer){
     if(groundCache.width !== bufW || groundCache.height !== bufH){
       groundCache.width = bufW; groundCache.height = bufH; // redimensionner efface
     } else {
@@ -3078,8 +3140,14 @@ function draw(){
   // fenêtre visible en px iso. En reconstruction on l'élargit de la marge (M/z) pour
   // peupler aussi la bordure du buffer.
   const bufMarginWorld = rebuildBuffer ? M/z : 0;
-  const vx0 = camX - TW - bufMarginWorld, vx1 = camX + W/z + TW + bufMarginWorld;
-  const vy0 = camY - TH*3 - 160 - bufMarginWorld, vy1 = camY + H/z + TH*2 + bufMarginWorld; // marge haute = gratte-ciel
+  let vx0 = camX - TW - bufMarginWorld, vx1 = camX + W/z + TW + bufMarginWorld;
+  let vy0 = camY - TH*3 - 160 - bufMarginWorld, vy1 = camY + H/z + TH*2 + bufMarginWorld; // marge haute = gratte-ciel
+  if(_stripRect){
+    // fenêtre de la bande seule (px buffer → px iso monde), avec les mêmes marges de sécurité
+    const r = _stripRect, k = 1 / (DPR * z);
+    vx0 = camX + (r.x0 - M*DPR) * k - TW;  vx1 = camX + (r.x1 - M*DPR) * k + TW;
+    vy0 = camY + (r.y0 - M*DPR) * k - TH*3 - 160;  vy1 = camY + (r.y1 - M*DPR) * k + TH*2;
+  }
 
   const isoToTile = (px,py)=> [ (px/TW2 + py/TH2)/2, (py/TH2 - px/TW2)/2 ];
   const viewCorners = [
@@ -3307,6 +3375,9 @@ function draw(){
     if(x<0||y<0||x>=N||y>=N) continue;
     const i = y*N+x;
     const c = tileCenterIso(rx, ry, x, y);
+    // bande de défilement : seules les tuiles de la bande (hors rectangle englobant des
+    // coordonnées tuiles, bien plus large qu'une bande) génèrent des tracés
+    if(_stripRect && (c[0] < vx0 || c[0] > vx1 || c[1] < vy0 || c[1] > vy1)) continue;
     if(road[i]){
       roadNodes.push(c);
       const roadNeighbor = (dx,dy)=>{ const nx=x+dx, ny=y+dy; return inMap(nx,ny) && !!road[ny*N+nx]; };
@@ -3578,9 +3649,19 @@ function draw(){
   // est déjà à jour (réutilisation). On restaure `ctx` au canvas principal puis on
   // blitte la portion visible du buffer. En drawFast le sol est déjà sur le principal.
   if(rebuildBuffer){
+    if(_stripRect) groundCacheCtx.restore(); // lève le clip de la bande
     ctx = mainCtx;
     _bufContentKey = contentKey;
     groundTexVersion++; // contenu du groundCache changé → re-upload côté Pixi
+    if(_stripRect){
+      // Bande seule : on met à jour la liste des feux de la zone redessinée puis on rend la
+      // main à scrollGroundBuffer — l'image complète (overlays, sprites) est dessinée par
+      // l'appel principal de draw().
+      _cachedTrafficLights = _cachedTrafficLights
+        .filter(tl => tl.c[0] < vx0 || tl.c[0] > vx1 || tl.c[1] < vy0 || tl.c[1] > vy1)
+        .concat(trafficLights);
+      return;
+    }
   }
   if(!drawFast && !usePixiTerrain){
     // Blit du sol sur #cv (mode Canvas2D). En mode Pixi-terrain, le sol est affiché
