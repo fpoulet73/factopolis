@@ -1,7 +1,8 @@
 // Maisons de luxe : verrouillées sous 100 habitants (déblocage définitif), prix
-// ×5, agrandissement sur les cases libres (1 → 2 → 4 → 9 cases) sans changer le
+// ×5, agrandissement (1 → 2 → 4 → 9 cases) uniquement en absorbant des maisons de
+// luxe voisines posées par le joueur (jamais sur des cases vides), sans changer le
 // nombre d'habitants, classe ouvriers → employés → cadres → patrons ; bloquées
-// sans place libre ; jamais fusionnées entre elles ni avec des maisons basiques.
+// sans voisines ; jamais fusionnées avec des maisons basiques.
 T_.flatWorld();
 for(const t of T_.line(88, 100, 122, 100)) road[t.y*N+t.x] = 1;
 markGroundDirty();
@@ -34,7 +35,17 @@ check('pose', lh && lh.type === 'lux_house' && myWallet().money === money0 - BUI
 const steps = [];
 if(lh){
   check('classe initiale ouvriers', residClassOf(lh) === 'ouvrier');
+  // seule, même avec de la place libre autour : aucun agrandissement
+  ready(lh); T_.run(1.1, 0.1);
+  check('aucun agrandissement seule', lh.type === 'lux_house' && lh.w * lh.h === 1);
+  // cases à remplir par des maisons de luxe voisines, niveau par niveau
+  const fill = {
+    lux_villa:  [[101, 101]],
+    lux_manor:  [[100, 102], [101, 102]],
+    lux_estate: [[102, 101], [102, 102], [100, 103], [101, 103], [102, 103]],
+  };
   for(const want of ['lux_villa', 'lux_manor', 'lux_estate']){
+    for(const [fx, fy] of fill[want]) check('pose voisine ' + fx + ',' + fy, !!T_.build('lux_house', fx, fy));
     ready(lh);
     T_.run(1.1, 0.1);
     steps.push(lh.type + ' ' + lh.w + 'x' + lh.h + ' ' + residClassOf(lh) + ' pop ' + lh.pop);
@@ -46,15 +57,14 @@ if(lh){
   let cover = true;
   for(let y = lh.y; y < lh.y + lh.h; y++) for(let x = lh.x; x < lh.x + lh.w; x++)
     if(bgrid[y*N+x] !== lh || road[y*N+x]) cover = false;
-  check('emprise sur cases libres uniquement', cover);
+  check('emprise entièrement absorbée', cover);
+  check('voisines absorbées', !buildings.some(o => !o.dead && o !== lh && o.type === 'lux_house' && o.x >= lh.x && o.x < lh.x + lh.w && o.y >= lh.y && o.y < lh.y + lh.h));
   check('toujours relié à la route', adjRoadTiles(lh).length > 0);
   ready(lh); T_.run(1.1, 0.1);
   check('taille maximale', lh.type === 'lux_estate' && lh.w * lh.h === 9);
 }
 
-// sans place libre : pas d'agrandissement, statut explicite
-for(const [x, y] of [[111, 101], [113, 101], [112, 102]]) road[y*N+x] = 1;
-markGroundDirty();
+// sans voisine à absorber : pas d'agrandissement, statut explicite
 const blocked = T_.build('lux_house', 112, 101);
 if(blocked){
   ready(blocked);
@@ -63,12 +73,12 @@ if(blocked){
   check('statut bloqué', /bloqué/.test(statusOf(blocked)));
 } else check('pose bloquée', false);
 
-// deux maisons de luxe voisines s'agrandissent chacune, sans fusionner
+// deux maisons de luxe voisines prêtes : l'une absorbe l'autre en villa
 const a = T_.build('lux_house', 117, 101), b2 = T_.build('lux_house', 118, 101);
 if(a && b2){
   ready(a); ready(b2);
   T_.run(2.2, 0.1);
-  check('pas de fusion entre maisons de luxe', !a.dead && !b2.dead && a.type === 'lux_villa' && b2.type === 'lux_villa');
+  check('une villa issue de deux maisons', [a, b2].filter(o => !o.dead).length === 1 && [a, b2].some(o => !o.dead && o.type === 'lux_villa'));
 } else check('pose voisines', false);
 check('aucune fusion basique avec le luxe', !buildings.some(o => !o.dead && BUILD[o.type].resid && !BUILD[o.type].lux && o.type !== 'house'));
 

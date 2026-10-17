@@ -1253,7 +1253,7 @@ function statusOf(b){
         if(b.pop < BUILD[b.type].resid.popCap) return txt+' — agrandissement prêt (logement à remplir)';
         return txt + (luxExpansionRect(b)
           ? ' — agrandissement imminent'
-          : ' — ⚠️ agrandissement bloqué : aucune case libre autour');
+          : ' — ⚠️ agrandissement bloqué : pose des maisons de luxe collées à celle-ci');
       }
       if(upgradePending.length) return txt+' — upgrade : '+upgradePending.join(' · ');
       if(residUpgradeResourcesOf(b).length) return txt + (b.pop >= BUILD[b.type].resid.popCap
@@ -1717,14 +1717,14 @@ function renderInfo(){
     h += '<div class="row"><span>Classe</span><b style="color:#f0d890">'+cls.icone+' '+escHtml(cls.pluriel)+'</b></div>';
   }
   if(d.lux){
-    // palier suivant de la maison de luxe (agrandissement sur les cases libres)
+    // palier suivant de la maison de luxe (agrandissement par absorption de maisons de luxe voisines)
     const next = luxNextLevelOf(b);
     if(next){
       const nc = RESIDENT_CLASSES[next.classe];
       h += '<div class="row"><span>Agrandissement</span><b>'+next.ic+' '+escHtml(next.n)+' — '
         + next.shapes[0][0]*next.shapes[0][1]+' cases, '+nc.icone+' '+escHtml(nc.pluriel.toLowerCase())+'</b></div>';
       if(!b.starterHome && luxReadyToExpand(b) && !luxExpansionRect(b))
-        h += '<div class="warn">⚠️ Pas de place pour s\'agrandir : il faut des cases d\'herbe plate libres (sans route ni bâtiment) autour de la maison.</div>';
+        h += '<div class="warn">⚠️ Pour s\'agrandir, il faut poser des maisons de luxe collées à celle-ci : elle les absorbe et ne s\'étend jamais seule.</div>';
     } else {
       h += '<div class="row"><span>Agrandissement</span><b style="color:#9fe8a0">taille maximale atteinte</b></div>';
     }

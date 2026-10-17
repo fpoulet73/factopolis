@@ -594,40 +594,38 @@ function tryMerge(){
   }
 }
 
-// ---------- maisons de luxe : agrandissement sur place ----------
+// ---------- maisons de luxe : agrandissement par absorption ----------
 // Même déclencheur qu'une fusion (logement plein + outils livrés), mais la maison
-// s'étend sur les cases LIBRES voisines au lieu d'absorber d'autres logements :
-// le bâtiment est modifié en place (mêmes habitants, stocks et références des
-// camions), seuls son type, son emprise et la classe de ses habitants changent.
+// ne s'étend JAMAIS sur des cases vides : elle absorbe uniquement des maisons de
+// luxe voisines du même propriétaire que le joueur a posées à côté. Le bâtiment
+// est modifié en place (mêmes habitants, stocks et références des camions),
+// seuls son type, son emprise et la classe de ses habitants changent.
 
-// Case libre : herbe plate au niveau de la maison, sans route, rail ni bâtiment.
-function luxExpansionTileFree(x, y, level){
-  if(!inMap(x, y)) return false;
-  const i = y*N+x;
-  if(road[i] || rail[i] || bgrid[i] || terrain[i] !== T.GRASS) return false;
-  return tileIsFlat(x, y) && terrainCornerLevelAt(x, y) === level;
-}
-
-// Emprise du niveau suivant : rectangle contenant l'emprise actuelle dont les
-// cases ajoutées sont libres. On préfère celui qui longe le plus de route
-// (façade sur rue), puis le moins décalé par rapport à la maison d'origine.
-// null : niveau maximal, ou pas assez de place autour de la maison.
+// Emprise du niveau suivant : rectangle contenant l'emprise actuelle dont toutes
+// les cases ajoutées sont occupées par des maisons de luxe voisines (du même
+// propriétaire) entièrement incluses dans le rectangle. On préfère celui qui
+// longe le plus de route, puis le moins décalé par rapport à la maison d'origine.
+// null : niveau maximal, ou pas assez de maisons de luxe voisines.
 function luxExpansionRect(b){
   const next = luxNextLevelOf(b);
   if(!next) return null;
-  const level = terrainCornerLevelAt(b.x, b.y);
   let best = null, bestScore = -Infinity;
   for(const [W, H] of next.shapes){
     if(W < b.w || H < b.h || W*H <= b.w*b.h) continue;
     for(let y = b.y + b.h - H; y <= b.y; y++) for(let x = b.x + b.w - W; x <= b.x; x++){
+      if(x < 0 || y < 0 || x+W > N || y+H > N) continue;
+      const absorb = new Set();
       let ok = true;
       for(let yy = y; yy < y+H && ok; yy++) for(let xx = x; xx < x+W; xx++){
         if(xx >= b.x && xx < b.x+b.w && yy >= b.y && yy < b.y+b.h) continue;
-        if(!luxExpansionTileFree(xx, yy, level)){ ok = false; break; }
+        const o = bgrid[yy*N+xx];
+        if(!o || o === b || o.dead || !BUILD[o.type]?.lux || (o.owner ?? null) !== (b.owner ?? null)
+           || o.x < x || o.y < y || o.x+o.w > x+W || o.y+o.h > y+H){ ok = false; break; }
+        absorb.add(o);
       }
       if(!ok) continue;
       const score = adjRoadTiles({ x, y, w:W, h:H }).length * 100 - (b.x - x) - (b.y - y);
-      if(score > bestScore){ bestScore = score; best = { x, y, w:W, h:H, type:next.key }; }
+      if(score > bestScore){ bestScore = score; best = { x, y, w:W, h:H, type:next.key, absorb:[...absorb] }; }
     }
   }
   return best;
@@ -641,6 +639,15 @@ function luxReadyToExpand(b){
 
 function expandLuxuryHouse(b, rect){
   const before = residClassDef(b);
+  const popCapNext = BUILD[rect.type].resid.popCap;
+  for(const o of rect.absorb || []){
+    for(const k in o.storage) b.storage[k] = (b.storage[k]||0) + o.storage[k];
+    b.pop = Math.min(popCapNext, (b.pop||0) + (o.pop||0));
+    if(o === selected) selected = b;
+    o.dead = true;
+    setGrid(o, null);
+  }
+  if(rect.absorb?.length) buildings = buildings.filter(o => !o.dead);
   setGrid(b, null);
   b.type = rect.type; b.x = rect.x; b.y = rect.y; b.w = rect.w; b.h = rect.h;
   setGrid(b, b);
