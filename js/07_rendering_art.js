@@ -254,6 +254,48 @@ function artHouse(b, u0, v0, u1, v1, rng, d){
   return artP((u0 + u1) / 2, (v0 + v1) / 2, H + R);
 }
 
+// Maisons mitoyennes : volume continu et toit commun, sans jardin entre lots.
+function artRowHouse(b, u0, v0, u1, v1, rng, d){
+  const alongU = u1 - u0 >= v1 - v0;
+  const n = Math.max(b.w, b.h);
+  const H = d.hgt - 7, R = 7;
+  const wall = ART_WALLS[Math.floor(rng() * ART_WALLS.length)];
+  const roofs = artRoofPalette();
+  const roof = roofs[Math.floor(rng() * roofs.length)];
+  const a = u0 + 0.08, c = u1 - 0.08, e = v0 + 0.08, f = v1 - 0.08;
+  artGround(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, '#a8a394');
+  artShadow(a, e, c, f, H + R);
+  artBox(a, e, c, f, 0, H, wall, { top:false });
+  const face = alongU ? 'l' : 'r', k = alongU ? f : c;
+  const start = alongU ? a : e, length = (alongU ? c - a : f - e) / n;
+  for(let i = 0; i < n; i++){
+    const s = start + i * length;
+    const facade = shade(wall, (i % 2) * 0.10 - 0.05);
+    artWindow(face, k, s, s + length, 0, H, shade(facade, alongU ? ART_LIGHT_LEFT : ART_LIGHT_RIGHT));
+    // Porte individuelle, fenêtre du séjour et deux fenêtres à l'étage.
+    artWindow(face, k, s + length * 0.14, s + length * 0.34, 0, 8, shade(roof, -0.4));
+    artWindow(face, k, s + length * 0.54, s + length * 0.84, 3, 8, '#b4d2dc');
+    for(const offset of [0.14, 0.58]){
+      artWindow(face, k, s + length * offset, s + length * (offset + 0.24), H - 6, H - 2,
+        rng() < 0.4 ? 'rgba(255,226,150,.92)' : '#a4c4d3');
+    }
+    // Pilastre : séparation visible des logements, sans espace entre les murs.
+    if(i) artWindow(face, k, s - 0.015, s + 0.015, 0, H, shade(wall, 0.2));
+  }
+  // Fenêtres du pignon visible et bandeau continu sous le toit.
+  artWindow(alongU ? 'r' : 'l', alongU ? c : f,
+    (alongU ? e : a) + 0.28, (alongU ? e : a) + 0.51, H - 6, H - 2, '#a4c4d3');
+  artBox(a - 0.015, e - 0.015, c + 0.015, f + 0.015, H - 1, H, shade(wall, 0.22), { top:false, edges:false });
+  artGable(a, e, c, f, H, H + R, roof, wall, alongU ? 'u' : 'v');
+  // Cheminées alignées sur le faîtage commun.
+  for(let i = 0; i < n; i++){
+    const s = start + (i + 0.65) * length;
+    const cu = alongU ? s : (a + c) / 2, cv = alongU ? (e + f) / 2 : s;
+    artBox(cu - 0.045, cv - 0.045, cu + 0.045, cv + 0.045, H + R - 2, H + R + 3, '#826354');
+  }
+  return artP((u0 + u1) / 2, (v0 + v1) / 2, H + R);
+}
+
 function artApartment(b, u0, v0, u1, v1, rng, d, floors, opts = {}){
   const palette = opts.palette || ['#d9cbb0', '#c9b79c', '#b8c2c9', '#d6c3a8', '#c5b3a1', '#a9b6bf'];
   const wall = palette[Math.floor(rng() * palette.length)];
@@ -634,7 +676,8 @@ function drawBuildingArt(b, rx0, ry0, rw, rh, lift, hgt, bCol){
   try {
     if(d.resid){
       switch(b.type){
-        case 'house': case 'duplex': case 'row': tc = artHouse(b, u0, v0, u1, v1, rng, d); break;
+        case 'house': tc = artHouse(b, u0, v0, u1, v1, rng, d); break;
+        case 'duplex': case 'row': tc = artRowHouse(b, u0, v0, u1, v1, rng, d); break;
         case 'residence': tc = artApartment(b, u0, v0, u1, v1, rng, d, 3, { perTile:2.2 }); break;
         case 'tower':     tc = artApartment(b, u0, v0, u1, v1, rng, d, 6, { perTile:2.4 }); break;
         case 'bigtower':  tc = artApartment(b, u0, v0, u1, v1, rng, d, 9, { perTile:2.4, greenRoof:true }); break;

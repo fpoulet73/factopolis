@@ -463,11 +463,16 @@ Côté client :
 `rail_update`, `rail_batch`, `rail_signal_update` (avec `forcedRed`, `kind`),
 `tunnel_build`, `bulldoze_road`, `bulldoze_tree`, `terraform`,
 `terraform_level`, `fill_water`, `bulldoze_bld`, `build`, `toggle_bld_pause`,
-`toggle_out_block`, `toggle_resid_upgrade_pause`, `clear_bld_stock`,
+`toggle_out_block`, `toggle_resid_upgrade_pause`, `set_depot_resource`, `clear_bld_stock`,
 `upgrade_plant`, `buy_vehicle`, `sell_vehicle`, `route_vehicle`,
 `return_vehicle`, `pin_vehicle_res`, `configure_train`,
 `depot_departure_flag`, `merge_towns`, `zone_reassign`, `rename_bus_stop`,
 `rename_bld`, `buy_expansion`, `owner_remap`, `pause`, `speed` (0.5–4).
+
+`set_depot_resource {x, y, res, allowed, trainAllowed?}` fixe le filtre d'une
+ressource d'un stockage ; `trainAllowed` est fourni depuis la gare liée.
+L'hôte vérifie la ressource, le type du bâtiment et son propriétaire.
+Sans `trainAllowed`, le filtre ferroviaire reste inchangé.
 
 Le serveur limite le débit par client avec un seau de jetons (rafale 400,
 150 msg/s) au lieu de jeter silencieusement au-delà de 60 msg/s.

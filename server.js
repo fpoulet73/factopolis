@@ -480,7 +480,7 @@ function sanitizeWorldConfig(config = {}) {
 
 const ALLOWED_ACTIONS = new Set([
   'road', 'road_batch', 'bulldoze_road', 'rail_update', 'rail_batch', 'rail_signal_update', 'tunnel_build', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
-  'build', 'toggle_bld_pause', 'toggle_out_block', 'toggle_resid_upgrade_pause', 'clear_bld_stock', 'upgrade_plant',
+  'build', 'toggle_bld_pause', 'toggle_out_block', 'toggle_resid_upgrade_pause', 'clear_bld_stock', 'upgrade_plant', 'set_depot_resource',
   'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'pin_vehicle_res', 'configure_train', 'merge_towns',
   'zone_reassign', 'rename_bus_stop', 'owner_remap', 'depot_departure_flag', 'pause', 'speed',
   'buy_expansion', 'terraform_level', 'rename_bld',
@@ -585,6 +585,12 @@ function sanitizeAction(client, msg) {
     case 'toggle_bld_pause':
       if (!intInRange(act.x) || !intInRange(act.y)) return null;
       Object.assign(out, { x: act.x, y: act.y, paused: !!act.paused }); break;
+    case 'set_depot_resource':
+      if (!intInRange(act.x) || !intInRange(act.y) || typeof act.res !== 'string' || act.res.length > 32 || typeof act.allowed !== 'boolean') return null;
+      if (act.trainAllowed !== undefined && typeof act.trainAllowed !== 'boolean') return null;
+      Object.assign(out, { x: act.x, y: act.y, res: act.res, allowed: act.allowed });
+      if (act.trainAllowed !== undefined) out.trainAllowed = act.trainAllowed;
+      break;
     case 'toggle_out_block':
       if (!intInRange(act.x) || !intInRange(act.y) || typeof act.res !== 'string' || act.res.length > 32) return null;
       Object.assign(out, { x: act.x, y: act.y, res: act.res, blocked: !!act.blocked }); break;

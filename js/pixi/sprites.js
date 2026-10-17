@@ -508,7 +508,8 @@ const PixiSprites = (function(){
   function stationSig(b){
     const routeState = (typeof vehicleRouteMode !== 'undefined' && vehicleRouteMode)
       ? ((vehicleRouteMode.step||'') + '|' + (vehicleRouteMode.vehicle?.vtype||'')) : '';
-    return [b.type, b.owner==null?'':b.owner, rot, terrainVersion + '.' + railVersion,
+    return [b.type, b.owner==null?'':b.owner, b.stationGroupId, b.stationAxis, stationLayoutVersion,
+      rot, terrainVersion + '.' + railVersion,
       bldSelected(b)?1:0, routeState,
       (typeof UI_OPTIONS!=='undefined' ? UI_OPTIONS.graphicPack : ''), GRAPHIC_PACK_IMAGES_GEN].join('|');
   }

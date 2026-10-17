@@ -1898,6 +1898,7 @@ function renderInfo(){
     h += '<div class="row"><span>Rayon</span><b>'+BUS_STOP_RADIUS+' cases</b></div>';
     h += '<div class="row"><span>Tarif</span><b style="color:#ffe9a0">'+BUS_FARE_FACTOR+' $/passager/tuile</b></div>';
     h += '<div class="row"><span>Intra-ville</span><b style="color:#a0c8e8">÷'+BUS_INTRA_CITY_DIV+' du tarif</b></div>';
+    h += '<div class="row"><span>Arrêt partagé</span><b style="color:#a0c8e8">'+Math.round(BUS_OWNER_SHARE*100)+' % bus · '+Math.round((1-BUS_OWNER_SHARE)*100)+' % arrêts étrangers</b></div>';
     if(canRename){
       const stopName = b.name || '';
       h += '<div style="margin-top:8px;color:#8fa3bf;font-size:11px">Nom de l\'arrêt</div>';
@@ -2147,6 +2148,7 @@ function renderInfo(){
       } else {                // état 3 → état 1 (désactivé)
         depot.allow[k] = false;
       }
+      if(MP.connected) netSend({ type:'set_depot_resource', x:depot.x, y:depot.y, res:k, allowed:depot.allow[k] !== false, trainAllowed:depot.trainAllow[k] !== false });
       p._html = null;
     };
   });
@@ -2158,6 +2160,7 @@ function renderInfo(){
       }
       if(!b.allow) b.allow = {};
       b.allow[el.dataset.toggleRes] = b.allow[el.dataset.toggleRes] === false ? undefined : false;
+      if(MP.connected) netSend({ type:'set_depot_resource', x:b.x, y:b.y, res:el.dataset.toggleRes, allowed:b.allow[el.dataset.toggleRes] !== false });
       p._html = null;
     };
   });

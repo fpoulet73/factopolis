@@ -2140,6 +2140,21 @@ function applyAction(msg){
       if(BUILD[b.type].resid) assignHomelessToHousing(b.owner);
       break;
     }
+    case 'set_depot_resource': {
+      if(!validXY(act.x, act.y) || !Object.prototype.hasOwnProperty.call(RES, act.res) || typeof act.allowed !== 'boolean') break;
+      if(act.trainAllowed !== undefined && typeof act.trainAllowed !== 'boolean') break;
+      const b = bgrid[act.y*N+act.x];
+      if(!b || !BUILD[b.type]?.storageHub) break;
+      if(b.owner && b.owner !== msg.from) break;
+      if(!b.allow) b.allow = {};
+      b.allow[act.res] = act.allowed ? undefined : false;
+      // Le panneau de l'entrepôt ne change pas le filtre ferroviaire.
+      if(act.trainAllowed !== undefined){
+        if(!b.trainAllow) b.trainAllow = {};
+        b.trainAllow[act.res] = act.trainAllowed ? undefined : false;
+      }
+      break;
+    }
     case 'toggle_bld_pause': {
       if(!validXY(act.x, act.y)) break;
       const b = bgrid[act.y*N+act.x];
@@ -2243,14 +2258,13 @@ function applyAction(msg){
         const source = buildings.find(b=>b.x===act.sourceX && b.y===act.sourceY);
         const dest   = buildings.find(b=>b.x===act.destX   && b.y===act.destY);
         if(!source || !dest) break;
-        // Réconcilier la propriété périmée des extrémités : leurs ID owner sont
-        // aussi volatils que ceux des dépôts (cf. mp-owner-id-instability). Sans
-        // ça, l'égalité stricte de canUseBuilding échoue et la route est rejetée
-        // alors que l'expéditeur route bien entre SES propres bâtiments. Aucun
-        // effet sur un bâtiment d'un autre joueur (mpSenderControlsOwner ne
-        // remappe que les anciens ID du même nom d'utilisateur).
-        mpSenderControlsOwner(source.owner, msg);
-        mpSenderControlsOwner(dest.owner, msg);
+        // Les arrêts publics ne doivent jamais être réattribués au propriétaire
+        // du véhicule : leurs recettes dépendent de leur véritable propriétaire.
+        // Les autres extrémités conservent la réconciliation des anciens ID.
+        if(v.vtype !== 'bus' && !(v.vtype === 'train' && isTrainStationPiece(source)))
+          mpSenderControlsOwner(source.owner, msg);
+        if(v.vtype !== 'bus' && !(v.vtype === 'train' && isTrainStationPiece(dest)))
+          mpSenderControlsOwner(dest.owner, msg);
         if(!vehicleRouteEndpointOk(source, v.vtype, msg.from) || !vehicleRouteEndpointOk(dest, v.vtype, msg.from)) break;
         v.source = source;
         v.dest = dest;

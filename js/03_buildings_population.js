@@ -492,6 +492,7 @@ function demolishBuilding(b, refundOwner){
   b.dead = true;
   buildings.splice(buildings.indexOf(b),1);
   setGrid(b,null);
+  if(b.type === 'train_station' || b.type === 'train_platform') stationLayoutVersion++;
   if(selected===b) selected = null;
   // retirer les véhicules du dépôt démoli et rembourser 50% de leur valeur
   if((b.type === 'garage' || BUILD[b.type]?.transportDepot) && b.vehicles){

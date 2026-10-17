@@ -306,8 +306,23 @@ function isTrainStationPiece(b){
   return !!b && !b.dead && (b.type === 'train_station' || b.type === 'train_platform');
 }
 
+// Invalide les textures Pixi de toutes les pièces quand la forme d'une gare change.
+let stationLayoutVersion = 0;
+
 function trainStationGroupHasBuilding(groupId){
   return buildings.some(b => isTrainStationPiece(b) && b.stationGroupId === groupId && b.type === 'train_station');
+}
+
+function trainPlatformGroupHasStationAnchor(groupId){
+  if(trainStationGroupHasBuilding(groupId)) return true;
+  return buildings.some(platform => isTrainStationPiece(platform) && platform.type === 'train_platform'
+    && platform.stationGroupId === groupId && buildings.some(station =>
+      isTrainStationPiece(station) && station.type === 'train_station'
+      && station.stationAxis === platform.stationAxis
+      && station.owner === platform.owner
+      && Math.max(Math.abs(station.x - platform.x), Math.abs(station.y - platform.y)) === 1
+      && (station.x - platform.x) * Number(platform.stationAxis.split(',')[0])
+        + (station.y - platform.y) * Number(platform.stationAxis.split(',')[1]) === 0));
 }
 
 function trainStationGroupLength(groupId, type){
@@ -359,6 +374,7 @@ function trainStationSelectionMatches(a, b){
 function mergeTrainStationGroups(groups, targetGroupId){
   for(const b of buildings)
     if(isTrainStationPiece(b) && groups.includes(b.stationGroupId)) b.stationGroupId = targetGroupId;
+  stationLayoutVersion++;
 }
 
 function tryMergeTrainStations(){
@@ -407,7 +423,8 @@ function trainStationPlacementInfo(x, y, owner = MP.myId){
   const platform = !!rail[i];
   const candidates = platform
     ? railStationAxesAt(x, y)
-    : RAIL_DIRS.flatMap(def => railStationAxesAt(x + def.dx, y + def.dy));
+    : RAIL_DIRS.flatMap(def => railStationAxesAt(x + def.dx, y + def.dy)
+        .filter(axis => def.dx * axis.dx + def.dy * axis.dy === 0));
   const uniqueAxes = [];
   for(const axis of candidates) if(!uniqueAxes.some(a => a.key === axis.key)) uniqueAxes.push(axis);
   if(!uniqueAxes.length)
@@ -427,7 +444,7 @@ function trainStationPlacementInfo(x, y, owner = MP.myId){
       if(b.type === 'train_station')
         return platform ? perpendicular : longitudinal;
       if(!platform) return false;
-      if(longitudinal) return true;
+      if(longitudinal) return trainPlatformGroupHasStationAnchor(b.stationGroupId);
       return perpendicular && trainStationGroupHasBuilding(b.stationGroupId);
     });
     if(!platform || connectors.length) return { ok:true, platform, axis, connectors };
@@ -471,6 +488,7 @@ function placeTrainStationTile(x, y, owner = MP.myId){
   b.stationAxis = info.axis.key;
   buildings.push(b);
   bgrid[y * N + x] = b;
+  stationLayoutVersion++;
   if(info.platform && mergeAfterBuild != null){
     const platformLength = trainStationGroupLength(groupId, 'train_platform');
     const stationLength = trainStationGroupLength(mergeAfterBuild, 'train_station');

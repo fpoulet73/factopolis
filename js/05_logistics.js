@@ -2286,8 +2286,9 @@ function vehicleRouteEndpointOk(b, vtype_override, ownerOverride){
   if(!b || b.dead) return false;
   const routeOwner = ownerOverride ?? vehicleRouteMode?.vehicle?.garageRef?.owner ?? MP.myId ?? null;
   const vt = vtype_override || vehicleRouteMode?.vehicle?.vtype;
-  // Les trains peuvent utiliser les gares d'un autre joueur comme arrêt
-  // (commerce inter-joueurs). Le train_depot reste réservé à son propriétaire.
+  // Les bus peuvent desservir les arrêts et gares d'autres joueurs ; les trains
+  // peuvent utiliser leurs gares. Les dépôts restent réservés à leur propriétaire.
+  if(vt === 'bus' && (b.type === 'bus_stop' || isTrainStationPiece(b))) return true;
   if(vt === 'train' && isTrainStationPiece(b) && b.owner != null && b.owner !== routeOwner){
     return true;
   }
@@ -2388,27 +2389,29 @@ function busEarnRevenue(v, numPassengers, routeLen, departStop, arrivalStop){
   const baseRev = numPassengers * dist * BUS_FARE_FACTOR;
   const sameCity = departStop.townId != null && departStop.townId === arrivalStop.townId;
   const revenue = Math.round(sameCity ? baseRev / BUS_INTRA_CITY_DIV : baseRev);
-  const dOwner = departStop.owner ?? v.garageRef.owner ?? null;
-  const aOwner = arrivalStop.owner ?? dOwner;
-  if(dOwner !== null && aOwner !== null && dOwner !== aOwner){
-    // Le propriétaire du bus (garageRef) reçoit BUS_OWNER_SHARE, l'autre joueur le reste
-    const busOwner = v.garageRef.owner ?? dOwner;
-    const otherOwner = busOwner === dOwner ? aOwner : dOwner;
-    const busShare   = Math.max(1, Math.round(revenue * BUS_OWNER_SHARE));
-    const otherShare = Math.max(0, revenue - busShare);
+  const busOwner = v.garageRef?.owner ?? departStop.owner ?? arrivalStop.owner ?? null;
+  const stopOwners = [...new Set([departStop.owner, arrivalStop.owner]
+    .filter(owner => owner != null && owner !== busOwner))];
+  if(stopOwners.length){
+    // Le bus reçoit sa part ; le reste est partagé entre les propriétaires
+    // distincts des arrêts étrangers empruntés par ce trajet.
+    const busShare = Math.max(0, Math.min(revenue, Math.round(revenue * BUS_OWNER_SHARE)));
     const busWallet = walletOf(busOwner);
-    earnMoney(busShare,   'vehicules', busWallet);
+    earnMoney(busShare, 'vehicules', busWallet);
     recordVente(busWallet, 'veh', 'bus', busShare);
-    if(otherShare > 0){
-      const otherWallet = walletOf(otherOwner);
-      earnMoney(otherShare, 'vehicules', otherWallet);
-      recordVente(otherWallet, 'veh', 'bus', otherShare);
+    const remainder = revenue - busShare;
+    for(let i = 0; i < stopOwners.length; i++){
+      const share = Math.floor(remainder / stopOwners.length) + (i < remainder % stopOwners.length ? 1 : 0);
+      if(share <= 0) continue;
+      const stopWallet = walletOf(stopOwners[i]);
+      earnMoney(share, 'vehicules', stopWallet);
+      recordVente(stopWallet, 'veh', 'bus', share);
     }
     addFloat(arrivalStop.x + 0.5, arrivalStop.y, '+'+busShare+' $ 🚌', '#4dd9ff');
   } else {
-    const dWallet = walletOf(dOwner);
-    earnMoney(revenue, 'vehicules', dWallet);
-    recordVente(dWallet, 'veh', 'bus', revenue);
+    const busWallet = walletOf(busOwner);
+    earnMoney(revenue, 'vehicules', busWallet);
+    recordVente(busWallet, 'veh', 'bus', revenue);
     addFloat(arrivalStop.x + 0.5, arrivalStop.y, '+'+revenue+' $ 🚌', sameCity ? '#a0c8e8' : '#ffe9a0');
   }
 }
