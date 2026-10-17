@@ -3247,7 +3247,7 @@ function draw(){
   // Éléments du sol DYNAMIQUES (hors cache) : feux de circulation et signaux
   // ferroviaires changent de couleur en continu → dessinés chaque frame.
   if(groundDirty || RENDER_SAFE) _cachedTrafficLights = trafficLights;
-  if(!drawFast && !UI_OPTIONS.disableTrafficLights){
+  if(!drawFast && !trafficLightsOff){
     const lx0 = cam.x - TW, lx1 = cam.x + W / z + TW, ly0 = cam.y - TH * 2, ly1 = cam.y + H / z + TH * 2;
     for(const tl of _cachedTrafficLights){
       if(tl.c[0] < lx0 || tl.c[0] > lx1 || tl.c[1] < ly0 || tl.c[1] > ly1) continue;

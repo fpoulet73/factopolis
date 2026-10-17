@@ -487,6 +487,26 @@ window.regenExpansions = function(){
   console.info('[regenExpansions] Terrain non-jouable régénéré avec de nouvelles ressources.');
 };
 
+// Remet à zéro tous les passagers (arrêts de bus, gares, ports, aéroports et
+// véhicules en charge) : les compteurs repartent des habitants sans travail.
+window.resetTransitPassengers = function(){
+  let n = 0;
+  for(const b of buildings){
+    if(b.dead) continue;
+    if(b.type !== 'bus_stop' && b.type !== 'train_station' && b.type !== 'boat_depot' && b.type !== 'plane_depot') continue;
+    b.passengers = 0; b.passengersEntrant = 0; b.passagersSortant = 0; b.passengersEntrantPending = 0;
+    b.passengersQuota = null; b.passengersEntrantQuota = null;
+    n++;
+  }
+  for(const v of vehicles){
+    if(VEHICLE_TYPES[v.vtype]?.passengers || v.vtype === 'bus'){ v.cargo = 0; v.passengerBoardStop = null; }
+    if(v.vtype === 'train'){ v.passengersOnBoard = 0; v.passengerBoardStop = null; }
+  }
+  if(typeof refreshTransitPassengerCaps === 'function') refreshTransitPassengerCaps();
+  toast('🧹 Passagers remis à zéro ('+n+' arrêts/gares).', 'win');
+  console.info('[resetTransitPassengers] '+n+' arrêts/gares vidés.');
+};
+
 // Génère des patchs de champs sur la zone jouable.
 // Appelée par le serveur via server_cmd 'spawn_fields'.
 function spawnFieldsOnMap(type, count){

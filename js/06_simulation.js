@@ -416,7 +416,25 @@ function update(dt){
   busStopTimer += dt;
   const updateBusMax = busStopTimer >= 3;
   if(updateBusMax) busStopTimer = 0;
-  if(updateBusMax) refreshTransitPassengerCaps();
+  if(updateBusMax){ refreshTransitPassengerCaps(); enforceTransitCoherence(); }
+  // Passagers arrivés qui n'ont trouvé aucun bus :
+  // gare : ils redeviennent passagers entrants (ils reprennent le train) après 3 jours.
+  // (pas de retour à la maison pour le moment : arrêts, ports et aéroports les gardent)
+  {
+    const dtc = Math.min(dt, 0.5) * GAME_HOURS_PER_SEC;
+    for(const b of buildings){
+      if(b.dead || b.type !== 'train_station') continue;
+      if(!(b.passagersSortant >= 1)){ b._sortantAge = 0; continue; }
+      // transfert par passagers entiers : les deux compteurs changent ensemble
+      b._sortantAge = (b._sortantAge || 0) + b.passagersSortant * Math.min(1, dtc / 72);
+      const moved = Math.min(Math.floor(b._sortantAge), Math.floor(b.passagersSortant));
+      if(moved >= 1){
+        b._sortantAge -= moved;
+        b.passagersSortant -= moved;
+        b.passengersEntrant = (b.passengersEntrant || 0) + moved;
+      }
+    }
+  }
   // Remplissage continu sur 3 jours (72 heures de jeu)
   const BUS_FILL_RATE_SECS = 3 * 24 / GAME_HOURS_PER_SEC; // gtime-secondes pour remplir à 100%
   // Quota par cycle de 3 jours : le total généré ne dépasse pas passengersMax sur la période
@@ -451,6 +469,9 @@ function update(dt){
     if(b.dead || (b.type !== 'train_station' && b.type !== 'boat_depot' && b.type !== 'plane_depot')) continue;
     if(b.passengersEntrant == null){ b.passengersEntrant = 0; b.passengersEntrantMax = 0; b.passagersSortant = 0; }
     const maxE = b.passengersEntrantMax || 0;
+    // (le plafond « habitants sans travail » est appliqué par joueur, pas par gare :
+    // enforceTransitCoherence ; le maximum d'une pièce de gare ne reflète pas
+    // les passagers amenés par les bus ou les trains)
     if(resetPassengerCycle || b.passengersEntrantQuota == null) b.passengersEntrantQuota = maxE;
     if(maxE > 0 && (b.passengersEntrantQuota || 0) > 0 && (b.passengersEntrant || 0) < maxE){
       const rate = maxE / BUS_FILL_RATE_SECS;

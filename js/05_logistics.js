@@ -60,7 +60,7 @@ function trafficGreenAxisXY(tx, ty){
 }
 
 function trafficLightAllows(fromPoint, toPoint){
-  if(UI_OPTIONS.disableTrafficLights) return true;
+  if(trafficLightsOff) return true;
   const fx = Math.floor(fromPoint.x / TILE), fy = Math.floor(fromPoint.y / TILE);
   const tx = Math.floor(toPoint.x / TILE), ty = Math.floor(toPoint.y / TILE);
   if(!inMap(fx, fy) || !road[fy*N+fx] || !inMap(tx, ty) || !road[ty*N+tx]) return true;

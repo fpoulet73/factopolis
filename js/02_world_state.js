@@ -38,6 +38,10 @@ const cam = { x:0, y:0, z:1 };
 const targetCam = { x:0, y:0, z:1 };
 const ZOOM_MIN = 0.35;
 
+// Feux de circulation désactivés : réglage du MONDE (pas d'affichage local), décidé
+// par l'hôte et appliqué à tous les joueurs ; sauvegardé et synchronisé avec l'état.
+let trafficLightsOff = false;
+
 // options d'affichage (persistées en localStorage)
 const UI_OPTIONS = (() => {
   let saved = {};
@@ -46,7 +50,6 @@ const UI_OPTIONS = (() => {
     language: (typeof currentLanguage === 'function') ? currentLanguage() : (saved.language || 'fr'),
     hideColorMarkers: saved.hideColorMarkers ?? false,
     highlightUnderstaffedFactories: saved.highlightUnderstaffedFactories ?? false,
-    disableTrafficLights: saved.disableTrafficLights ?? false,
     disableSounds: saved.disableSounds ?? false,
     soundVolume: (typeof saved.soundVolume === 'number') ? Math.max(0, Math.min(1, saved.soundVolume)) : 0.7,
     soundZoomMin: (typeof saved.soundZoomMin === 'number') ? saved.soundZoomMin : ((CFG && CFG.sons && CFG.sons.zoomMin) ?? 1.0),
@@ -1673,6 +1676,62 @@ function refreshTransitPassengerCaps(){
   }
 }
 
+// ---------- cohérence des passagers ----------
+// Les passagers sont des habitants SANS travail : pour chaque joueur, le total
+// (en attente aux arrêts/gares/ports/aéroports + arrivés + à bord des véhicules)
+// ne peut jamais dépasser sa population moins ses ouvriers en poste.
+// (les navetteurs déjà arrivés à leur poste — entrants d'arrêt de bus — comptent
+// comme « au travail »)
+function transitByOwner(){
+  const out = new Map();
+  const get = o => {
+    o = o ?? null;
+    let r = out.get(o);
+    if(!r){ r = { owner:o, pop:0, working:0, waiting:0, sortants:0, onboard:0, passengers:0, allowed:0, refs:[] }; out.set(o, r); }
+    return r;
+  };
+  for(const b of buildings){
+    if(b.dead) continue;
+    const r = get(b.owner);
+    r.pop += b.pop || 0;
+    r.working += workersAllocatedOf(b);
+    if(b.type === 'bus_stop'){
+      r.waiting += b.passengers || 0; r.sortants += b.passagersSortant || 0;
+      r.refs.push([b, 'passagersSortant', 0], [b, 'passengers', 1]);
+    } else if(b.type === 'train_station' || b.type === 'boat_depot' || b.type === 'plane_depot'){
+      r.waiting += (b.passengersEntrant || 0) + (b.passengersEntrantPending || 0);
+      r.sortants += b.passagersSortant || 0;
+      r.refs.push([b, 'passagersSortant', 0], [b, 'passengersEntrantPending', 1], [b, 'passengersEntrant', 1]);
+    }
+  }
+  for(const v of vehicles){
+    const n = v.vtype === 'train' ? (v.passengersOnBoard || 0)
+      : (v.vtype === 'bus' || VEHICLE_TYPES[v.vtype]?.passengers) ? (v.cargo || 0) : 0;
+    if(n > 0) get(v.owner ?? v.garageRef?.owner).onboard += n;
+  }
+  for(const r of out.values()){
+    r.working = Math.min(r.pop, r.working);
+    r.passengers = r.waiting + r.sortants + r.onboard;
+    r.allowed = Math.max(0, r.pop - r.working);
+  }
+  return out;
+}
+// Retire le surplus de passagers (sortants d'abord, puis ceux en attente).
+function enforceTransitCoherence(){
+  for(const r of transitByOwner().values()){
+    let excess = r.passengers - r.allowed;
+    if(excess <= 0.01) continue;
+    for(const stage of [0, 1]){
+      const refs = r.refs.filter(x => x[2] === stage && (x[0][x[1]] || 0) > 0);
+      const sum = refs.reduce((s, x) => s + x[0][x[1]], 0);
+      if(sum <= 0 || excess <= 0) continue;
+      const cut = Math.min(excess, sum), f = 1 - cut / sum;
+      for(const x of refs) x[0][x[1]] *= f;
+      excess -= cut;
+    }
+  }
+}
+
 // Allocation des ouvriers : coûteuse (chaque poste cherche les logements à
 // portée). Recalculée seulement quand la structure change (bâtiments, population,
 // pauses) ou au plus tard toutes les WORKER_ALLOC_PERIOD secondes de jeu.
@@ -1800,6 +1859,43 @@ function refreshWorkerAllocation(){
       job.workersAssigned = (job.workersAssigned||0) + take;
       job.workersByBusStop = (job.workersByBusStop||0) + take;
       busAvail.set(stop, busAvail.get(stop) - take);
+    }
+  }
+
+  // Pass 3 : passagers arrivés en gare (passagersSortant) → rejoignent à pied les
+  // postes encore sous-dotés situés dans le rayon de la gare (stockés sur le
+  // représentant du groupe de gares).
+  const stationsOut = buildings.filter(b => !b.dead && b.type === 'train_station' && (b.passagersSortant || 0) >= 1);
+  if(stationsOut.length){
+    const stAvail = new Map();
+    const stGroups = new Map(); // représentant -> gares du groupe
+    for(const st of buildings){
+      if(st.dead || st.type !== 'train_station') continue;
+      const rep = (typeof trainStationGroupRepresentative === 'function' && trainStationGroupRepresentative(st.stationGroupId)) || st;
+      if(!(rep.passagersSortant >= 1)) continue;
+      stAvail.set(rep, Math.floor(rep.passagersSortant));
+      if(!stGroups.has(rep)) stGroups.set(rep, []);
+      stGroups.get(rep).push(st);
+    }
+    for(const job of jobs){
+      if(workersRequiredOf(job) - workersAllocatedOf(job) <= 0) continue;
+      const near = [];
+      for(const [rep, group] of stGroups){
+        if(!(stAvail.get(rep) > 0)) continue;
+        if(job.owner != null && rep.owner != null && job.owner !== rep.owner) continue;
+        let d = Infinity;
+        for(const st of group) d = Math.min(d, buildingDistance(st, job));
+        if(d <= TRAIN_STATION_RADIUS) near.push({ rep, d });
+      }
+      near.sort((a, b) => a.d - b.d);
+      for(const { rep } of near){
+        const remaining = workersRequiredOf(job) - workersAllocatedOf(job);
+        if(remaining <= 0) break;
+        const take = Math.min(stAvail.get(rep), remaining);
+        job.workersAssigned = (job.workersAssigned||0) + take;
+        job.workersByBusStop = (job.workersByBusStop||0) + take;
+        stAvail.set(rep, stAvail.get(rep) - take);
+      }
     }
   }
 

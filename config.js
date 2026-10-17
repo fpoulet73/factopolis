@@ -177,11 +177,11 @@ const CONFIG = {
      LIBRES voisines (herbe plate au même niveau, sans route, rail ni bâtiment)
      au lieu de fusionner avec ses voisines. Pas d'immeuble : la maison s'étale
      (jardin, piscine, tennis…) et gagne au plus un étage. Le nombre d'habitants
-     ne change pas, seule leur classe progresse (cf. classesHabitants) :
-       maison  1 case  → ouvriers
-       villa   2 cases → employés
-       manoir  4 cases → cadres
-       domaine 9 cases → patrons (taille maximale)
+       double à chaque agrandissement et leur classe progresse (cf. classesHabitants) :
+       maison  1 case  →  5 ouvriers
+       villa   2 cases → 10 employés
+       manoir  4 cases → 20 cadres
+       domaine 9 cases → 40 patrons (taille maximale)
      Chaque niveau accepte les mêmes clés que les logements basiques, plus
      `classe` (clé de classesHabitants). */
   maisonLuxe: {
@@ -200,7 +200,7 @@ const CONFIG = {
       classe: 'employe',
       formes: [[2,1],[1,2]],
       intervalleConsommation: 40,
-      habitantsMax: 5,
+      habitantsMax: 10,
       stockMax: 14,
       ressourcesIndispensables: ['fish_fillet','bread'],
       ressourcesUpgrade: { goods: 150, clothes: 75 },
@@ -210,7 +210,7 @@ const CONFIG = {
       classe: 'cadre',
       formes: [[2,2]],
       intervalleConsommation: 30,
-      habitantsMax: 5,
+      habitantsMax: 20,
       stockMax: 20,
       ressourcesIndispensables: ['fish_fillet','bread','clothes'],
       ressourcesUpgrade: { goods: 300, clothes: 150 },
@@ -220,7 +220,7 @@ const CONFIG = {
       classe: 'patron',
       formes: [[3,3]],
       intervalleConsommation: 20,
-      habitantsMax: 5,
+      habitantsMax: 40,
       stockMax: 30,
       ressourcesIndispensables: ['fish_fillet','bread','clothes'],
       ressourcesUpgrade: {},

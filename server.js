@@ -482,7 +482,7 @@ const ALLOWED_ACTIONS = new Set([
   'road', 'road_batch', 'bulldoze_road', 'rail_update', 'rail_batch', 'rail_signal_update', 'tunnel_build', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
   'build', 'toggle_bld_pause', 'toggle_out_block', 'toggle_resid_upgrade_pause', 'clear_bld_stock', 'upgrade_plant', 'set_depot_resource',
   'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'pin_vehicle_res', 'configure_train', 'merge_towns',
-  'zone_reassign', 'rename_bus_stop', 'owner_remap', 'depot_departure_flag', 'pause', 'speed',
+  'zone_reassign', 'rename_bus_stop', 'owner_remap', 'depot_departure_flag', 'pause', 'speed', 'traffic_lights',
   'buy_expansion', 'terraform_level', 'rename_bld',
 ]);
 const EXPANSION_SIDES = new Set(['left','right','top','bottom','top-left','top-right','bottom-left','bottom-right']);
@@ -692,6 +692,7 @@ function sanitizeAction(client, msg) {
       if (!intInRange(act.x) || !intInRange(act.y) || !validName(act.name, 64)) return null;
       Object.assign(out, { x: act.x, y: act.y, name: act.name || null }); break;
     case 'pause': break;
+    case 'traffic_lights': out.off = !!act.off; break;
     case 'speed':
       if (![0.5, 1, 2, 3, 4].includes(Number(act.s))) return null;
       out.s = Number(act.s); break;
@@ -1072,6 +1073,8 @@ wss.on('connection', (ws) => {
         const act = sanitizeAction(client, msg);
         if (!act) break;
         if ((act.type === 'pause' || act.type === 'speed') && !isPrivileged(client)) break;
+        // feux de circulation : réglage du monde, réservé à l'hôte de la salle
+        if (act.type === 'traffic_lights' && client.id !== room.hostId) break;
         broadcastRoom(room.id, { type:'action', act, from:id, fromUsername: client.username || null }, id);
         break;
       }

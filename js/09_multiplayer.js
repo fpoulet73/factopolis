@@ -529,6 +529,7 @@ function applyMoveSync(d){
   if(!d) return;
   paused = !!d.paused;
   speed = d.speed || 1;
+  if(d.trafficLightsOff != null) trafficLightsOff = !!d.trafficLightsOff;
   if(d.gtime != null) gtime = d.gtime;
   const cache = MP.vehPathCache || (MP.vehPathCache = new Map());
   const byId = new Map(vehicles.map(v => [String(v.id), v]));
@@ -886,6 +887,8 @@ function syncBuildingByCoords(x, y, type=null){
 function applyPauseSpeedFromSync(d){
   paused = !!d.paused;
   speed = d.speed || 1;
+  trafficLightsOff = !!d.trafficLightsOff;
+  if(typeof refreshOptMenu === 'function') refreshOptMenu();
   $('bPause').textContent = paused ? '▶' : '⏸';
   $('bPause').classList.toggle('on', paused);
   document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===speed));
@@ -1309,7 +1312,7 @@ function serializeMoveSync(){
   });
   for(const k of sigMap.keys()) if(!seen.has(k)) sigMap.delete(k);
   return {
-    gtime, paused, speed,
+    gtime, paused, speed, trafficLightsOff,
     vehicles: vehs,
     trucks: trucks.map(serializeTruckState),
     walkers: walkers.map(serializeWalkerState),
@@ -1337,7 +1340,7 @@ function serializeState(opts = {}){
         }))
       : [],
     gtime,
-    paused, speed,
+    paused, speed, trafficLightsOff,
     dispatchTimer,
     taxTimer,
     mergeTimer,
@@ -1648,6 +1651,8 @@ function applySnapshot(d){
   WALLETS  = {};
   if(d.wallets){ for(const k in d.wallets) WALLETS[k] = d.wallets[k]; }
   paused   = d.paused;  speed   = d.speed||1;
+  trafficLightsOff = !!d.trafficLightsOff;
+  if(typeof refreshOptMenu === 'function') refreshOptMenu();
   $('bPause').textContent = paused ? '▶' : '⏸';
   $('bPause').classList.toggle('on', paused);
   document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===speed));
@@ -2381,6 +2386,10 @@ function applyAction(msg){
       applyOwnerRemap(act.oldId, act.newId);
       break;
     case 'pause': togglePause(); break;
+    case 'traffic_lights':
+      trafficLightsOff = !!act.off;
+      if(typeof refreshOptMenu === 'function') refreshOptMenu();
+      break;
     case 'speed': {
       speed = act.s; paused = false;
       document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===act.s));

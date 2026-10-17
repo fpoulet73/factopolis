@@ -814,8 +814,8 @@ function residClassDef(b){ return RESIDENT_CLASSES[residClassOf(b)]; }
 // ---------- maisons de luxe ----------
 // Ligne résidentielle à part : une maison de luxe ne fusionne jamais avec ses
 // voisines, elle s'agrandit sur les cases libres autour d'elle (tryExpandLuxury,
-// 06_simulation.js). Ses habitants restent aussi nombreux ; seule leur classe
-// progresse. Débloquée à LUX_UNLOCK_POP habitants (wallet.luxeUnlocked).
+// 06_simulation.js). Ses habitants doublent à chaque agrandissement et leur
+// classe progresse. Débloquée à LUX_UNLOCK_POP habitants (wallet.luxeUnlocked).
 const LUX_CFG = CFG.maisonLuxe || {};
 const LUX_UNLOCK_POP = LUX_CFG.seuilHabitants ?? 100;
 const LUX_COST_MULT = LUX_CFG.multiplicateurCout ?? 5;
@@ -823,11 +823,11 @@ const LUX_LEVELS = [
   { key:'lux_house',  cfg:LUX_CFG.maison,  n:'Maison de luxe', ic:'💎', shapes:[[1,1]],       col:'#b08a5a', hgt:22, classe:'ouvrier',
     def:{ interval:60, popCap:5, stockCap:10, required:['fish_fillet'], upgradeTargets:{ goods:60, clothes:30 }, bonus:['fish_oil'] } },
   { key:'lux_villa',  cfg:LUX_CFG.villa,   n:'Villa',          ic:'🏡', shapes:[[2,1],[1,2]], col:'#c09a62', hgt:26, classe:'employe',
-    def:{ interval:40, popCap:5, stockCap:14, required:['fish_fillet','bread'], upgradeTargets:{ goods:150, clothes:75 }, bonus:['fish_oil'] } },
+    def:{ interval:40, popCap:10, stockCap:14, required:['fish_fillet','bread'], upgradeTargets:{ goods:150, clothes:75 }, bonus:['fish_oil'] } },
   { key:'lux_manor',  cfg:LUX_CFG.manoir,  n:'Manoir',         ic:'🏰', shapes:[[2,2]],       col:'#a88a66', hgt:34, classe:'cadre',
-    def:{ interval:30, popCap:5, stockCap:20, required:['fish_fillet','bread','clothes'], upgradeTargets:{ goods:300, clothes:150 }, bonus:['fish_oil'] } },
+    def:{ interval:30, popCap:20, stockCap:20, required:['fish_fillet','bread','clothes'], upgradeTargets:{ goods:300, clothes:150 }, bonus:['fish_oil'] } },
   { key:'lux_estate', cfg:LUX_CFG.domaine, n:'Domaine',        ic:'⛲', shapes:[[3,3]],       col:'#9a8a70', hgt:36, classe:'patron',
-    def:{ interval:20, popCap:5, stockCap:30, required:['fish_fillet','bread','clothes'], upgradeTargets:{}, bonus:['fish_oil'] } },
+    def:{ interval:20, popCap:40, stockCap:30, required:['fish_fillet','bread','clothes'], upgradeTargets:{}, bonus:['fish_oil'] } },
 ].map((L, rank) => ({ key:L.key, n:L.n, ic:L.ic, col:L.col, hgt:L.hgt, rank,
              classe: RESIDENT_CLASSES[L.cfg?.classe] ? L.cfg.classe : L.classe,
              shapes: normalizeLuxShapes(L.cfg?.formes ?? L.shapes),
@@ -849,7 +849,7 @@ function normalizeLuxShapes(list){
       desc: L.rank === 0
         ? 'Logement haut de gamme (débloqué à '+LUX_UNLOCK_POP+' habitants). Plein et approvisionné en outils, il s\'agrandit sur les cases libres voisines : '
           + LUX_LEVELS.slice(1).map(o => o.n.toLowerCase()+' '+o.shapes[0][0]*o.shapes[0][1]+' cases ('+RESIDENT_CLASSES[o.classe].pluriel.toLowerCase()+')').join(', ')
-          + '. Le nombre d\'habitants reste '+L.resid.popCap+'.'
+          + '. Le nombre d\'habitants double à chaque agrandissement ('+LUX_LEVELS.map(o => o.resid.popCap).join(' → ')+').'
         : 'Maison de luxe agrandie ('+sizes+'). '+L.resid.popCap+' '+cls.pluriel.toLowerCase()+'.' };
   }
 })();

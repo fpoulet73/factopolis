@@ -45,11 +45,85 @@ function updateHUD(dt){
   }
   syncLuxeToolbar();
   renderInfo();
+  renderPopPanel();
   renderFinance();
   renderVehicleListPanel();
   renderEventsPanel();
   if(typeof ObjectivesPanel !== 'undefined') ObjectivesPanel.render();
   if(trainConfigVehicle) renderTrainPanel();
+}
+
+// Clic sur le compteur d'habitants : répartition au travail / en passager / à la maison.
+function popBreakdown(){
+  const town = ensureSelectedTown();
+  const pop = town ? townPopTotal(town.id) : popTotal();
+  const jobs = town ? townReachableJobs(town.id) : jobsTotal();
+  const working = Math.min(pop, town ? townAllocatedWorkers(town.id) : Math.min(popTotal(), jobs));
+  let riding = 0;
+  for(const b of buildings){
+    if(b.dead || (town && b.townId !== town.id)) continue;
+    if(b.type === 'bus_stop') riding += (b.passengers || 0) + (b.passagersSortant || 0);
+    else if(b.type === 'train_station' || b.type === 'boat_depot' || b.type === 'plane_depot')
+      riding += (b.passengersEntrant || 0) + (b.passagersSortant || 0);
+  }
+  for(const v of vehicles){
+    if(v.vtype === 'train') riding += v.passengersOnBoard || 0;
+    else if(v.vtype === 'bus' || VEHICLE_TYPES[v.vtype]?.passengers) riding += v.cargo || 0;
+  }
+  riding = Math.min(Math.round(riding), Math.max(0, pop - working));
+  return { pop, working, riding, home: Math.max(0, pop - working - riding) };
+}
+// Répartition des passagers par joueur (propriétaire des arrêts/gares/véhicules).
+let passengerOwnersOpen = false;
+function togglePassengerOwners(){ passengerOwnersOpen = !passengerOwnersOpen; renderPopPanel(); if(typeof renderInfo === 'function') renderInfo(); }
+// Détail d'une gare / d'un arrêt : un bloc sous « entrants » et un sous « sortants »,
+// par joueur (les passagers sont comptés par bâtiment : joueur = propriétaire).
+const passengerDetailOpen = { in:false, out:false };
+function togglePassengerDetail(kind){ passengerDetailOpen[kind] = !passengerDetailOpen[kind]; if(typeof renderInfo === 'function') renderInfo(); }
+function passengerDetailBlock(kind, b){
+  if(!passengerDetailOpen[kind]) return '';
+  const n = Math.floor(kind === 'in' ? (b.passengersEntrant || 0) : (b.passagersSortant || 0));
+  if(n <= 0) return '';
+  return '<div style="margin:2px 0 6px;padding:4px 6px;background:#101826;border-radius:6px;font-size:12px;color:#b8d4f0">'
+    + '<div>'+escHtml(playerName(b.owner))+' : <b>'+n+'</b></div></div>';
+}
+function passengerOwnersHtml(){
+  let h = '';
+  for(const r of transitByOwner().values()){
+    if(r.pop <= 0 && r.passengers < 0.5) continue;
+    h += '<div style="padding-left:14px;font-size:12px;color:#b8d4f0">• '+escHtml(playerName(r.owner))+' : <b>'+Math.round(r.passengers)+'</b>'
+      + ' <span style="opacity:.75">(attente '+Math.round(r.waiting)+' · arrivés '+Math.round(r.sortants)+' · à bord '+Math.round(r.onboard)+')</span>'
+      + ' <span style="opacity:.75">/ '+Math.round(r.allowed)+' sans travail</span></div>';
+  }
+  return h || '<div style="padding-left:14px;font-size:12px;opacity:.7">Aucun passager</div>';
+}
+// Clic sur un compteur de passagers (gare, arrêt) : répartition par joueur.
+function showPassengerOwnersToast(){
+  const rows = [...transitByOwner().values()].filter(r => r.pop > 0 || r.passengers >= 0.5)
+    .map(r => escHtml(playerName(r.owner))+' : '+Math.round(r.passengers)+' passagers / '+Math.round(r.allowed)+' habitants sans travail');
+  toast('🚌 Passagers par joueur — '+(rows.join(' · ') || 'aucun'), 'info');
+}
+
+// Panneau déroulant sous le compteur d'habitants ; un nouveau clic le replie.
+let popPanelOpen = false;
+function togglePopPanel(){
+  popPanelOpen = !popPanelOpen;
+  renderPopPanel();
+}
+function renderPopPanel(){
+  const el = $('popPanel'), anchor = $('sPop');
+  if(!el || !anchor) return;
+  if(!popPanelOpen){ el.style.display = 'none'; return; }
+  const p = popBreakdown();
+  el.innerHTML = '<div>🏭 Au travail : <b>'+p.working+'</b></div>'
+    + '<div style="cursor:pointer" onclick="togglePassengerOwners()" title="Cliquer : répartition par joueur">🚌 En passager : <b>'+p.riding+'</b> '+(passengerOwnersOpen?'▾':'▸')+'</div>'
+    + (passengerOwnersOpen ? passengerOwnersHtml() : '')
+    + '<div>🏠 À la maison : <b>'+p.home+'</b></div>'
+    + '<div style="border-top:1px solid #36465e;margin-top:3px;padding-top:3px">👥 Total : <b>'+p.pop+'</b></div>';
+  el.style.display = 'block';
+  const r = anchor.getBoundingClientRect();
+  el.style.left = Math.max(6, Math.min(r.left, innerWidth - el.offsetWidth - 6)) + 'px';
+  el.style.top = (r.bottom + 14) + 'px';
 }
 
 // ---------- panneau finances ----------
@@ -1610,8 +1684,10 @@ function renderInfo(){
       const pE = Math.floor(mainStation.passengersEntrant || 0);
       const pEMax = mainStation.passengersEntrantMax || 0;
       const pS = Math.floor(mainStation.passagersSortant || 0);
-      h += '<div class="row"><span>Passagers entrants</span><b style="color:#c8e040">🚶 '+pE+'</b></div>';
-      h += '<div class="row"><span>Passagers sortants</span><b style="color:#9fd4f0">🚶 '+pS+'</b></div>';
+      h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'in\')" title="Cliquer : détail par joueur"><span>Passagers entrants</span><b style="color:#c8e040">🚶 '+pE+'</b></div>';
+      h += passengerDetailBlock('in', mainStation);
+      h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'out\')" title="Cliquer : détail par joueur"><span>Passagers sortants</span><b style="color:#9fd4f0">🚶 '+pS+'</b></div>';
+      h += passengerDetailBlock('out', mainStation);
       h += '<div class="row"><span>Rayon</span><b>'+TRAIN_STATION_RADIUS+' cases</b></div>';
       h += '<div class="row"><span>Tarif</span><b style="color:#ffe9a0">'+TRAIN_FARE_FACTOR+' $/passager/case</b></div>';
     }
@@ -1931,8 +2007,10 @@ function renderInfo(){
     }
     const pE = Math.floor(b.passengersEntrant||0);
     const pS = Math.floor(b.passagersSortant||0);
-    if(pE > 0) h += '<div class="row"><span>Arrivants (travailleurs)</span><b style="color:#a0e890">👷 '+pE+'</b></div>';
-    if(pS > 0) h += '<div class="row"><span>Retours (en attente bus)</span><b style="color:#f0c060">🔄 '+pS+'</b></div>';
+    if(pE > 0) h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'in\')" title="Cliquer : détail par joueur"><span>Arrivants (travailleurs)</span><b style="color:#a0e890">👷 '+pE+'</b></div>';
+    h += passengerDetailBlock('in', b);
+    if(pS > 0) h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'out\')" title="Cliquer : détail par joueur"><span>Retours (en attente bus)</span><b style="color:#f0c060">🔄 '+pS+'</b></div>';
+    h += passengerDetailBlock('out', b);
     h += '<div class="row"><span>Rayon</span><b>'+BUS_STOP_RADIUS+' cases</b></div>';
     h += '<div class="row"><span>Tarif</span><b style="color:#ffe9a0">'+BUS_FARE_FACTOR+' $/passager/tuile</b></div>';
     h += '<div class="row"><span>Intra-ville</span><b style="color:#a0c8e8">÷'+BUS_INTRA_CITY_DIV+' du tarif</b></div>';
@@ -3834,7 +3912,10 @@ function refreshOptMenu(){
   }
   document.querySelectorAll('.opt-item[data-opt]').forEach(el => {
     const key = el.dataset.opt;
-    const active = !!UI_OPTIONS[key];
+    // réglage du monde : feux désactivés pour tous, modifiable par l'hôte seulement
+    const world = key === 'disableTrafficLights';
+    if(world) el.style.display = (!MP.connected || MP.role === 'host') ? '' : 'none';
+    const active = world ? !!trafficLightsOff : !!UI_OPTIONS[key];
     el.classList.toggle('active', active);
     el.querySelector('.chk').textContent = active ? '✓' : '';
   });
@@ -3917,6 +3998,13 @@ document.querySelectorAll('.opt-item[data-opt]').forEach(el => {
   el.onclick = e => {
     e.stopPropagation();
     const key = el.dataset.opt;
+    if(key === 'disableTrafficLights'){
+      if(MP.connected && MP.role !== 'host') return; // réservé à l'hôte
+      trafficLightsOff = !trafficLightsOff;
+      if(MP.connected) netSend({ type:'traffic_lights', off:trafficLightsOff });
+      refreshOptMenu();
+      return;
+    }
     UI_OPTIONS[key] = !UI_OPTIONS[key];
     saveUIOptions();
     refreshOptMenu();
