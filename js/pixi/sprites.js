@@ -293,6 +293,7 @@ const PixiSprites = (function(){
       }
       if(veh.state === 'idle' || !rs.pts || !rs.pts.length) continue;
       if(veh.vtype === 'train'){
+        const wagonLoads = trainWagonLoads(veh); // chargement par wagon : le badge n'apparaît que si le wagon est rempli
         for(let i = 0; i < (veh.wagons?.length || 0); i++){
           const wp = trainWagonPose(veh, i); if(!wp) continue;
           // Wagon encore dans le dépôt (ou derrière, à la sortie) : pas de rail sous lui → masqué.
@@ -304,7 +305,7 @@ const PixiSprites = (function(){
           nw = placeDir(wagonPool, nw, layer, 'wagon', drawWagonCore, trainWagonTypeKey(wagon) || '#888', wp.u, wp.v, wp.du, wp.dv, 0.52);
           applyTunnelClip(wagonPool[nw-1], clip, layer);
           // badge ressource sélectionnée (seulement hors bouche)
-          const selRes = !clip && typeof trainWagonSelectedResource === 'function' ? trainWagonSelectedResource(wagon) : null;
+          const selRes = (!clip && veh.res && (wagonLoads[i] || 0) > 0 && !trainWagonDef(wagon)?.passenger) ? veh.res : null; // ressource réellement transportée
           if(selRes && RES[selRes]?.ic){
             const c = entityIso(wp.u, wp.v), by = c[1]-11, s = getVehOv(ovLayer, nov++);
             s.g.ellipse(c[0], by, 8.5, 7).fill({ color:0x0c1826, alpha:0.92 }).stroke({ color: RES[selRes].c || '#ffe082', width:1.2 });

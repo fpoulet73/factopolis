@@ -286,6 +286,23 @@ function trainWagonCapacityForRes(v, res){
   }, 0);
 }
 
+// Chargement de chaque wagon d'un train : la cargaison (ou les voyageurs à bord) remplit les
+// wagons dans l'ordre, chacun jusqu'à sa capacité. Retourne un tableau (indice du wagon → quantité).
+function trainWagonLoads(v){
+  if(v?.vtype !== 'train') return [];
+  const wagons = trainNormalizeWagons(v);
+  const loads = new Array(wagons.length).fill(0);
+  let freight = v.res ? Math.max(0, v.cargo || 0) : 0;
+  let pax = Math.max(0, v.passengersOnBoard || 0);
+  wagons.forEach((wagon, i) => {
+    const w = trainWagonDef(wagon);
+    if(!w) return;
+    if(w.passenger){ loads[i] = Math.min(w.capacite, pax); pax -= loads[i]; }
+    else if(freight > 0 && trainWagonAcceptedResources(wagon).includes(v.res)){ loads[i] = Math.min(w.capacite, freight); freight -= loads[i]; }
+  });
+  return loads;
+}
+
 function trainTotalCapacity(v){
   if(v?.vtype !== 'train') return VEHICLE_TYPES[v?.vtype]?.capacite || 0;
   const wagons = trainNormalizeWagons(v);
