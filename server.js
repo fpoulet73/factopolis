@@ -481,7 +481,7 @@ function sanitizeWorldConfig(config = {}) {
 const ALLOWED_ACTIONS = new Set([
   'road', 'road_batch', 'bulldoze_road', 'rail_update', 'rail_batch', 'rail_signal_update', 'tunnel_build', 'bulldoze_tree', 'terraform', 'fill_water', 'bulldoze_bld',
   'build', 'toggle_bld_pause', 'toggle_out_block', 'toggle_resid_upgrade_pause', 'clear_bld_stock', 'upgrade_plant', 'set_depot_resource',
-  'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'pin_vehicle_res', 'configure_train', 'merge_towns',
+  'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'pause_vehicle', 'pin_vehicle_res', 'configure_train', 'merge_towns',
   'zone_reassign', 'rename_bus_stop', 'owner_remap', 'depot_departure_flag', 'pause', 'speed', 'traffic_lights',
   'buy_expansion', 'terraform_level', 'rename_bld',
 ]);
@@ -494,7 +494,7 @@ const ALLOWED_BUILD_TYPES = new Set([
 const ALLOWED_VEHICLE_TYPES = new Set([
   // types achetables actuels
   'minerai', 'plateau', 'cereale', 'marchandises', 'frigo', 'citerne', 'bus', 'train',
-  'cargo_ship', 'ferry', 'plane',
+  'cargo_ship', 'ferry', 'plane', 'cargo_plane',
   // types hérités (sauvegardes existantes, plus achetables mais toujours routables)
   'bois', 'ble', 'coton', 'vetement', 'farine', 'pain', 'poisson', 'acier',
 ]);
@@ -606,6 +606,9 @@ function sanitizeAction(client, msg) {
     case 'buy_vehicle':
       if (!validVehicleId(act.id) || !ALLOWED_VEHICLE_TYPES.has(act.vtype) || !intInRange(act.garageX) || !intInRange(act.garageY)) return null;
       Object.assign(out, { id: String(act.id), vtype: act.vtype, garageX: act.garageX, garageY: act.garageY }); break;
+    case 'pause_vehicle':
+      if (!validVehicleId(act.id) || typeof act.paused !== 'boolean') return null;
+      out.id = String(act.id); out.paused = act.paused; break;
     case 'sell_vehicle':
     case 'return_vehicle':
       if (!validVehicleId(act.id)) return null;

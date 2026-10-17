@@ -487,6 +487,7 @@ const PixiSprites = (function(){
   function bldSig(b){
     return b.type + '|' + b.w + '|' + b.h + '|' + (b.ore||'') + '|' + (b.owner==null?'':b.owner) + '|' + (b.paused?1:0)
       + (AIR_TYPES.includes(b.type) ? '|a' + airNeighborKey(b) : '')
+      + (b.type === 'air_terminal' && airportRepresentative(b) === b ? '|R' : '') // badge : gare principale seulement
       + '|' + _sigTail + ((_sigDiag && bldSelected(b)) ? '|s' : '');
   }
 
@@ -657,7 +658,8 @@ const PixiSprites = (function(){
     const ownerMark = !(typeof UI_OPTIONS!=='undefined' && UI_OPTIONS.hideColorMarkers) && b.owner ? b.owner : null;
     const ownerCol = ownerMark != null ? playerColor(ownerMark) : null;
     const paused = d.ind && b.paused;
-    const lack = lacksAccess(b);
+    // gares d'aéroport fusionnées : une seule alerte, sur la gare principale
+    const lack = lacksAccess(b) && (b.type !== 'air_terminal' || airportRepresentative(b) === b);
     const noWorkers = !lack && typeof isUnderstaffedOwnFactory === 'function' && isUnderstaffedOwnFactory(b) && workersAllocatedOf(b) === 0;
     const sale = !!(d.storageHub && b.type !== 'tank' && b.sellTo && Object.values(b.sellTo).some(v=>v));
     const pass = b.type === 'bus_stop' && (b.passengersMax||0) > 0 ? Math.floor(b.passengers||0) : -1;

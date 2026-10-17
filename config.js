@@ -445,6 +445,9 @@ const CONFIG = {
       rayon: 16,
       tarif: 1.1,
       avion: { cout: 18000, capacite: 40, vitesse: 7, coutEntretienJournalier: 45 },
+      // avion cargo : achetable seulement si l'aéroport contient un entrepôt (collé à l'une de ses pièces)
+      cargo: { cout: 24000, capacite: 80, vitesse: 7, coutEntretienJournalier: 60 },
+      tarifFret: 0.12,       // $ par unité livrée = prix commercial × distance × tarifFret
     },
 
     /* ---------- ARRÊT DE BUS ----------

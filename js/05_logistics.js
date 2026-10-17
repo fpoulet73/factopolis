@@ -1886,7 +1886,7 @@ function trainProcessStop(v, stopB, nextStop){
     ? buildings.find(b => !b.dead && isStorageDepot(b) && buildingEdgeGap(stopB, b) === 0)
     : null;
   const freightHub = linkedDepot || directDepot || portFreightHub(stopB) || (isStorageHub(stopB) ? stopB : null);
-  const freightFactor = vehicleMode(v) === 'water' ? SHIP_FREIGHT_FACTOR : TRAIN_FREIGHT_FACTOR;
+  const freightFactor = vehicleMode(v) === 'water' ? SHIP_FREIGHT_FACTOR : vehicleMode(v) === 'air' ? PLANE_FREIGHT_FACTOR : TRAIN_FREIGHT_FACTOR;
 
   let unloadedRes = null;
   if(canUnload && v.cargo > 0 && v.res && freightHub){
@@ -2764,6 +2764,8 @@ function updateVehicles(dt){
         v.currentBuilding = v.garageRef;
         v.atDepot = true;
         resetVehicleDepotDeparture(v);
+        // avion remis en service pendant son retour : il reprend sa ligne dès qu'il est posé
+        if(mode === 'air' && !v.paused && v.source && v.dest) v.depotDepartureArmed = true;
         continue;
       }
       if(mode !== 'road'){

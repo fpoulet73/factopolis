@@ -1785,7 +1785,11 @@ function dispatchCommuters(hub, job, n, key, field = 'commuters'){
   const A = { x:(hub.x + (hub.w||1)/2)*TILE, y:(hub.y + (hub.h||1)/2)*TILE };
   const B = { x:(job.x + (job.w||1)/2)*TILE, y:(job.y + (job.h||1)/2)*TILE };
   const k = Math.max(1, Math.min(3, n, 81 - walkers.length));
-  if(walkers.length > 80){ deliverCommuters(job.x, job.y, key, n, field); return; }
+  // au chargement d'une partie / d'un état de l'hôte : l'état des ouvriers est restauré instantanément
+  // (pas de marche) pour que les usines ne repartent pas à vide ; trop de piétons à l'écran : idem
+  if(walkers.length > 80 || (typeof objectivesSettleUntil !== 'undefined' && performance.now() < objectivesSettleUntil)){
+    deliverCommuters(job.x, job.y, key, n, field); return;
+  }
   for(let i = 0; i < k; i++){
     const share = Math.floor(n / k) + (i < n % k ? 1 : 0);
     walkers.push({ id: nextWalkerId++, pts:[A, B], seg:0, t:-i*0.12, target:null, leaving:true,

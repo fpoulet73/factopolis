@@ -1243,7 +1243,8 @@ function drawBuildingArt(b, rx0, ry0, rw, rh, lift, hgt, bCol){
       if(tc && d.ic) artSign(tc[0] + 10, tc[1] + 2, d.ic, b.type === 'mine' ? (b.ore === 'iron' ? '#d98a4f' : '#b0b0c0') : '#ffe082');
     } else {
       tc = artStorage(b, u0, v0, u1, v1, rng, d, bCol);
-      if(tc && d.ic && b.type !== 'bus_stop' && !AIR_TYPES.includes(b.type) || b.type === 'air_terminal') artSign(tc[0] + 10, tc[1] + 2, d.ic, '#9fd0ff');
+      // gares d'aéroport fusionnées : un seul badge, sur la gare principale (comme une gare ferroviaire)
+      if(tc && d.ic && b.type !== 'bus_stop' && (!AIR_TYPES.includes(b.type) || (b.type === 'air_terminal' && airportRepresentative(b) === b))) artSign(tc[0] + 10, tc[1] + 2, d.ic, '#9fd0ff');
     }
   } finally {
     ctx.restore();

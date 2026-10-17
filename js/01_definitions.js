@@ -159,6 +159,7 @@ const PORT_RADIUS          = CFG.logistique?.bateau?.rayon     ?? 10;
 const SHIP_FARE_FACTOR     = CFG.logistique?.bateau?.tarif     ?? 0.5;
 const SHIP_FREIGHT_FACTOR  = CFG.logistique?.bateau?.tarifFret ?? 0.05;
 const AIRPORT_RADIUS       = CFG.logistique?.avion?.rayon      ?? 16;
+const PLANE_FREIGHT_FACTOR = CFG.logistique?.avion?.tarifFret ?? 0.12;
 const PLANE_FARE_FACTOR    = CFG.logistique?.avion?.tarif      ?? 1.1;
 const ALL_CARGO_RESOURCES  = ['iron','coal','wood','wheat','cotton','clothes','flour','water','bread','fish','fish_fillet','fish_oil','steel','goods','dirt'];
 
@@ -169,7 +170,7 @@ const VEHICLE_TYPES = (()=>{
   const COLOR_MAP = {
     minerai:'#c0763a', plateau:'#8a7a5a', cereale:'#d4b842', marchandises:'#e6c84f',
     frigo:'#4fa6b8', citerne:'#64b7e8', bus:'#3a8fd4', train:'#4f5c6f',
-    cargo_ship:'#2f5f8f', ferry:'#e8eef2', plane:'#f4f6f8',
+    cargo_ship:'#2f5f8f', ferry:'#e8eef2', plane:'#f4f6f8', cargo_plane:'#d9b26a',
     // legacy
     bois:'#5e7a3a', ble:'#d7b348', coton:'#f1efe3', vetement:'#b98fcb',
     farine:'#eadfa8', pain:'#d99a45', poisson:'#4fa6b8', acier:'#7a8fa0',
@@ -188,6 +189,7 @@ const VEHICLE_TYPES = (()=>{
     cargo_ship:  { nom:'Cargo',              icone:'🚢', resources:ALL_CARGO_RESOURCES.slice(), cost:cfgShip.cargo?.cout ?? 6000, capacite:cfgShip.cargo?.capacite ?? 60, speed:cfgShip.cargo?.vitesse ?? 2.2, maintenanceCost: cfgShip.cargo?.coutEntretienJournalier ?? 20, mode:'water' },
     ferry:       { nom:'Ferry',              icone:'⛴️', resources:[], passengers:true, cost:cfgShip.ferry?.cout ?? 4500, capacite:cfgShip.ferry?.capacite ?? 60, speed:cfgShip.ferry?.vitesse ?? 2.8, maintenanceCost: cfgShip.ferry?.coutEntretienJournalier ?? 16, mode:'water' },
     plane:       { nom:'Avion de ligne',     icone:'✈️', resources:[], passengers:true, cost:cfgPlane.avion?.cout ?? 18000, capacite:cfgPlane.avion?.capacite ?? 40, speed:cfgPlane.avion?.vitesse ?? 7, maintenanceCost: cfgPlane.avion?.coutEntretienJournalier ?? 45, mode:'air' },
+    cargo_plane: { nom:'Avion cargo',       icone:'🛩️', resources:ALL_CARGO_RESOURCES.slice(), cost:cfgPlane.cargo?.cout ?? 24000, capacite:cfgPlane.cargo?.capacite ?? 80, speed:cfgPlane.cargo?.vitesse ?? 7, maintenanceCost: cfgPlane.cargo?.coutEntretienJournalier ?? 60, mode:'air' },
     // --- legacy (sauvegardes existantes, plus achetables) ---
     bois:        { nom:'Camion bois',        icone:'🚜', resources:['wood'],                   cost:600,  capacite:15, speed:4.0, buyDisabled:true, maintenanceCost: cfgV.bois?.coutEntretienJournalier     ?? 4 },
     ble:         { nom:'Camion blé',         icone:'🚜', resources:['wheat'],                  cost:550,  capacite:15, speed:4.0, buyDisabled:true, maintenanceCost: cfgV.ble?.coutEntretienJournalier      ?? 4 },

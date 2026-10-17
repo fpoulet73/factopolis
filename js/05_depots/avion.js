@@ -53,12 +53,12 @@ BUILD.plane_depot = BUILD.plane_depot || {
   col: '#5c6f8f',
   hgt: 22,
   transportDepot: true,
-  buyCatalog: ['plane'],
+  buyCatalog: ['plane', 'cargo_plane'],
   desc: 'Dépôt d\'aéroport : achète les avions et crée les lignes entre gares d\'aéroport. '
     + 'Hangar : à poser contre une voie de taxi de l\'aéroport. Il ne transporte aucun voyageur lui-même.',
 };
 BUILD.plane_depot.transportDepot = true;
-BUILD.plane_depot.buyCatalog = ['plane'];
+BUILD.plane_depot.buyCatalog = ['plane', 'cargo_plane'];
 
 registerDepotTool({
   key: 'avion',
@@ -304,8 +304,16 @@ function hangarFleet(d){
   return { hangars:hs.length, planes, capacity:hangarCapacityFor(hs.length) };
 }
 // Peut-on acheter un avion de plus dans ce hangar ?
+// Entrepôt faisant partie de l'aéroport du hangar (collé à l'une de ses pièces) : fret aérien.
+function airportFreightDepot(d){
+  const g = planeDepotAirport(d);
+  if(!g) return null;
+  return buildings.find(o => !o.dead && isStorageDepot(o) && g.pieces.some(p => buildingEdgeGap(p, o) === 0)) || null;
+}
 function planePurchaseError(d, vtype){
   if(d?.type !== 'plane_depot' || VEHICLE_TYPES[vtype]?.mode !== 'air') return null;
+  if(vtype === 'cargo_plane' && !airportFreightDepot(d))
+    return "Avion cargo : il faut un entrepôt collé à une pièce de l'aéroport (il fait alors partie de l'aéroport).";
   const f = hangarFleet(d);
   return f.planes >= f.capacity
     ? 'Hangars pleins : ' + f.planes + ' / ' + f.capacity + ' avions (1 hangar = 2, 2 = 6, 3 = 10, 4 = 16). Construis un hangar de plus contre une voie de taxi.'

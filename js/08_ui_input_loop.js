@@ -285,7 +285,7 @@ function renderFinance(){
     return h;
   };
 
-  const VEH_LABELS = { bus:'🚌 Bus', train:'🚃 Train', camion:'🚛 Camion', cargo_ship:'🚢 Cargo', ferry:'⛴️ Ferry', plane:'✈️ Avion' };
+  const VEH_LABELS = { bus:'🚌 Bus', train:'🚃 Train', camion:'🚛 Camion', cargo_ship:'🚢 Cargo', ferry:'⛴️ Ferry', plane:'✈️ Avion', cargo_plane:'🛩️ Avion cargo' };
   const resLabel = k => (RES[k]?.ic ? RES[k].ic+' ' : '') + (RES[k]?.n || k);
   const expandRow = (toggleId, expanded, label, cat, subRows)=>{
     const arrow = expanded ? '▾' : '▸';
@@ -1684,7 +1684,7 @@ function renderInfo(){
            + (trainFlagState ? trainDepotFlagButtonHtml(veh, ' id="bVehTrainFlag"') : '')
            + '</div>';
         if(vt.mode === 'air')
-          h += '<button class="tbtn" style="width:100%;margin-top:4px" id="bVehPause">'+(veh.paused ? '▶️ Reprendre le service' : '⏸️ Mettre en pause (parking / hangar)')+'</button>';
+          h += '<button class="tbtn" style="width:100%;margin-top:4px" id="bVehPause">'+(veh.paused ? '▶️ Reprendre le service' : '⏸️ Mettre en pause (rejoint un parking)')+'</button>';
         if(veh.state !== 'idle' && veh.state !== 'returning')
           h += '<button class="tbtn" style="width:100%;margin-top:4px" id="bVehReturn">🏪 Retour au dépôt</button>';
         h += '<button class="tbtn" style="width:100%;margin-top:4px;color:#ff9a8a" id="bVehSell">🗑️ Vendre (+'
@@ -1718,7 +1718,7 @@ function renderInfo(){
         const paused = !veh.paused;
         setPlanePaused(veh, paused);
         if(MP.connected) netSend({ type:'pause_vehicle', id:veh.id, paused });
-        toast(paused ? '⏸️ '+vt.nom+' en pause : il rejoint son aéroport (parking, sinon hangar).' : '▶️ '+vt.nom+' reprend le service.');
+        toast(paused ? '⏸️ '+vt.nom+' en pause : il rejoint une place de parking de son aéroport.' : '▶️ '+vt.nom+' reprend sa route.');
         p._html = null;
       };
       const retBtn = $('bVehReturn');
@@ -2252,7 +2252,9 @@ function renderInfo(){
           ? '<span style="color:#8fa3bf;font-size:10px"> · '+ vt.resources.map(r=>RES[r]?.ic||r).join(' ') +'</span>'
           : '';
         const maintLabel = vt.maintenanceCost > 0 ? ' <span style="color:#ff9a8a;font-size:10px">'+vt.maintenanceCost+' $/j</span>' : '';
-        h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:2px" data-buy-v="'+vk+'"'+(canControl?'':' disabled')+'>'
+        // avion cargo : grisé tant que l'aéroport n'a pas d'entrepôt (la raison est dans l'info-bulle)
+        const cargoErr = vk === 'cargo_plane' ? planePurchaseError(b, vk) : null;
+        h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:2px'+(cargoErr?';opacity:.55':'')+'" data-buy-v="'+vk+'"'+(canControl?'':' disabled')+(cargoErr?' title="'+escHtml(cargoErr)+'"':'')+'>'
            + vt.icone+' '+vt.nom+resLabel+' <span style="color:#8fa3bf">— '+vt.cost+' $</span>'+maintLabel+'</button>';
       }
     } else if(b.type !== 'garage'){
