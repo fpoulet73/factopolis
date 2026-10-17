@@ -267,9 +267,14 @@ function update(dt){
   for(const b of buildings){
     if(b.dead || b.type !== 'bus_stop') continue;
     // (avant : recherche de gare liée sur TOUS les bâtiments, pour chaque arrêt, à chaque pas)
-    if(!((b.passengersEntrant || 0) > 0 || (b.passagersSortant || 0) > 0)) continue;
+    if(!((b.passengersEntrant || 0) > 0 || (b.passagersSortant || 0) > 0 || (b.passengers || 0) > 0)) continue;
     const station = trainStationLinkedRepresentative(b);
     if(!station) continue;
+    if((b.passengers || 0) > 0){
+      // habitants déjà en attente à l'arrêt → cumulés aux passagers entrants de la gare
+      station.passengersEntrantPending = (station.passengersEntrantPending || 0) + b.passengers;
+      b.passengers = 0;
+    }
     if((b.passengersEntrant || 0) > 0){
       station.passengersEntrantPending = (station.passengersEntrantPending || 0) + b.passengersEntrant;
       b.passengersEntrant = 0;

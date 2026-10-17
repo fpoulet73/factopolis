@@ -1277,6 +1277,11 @@ function statusOf(b){
     const pE = Math.floor(b.passengersEntrant || 0);
     const pS = Math.floor(b.passagersSortant || 0);
     const parts = [];
+    const linked = trainStationLinkedRepresentative(b);
+    if(linked){
+      const out = Math.floor(linked.passagersSortant || 0);
+      return '🚉 Gare liée · 👥 '+out+' habitant'+(out>1?'s':'')+' (sortants de la gare)';
+    }
     if(max > 0) parts.push('↑ '+cur+'/'+max+' départ');
     if(pE > 0) parts.push(pE+' arrivant'+(pE>1?'s':''));
     if(pS > 0) parts.push('↓ '+pS+' retour');
@@ -1889,8 +1894,13 @@ function renderInfo(){
     const canRename = !b.owner || b.owner === (MP.myId ?? null);
     const town = getTownOf(b);
     if(town) h += '<div class="row"><span>Village</span><b style="color:#e8d48b">🏘️ '+escHtml(town.name)+'</b></div>';
-    const pCur = Math.floor(b.passengers||0), pMax = b.passengersMax||0;
-    h += '<div class="row"><span>Départs</span><b style="color:#7dd8ff">👥 '+pCur+(pMax>0?' / '+pMax:'')+'</b></div>';
+    const linkedSt = trainStationLinkedRepresentative(b);
+    if(linkedSt){
+      h += '<div class="row"><span>Habitants (sortants de la gare)</span><b style="color:#7dd8ff">👥 '+Math.floor(linkedSt.passagersSortant||0)+'</b></div>';
+    } else {
+      const pCur = Math.floor(b.passengers||0), pMax = b.passengersMax||0;
+      h += '<div class="row"><span>Départs</span><b style="color:#7dd8ff">👥 '+pCur+(pMax>0?' / '+pMax:'')+'</b></div>';
+    }
     const pE = Math.floor(b.passengersEntrant||0);
     const pS = Math.floor(b.passagersSortant||0);
     if(pE > 0) h += '<div class="row"><span>Arrivants (travailleurs)</span><b style="color:#a0e890">👷 '+pE+'</b></div>';

@@ -1661,6 +1661,16 @@ function refreshTransitPassengerCaps(){
       delete entry.building._tmpTransitCap;
     }
   }
+
+  // Arrêt de bus lié à une gare : ses habitants s'ajoutent aux passagers entrants
+  // de la gare (l'arrêt n'en génère plus lui-même).
+  for(const stop of busStops){
+    if(!(stop.passengersMax > 0)) continue;
+    const station = trainStationLinkedRepresentative(stop);
+    if(!station) continue;
+    station.passengersEntrantMax = (station.passengersEntrantMax || 0) + stop.passengersMax;
+    stop.passengersMax = 0;
+  }
 }
 
 // Allocation des ouvriers : coûteuse (chaque poste cherche les logements à
