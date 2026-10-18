@@ -202,6 +202,33 @@ function depotResPanel(depot, mode){
 // Les habitants d'une maison appartiennent tous à son propriétaire.
 const homeDetailOpen = { pop:false, present:false };
 function toggleHomeDetail(kind){ homeDetailOpen[kind] = !homeDetailOpen[kind]; if(typeof renderInfo === 'function') renderInfo(); }
+// Lignes du détail « Habitants » : habitants du propriétaire, puis locataires Airbnb par joueur
+// d'origine ; un joueur à 0 n'est jamais listé.
+function homePopRows(home, pop, ownerName){
+  const byOwner = new Map();
+  for(const g of (home.guests || []).slice(0, pop)){
+    const o = typeof g === 'number' ? null : (g.o ?? null);
+    byOwner.set(o, (byOwner.get(o) || 0) + 1);
+  }
+  let airbnb = 0;
+  for(const n of byOwner.values()) airbnb += n;
+  const rows = [];
+  if(pop - airbnb > 0) rows.push(ownerName+' : <b>'+(pop - airbnb)+'</b>');
+  for(const [o, n] of byOwner)
+    rows.push(escHtml(o == null ? 'Visiteurs' : playerName(o))+' : <b>'+n+'</b> 🏨 Airbnb');
+  return rows;
+}
+// Réglage « Airbnb uniquement » : plus aucun habitant du propriétaire ne rejoint la maison
+// (les habitants déjà présents restent) ; seuls les voyageurs d'autres joueurs peuvent s'y installer.
+function toggleAirbnbOnly(x, y){
+  const b = bgrid[y*N+x];
+  if(!b || b.dead || !BUILD[b.type]?.resid || b.starterHome) return;
+  if(MP.connected && b.owner && b.owner !== MP.myId){ toast('⛔ Bâtiment d\'un autre joueur','err'); return; }
+  b.airbnbOnly = b.airbnbOnly ? undefined : true;
+  if(MP.connected) netSend({ type:'toggle_airbnb_only', x:b.x, y:b.y, on:!!b.airbnbOnly });
+  const p = $('info'); if(p) p._html = null;
+  if(typeof renderInfo === 'function') renderInfo();
+}
 function homeOccupancyHtml(home){
   const key = home.x + ',' + home.y;
   const pop = Math.floor(home.pop || 0);
@@ -218,10 +245,13 @@ function homeOccupancyHtml(home){
   const name = escHtml(playerName(home.owner));
   let h = '';
   h += '<div class="row" style="cursor:pointer" onclick="toggleHomeDetail(\'pop\')" title="Cliquer : détail par joueur"><span>Habitants</span><b>'+pop+' / '+(BUILD[home.type]?.resid?.popCap ?? pop)+'</b></div>'
-    + (homeDetailOpen.pop && pop > 0 ? box([name+' : <b>'+pop+'</b>']) : '');
+    + (homeDetailOpen.pop && pop > 0 ? box(homePopRows(home, pop, name)) : '');
   h += '<div class="row" style="cursor:pointer" onclick="toggleHomeDetail(\'present\')" title="Cliquer : détail par joueur"><span>Présents à la maison</span><b>🏠 '+present+' / '+pop+'</b></div>';
   if(homeDetailOpen.present && pop > 0)
     h += box([name+' : <b>'+present+'</b> présents · <b>'+working+'</b> au travail · <b>'+walking+'</b> passagers']);
+  if(!home.starterHome)
+    h += '<div class="row" style="cursor:pointer" onclick="toggleAirbnbOnly('+home.x+','+home.y+')" title="Les habitants de ton joueur ne rejoindront plus cette maison ; seuls des voyageurs des autres joueurs pourront y loger">'
+      + '<span>🏨 Airbnb uniquement</span><b style="color:'+(home.airbnbOnly ? '#7dffb0' : '#8aa0b8')+'">'+(home.airbnbOnly ? 'OUI' : 'non')+'</b></div>';
   return h;
 }
 
@@ -231,10 +261,11 @@ function popBreakdown(){
   const pop = town ? townPopTotal(town.id) : popTotal();
   const jobs = town ? townReachableJobs(town.id) : jobsTotal();
   const working = Math.min(pop, town ? townAllocatedWorkers(town.id) : Math.min(popTotal(), jobs));
-  let riding = 0, onboard = 0;
-  for(const r of transitByOwner(town ? town.id : null).values()){ riding += r.passengers; onboard += r.onboard; }
+  let riding = 0, onboard = 0, leisure = 0;
+  for(const r of transitByOwner(town ? town.id : null).values()){ riding += r.passengers; onboard += r.onboard; leisure += r.visiting; }
   riding = Math.min(Math.round(riding), Math.max(0, pop - working));
   onboard = Math.min(Math.round(onboard), riding);
+  leisure = Math.min(Math.round(leisure), riding - onboard);
   // Airbnb : voyageurs installés pour une semaine chez un autre joueur (comptés dans la pop de la maison)
   let airbnb = 0;
   for(const b of buildings){
@@ -242,7 +273,7 @@ function popBreakdown(){
     airbnb += Math.min(b.guests.length, b.pop || 0);
   }
   airbnb = Math.min(airbnb, Math.max(0, pop - working - riding));
-  return { pop, working, riding, onboard, waiting: riding - onboard, airbnb, home: Math.max(0, pop - working - riding - airbnb) };
+  return { pop, working, riding, onboard, leisure, waiting: riding - onboard - leisure, airbnb, home: Math.max(0, pop - working - riding - airbnb) };
 }
 // Répartition des passagers par joueur (propriétaire des arrêts/gares/véhicules).
 let passengerOwnersOpen = false;
@@ -300,7 +331,7 @@ function renderPopPanel(){
   if(!popPanelOpen){ el.style.display = 'none'; return; }
   const p = popBreakdown();
   el.innerHTML = '<div>🏭 Au travail : <b>'+p.working+'</b></div>'
-    + '<div>🚌 Voyageurs : <b>'+p.riding+'</b> <span style="opacity:.75">(attente '+p.waiting+' · à bord '+p.onboard+')</span></div>'
+    + '<div>🚌 Voyageurs : <b>'+p.riding+'</b> <span style="opacity:.75">(attente '+p.waiting+' · à bord '+p.onboard+(p.leisure ? ' · en sortie '+p.leisure : '')+')</span></div>'
     + '<div>🏨 Airbnb (chez un autre joueur) : <b>'+p.airbnb+'</b></div>'
     + '<div>🏠 À la maison : <b>'+p.home+'</b></div>'
     + '<div style="border-top:1px solid #36465e;margin-top:3px;padding-top:3px">👥 Total : <b>'+p.pop+'</b></div>';
@@ -399,7 +430,7 @@ function renderFinance(){
   const hasVeh  = hasRow('vehicules') || financeVehiculesExpanded;
   const hasExp  = hasRow('expansion');
 
-  const incCats = ['ventes','vehicules','taxes','rembours','primes','peageRecu','airbnb'];
+  const incCats = ['ventes','vehicules','taxes','rembours','primes','peageRecu','airbnb','loisirs'];
   const outCats = ['construction','entretien','entretienVehicules','peagePaye','expansion'];
   const netVal = read => incCats.reduce((a,c)=>a+read(c),0) - outCats.reduce((a,c)=>a+read(c),0);
   const netDeltas = months.map(m => netVal(c => (m.end ? (m.end.fin?.[c]||0) : (fin[c]||0)) - (m.start.fin?.[c]||0)));
@@ -416,6 +447,7 @@ function renderFinance(){
     + row('Taxes des habitants','taxes','+','in')
     + row('Remboursements','rembours','+','in')
     + (hasRow('airbnb') ? row('Airbnb (voyageurs hébergés)','airbnb','+','in') : '')
+    + (hasRow('loisirs') ? row('Loisirs (entrées des visiteurs)','loisirs','+','in') : '')
     + (hasRow('primes') ? row('Primes d’objectifs','primes','+','in') : '')
     + (hasRecu ? row('Péages rails reçus','peageRecu','+','in') + playerSubRows(peageDetail.recv,'precv','de','in') : '')
     + row('Construction','construction','−','out')
@@ -1539,6 +1571,10 @@ function statusOf(b){
     return 'Attend : '+resNames(missingReq);
   }
   if(b.type==='market') return 'Marché — vente aux autres joueurs';
+  if(BUILD[b.type].leisure){
+    const n = leisureVisitorsOf(b);
+    return n > 0 ? '🎟️ '+n+' visiteur'+(n > 1 ? 's' : '')+' sur place' : 'En attente de visiteurs';
+  }
   if(isVehicleDepot(b)){
     if(b.type === 'garage'){
       const active = (b.vehicles||[]).filter(v=>v.state!=='idle').length;
@@ -1987,6 +2023,23 @@ function renderInfo(){
                  : (b.prog > 0 ? '🔧 Assemblage '+pct+' %' : '⏳ En attente des pièces')) + '</b></div>';
     h += '<div class="row"><span>Lancements</span><b>'+(b.launches || 0)+'</b></div>';
     h += '<div class="row"><span>Durée de mission</span><b>'+SPACE_MISSION_TIME+' s</b></div>';
+  }
+  if(d.leisure){
+    const L = d.leisure, cap = leisureCapacityOf(b), inside = leisureVisitorsOf(b);
+    h += '<div class="row"><span>Visiteurs</span><b style="color:#ffc2ea">🎟️ '+inside+' / '+cap
+       + (cap < L.capacity ? ' <span style="opacity:.7">(max '+L.capacity+')</span>' : '')+'</b></div>';
+    if(cap < L.capacity)
+      h += '<div class="warn">⚠️ Personnel incomplet : la capacité baisse au prorata des employés en poste.</div>';
+    h += '<div class="row"><span>Entrée</span><b style="color:#ffe9a0">'+L.fee+' $ / visiteur</b></div>';
+    h += '<div class="row"><span>Durée de visite</span><b>'+leisureDaysText(L.days)+' de jeu</b></div>';
+    h += '<div class="row"><span>Visites / recettes</span><b>'+(b.visitsTotal || 0).toLocaleString('fr-FR')+' · '
+       + Math.round(b.leisureIncome || 0).toLocaleString('fr-FR')+' $</b></div>';
+    if(d.upkeep) h += '<div class="row"><span>Entretien</span><b>'+(Math.round(upkeepOf(b)*10)/10)+' $ / '+IND_UPKEEP_INTERVAL+' s</b></div>';
+    if(!buildings.some(s => isTransitHub(s) && buildingDistance(s, b) <= (s.type === 'train_station' ? TRAIN_STATION_RADIUS
+        : s.type === 'boat_depot' ? PORT_RADIUS : s.type === 'air_terminal' ? AIRPORT_RADIUS : BUS_STOP_RADIUS)))
+      h += '<div class="warn">⚠️ Aucun arrêt de bus, gare, port ou aéroport à portée : aucun visiteur ne viendra.</div>';
+    else
+      h += '<div class="status" style="opacity:.8">Les voyageurs arrivés aux points de transit voisins viennent ici avant de chercher un logement.</div>';
   }
   if(d.resid)
     h += homeOccupancyHtml(b);
@@ -2839,6 +2892,8 @@ const STORAGE_TOOLBAR_TOOLS = ['depot','tank'];
 let buildingToolbarGroup = null;
 let buildingToolbarMenu = null;
 const BUILDING_TOOLBAR_TOOLS = ['house','lux_house','plant','market','space_center'];
+let leisureToolbarGroup = null;
+let leisureToolbarMenu = null;
 // Infobulle d'un outil : description + matériaux de chantier exigés (entrepôt proche).
 function toolTitle(k){
   const d = BUILD[k];
@@ -2912,6 +2967,13 @@ function closeBuildingToolbarMenu(){
   syncToolbarState();
 }
 
+function closeLeisureToolbarMenu(){
+  if(!leisureToolbarGroup || !leisureToolbarMenu) return;
+  leisureToolbarGroup.classList.remove('open');
+  leisureToolbarMenu.classList.remove('open');
+  syncToolbarState();
+}
+
 function closeVehicleToolbarMenu(){
   if(!vehicleToolbarGroup || !vehicleToolbarMenu) return;
   vehicleToolbarGroup.classList.remove('open');
@@ -2947,6 +3009,7 @@ function closeToolbarMenus(){
   closeStorageToolbarMenu();
   closeAirportToolbarMenu();
   closeBuildingToolbarMenu();
+  closeLeisureToolbarMenu();
   closeVehicleToolbarMenu();
   closeTerraformToolbarMenu();
 }
@@ -3024,6 +3087,17 @@ function syncToolbarState(){
       b.classList.toggle('on', b.dataset.buildingTool === tool);
     });
   }
+  if(leisureToolbarGroup){
+    const active = LEISURE_TYPES.includes(tool);
+    leisureToolbarGroup.classList.toggle('on', active);
+    const groupBtn = leisureToolbarGroup.querySelector('.tool-group-btn');
+    if(groupBtn) groupBtn.classList.toggle('on', active || leisureToolbarGroup.classList.contains('open'));
+  }
+  if(leisureToolbarMenu){
+    leisureToolbarMenu.querySelectorAll('[data-leisure-tool]').forEach(b=>{
+      b.classList.toggle('on', b.dataset.leisureTool === tool);
+    });
+  }
   if(vehicleToolbarGroup){
     const active = VEHICLE_TOOLBAR_TOOLS.includes(tool);
     vehicleToolbarGroup.classList.toggle('on', active);
@@ -3066,6 +3140,8 @@ function buildToolbar(){
   airportToolbarMenu = null;
   buildingToolbarGroup = null;
   buildingToolbarMenu = null;
+  leisureToolbarGroup = null;
+  leisureToolbarMenu = null;
   vehicleToolbarGroup = null;
   vehicleToolbarMenu = null;
   terraformToolbarGroup = null;
@@ -3208,6 +3284,43 @@ function buildToolbar(){
       buildingToolbarGroup = group;
       buildingToolbarMenu = menu;
       luxeToolbarUnlocked = null;
+      continue;
+    }
+    if(k === 'restaurant'){
+      // lieux de loisirs : un seul menu déroulant pour tous (LEISURE_TYPES)
+      const group = document.createElement('div');
+      group.className = 'tool-group';
+      const btn = document.createElement('button');
+      btn.className = 'tool tool-group-btn';
+      btn.dataset.t = 'restaurant';
+      btn.title = 'Loisirs : les voyageurs arrivés à un arrêt, une gare, un port ou un aéroport proche y passent en priorité et paient l’entrée';
+      btn.innerHTML = '<span class="ic">🎡</span><span>Loisirs</span><span class="hk">▾</span>';
+      const menu = document.createElement('div');
+      menu.className = 'tool-group-menu';
+      for(const toolKey of LEISURE_TYPES){
+        const d = BUILD[toolKey];
+        const choice = document.createElement('button');
+        choice.className = 'tool tool-group-item';
+        choice.dataset.leisureTool = toolKey;
+        choice.title = toolTitle(toolKey);
+        choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
+          + '<span class="cost">'+toolCostLabel(toolKey)+'</span>';
+        choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
+        menu.appendChild(choice);
+      }
+      btn.onclick = e => {
+        e.stopPropagation();
+        const open = !group.classList.contains('open');
+        closeToolbarMenus();
+        group.classList.toggle('open', open);
+        menu.classList.toggle('open', open);
+        syncToolbarState();
+      };
+      group.appendChild(btn);
+      group.appendChild(menu);
+      bar.appendChild(group);
+      leisureToolbarGroup = group;
+      leisureToolbarMenu = menu;
       continue;
     }
     if(k === 'air_runway' || k === 'air_taxi' || k === 'air_parking' || k === 'air_tower' || k === 'air_deco') continue; // regroupés sous "Aéroport"
@@ -4126,6 +4239,7 @@ addEventListener('click', e=>{
   if(storageToolbarGroup && !storageToolbarGroup.contains(e.target)) closeStorageToolbarMenu();
   if(airportToolbarGroup && !airportToolbarGroup.contains(e.target)) closeAirportToolbarMenu();
   if(buildingToolbarGroup && !buildingToolbarGroup.contains(e.target)) closeBuildingToolbarMenu();
+  if(leisureToolbarGroup && !leisureToolbarGroup.contains(e.target)) closeLeisureToolbarMenu();
   if(vehicleToolbarGroup && !vehicleToolbarGroup.contains(e.target)) closeVehicleToolbarMenu();
   if(terraformToolbarGroup && !terraformToolbarGroup.contains(e.target)) closeTerraformToolbarMenu();
 });

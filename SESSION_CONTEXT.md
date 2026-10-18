@@ -204,6 +204,33 @@ sérialisés ; `spaceCenterPhaseChanged` (07_rendering.js) lance l'animation
 L'art (`artSpaceCenter`) montre la fusée sur le pas de tir pendant l'assemblage
 (`spacePadHasRocket`, inclus dans `bldSig`).
 
+### Lieux de loisirs
+
+12 types (`LEISURE_TYPES`, définis par `LEISURE_DEFS` dans 01_definitions.js,
+réglages `config.js` `loisirs.lieux`) : restaurant, cinema, museum, treetop
+(parcours dans les arbres, arbre à 2 cases), marina (base nautique, bord de l'eau),
+spa, hotel, concert_hall, zoo, casino, stadium, theme_park. `BUILD[t].leisure` =
+`{ capacity, days, fee, near }` (`days` : jours de jeu sur place) ; emprise carrée `size` + `noMerge` (ouvriers et
+entretien comptés une fois). Menu 🎡 Loisirs de la barre d'outils (ancre
+`restaurant` dans `TOOL_ORDER`). Contrainte de site : `leisureNearError` (04).
+Chaque lieu exige des matériaux de chantier (`config.js` `materiauxChantier.batiments`,
+clé = type moteur), vérifiés et prélevés comme pour les ports et aéroports.
+- `tickSortantsToHomes` (06) : pour chaque point de transit ayant des passagers
+  sortants, `sendSortantsToLeisure` les envoie d'abord vers les lieux à portée du
+  rayon du point (le plus proche d'abord, `LEISURE_AFFLUX` par heure de jeu, dans
+  la limite de `leisureCapacityOf` = capacité × part des employés en poste), avant
+  la recherche d'un logement / Airbnb.
+- `admitVisitors` : lot `{ t:gtime, n, o }` ajouté à `b.visitors`, entrée
+  (`n × fee`) créditée au propriétaire du lieu (catégorie finance `loisirs`).
+- `tickLeisureVisits` : au bout de `days` jours de jeu (`leisureStaySecs`), `sendVisitorsToTransit`
+  renvoie le lot au point de transit le plus proche (de préférence du joueur
+  d'origine) en passagers entrants. Démolition : `evictVisitors`.
+- Cohérence : les visiteurs comptent dans `transitByOwner` (`visiting`) pour leur
+  joueur d'origine, sans jamais être retirés.
+- `visitors`, `visitsTotal`, `leisureIncome` sont sérialisés (`applyLeisureState`,
+  09_multiplayer.js). Art : `artLeisure` (07_rendering_art.js). Test :
+  `tools/tests/solo/loisirs.js`.
+
 ## Boucle de simulation
 
 La boucle `frame()` (dans `08_ui_input_loop.js`) :

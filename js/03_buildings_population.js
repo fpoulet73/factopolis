@@ -487,7 +487,7 @@ function assignHomelessToHousing(owner){
   for(const h of homeless)
     if(h.owner === owner) h.col = playerColor(owner);
   const homes = buildings
-    .filter(b=>!b.dead && BUILD[b.type].resid && ownedBy(b, owner))
+    .filter(b=>!b.dead && BUILD[b.type].resid && ownedBy(b, owner) && !b.airbnbOnly)
     .sort((a,b)=> (b.starterHome?1:0)-(a.starterHome?1:0) || (a.y-b.y) || (a.x-b.x));
   for(const home of homes){
     const rc = BUILD[home.type].resid;
@@ -563,6 +563,7 @@ function demolishBuilding(b, refundOwner){
   const townId = b.townId ?? null;
   if(AIR_TYPES.includes(b.type)) airVersion++;
   if(BUILD[b.type]?.resid) evictGuests(b); // les invités d'un autre joueur repartent en transport
+  if(BUILD[b.type]?.leisure) evictVisitors(b); // lieu de loisirs : les visiteurs repartent en transport
   const evicted = makeResidentsHomeless(b);
   // ouvriers venus par transport : ils rejoignent la maison libre / le point de transit le plus proche
   if(b.commuters) for(const key of Object.keys(b.commuters)) sendCommutersAway(b, key, b.commuters[key]);

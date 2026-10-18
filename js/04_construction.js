@@ -748,6 +748,8 @@ function canPlace(t,x,y, actorId = MP.myId){
       if(terrain[ti] !== T.GRASS) return { ok:false, msg:'Il faut une zone d’herbe libre de '+fp+'×'+fp+' cases' };
       if(!tileIsFlat(tx, ty) || terrainLevelAt(tx, ty) !== lvl) return { ok:false, msg:'Terrain non plat : nivelez une zone de '+fp+'×'+fp+' cases' };
     }
+    const nearErr = leisureNearError(t, x, y, fp);
+    if(nearErr) return { ok:false, msg:nearErr };
     const miss = buildMaterialsMissing(t, x, y, fp, fp, actorId ?? null);
     if(miss) return { ok:false, msg:buildMaterialsError(t, x, y, fp, fp, actorId ?? null), materials:miss };
     return { ok:true };
@@ -767,6 +769,8 @@ function canPlace(t,x,y, actorId = MP.myId){
   } else {
     if(ter!==T.GRASS) return { ok:false, msg:'Terrain non constructible' };
     if(t==='lumber' && !treeNear(x,y,2)) return { ok:false, msg:"Aucun arbre à moins de 2 cases" };
+    const nearErr = leisureNearError(t, x, y, 1);
+    if(nearErr) return { ok:false, msg:nearErr };
     if(t==='farm'){
       if(!fieldNear(x,y,2)) return { ok:false, msg:"Aucun champ de blé à moins de 2 cases" };
       const capErr = farmCapacityError(x, y, 'farm', T.WHEAT);
@@ -804,6 +808,17 @@ function canPlace(t,x,y, actorId = MP.myId){
   const miss = buildMaterialsMissing(t, x, y, 1, 1, actorId ?? null);
   if(miss) return { ok:false, msg:buildMaterialsError(t, x, y, 1, 1, actorId ?? null), materials:miss };
   return { ok:true };
+}
+// Lieu de loisirs à contrainte de site : parcours dans les arbres (arbre à 2 cases de
+// l'emprise fp×fp) ou base nautique (eau à 1 case). Retourne le message d'erreur ou null.
+function leisureNearError(t, x, y, fp){
+  const near = BUILD[t]?.leisure?.near;
+  if(!near) return null;
+  const r = near === 'arbres' ? 2 : 1;
+  const test = near === 'arbres' ? treeNear : waterNear;
+  for(let dy = 0; dy < fp; dy++) for(let dx = 0; dx < fp; dx++)
+    if(test(x + dx, y + dy, r)) return null;
+  return near === 'arbres' ? 'Aucun arbre à moins de 2 cases' : 'Doit être au bord de l\'eau';
 }
 // Côté de l'emprise posée en un clic (1 pour tous, sauf les grands bâtiments d'un seul tenant).
 const footprintOf = t => (BUILD[t] && !BUILD[t].resid && BUILD[t].size > 1) ? BUILD[t].size : 1;

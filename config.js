@@ -108,6 +108,19 @@ const CONFIG = {
       quantum_lab:       { steel_beam: 4, concrete: 8, window: 6, circuit: 6 },
       // espace
       space_center:   { steel_beam: 30, steel_plate: 20, concrete: 40, window: 10, copper_wire: 16, circuit: 12, paint: 6 },
+      // lieux de loisirs
+      restaurant:     { wood: 6, nails: 4, window: 2, furniture: 2 },
+      cinema:         { concrete: 6, steel_beam: 3, window: 2, copper_wire: 3, furniture: 4 },
+      museum:         { concrete: 8, steel_beam: 2, window: 6, glass: 4, paint: 2 },
+      treetop:        { wood: 12, rope: 10, nails: 6 },                                        // parcours dans les arbres
+      marina:         { wood: 8, rope: 8, plastic: 6, paint: 2 },                              // base nautique
+      spa:            { concrete: 6, steel_plate: 3, window: 4, copper_wire: 2, furniture: 2 },
+      hotel:          { concrete: 12, steel_beam: 6, window: 10, furniture: 8, appliances: 2 },
+      concert_hall:   { concrete: 12, steel_beam: 8, steel_plate: 4, copper_wire: 6, circuit: 3 },
+      zoo:            { wood: 10, nails: 6, steel_plate: 4, rope: 4, glass: 4 },
+      casino:         { concrete: 10, steel_beam: 6, window: 6, circuit: 6, furniture: 4, jewelry: 4 },
+      stadium:        { concrete: 30, steel_beam: 16, steel_plate: 8, plastic: 12, copper_wire: 8, paint: 4 },
+      theme_park:     { steel_beam: 24, steel_plate: 12, concrete: 16, circuit: 8, plastic: 10, copper_wire: 6, paint: 6 },
     },
   },
 
@@ -128,6 +141,40 @@ const CONFIG = {
     tempsAssemblage: 60,
     dureeMission: 90,
     cargaison: { helium3: 6, xenite: 4 },
+  },
+
+  /* ---------- LIEUX DE LOISIRS ----------
+     Bâtiments posés depuis le menu 🎡 Loisirs. Les voyageurs arrivés (passagers sortants)
+     à un arrêt de bus, une gare, un port ou un aéroport dont le rayon couvre le lieu s'y
+     rendent EN PRIORITÉ (avant un logement Airbnb). Chaque visiteur paie `tarif` $ à son
+     arrivée au propriétaire du lieu ; au bout de `duree` jours de jeu, il repart vers le
+     point de transit le plus proche en passager entrant.
+       afflux : visiteurs envoyés au plus, par point de transit et par heure de jeu
+       Par lieu :
+         cout      : prix de construction ($)
+         taille    : côté de l'emprise carrée (1 à 4 cases), terrain plat
+         capacite  : visiteurs simultanés maximum
+         duree     : jours de jeu passés sur place (décimales permises : 1.5 = un jour et demi)
+         tarif     : $ payés par visiteur
+         ouvriers  : employés nécessaires ; en sous-effectif la capacité baisse au prorata (0 = aucun)
+         entretien : $ par cycle d'entretien (comme les usines)
+         pres      : contrainte de pose facultative : 'arbres' (arbre à 2 cases) ou 'eau' (rive à 1 case) */
+  loisirs: {
+    afflux: 10,
+    lieux: {
+      restaurant:      { cout: 1500,  taille: 1, capacite: 20,  duree: 1,   tarif: 35,  ouvriers: 2,  entretien: 1 },
+      cinema:          { cout: 3000,  taille: 2, capacite: 60,  duree: 1.5, tarif: 25,  ouvriers: 3,  entretien: 2 },
+      musee:           { cout: 5000,  taille: 2, capacite: 50,  duree: 2,   tarif: 30,  ouvriers: 3,  entretien: 2 },
+      accrobranche:    { cout: 2500,  taille: 2, capacite: 30,  duree: 1.5, tarif: 45,  ouvriers: 2,  entretien: 1, pres: 'arbres' },
+      baseNautique:    { cout: 4000,  taille: 2, capacite: 40,  duree: 2,   tarif: 55,  ouvriers: 3,  entretien: 2, pres: 'eau' },
+      spa:             { cout: 9000,  taille: 2, capacite: 40,  duree: 3,   tarif: 120, ouvriers: 4,  entretien: 3 },
+      hotel:           { cout: 8000,  taille: 2, capacite: 80,  duree: 12,  tarif: 180, ouvriers: 6,  entretien: 4 },
+      salleConcert:    { cout: 12000, taille: 3, capacite: 150, duree: 2,   tarif: 70,  ouvriers: 6,  entretien: 5 },
+      zoo:             { cout: 15000, taille: 3, capacite: 120, duree: 3,   tarif: 60,  ouvriers: 8,  entretien: 6 },
+      casino:          { cout: 20000, taille: 3, capacite: 100, duree: 2.5, tarif: 200, ouvriers: 8,  entretien: 8 },
+      stade:           { cout: 30000, taille: 4, capacite: 400, duree: 1.5, tarif: 50,  ouvriers: 10, entretien: 10 },
+      parcAttractions: { cout: 40000, taille: 4, capacite: 300, duree: 4,   tarif: 110, ouvriers: 14, entretien: 12 },
+    },
   },
 
   /* ---------- BÂTIMENTS CIVILS ---------- */

@@ -650,6 +650,7 @@ function tryMerge(){
         t.pop = Math.min(d.resid.popCap, pop);
         t.protectedPop = Math.min(t.pop, protectedPop);
         t.starterHome = t.protectedPop > 0 || set.some(o => o.starterHome);
+        if(set.every(o => o.airbnbOnly)) t.airbnbOnly = true;
         // Conserver le nombre total de slots de départ absorbés
         t.starterSlots = set.reduce((s, o) => s + (o.starterSlots || (o.starterHome ? 1 : 0)), 0);
         for(const k in stock) if(RES[k]) t.storage[k] = Math.min(d.resid.stockCap, stock[k]);
@@ -852,6 +853,7 @@ function pathToEdge(b){
 }
 
 function spawnWalker(b){
+  if(b.airbnbOnly) return; // maison réservée aux locataires Airbnb : pas de nouvel habitant du propriétaire
   if(walkers.length > 80){ growPop(b); return; }
   const pts = pathToEdge(b);
   if(!pts){ growPop(b); return; } // logement enclavé : arrivée instantanée
@@ -953,6 +955,7 @@ function splitBuilding(b){
     h.starterHome = h.protectedPop > 0;
     protectedPop -= h.protectedPop;
     h.starve = 0;
+    if(b.airbnbOnly) h.airbnbOnly = true;
     buildings.push(h);
     setGrid(h,h);
     newHomes.push(h);
@@ -1006,16 +1009,21 @@ function tickSortantsToHomes(dt){
   const elapsed = sortantsHomeTimer;
   sortantsHomeTimer = 0;
   tickGuestsExpire(elapsed);
+  tickLeisureVisits();
   for(const hub of buildings){
     if(hub.dead || !(hub.passagersSortant >= 1)) continue;
     if(!isTransitHub(hub)) continue;
     if(hub.type === 'train_station' && trainStationGroupRepresentative(hub.stationGroupId) !== hub) continue;
     const radius = hub.type === 'train_station' ? TRAIN_STATION_RADIUS
       : hub.type === 'boat_depot' ? PORT_RADIUS : hub.type === 'air_terminal' ? AIRPORT_RADIUS : BUS_STOP_RADIUS;
+    // priorité aux lieux de loisirs à portée (avant un logement / un Airbnb)
+    sendSortantsToLeisure(hub, radius, elapsed);
+    if(!(hub.passagersSortant >= 1)) continue;
     let best = null, bd = Infinity;
     for(const h of buildings){
       if(h.dead || !BUILD[h.type]?.resid) continue;
       if((h.pop || 0) + (h.pending || 0) >= BUILD[h.type].resid.popCap) continue;
+      if(h.airbnbOnly && !(hub.owner != null && h.owner != null && h.owner !== hub.owner)) continue; // réservé aux autres joueurs
       const d = buildingDistance(h, hub);
       if(d <= radius && d < bd){ bd = d; best = h; }
     }
@@ -1025,6 +1033,91 @@ function tickSortantsToHomes(dt){
     else spawnTransitWalkers(hub, best, 1);
   }
 }
+// ---------- lieux de loisirs ----------
+// Visiteurs d'un lieu : lots { t: heure d'arrivée (gtime), n, o: joueur d'origine } dans
+// l'ordre d'arrivée. Ils comptent parmi les passagers de leur joueur (transitByOwner) :
+// ce sont des habitants sans travail sortis, ils ne sont pas remplacés pendant la visite.
+const leisureVisitorsOf = b => (b.visitors || []).reduce((s, g) => s + g.n, 0);
+// Capacité utile : réduite au prorata des employés en poste.
+function leisureCapacityOf(b){
+  const L = BUILD[b.type]?.leisure;
+  if(!L) return 0;
+  const req = workersRequiredOf(b);
+  return Math.floor(L.capacity * (req > 0 ? workersAllocatedOf(b) / req : 1));
+}
+const leisureStaySecs = b => (BUILD[b.type]?.leisure?.days || 1) * 24 / GAME_HOURS_PER_SEC;
+// Voyageurs arrivés au point de transit `hub` → lieux de loisirs à portée, le plus proche
+// d'abord, au plus LEISURE_AFFLUX par heure de jeu écoulée.
+function sendSortantsToLeisure(hub, radius, elapsed = 1){
+  let budget = Math.min(Math.floor(hub.passagersSortant), Math.max(1, Math.round(LEISURE_AFFLUX * elapsed * GAME_HOURS_PER_SEC)));
+  if(budget < 1) return;
+  const near = [];
+  for(const b of buildings){
+    if(b.dead || !isLeisure(b)) continue;
+    const free = leisureCapacityOf(b) - leisureVisitorsOf(b);
+    if(free < 1) continue;
+    const d = buildingDistance(b, hub);
+    if(d <= radius) near.push({ b, d, free });
+  }
+  if(!near.length) return;
+  near.sort((a, c) => a.d - c.d);
+  for(const { b, free } of near){
+    const n = Math.min(budget, free);
+    hub.passagersSortant -= n;
+    budget -= n;
+    admitVisitors(b, hub, n);
+    if(budget < 1) break;
+  }
+}
+// `n` visiteurs venus de `hub` entrent dans le lieu `b` : l'entrée est payée au propriétaire.
+function admitVisitors(b, hub, n){
+  (b.visitors ||= []).push({ t: gtime, n, o: hub.owner ?? null });
+  b.visitsTotal = (b.visitsTotal || 0) + n;
+  const fee = Math.round(n * (BUILD[b.type].leisure.fee || 0));
+  if(fee > 0){
+    earnMoney(fee, 'loisirs', walletOf(b.owner));
+    b.leisureIncome = (b.leisureIncome || 0) + fee;
+    addFloat(b.x + (b.w-1)/2, b.y, '+'+fee+' $', '#ffc2ea');
+  }
+  spawnTransitWalkers(hub, b, n);
+}
+// Fin de visite : les visiteurs repartent en passagers entrants du point de transit le
+// plus proche (de préférence un point de leur joueur d'origine).
+function sendVisitorsToTransit(b, n, origin = null){
+  let hub = null, bd = Infinity, any = null, ad = Infinity;
+  for(const s of buildings){
+    if(!isTransitHub(s)) continue;
+    const d = buildingDistance(s, b);
+    if(d < ad){ ad = d; any = s; }
+    if((s.owner ?? null) === origin && d < bd){ bd = d; hub = s; }
+  }
+  hub = hub || any;
+  if(!hub) return; // plus aucun point de transit : ils rentrent par leurs propres moyens
+  const rep = hub.type === 'train_station'
+    ? ((typeof trainStationGroupRepresentative === 'function' && trainStationGroupRepresentative(hub.stationGroupId)) || hub) : hub;
+  const inKey = rep.type === 'bus_stop' ? 'passengers' : 'passengersEntrant';
+  rep[inKey] = (rep[inKey] || 0) + n;
+  spawnTransitWalkers(b, rep, n);
+}
+function tickLeisureVisits(){
+  for(const b of buildings){
+    if(b.dead || !b.visitors) continue;
+    const stay = leisureStaySecs(b);
+    while(b.visitors.length && gtime - b.visitors[0].t >= stay){
+      const g = b.visitors.shift();
+      sendVisitorsToTransit(b, g.n, g.o);
+    }
+    if(!b.visitors.length) delete b.visitors;
+  }
+}
+// Lieu démoli : tous ses visiteurs repartent aussitôt.
+function evictVisitors(b){
+  if(!b.visitors) return;
+  const list = b.visitors;
+  delete b.visitors;
+  for(const g of list) sendVisitorsToTransit(b, g.n, g.o);
+}
+
 // Un voyageur du point de transit `hub` emménage dans la maison `home` (d'un autre joueur) :
 // piéton réservant une place (pending), habitant ajouté à son arrivée (updateWalkers).
 function moveInFromHub(hub, home){
@@ -1105,7 +1198,7 @@ function updateWalkers(dt){
         let best = null, bestPop = Infinity;
         for(const c of buildings){
           if(c.dead || !BUILD[c.type].resid) continue;
-          if(c.pop + c.pending >= BUILD[c.type].resid.popCap) continue;
+          if(c.pop + c.pending >= BUILD[c.type].resid.popCap || (c.airbnbOnly && !wk.guest)) continue;
           const d = Math.abs(c.x - ox) + Math.abs(c.y - oy);
           if(d < 4 && c.pop < bestPop){ bestPop = c.pop; best = c; }
         }

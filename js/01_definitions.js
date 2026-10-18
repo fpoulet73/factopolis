@@ -929,6 +929,47 @@ BUILD.space_center = { n:'Centre spatial', ic:'🚀', hk:'', cost: SPACE_CFG.cou
     +'), assemble la fusée puis la lance. Au retour de mission, la capsule rapporte '+resAmountsText(SPACE_CARGO)
     +' — des ressources introuvables sur Terre.' };
 
+// ---------- lieux de loisirs ----------
+// Les voyageurs arrivés à un point de transit voisin s'y rendent en priorité (avant
+// un Airbnb), paient l'entrée au propriétaire puis repartent au bout de la durée de
+// visite (cf. tickLeisureVisits, 06_simulation.js). Réglages : config.js `loisirs`.
+const LEISURE_CFG = CFG.loisirs || {};
+const LEISURE_AFFLUX = Math.max(1, +LEISURE_CFG.afflux || 10);
+// [type moteur, clé config, nom, icône, couleur, hauteur, défauts, description]
+const LEISURE_DEFS = [
+  ['restaurant',   'restaurant',      'Restaurant',            '🍽️', '#b8573a', 16, { cout:1500,  taille:1, capacite:20,  duree:1,   tarif:35,  ouvriers:2,  entretien:1 },  'Une table du quartier : repas rapide, clientèle fidèle.'],
+  ['cinema',       'cinema',          'Cinéma',                '🎬', '#3a3f6a', 22, { cout:3000,  taille:2, capacite:60,  duree:1.5, tarif:25,  ouvriers:3,  entretien:2 },  'Une séance et du pop-corn.'],
+  ['museum',       'musee',           'Musée',                 '🏛️', '#d8cfb8', 24, { cout:5000,  taille:2, capacite:50,  duree:2,   tarif:30,  ouvriers:3,  entretien:2 },  'Colonnade et collections : une visite culturelle.'],
+  ['treetop',      'accrobranche',    'Parcours dans les arbres', '🧗', '#5a8a3a', 26, { cout:2500,  taille:2, capacite:30,  duree:1.5, tarif:45,  ouvriers:2,  entretien:1, pres:'arbres' }, 'Tyroliennes et ponts de singe : à poser près d’arbres.'],
+  ['marina',       'baseNautique',    'Base nautique',         '🛶', '#3a8fb8', 14, { cout:4000,  taille:2, capacite:40,  duree:2,   tarif:55,  ouvriers:3,  entretien:2, pres:'eau' }, 'Kayaks et pédalos : à poser au bord de l’eau.'],
+  ['spa',          'spa',             'Thermes & spa',         '♨️', '#7fb8b0', 18, { cout:9000,  taille:2, capacite:40,  duree:3,   tarif:120, ouvriers:4,  entretien:3 },  'Bassins chauds et massages : une cure de détente.'],
+  ['hotel',        'hotel',           'Hôtel',                 '🏨', '#c9b48a', 40, { cout:8000,  taille:2, capacite:80,  duree:12,  tarif:180, ouvriers:6,  entretien:4 },  'Séjour sur place : long et bien payé.'],
+  ['concert_hall', 'salleConcert',    'Salle de concert',      '🎸', '#6a3a8a', 28, { cout:12000, taille:3, capacite:150, duree:2,   tarif:70,  ouvriers:6,  entretien:5 },  'Scène, lumières et foule.'],
+  ['zoo',          'zoo',             'Zoo',                   '🦒', '#7a9a4a', 18, { cout:15000, taille:3, capacite:120, duree:3,   tarif:60,  ouvriers:8,  entretien:6 },  'Enclos, volière et bassin des otaries.'],
+  ['casino',       'casino',          'Casino',                '🎰', '#a8302a', 30, { cout:20000, taille:3, capacite:100, duree:2.5, tarif:200, ouvriers:8,  entretien:8 },  'Néons et machines à sous : le plus lucratif par visiteur.'],
+  ['stadium',      'stade',           'Stade de foot',         '🏟️', '#9aa3ad', 30, { cout:30000, taille:4, capacite:400, duree:1.5, tarif:50,  ouvriers:10, entretien:10 }, 'Un match : énorme capacité, visite courte.'],
+  ['theme_park',   'parcAttractions', 'Parc d’attractions',    '🎢', '#d94a6a', 44, { cout:40000, taille:4, capacite:300, duree:4,   tarif:110, ouvriers:14, entretien:12 }, 'Montagnes russes et grande roue : plusieurs jours de manèges.'],
+];
+// « 1 jour », « 1,5 jour », « 2 jours »
+const leisureDaysText = d => String(d).replace('.', ',') + (d >= 2 ? ' jours' : ' jour');
+const LEISURE_TYPES = [];
+for(const [type, key, n, ic, col, hgt, def, note] of LEISURE_DEFS){
+  const c = { ...def, ...(LEISURE_CFG.lieux?.[key] || {}) };
+  const size = Math.max(1, Math.min(4, Math.round(+c.taille || 1)));
+  const leisure = {
+    capacity: Math.max(1, Math.round(+c.capacite || 1)),
+    days:     Math.max(0.1, +c.duree || 1),   // jours de jeu sur place
+    fee:      Math.max(0, +c.tarif || 0),
+    near:     c.pres === 'arbres' || c.pres === 'eau' ? c.pres : null,
+  };
+  BUILD[type] = { n, ic, hk:'', cost: c.cout ?? 1000, workers: Math.max(0, Math.round(+c.ouvriers || 0)),
+    col, hgt, size, noMerge:true, upkeep: +c.entretien || 0, leisure,
+    desc: note + ' ' + size + '×' + size + ' cases · ' + leisure.capacity + ' visiteurs · '
+      + leisureDaysText(leisure.days) + ' sur place · ' + leisure.fee + ' $ / visiteur.' };
+  LEISURE_TYPES.push(type);
+}
+const isLeisure = b => !!b && !!BUILD[b.type]?.leisure;
+
 const PLANT_UPGRADES = {
   smelter: { label:'Aciérie',       type:'smelter', icon:'🔥', cat:'metal' },
   farm:    { label:'Ferme',         type:'farm',    icon:'🌾', cat:'food' },
@@ -1671,5 +1712,5 @@ const BUILD_MATERIALS = (()=>{
 // pose un quai sur un rail : la clé est alors train_platform.
 const buildMaterialsOf = type => BUILD_MATERIALS[type] || null;
 
-const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','oil_well','plant','house','space_center','depot','market','tank','pump','garage','bus_stop','air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco','terraform','fill_water','terraform_dig','terraform_raise','terraform_canal'];
+const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','oil_well','plant','house','space_center','restaurant','depot','market','tank','pump','garage','bus_stop','air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco','terraform','fill_water','terraform_dig','terraform_raise','terraform_canal'];
 const MILESTONES = [25, 50, 100, 200, 400];

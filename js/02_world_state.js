@@ -31,7 +31,7 @@ let terraformRadius = 1; // 1..4 : taille du carré N×N affecté par Creuser/Re
 let speed = 1, paused = false;
 let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0, passengerCycleTimer = 0;
 let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
-const FIN_ZERO = ()=> ({ ventes:0, vehicules:0, taxes:0, rembours:0, primes:0, construction:0, entretien:0, entretienVehicules:0, peageRecu:0, peagePaye:0, expansion:0, airbnb:0 });
+const FIN_ZERO = ()=> ({ ventes:0, vehicules:0, taxes:0, rembours:0, primes:0, construction:0, entretien:0, entretienVehicules:0, peageRecu:0, peagePaye:0, expansion:0, airbnb:0, loisirs:0 });
 const START_HOMELESS = 0;
 let rot = 0; // orientation de la vue (0..3)
 const cam = { x:0, y:0, z:1 };
@@ -1819,7 +1819,7 @@ function transitByOwner(townId = null){
   const get = o => {
     o = o ?? null;
     let r = out.get(o);
-    if(!r){ r = { owner:o, pop:0, working:0, waiting:0, sortants:0, onboard:0, passengers:0, allowed:0, refs:[] }; out.set(o, r); }
+    if(!r){ r = { owner:o, pop:0, working:0, waiting:0, sortants:0, onboard:0, visiting:0, passengers:0, allowed:0, refs:[] }; out.set(o, r); }
     return r;
   };
   for(const b of buildings){
@@ -1835,6 +1835,8 @@ function transitByOwner(townId = null){
       r.sortants += b.passagersSortant || 0;
       r.refs.push([b, 'passagersSortant', 0], [b, 'passengersEntrantPending', 1], [b, 'passengersEntrant', 1]);
     }
+    // visiteurs d'un lieu de loisirs : comptés pour leur joueur d'origine (jamais retirés)
+    if(b.visitors) for(const g of b.visitors) get(g.o).visiting += g.n;
   }
   for(const v of vehicles){
     if(townId != null && !inTown(v.passengerBoardStop || v.source || v.garageRef)) continue;
@@ -1849,7 +1851,7 @@ function transitByOwner(townId = null){
   for(const r of out.values()){
     r.working = Math.min(r.pop, r.working);
     if(townId == null) r.sortants = Math.max(0, r.sortants - (_stationWorkersByOwner.get(r.owner) || 0)); // déjà « au travail »
-    r.passengers = r.waiting + r.sortants + r.onboard;
+    r.passengers = r.waiting + r.sortants + r.onboard + r.visiting;
     r.allowed = Math.max(0, r.pop - r.working);
   }
   return out;
@@ -1884,7 +1886,7 @@ function sendCommutersAway(job, key, n){
   const sameOwner = h => !(job.owner != null && h.owner != null && h.owner !== job.owner);
   let best = null, bd = Infinity;
   for(const h of buildings){
-    if(h.dead || !BUILD[h.type]?.resid || !sameOwner(h)) continue;
+    if(h.dead || !BUILD[h.type]?.resid || !sameOwner(h) || h.airbnbOnly) continue;
     if((h.pop || 0) + (h.pending || 0) >= BUILD[h.type].resid.popCap) continue;
     const d = buildingDistance(h, job);
     if(d < bd){ bd = d; best = h; }

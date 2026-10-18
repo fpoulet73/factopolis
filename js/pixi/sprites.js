@@ -710,12 +710,13 @@ const PixiSprites = (function(){
     const showPop = d.resid && b.pop > 0 && (cam.z || 1) >= 0.8;
     const idle = showPop && (b.workersIdle || 0) > 0;
     // Airbnb : locataires d'un autre joueur, regroupés par joueur d'origine (max. 3 icônes)
-    let guestGroups = null, guestKey = '';
+    let guestGroups = null, guestKey = '', guestTotal = 0;
     if(showPop && b.guests && b.guests.length){
       const m = new Map();
       for(const g of b.guests.slice(0, b.pop)){ const o = typeof g === 'number' ? null : (g.o ?? null); m.set(o, (m.get(o) || 0) + 1); }
       guestGroups = [...m].slice(0, 3).map(([o, n]) => ({ col: playerColor(o), n }));
       guestKey = guestGroups.map(x => x.col + x.n).join(',');
+      guestTotal = guestGroups.reduce((a, x) => a + x.n, 0);
     }
     const popCol = playerColor(b.owner ?? null);
     const sel = b === selected || inSelectedStation(b);
@@ -756,13 +757,14 @@ const PixiSprites = (function(){
     // habitants : une seule pastille compacte (ambre s'il reste des inactifs),
     // masquée en vue éloignée pour ne pas surcharger la ville.
     if(showPop){
-      // pastille : [personnage couleur du propriétaire] N  puis, s'il y a des locataires Airbnb,
-      // [personnage couleur du joueur d'origine] n (un par joueur)
-      const label = String(b.pop);
+      // pastille : [personnage couleur du propriétaire] N (habitants propres, sans les locataires),
+      // puis, s'il y a des locataires Airbnb, [personnage couleur du joueur d'origine] n (un par joueur)
+      const own = b.pop - guestTotal;
+      const label = String(own);
       if(s.pop.text !== label) s.pop.text = label;
       const fill = idle ? 0xffd27a : 0xe8f4ff;
       if(s.pop.style.fill !== fill) s.pop.style.fill = fill;
-      const items = [{ col:popCol, t:s.pop }];
+      const items = own > 0 || !guestGroups ? [{ col:popCol, t:s.pop }] : [];
       if(guestGroups) guestGroups.forEach((gr, i) => {
         const t = s.gt[i], txt = String(gr.n);
         if(t.text !== txt) t.text = txt;

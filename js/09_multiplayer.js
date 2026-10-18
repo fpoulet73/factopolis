@@ -900,6 +900,16 @@ function applyPauseSpeedFromSync(d){
   document.querySelectorAll('.spd').forEach(b=> b.classList.toggle('on', +b.dataset.s===speed));
 }
 
+// Lieu de loisirs : visiteurs présents (lots {t, n, o}) et compteurs de l'état reçu / chargé.
+function applyLeisureState(b, o){
+  const list = Array.isArray(o.visitors)
+    ? o.visitors.filter(g => g && Number.isFinite(g.t) && g.n > 0).map(g => ({ t:g.t, n:Math.floor(g.n), o:g.o ?? null }))
+    : [];
+  if(list.length) b.visitors = list; else delete b.visitors;
+  b.visitsTotal = o.visitsTotal || 0;
+  b.leisureIncome = o.leisureIncome || 0;
+}
+
 function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   const prevProg = b.prog || 0;
   const prevSyncGtime = b.mpProgSyncGtime ?? null;
@@ -909,6 +919,7 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   b.trucksOut = includeTransient ? (o.trucksOut || 0) : b.trucksOut || 0;
   b.pop = o.pop || 0;
   b.protectedPop = o.protectedPop || 0;
+  b.airbnbOnly = o.airbnbOnly ? true : undefined;
   b.guests = Array.isArray(o.guests) && o.guests.length ? o.guests.slice() : undefined;
   b.ct = o.ct || 0;
   b.pending = includeTransient ? (o.pending || 0) : 0;
@@ -955,6 +966,7 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
     b.spacePhase = o.spacePhase || null;
     b.launches = o.launches || 0;
   }
+  if(BUILD[b.type]?.leisure) applyLeisureState(b, o);
   const r = recipeOf(b);
   if(r && syncGtime != null && prevSyncGtime != null && syncGtime > prevSyncGtime){
     const deltaG = syncGtime - prevSyncGtime;
@@ -1375,7 +1387,7 @@ function serializeState(opts = {}){
       upgradePaused:{...(b.upgradePaused || {})},
       prog:b.prog||0, trucksOut:includeTransient ? (b.trucksOut||0) : 0,
       pop:b.pop||0, protectedPop:b.protectedPop||0,
-      guests:b.guests && b.guests.length ? b.guests.slice() : null,
+      guests:b.guests && b.guests.length ? b.guests.slice() : null, airbnbOnly:b.airbnbOnly ? 1 : 0,
       ct:b.ct||0,
       pending:includeTransient ? (b.pending||0) : 0,
       pendingProtected:includeTransient ? (b.pendingProtected||0) : 0,
@@ -1390,6 +1402,8 @@ function serializeState(opts = {}){
       passengersEntrantPending:b.passengersEntrantPending??null,
       stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null, runwayRev:b.runwayRev ? 1 : 0, decor:b.decor ?? null, design:b.design ?? null,
       spacePhase:b.spacePhase || null, launches:b.launches || 0,
+      visitors:b.visitors && b.visitors.length ? b.visitors.map(g => ({ ...g })) : null,
+      visitsTotal:b.visitsTotal || 0, leisureIncome:b.leisureIncome || 0,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
     news: { flags: Object.keys(newsFlags), log: newsLog, next: nextNewsId },
@@ -1737,6 +1751,7 @@ function applySnapshot(d){
       starve:o.starve||0,
     });
     if(Array.isArray(o.guests) && o.guests.length) b.guests = o.guests.slice();
+    if(o.airbnbOnly) b.airbnbOnly = true;
     b.renderProg = b.prog || 0;
     b.mpProgRate = 0;
     b.mpProgSyncGtime = gtime || 0;
@@ -1775,6 +1790,7 @@ function applySnapshot(d){
     if(o.design != null) b.design = o.design;
     if(o.spacePhase) b.spacePhase = o.spacePhase;
     if(o.launches) b.launches = o.launches;
+    if(BUILD[b.type]?.leisure) applyLeisureState(b, o);
     buildings.push(b);
     setGrid(b,b);
     if(b.stationGroupId != null) nextTrainStationId = Math.max(nextTrainStationId, b.stationGroupId + 1);
@@ -2242,6 +2258,14 @@ function applyAction(msg){
       if(!b || !BUILD[b.type]?.ind) break;
       if(b.owner && b.owner !== msg.from) break;
       b.paused = !!act.paused;
+      break;
+    }
+    case 'toggle_airbnb_only': {
+      if(!validXY(act.x, act.y)) break;
+      const b = bgrid[act.y*N+act.x];
+      if(!b || !BUILD[b.type]?.resid || b.starterHome) break;
+      if(b.owner && b.owner !== msg.from) break;
+      b.airbnbOnly = act.on ? true : undefined;
       break;
     }
     case 'toggle_out_block': {
