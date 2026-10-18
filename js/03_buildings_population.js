@@ -557,6 +557,23 @@ function makeResidentsHomeless(b){
   return created;
 }
 
+// Passe une maison en / hors « Airbnb uniquement ». En activant, les habitants du propriétaire
+// (hors invités) quittent la maison : ils rejoignent un autre logement libre, sinon la carte.
+function setAirbnbOnly(b, on){
+  if(!b || b.dead || !BUILD[b.type]?.resid || b.starterHome) return;
+  if(!on){ b.airbnbOnly = undefined; return; }
+  b.airbnbOnly = true;
+  const guests = Math.min((b.guests || []).length, b.pop || 0);
+  const own = (b.pop || 0) - guests;
+  if(own <= 0) return;
+  b.pop = own;                                   // makeResidentsHomeless ne déloge que les habitants propres
+  const evicted = makeResidentsHomeless(b);
+  b.pop = guests;
+  b.protectedPop = Math.min(b.protectedPop || 0, b.pop);
+  addFloat(b.x, b.y-0.5, '−'+own+' 👤', '#ff9a8a');
+  routeUnhousedResidents(b.owner ?? null, evicted);
+}
+
 function demolishBuilding(b, refundOwner){
   if(!b || b.dead) return 0;
   const owner = b.owner ?? null;

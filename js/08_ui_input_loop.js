@@ -224,7 +224,9 @@ function toggleAirbnbOnly(x, y){
   const b = bgrid[y*N+x];
   if(!b || b.dead || !BUILD[b.type]?.resid || b.starterHome) return;
   if(MP.connected && b.owner && b.owner !== MP.myId){ toast('⛔ Bâtiment d\'un autre joueur','err'); return; }
-  b.airbnbOnly = b.airbnbOnly ? undefined : true;
+  const on = !b.airbnbOnly;
+  if(!MP.connected || MP.role !== 'guest') setAirbnbOnly(b, on); // un invité attend l'état de l'hôte
+  else b.airbnbOnly = on ? true : undefined;
   if(MP.connected) netSend({ type:'toggle_airbnb_only', x:b.x, y:b.y, on:!!b.airbnbOnly });
   const p = $('info'); if(p) p._html = null;
   if(typeof renderInfo === 'function') renderInfo();

@@ -46,6 +46,10 @@ function artVariantOf(b){
   return (hash(b.x * 31 + b.w, b.y * 17 + b.h) >>> 0) % ART_VARIANTS;
 }
 
+// Graine du hasard de l'art d'un bâtiment (partagée avec les animations des lieux de
+// loisirs, qui rejouent la même suite pour retrouver la position des éléments dessinés).
+const artSeedOf = b => Math.imul(artVariantOf(b) + 1, 2654435761) ^ (b.type.length * 40503) ^ (b.w * 7 + b.h * 131);
+
 // Ombre portée douce vers le bas-gauche (lumière haut-droite).
 function artShadow(u0, v0, u1, v1, h){
   const k = Math.min(0.9, h / 70);
@@ -1889,7 +1893,7 @@ function drawBuildingArt(b, rx0, ry0, rw, rh, lift, hgt, bCol){
   const d = BUILD[b.type];
   if(!d) return null;
   _artLift = lift || 0;
-  const rng = artRng(Math.imul(artVariantOf(b) + 1, 2654435761) ^ (b.type.length * 40503) ^ (b.w * 7 + b.h * 131));
+  const rng = artRng(artSeedOf(b));
   const u0 = rx0, v0 = ry0, u1 = rx0 + rw, v1 = ry0 + rh;
   ctx.save();
   let tc = null;

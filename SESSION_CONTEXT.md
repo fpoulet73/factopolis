@@ -228,7 +228,11 @@ clé = type moteur), vérifiés et prélevés comme pour les ports et aéroports
 - Cohérence : les visiteurs comptent dans `transitByOwner` (`visiting`) pour leur
   joueur d'origine, sans jamais être retirés.
 - `visitors`, `visitsTotal`, `leisureIncome` sont sérialisés (`applyLeisureState`,
-  09_multiplayer.js). Art : `artLeisure` (07_rendering_art.js). Test :
+  09_multiplayer.js). Art : `artLeisure` (07_rendering_art.js). Animations :
+  `drawLeisureFx` (07_rendering.js, couche 2D au-dessus des sprites) quand
+  `cam.z >= LEISURE_FX_ZOOM` (`loisirs.zoomAnimation`) et que le lieu a des visiteurs ;
+  géométrie identique à `artLeisure` (le parcours dans les arbres rejoue son hasard
+  via `artSeedOf`). Test :
   `tools/tests/solo/loisirs.js`.
 
 ## Boucle de simulation

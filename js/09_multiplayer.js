@@ -2265,7 +2265,7 @@ function applyAction(msg){
       const b = bgrid[act.y*N+act.x];
       if(!b || !BUILD[b.type]?.resid || b.starterHome) break;
       if(b.owner && b.owner !== msg.from) break;
-      b.airbnbOnly = act.on ? true : undefined;
+      setAirbnbOnly(b, !!act.on);
       break;
     }
     case 'toggle_out_block': {

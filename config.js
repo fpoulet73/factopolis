@@ -150,6 +150,8 @@ const CONFIG = {
      arrivée au propriétaire du lieu ; au bout de `duree` jours de jeu, il repart vers le
      point de transit le plus proche en passager entrant.
        afflux : visiteurs envoyés au plus, par point de transit et par heure de jeu
+       zoomAnimation : zoom minimal (0.35 → 2.4) pour voir les lieux animés (joueurs,
+                       projecteurs, manèges…) — seulement quand des visiteurs sont présents
        Par lieu :
          cout      : prix de construction ($)
          taille    : côté de l'emprise carrée (1 à 4 cases), terrain plat
@@ -161,6 +163,7 @@ const CONFIG = {
          pres      : contrainte de pose facultative : 'arbres' (arbre à 2 cases) ou 'eau' (rive à 1 case) */
   loisirs: {
     afflux: 10,
+    zoomAnimation: 1.0,
     lieux: {
       restaurant:      { cout: 1500,  taille: 1, capacite: 20,  duree: 1,   tarif: 35,  ouvriers: 2,  entretien: 1 },
       cinema:          { cout: 3000,  taille: 2, capacite: 60,  duree: 1.5, tarif: 25,  ouvriers: 3,  entretien: 2 },

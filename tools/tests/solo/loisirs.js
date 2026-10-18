@@ -90,5 +90,16 @@ check('coût affiché 🏗️', /🏗️/.test(document.querySelector('[data-lei
 WORLD.buildMaterials = false;
 
 tryDo('panneau', () => { selected = placed[0]; selectedVehicle = null; $('info')._html = null; renderInfo(); if(!/Visiteurs/.test($('info').innerHTML)) throw new Error('ligne Visiteurs absente'); });
+tryDo('animations', () => {
+  for(const b of placed) b.visitors = [{ t:gtime, n:Math.ceil(BUILD[b.type].leisure.capacity / 2), o:null }];
+  const z0 = cam.z; cam.z = ZOOM_MAX;
+  for(let k = 0; k < 4; k++){
+    rotate(1);
+    for(const b of placed) for(const t of [0, 1.7, 9.3]) drawOneLeisureFx(b, leisureFxFrame(b), t, 0.5, 7);
+    drawLeisureFx(); drawFn();
+  }
+  cam.z = z0;
+  for(const b of placed) delete b.visitors;
+});
 tryDo('art', () => { for(let k = 0; k < 4; k++){ rotate(1); for(const b of placed) drawBuildingBody(b); drawFn(); } });
 return { ok: errs.length === 0, errs };

@@ -1783,6 +1783,332 @@ function drawRocketFx(){
   }
 }
 
+// ---------- lieux de loisirs animés ----------
+// Dessinés par-dessus le sprite cuit, seulement quand le zoom est assez proche
+// (LEISURE_FX_ZOOM) et que des visiteurs sont présents : joueurs et ballon du stade,
+// projecteurs du concert, manèges, animaux du zoo… La géométrie reprend celle de
+// artLeisure (07_rendering_art.js). Purement visuel : vit aussi chez les invités.
+let _leisureFxT = 0, _leisureFxLast = 0;
+// pseudo-hasard stable (0..1) par lieu et par indice
+const leisureFxRnd = (seed, i) => { const s = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453; return s - Math.floor(s); };
+function leisureFxFrame(b){
+  const [r1x, r1y] = rotIdx(b.x, b.y);
+  const [r2x, r2y] = rotIdx(b.x + b.w - 1, b.y + b.h - 1);
+  const u0 = Math.min(r1x, r2x), v0 = Math.min(r1y, r2y);
+  const u1 = u0 + Math.abs(r1x - r2x) + 1, v1 = v0 + Math.abs(r1y - r2y) + 1;
+  const lift = buildingLiftPx(b);
+  return { u0, v0, u1, v1, wu: u1 - u0, wv: v1 - v0, cu: (u0 + u1) / 2, cv: (v0 + v1) / 2,
+    P: (u, v, z) => liftedIso(u, v, lift + (z || 0)) };
+}
+function fxDot(p, r, col){ ctx.fillStyle = col; ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, Math.PI * 2); ctx.fill(); }
+// Petit personnage debout en p (pieds) ; bob = saut en px.
+function fxPerson(p, col, bob = 0){
+  ctx.fillStyle = col; ctx.fillRect(p[0] - 1, p[1] - 4.2 - bob, 2, 3.4);
+  fxDot([p[0], p[1] - 5.4 - bob], 1.1, '#f0c9a0');
+}
+// Quadrilatère d'une fenêtre (face 'r' : u = k, s le long de v ; face 'l' : v = k, s le long de u).
+function fxWindow(F, face, k, s0, s1, z0, z1, col){
+  const pts = face === 'r' ? [F.P(k, s0, z0), F.P(k, s1, z0), F.P(k, s1, z1), F.P(k, s0, z1)]
+    : [F.P(s0, k, z0), F.P(s1, k, z0), F.P(s1, k, z1), F.P(s0, k, z1)];
+  ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  for(let i = 1; i < 4; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath(); ctx.fill();
+}
+function drawLeisureFx(){
+  const now = performance.now();
+  const dt = _leisureFxLast ? Math.min(0.1, (now - _leisureFxLast) / 1000) : 0;
+  _leisureFxLast = now;
+  if(drawFast || (cam.z || 1) < LEISURE_FX_ZOOM) return;
+  if(!paused) _leisureFxT += dt * Math.min(2, speed || 1);
+  const T = _leisureFxT, z = cam.z || 1;
+  for(const b of buildings){
+    if(b.dead || !b.visitors || !b.visitors.length || !BUILD[b.type]?.leisure) continue;
+    const F = leisureFxFrame(b);
+    const c = F.P(F.cu, F.cv, 0);
+    if(c[0] < cam.x - 220 || c[0] > cam.x + W / z + 220 || c[1] < cam.y - 60 || c[1] > cam.y + H / z + 260) continue;
+    const occ = Math.min(1, leisureVisitorsOf(b) / Math.max(1, BUILD[b.type].leisure.capacity));
+    const seed = (b.x * 73 + b.y * 151) % 997;
+    ctx.save();
+    try { drawOneLeisureFx(b, F, T, occ, seed); } finally { ctx.restore(); }
+  }
+}
+function drawOneLeisureFx(b, F, T, occ, seed){
+  const { u0, v0, u1, v1, wu, wv, cu, cv, P } = F;
+  const S = Math.max(wu, wv);
+  const crowd = n => Math.max(1, Math.round(n * (0.3 + 0.7 * occ)));
+  switch(b.type){
+    case 'stadium': {
+      // deux équipes de 6 qui suivent le ballon, flashs des photographes en tribune
+      const t = 0.18 * S / 2, pu0 = u0 + t + 0.32, pv0 = v0 + t + 0.32, pu1 = u1 - t - 0.3, pv1 = v1 - t - 0.3;
+      const pw = pu1 - pu0, ph = pv1 - pv0;
+      const bu = 0.5 + 0.36 * Math.sin(T * 0.7) * Math.cos(T * 0.23), bv = 0.5 + 0.32 * Math.sin(T * 0.53 + 1);
+      const players = [];
+      for(let i = 0; i < 12; i++){
+        const team = i < 6 ? 0 : 1, k = i % 6;
+        const hu = team ? 0.55 + 0.35 * leisureFxRnd(seed, i) : 0.1 + 0.35 * leisureFxRnd(seed, i);
+        const hv = 0.12 + 0.76 * leisureFxRnd(seed, i + 20);
+        const pull = k === 0 ? 0.05 : 0.25 + 0.3 * (0.5 + 0.5 * Math.sin(T * 0.9 + i));
+        const u = hu + (bu - hu) * pull + 0.03 * Math.sin(T * 2.1 + i * 1.7);
+        const v = hv + (bv - hv) * pull + 0.03 * Math.cos(T * 1.8 + i * 2.3);
+        players.push({ u: pu0 + pw * u, v: pv0 + ph * v, col: k === 0 ? '#f2c94c' : (team ? '#3f6fd8' : '#e0453a'), i });
+      }
+      players.push({ u: pu0 + pw * bu, v: pv0 + ph * bv, ball: true });
+      players.sort((a, c) => (a.u + a.v) - (c.u + c.v));
+      for(const p of players){
+        if(p.ball){ fxDot(P(p.u, p.v, 1.2 + Math.abs(Math.sin(T * 6)) * 2), 1.2, '#ffffff'); continue; }
+        fxPerson(P(p.u, p.v, 0.9), p.col, Math.abs(Math.sin(T * 9 + p.i)) * 0.7);
+      }
+      for(let k = 0; k < crowd(6); k++){
+        if(leisureFxRnd(seed + Math.floor(T * 4), k) < 0.75) continue;
+        const u = u0 + 0.12 + (pu0 - u0 - 0.2) * leisureFxRnd(seed, k + 40), v = v0 + 0.15 + (wv - 0.3) * leisureFxRnd(seed, k + 60);
+        fxDot(P(u, v, 6 + 16 * leisureFxRnd(seed, k + 80)), 1.6, 'rgba(255,255,240,.95)');
+      }
+      break;
+    }
+    case 'concert_hall': {
+      // projecteurs qui balaient la scène, musiciens et public qui sautent
+      const hu1 = u1 - wu * 0.32, su0 = hu1 + 0.15, su1 = u1 - 0.12, sv0 = v0 + wv * 0.25, sv1 = v1 - wv * 0.25;
+      const cols = ['255,106,213', '106,213,255', '255,230,106', '140,255,140'];
+      ctx.globalCompositeOperation = 'lighter';
+      for(let k = 0; k < 4; k++){
+        const top = P(su0 + 0.05, sv0 + 0.05 + (sv1 - sv0 - 0.1) * (k + 0.5) / 4, 22);
+        const a = 0.5 + 0.45 * Math.sin(T * (1.1 + k * 0.27) + k * 2);
+        const e = sv0 + (sv1 - sv0) * a, w = 0.12;
+        const f0 = P(su1 + 0.08, e - w, 0.5), f1 = P(su1 + 0.08, e + w, 0.5);
+        ctx.fillStyle = 'rgba(' + cols[k] + ',' + (0.18 + 0.1 * Math.sin(T * 7 + k)).toFixed(2) + ')';
+        ctx.beginPath(); ctx.moveTo(top[0], top[1]); ctx.lineTo(f0[0], f0[1]); ctx.lineTo(f1[0], f1[1]); ctx.closePath(); ctx.fill();
+        fxDot(top, 1.6, 'rgba(' + cols[k] + ',.95)');
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      for(let k = 0; k < 3; k++) fxPerson(P(su0 + 0.3, sv0 + (sv1 - sv0) * (k + 0.5) / 3, 4), ['#1a1a1a', '#e8e8e8', '#c8402f'][k], Math.abs(Math.sin(T * 5 + k)) * 1.2);
+      const n = crowd(14);
+      for(let k = 0; k < n; k++){
+        const u = su1 + 0.02 + 0.08 * leisureFxRnd(seed, k), v = v0 + 0.15 + (wv - 0.3) * leisureFxRnd(seed, k + 30);
+        fxPerson(P(u, v, 0.6), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, k + 60)) + ',55%,55%)', Math.max(0, Math.sin(T * 8 + k * 1.3)) * 2);
+      }
+      break;
+    }
+    case 'theme_park': {
+      // train des montagnes russes, lumières qui tournent sur la grande roue, chevaux du carrousel
+      const track = a => [u0 + wu * (0.72 + Math.cos(a) * 0.18), v0 + wv * (0.5 + Math.sin(a) * 0.36),
+        6 + Math.max(0, Math.sin(a * 2 + 0.6)) * 30 + Math.max(0, Math.sin(a + 2)) * 10];
+      const R = 9 * S, hub = P(u0 + wu * 0.3, v0 + wv * 0.25, R + 4);
+      for(let k = 0; k < 24; k++){
+        const a = k * Math.PI / 12, on = (k + Math.floor(T * 6)) % 4 === 0;
+        fxDot([hub[0] + Math.cos(a) * R, hub[1] + Math.sin(a) * R], on ? 1.5 : 0.8, on ? '#fff6a0' : 'rgba(255,200,120,.6)');
+      }
+      const ra = T * 0.6;
+      for(let k = 0; k < 6; k++){
+        const a = ra + k * Math.PI / 3;
+        ctx.strokeStyle = 'rgba(255,240,200,.55)'; ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.moveTo(hub[0], hub[1]); ctx.lineTo(hub[0] + Math.cos(a) * R, hub[1] + Math.sin(a) * R); ctx.stroke();
+      }
+      const a0 = T * 0.9;
+      for(let k = 0; k < 4; k++){
+        const [u, v, zz] = track(a0 - k * 0.09);
+        const p = P(u, v, zz + 1.5);
+        ctx.fillStyle = ['#f2c94c', '#3f8fd9', '#3fb87a', '#e8574a'][k]; ctx.fillRect(p[0] - 2.6, p[1] - 2.2, 5.2, 2.8);
+        fxDot([p[0], p[1] - 3], 0.9, '#f0c9a0');
+      }
+      const ku = u0 + wu * 0.28, kv = v0 + wv * 0.75;
+      for(let k = 0; k < 6; k++){
+        const a = T * 1.4 + k * Math.PI / 3;
+        fxDot(P(ku + Math.cos(a) * 0.22, kv + Math.sin(a) * 0.22, 3 + Math.abs(Math.sin(T * 3 + k)) * 2), 1.4, ['#ffffff', '#c86fd8', '#f2c94c'][k % 3]);
+      }
+      const n = crowd(10);
+      for(let k = 0; k < n; k++){
+        const s = (T * 0.05 + leisureFxRnd(seed, k)) % 1, along = k % 2;
+        const u = along ? u0 + 0.12 + (wu - 0.24) * s : cu + 0.05 * (leisureFxRnd(seed, k + 9) - 0.5);
+        const v = along ? cv + 0.05 * (leisureFxRnd(seed, k + 9) - 0.5) : v0 + 0.12 + (wv - 0.24) * s;
+        fxPerson(P(u, v, 0.7), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, k + 50)) + ',60%,55%)', Math.abs(Math.sin(T * 7 + k)) * 0.5);
+      }
+      break;
+    }
+    case 'zoo': {
+      // zèbres dans la savane, otarie qui plonge, oiseaux de la volière, visiteurs dans les allées
+      for(let k = 0; k < 2; k++){
+        const u = u0 + wu * (0.64 + 0.12 * (0.5 + 0.5 * Math.sin(T * 0.25 + k * 3))), v = v0 + wv * (0.2 + 0.14 * (0.5 + 0.5 * Math.cos(T * 0.2 + k * 2)));
+        const p = P(u, v, 0.8);
+        ctx.fillStyle = '#f4f4f4'; ctx.beginPath(); ctx.ellipse(p[0], p[1] - 3, 3.2, 1.8, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#222'; ctx.lineWidth = 0.6;
+        for(let s = -2; s <= 2; s += 1.4){ ctx.beginPath(); ctx.moveTo(p[0] + s, p[1] - 4.6); ctx.lineTo(p[0] + s, p[1] - 1.4); ctx.stroke(); }
+        fxDot([p[0] + 3.2, p[1] - 4.2], 1.1, '#f4f4f4');
+      }
+      const sp = Math.sin(T * 1.3);
+      if(sp > 0){
+        const p = P(u0 + wu * (0.26 + 0.08 * Math.sin(T * 0.4)), v0 + wv * 0.28, 0.6);
+        ctx.fillStyle = '#4a4f57'; ctx.beginPath(); ctx.ellipse(p[0], p[1] - 1.5 * sp, 2.6, 1.6 + sp, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'rgba(235,250,255,.7)'; ctx.lineWidth = 0.7;
+        ctx.beginPath(); ctx.ellipse(p[0], p[1], 4 + 2 * sp, 1.6 + sp, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+      const a = P(u0 + wu * 0.26, v0 + wv * 0.74, 0);
+      for(let k = 0; k < 4; k++){
+        const ang = T * (1.5 + k * 0.3) + k * 1.6;
+        const x = a[0] + Math.cos(ang) * 6, y = a[1] - 6 - Math.sin(ang * 1.7) * 3;
+        const wing = Math.sin(T * 14 + k) * 1.4;
+        ctx.strokeStyle = ['#e8574a', '#3f8fd9', '#f2c94c', '#3fb87a'][k]; ctx.lineWidth = 0.9;
+        ctx.beginPath(); ctx.moveTo(x - 2, y - wing); ctx.lineTo(x, y); ctx.lineTo(x + 2, y - wing); ctx.stroke();
+      }
+      const n = crowd(8);
+      for(let k = 0; k < n; k++){
+        const s = (T * 0.04 + leisureFxRnd(seed, k)) % 1;
+        const u = k % 2 ? u0 + 0.08 + (wu - 0.16) * s : u0 + wu * 0.51;
+        const v = k % 2 ? v0 + wv * 0.51 : v0 + 0.08 + (wv - 0.16) * s;
+        fxPerson(P(u, v, 0.7), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, k + 50)) + ',55%,55%)');
+      }
+      break;
+    }
+    case 'casino': {
+      // néons qui défilent sur les arêtes, deux faisceaux de projecteurs dans le ciel
+      const hu0 = u0 + 0.16, hv0 = v0 + 0.16, hu1 = u1 - 0.3, hv1 = v1 - 0.3, H = 22;
+      ctx.globalCompositeOperation = 'lighter';
+      for(let k = 0; k < 2; k++){
+        const base = P(cu - 0.15, cv - 0.15, H + 6);
+        const ang = -Math.PI / 2 + Math.sin(T * 0.6 + k * Math.PI) * 0.6;
+        const L = 110, w = 0.05;
+        ctx.fillStyle = 'rgba(255,245,200,.13)';
+        ctx.beginPath(); ctx.moveTo(base[0], base[1]);
+        ctx.lineTo(base[0] + Math.cos(ang - w) * L, base[1] + Math.sin(ang - w) * L);
+        ctx.lineTo(base[0] + Math.cos(ang + w) * L, base[1] + Math.sin(ang + w) * L); ctx.closePath(); ctx.fill();
+      }
+      const chase = Math.floor(T * 8);
+      for(const zz of [H - 1, 2]){
+        for(let i = 0; i <= 14; i++){
+          const on = (i + chase) % 3 === 0;
+          fxDot(P(hu1, hv0 + (hv1 - hv0) * i / 14, zz), on ? 1.2 : 0.6, on ? '#ff6ad5' : 'rgba(255,106,213,.35)');
+          fxDot(P(hu0 + (hu1 - hu0) * i / 14, hv1, zz), on ? 1.2 : 0.6, on ? '#6ad5ff' : 'rgba(106,213,255,.35)');
+        }
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      const n = crowd(6);
+      for(let k = 0; k < n; k++){
+        const s = (T * 0.06 + leisureFxRnd(seed, k)) % 1;
+        fxPerson(P(hu1 + 0.12, hv0 + (hv1 - hv0) * s, 0.7), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, k + 50)) + ',50%,45%)');
+      }
+      break;
+    }
+    case 'cinema': {
+      // ampoules de la marquise qui défilent, file d'attente devant l'entrée
+      const k = u1 - 0.12, chase = Math.floor(T * 7);
+      for(let i = 0; i <= 12; i++){
+        const on = (i + chase) % 3 === 0;
+        fxDot(P(k + 0.16, v0 + 0.25 + (wv - 0.5) * i / 12, 11), on ? 1.3 : 0.7, on ? '#fff6c8' : 'rgba(255,214,120,.5)');
+      }
+      const n = crowd(6);
+      for(let i = 0; i < n; i++) fxPerson(P(u1 - 0.05, cv - 0.25 + i * 0.1, 0.6), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, i)) + ',50%,50%)', Math.abs(Math.sin(T * 2 + i)) * 0.3);
+      break;
+    }
+    case 'restaurant': {
+      // clients attablés sous les parasols, serveur qui fait la navette
+      const tables = [[u1 - 0.16, v0 + 0.22], [u1 - 0.16, v1 - 0.18], [u0 + 0.24, v1 - 0.14]];
+      tables.forEach(([u, v], i) => {
+        for(let k = 0; k < 2; k++) fxPerson(P(u + (k ? 0.07 : -0.07), v + 0.04, 0.6), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, i * 2 + k)) + ',45%,50%)', Math.max(0, Math.sin(T * 1.7 + i * 2 + k)) * 0.5);
+      });
+      const s = 0.5 + 0.5 * Math.sin(T * 0.8), w = s < 0.5 ? s * 2 : (s - 0.5) * 2;
+      const [a, e] = s < 0.5 ? [tables[0], tables[1]] : [tables[1], tables[2]];
+      fxPerson(P(a[0] + (e[0] - a[0]) * w - 0.08, a[1] + (e[1] - a[1]) * w, 0.6), '#f4f4f4');
+      break;
+    }
+    case 'museum': {
+      // visiteurs qui flânent devant la colonnade
+      const n = crowd(8);
+      for(let k = 0; k < n; k++){
+        const s = 0.5 + 0.5 * Math.sin(T * 0.25 + leisureFxRnd(seed, k) * 6.28);
+        fxPerson(P(u1 - 0.07 - 0.04 * (k % 2), v0 + 0.16 + (wv - 0.32) * s, 0.6), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, k + 20)) + ',40%,50%)');
+      }
+      break;
+    }
+    case 'treetop': {
+      // grimpeurs qui glissent sur les tyroliennes (même hasard que l'art cuit)
+      const rng = artRng(artSeedOf(b));
+      const tops = [];
+      for(const [fu, fv] of [[0.22, 0.25], [0.7, 0.2], [0.45, 0.55], [0.2, 0.78], [0.78, 0.72]]){
+        const h = 26 + rng() * 10; rng();
+        tops.push(P(u0 + wu * fu, v0 + wv * fv, h * 0.42 + 2));
+      }
+      const n = Math.min(4, crowd(4));
+      for(let k = 0; k < n; k++){
+        const seg = k % (tops.length - 1), p = tops[seg], q = tops[seg + 1];
+        const s = (T * 0.35 + k * 0.37) % 1;
+        const cx = (p[0] + q[0]) / 2, cy = Math.max(p[1], q[1]) + 4;
+        const x = (1 - s) * (1 - s) * p[0] + 2 * (1 - s) * s * cx + s * s * q[0];
+        const y = (1 - s) * (1 - s) * p[1] + 2 * (1 - s) * s * cy + s * s * q[1];
+        ctx.strokeStyle = '#333'; ctx.lineWidth = 0.6; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 2); ctx.stroke();
+        fxPerson([x, y + 7], ['#e8574a', '#3f8fd9', '#f2c94c', '#3fb87a'][k]);
+      }
+      break;
+    }
+    case 'marina': {
+      // kayaks qui pagaient sur l'eau voisine
+      let wx = -1, wy = -1;
+      for(let y = b.y - 1; y <= b.y + b.h && wx < 0; y++) for(let x = b.x - 1; x <= b.x + b.w; x++){
+        if(inMap(x, y) && terrain[y * N + x] === T.WATER){ wx = x; wy = y; break; }
+      }
+      if(wx >= 0){
+        const [rx, ry] = rotIdx(wx, wy), lift = terrainLiftPxAt(wx, wy);
+        const n = Math.min(3, crowd(3));
+        for(let k = 0; k < n; k++){
+          const a = T * 0.5 + k * 2.1;
+          const p = liftedIso(rx + 0.5 + Math.cos(a) * 0.3, ry + 0.5 + Math.sin(a) * 0.3, lift + 0.5);
+          ctx.fillStyle = ['#e8574a', '#f2c94c', '#3fb87a'][k];
+          ctx.beginPath(); ctx.ellipse(p[0], p[1], 4, 1.4, Math.atan2(Math.cos(a), -Math.sin(a)) * 0.3, 0, Math.PI * 2); ctx.fill();
+          fxDot([p[0], p[1] - 2.4], 1, '#f0c9a0');
+          const pa = Math.sin(T * 6 + k) * 3;
+          ctx.strokeStyle = '#5a4030'; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(p[0] - 3, p[1] - 1 + pa * 0.3); ctx.lineTo(p[0] + 3, p[1] - 1 - pa * 0.3); ctx.stroke();
+        }
+      }
+      for(let k = 0; k < Math.min(3, crowd(3)); k++){
+        const s = 0.5 + 0.5 * Math.sin(T * 0.3 + k * 2);
+        fxPerson(P(u0 + wu * (0.25 + 0.5 * s), v0 + wv * 0.48, 0.7), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, k)) + ',50%,50%)');
+      }
+      break;
+    }
+    case 'spa': {
+      // vapeur qui monte des bassins, baigneurs
+      for(const [fu, fv] of [[0.72, 0.28], [0.3, 0.78]]) for(let k = 0; k < 4; k++){
+        const ph = (T * 0.35 + k / 4) % 1;
+        const p = P(u0 + wu * fu + 0.05 * Math.sin(T + k), v0 + wv * fv, 3 + ph * 16);
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.32 * (1 - ph)).toFixed(3) + ')';
+        ctx.beginPath(); ctx.ellipse(p[0], p[1], 2.5 + ph * 3, 1.6 + ph * 1.6, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      const pools = [[u0 + wu * 0.5, v0 + 0.1, u1 - 0.08, v0 + wv * 0.48], [u0 + 0.1, v0 + wv * 0.58, u0 + wu * 0.46, v1 - 0.08]];
+      const n = crowd(6);
+      for(let k = 0; k < n; k++){
+        const [a0, b0, a1, b1] = pools[k % 2];
+        const u = a0 + 0.1 + (a1 - a0 - 0.2) * (0.5 + 0.45 * Math.sin(T * 0.3 + k * 1.9));
+        const v = b0 + 0.1 + (b1 - b0 - 0.2) * (0.5 + 0.45 * Math.cos(T * 0.25 + k * 2.7));
+        const p = P(u, v, 0.9);
+        fxDot(p, 1.2, '#f0c9a0');
+        ctx.strokeStyle = 'rgba(235,250,255,.6)'; ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.ellipse(p[0], p[1] + 0.6, 2.6, 1, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+      break;
+    }
+    case 'hotel': {
+      // fenêtres des chambres qui s'allument et s'éteignent
+      const tu0 = u0 + 0.18, tv0 = v0 + 0.18, tu1 = u1 - 0.24, tv1 = v1 - 0.2, Z0 = 8, Z1 = 52, fh = 6;
+      const floors = Math.floor((Z1 - Z0) / fh);
+      let i = 0;
+      const face = (fc, k, a0, a1) => {
+        const cols = Math.max(1, Math.round((a1 - a0) * 3));
+        for(let f = 0; f < floors; f++){
+          const fz0 = Z0 + f * fh + fh * 0.28, fz1 = fz0 + fh * 0.46;
+          if(fz1 > Z1 - 1) break;
+          for(let col = 0; col < cols; col++, i++){
+            const lit = leisureFxRnd(seed + Math.floor(T * 0.4 + leisureFxRnd(seed, i) * 7), i) < 0.35 + 0.4 * occ;
+            const s0 = a0 + (a1 - a0) * (col + 0.22) / cols, s1 = a0 + (a1 - a0) * (col + 0.78) / cols;
+            fxWindow(F, fc, k, s0, s1, fz0, fz1, lit ? 'rgba(255,226,150,.95)' : 'rgba(28,40,58,.85)');
+          }
+        }
+      };
+      face('r', tu1, tv0, tv1);
+      face('l', tv1, tu0, tu1);
+      fxPerson(P(tu1 + 0.1, (tv0 + tv1) / 2 + 0.25, 0.6), '#a8382a');
+      break;
+    }
+  }
+}
+
 // Pose d'un camion (position tuile tournée + direction) depuis son état de
 // rendu (interpolé en MP). Réutilisé par le rendu ET le baking de textures Pixi.
 function truckPose(tk){
@@ -3888,6 +4214,8 @@ function draw(){
   drawSmoke();
   // fusées des centres spatiaux (décollage, retour de capsule)
   drawRocketFx();
+  // lieux de loisirs animés (zoom proche, visiteurs présents)
+  drawLeisureFx();
 
   // textes flottants
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';

@@ -935,6 +935,7 @@ BUILD.space_center = { n:'Centre spatial', ic:'🚀', hk:'', cost: SPACE_CFG.cou
 // visite (cf. tickLeisureVisits, 06_simulation.js). Réglages : config.js `loisirs`.
 const LEISURE_CFG = CFG.loisirs || {};
 const LEISURE_AFFLUX = Math.max(1, +LEISURE_CFG.afflux || 10);
+const LEISURE_FX_ZOOM = +LEISURE_CFG.zoomAnimation || 1.0; // zoom minimal des animations (drawLeisureFx)
 // [type moteur, clé config, nom, icône, couleur, hauteur, défauts, description]
 const LEISURE_DEFS = [
   ['restaurant',   'restaurant',      'Restaurant',            '🍽️', '#b8573a', 16, { cout:1500,  taille:1, capacite:20,  duree:1,   tarif:35,  ouvriers:2,  entretien:1 },  'Une table du quartier : repas rapide, clientèle fidèle.'],
