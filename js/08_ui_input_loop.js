@@ -241,6 +241,20 @@ function adjustLeisureRadius(x, y, delta){
   const p = $('info'); if(p) p._html = null;
   if(typeof renderInfo === 'function') renderInfo();
 }
+// Orientation des lieux de loisirs : quart de tour horaire à l'écran (antihoraire si step = -1).
+const turnDir = (dir, step) => (dir - step + 4) & 3;
+function rotateLeisurePlaceDir(step = 1){
+  leisurePlaceDir = turnDir(leisurePlaceDir, step);
+}
+function rotateLeisure(x, y, step = 1){
+  const b = bgrid[y*N+x];
+  if(!isLeisure(b) || b.dead) return;
+  if(MP.connected && b.owner && b.owner !== MP.myId){ toast('⛔ Bâtiment d\'un autre joueur','err'); return; }
+  setLeisureDir(b, turnDir(leisureDirOf(b), step));
+  if(MP.connected) netSend({ type:'set_leisure_dir', x:b.x, y:b.y, dir:leisureDirOf(b) });
+  const p = $('info'); if(p) p._html = null;
+  if(typeof renderInfo === 'function') renderInfo();
+}
 // Détail des voyageurs par joueur (panneau d'un bus ou d'un lieu de loisirs) : déplié par défaut,
 // replié par un clic sur la ligne « Voyageurs » / « Visiteurs ».
 const voyageursClosed = new Set();
@@ -2090,6 +2104,12 @@ function renderInfo(){
        + radius + ' cases'
        + (canEdit ? '<button class="tbtn" style="padding:0 7px" onclick="adjustLeisureRadius('+b.x+','+b.y+',2)" '+(radius >= LEISURE_RADIUS_MAX ? 'disabled' : '')+'>+</button>' : '')
        + '</b></div>';
+    if(canEdit)
+      h += '<div class="row"><span title="Fait pivoter le lieu d\'un quart de tour (touche T sur le lieu sélectionné, Maj+T dans l\'autre sens)">Orientation</span>'
+         + '<b style="display:flex;align-items:center;gap:6px">'
+         + '<button class="tbtn" style="padding:0 7px" title="Pivoter à gauche" onclick="rotateLeisure('+b.x+','+b.y+',-1)">⟲</button>'
+         + '<button class="tbtn" style="padding:0 7px" title="Pivoter à droite" onclick="rotateLeisure('+b.x+','+b.y+',1)">⟳</button>'
+         + '</b></div>';
     if(!buildings.some(s => isTransitHub(s) && buildingDistance(s, b) <= radius))
       h += '<div class="warn">⚠️ Aucun arrêt de bus, gare, port ou aéroport dans le rayon d\'attractivité : aucun visiteur ne viendra.</div>';
     else
@@ -3085,6 +3105,8 @@ function syncToolbarState(){
   if(cCancel) cCancel.classList.toggle('show', tool !== 'select');
   const cShift = $('ctxShift');
   if(cShift) cShift.classList.toggle('show', tool === 'road');
+  const cTurn = $('ctxTurn');
+  if(cTurn) cTurn.classList.toggle('show', LEISURE_TYPES.includes(tool));
   if(depotToolbarGroup){
     const active = (DEPOT_TOOLBAR_ITEMS || []).some(item => item.tool === tool);
     depotToolbarGroup.classList.toggle('on', active);
@@ -4288,6 +4310,11 @@ addEventListener('keydown', e=>{
     roadPreviewTiles = computeRoadPreview(roadDragStart.x, roadDragStart.y, mouse.tx, mouse.ty, true);
   if(e.code==='KeyH') toggleHelp();
   if(e.code==='KeyR') rotate(e.shiftKey ? -1 : 1);
+  // T : pivote le lieu de loisirs à poser, sinon le lieu sélectionné (Maj+T : autre sens)
+  if(e.code==='KeyT'){
+    if(LEISURE_TYPES.includes(tool)) rotateLeisurePlaceDir(e.shiftKey ? -1 : 1);
+    else if(tool==='select' && isLeisure(selected) && !selected.dead) rotateLeisure(selected.x, selected.y, e.shiftKey ? -1 : 1);
+  }
   if(e.code==='KeyB') setTool('terraform');
   if(e.code.startsWith('Digit')){
     const d = +e.code.slice(5);
@@ -4342,6 +4369,7 @@ $('bRotL').onclick = ()=> rotate(-1);
 $('bRotR').onclick = ()=> rotate(1);
 // ---- actions contextuelles tactiles ----
 $('ctxCancel').onclick = ()=> setTool('select');
+$('ctxTurn').onclick = ()=> rotateLeisurePlaceDir(1);
 $('ctxShift').onclick = ()=>{
   shiftToggle = !shiftToggle;
   $('ctxShift').classList.toggle('on', shiftToggle);

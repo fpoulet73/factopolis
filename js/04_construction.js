@@ -843,6 +843,9 @@ function leisureNearError(t, x, y, fp){
 }
 // Côté de l'emprise posée en un clic (1 pour tous, sauf les grands bâtiments d'un seul tenant).
 const footprintOf = t => (BUILD[t] && !BUILD[t].resid && BUILD[t].size > 1) ? BUILD[t].size : 1;
+// Orientation (quarts de tour) donnée aux lieux de loisirs posés : touche T / bouton ↻
+// pendant la pose (rotateLeisurePlaceDir, 08_ui_input_loop.js).
+let leisurePlaceDir = 0;
 
 function clickAt(x,y){
   if(!inMap(x,y)){
@@ -1101,6 +1104,7 @@ function clickAt(x,y){
   if(tool==='road'){ road[i] = 1; markGroundDirty(); return; }
   const b = newBuilding(tool,x,y);
   b.owner = MP.myId;
+  if(isLeisure(b)) setLeisureDir(b, leisurePlaceDir);
   if(consumeBuildMaterials(tool, x, y, b.w, b.h, MP.myId) && buildMaterialsFor(tool))
     addFloat(x + (b.w-1)/2, y, '🏗️ −'+resAmountsIcons(buildMaterialsFor(tool)), '#ffd27a');
   markStarterHomeIfNeeded(b);

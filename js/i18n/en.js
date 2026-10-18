@@ -89,6 +89,7 @@ window.FACTOPOLIS_TRANSLATIONS.en = {
   'help.control7': '⌨️ <kbd>1</kbd>–<kbd>9</kbd>: select tool',
   'help.control8': '⌨️ <kbd>Esc</kbd>: cancel — <kbd>Space</kbd>: pause',
   'help.control9': '⌨️ <kbd>H</kbd>: open / close this help',
+  'help.control10': '⌨️ <kbd>T</kbd> / <kbd>Shift+T</kbd>: rotate the leisure venue being placed (or selected)',
   'help.transportTitle': '🚆 Transport',
   'help.transport1': '🚂 <b>Trains</b>: lay tracks (45° turns max), a station (building along the track + platform on the track) and a depot. Buy a train, add wagons, set at least 2 stops, then raise the 🚩 green flag.',
   'help.transport2': '🚦 <b>Signals</b> split the track into one-way blocks, one train per block. Click repeatedly: green → forced red → removed. Junction signals wait until a next track is free. At a terminus the train turns around.',

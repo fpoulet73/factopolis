@@ -89,6 +89,7 @@ window.FACTOPOLIS_TRANSLATIONS.fr = {
   'help.control7': '⌨️ <kbd>1</kbd>–<kbd>9</kbd> : sélectionner l’outil',
   'help.control8': '⌨️ <kbd>Échap</kbd> : annuler — <kbd>Espace</kbd> : pause',
   'help.control9': '⌨️ <kbd>H</kbd> : ouvrir / fermer cette aide',
+  'help.control10': '⌨️ <kbd>T</kbd> / <kbd>Maj+T</kbd> : pivoter le lieu de loisirs à poser (ou sélectionné)',
   'help.transportTitle': '🚆 Transports',
   'help.transport1': '🚂 <b>Trains</b> : pose des rails (virages à 45° max), une gare (bâtiment le long de la voie + quai sur la voie) et un dépôt. Achète un train, ajoute des wagons, définis au moins 2 arrêts puis lève le 🚩 drapeau vert.',
   'help.transport2': '🚦 <b>Signaux</b> : ils découpent la voie en cantons à sens unique, un seul train par canton. Clic répété : vert → rouge forcé → retiré. Le feu de jonction attend qu’une voie suivante soit libre. Au terminus, le train se retourne.',

@@ -565,7 +565,7 @@ const ALLOWED_ACTIONS = new Set([
   'build', 'toggle_bld_pause', 'toggle_airbnb_only', 'toggle_out_block', 'toggle_resid_upgrade_pause', 'clear_bld_stock', 'upgrade_plant', 'set_depot_resource',
   'buy_vehicle', 'sell_vehicle', 'route_vehicle', 'return_vehicle', 'pause_vehicle', 'pin_vehicle_res', 'configure_train', 'merge_towns',
   'zone_reassign', 'rename_bus_stop', 'owner_remap', 'depot_departure_flag', 'pause', 'speed', 'traffic_lights',
-  'buy_expansion', 'terraform_level', 'rename_bld',
+  'buy_expansion', 'terraform_level', 'rename_bld', 'set_leisure_radius', 'set_leisure_dir',
 ]);
 const EXPANSION_SIDES = new Set(['left','right','top','bottom','top-left','top-right','bottom-left','bottom-right']);
 const ALLOWED_BUILD_TYPES = new Set([
@@ -673,7 +673,9 @@ function sanitizeAction(client, msg) {
       Object.assign(out, { bx: act.bx, by: act.by }); break;
     case 'build':
       if (!ALLOWED_BUILD_TYPES.has(act.btype) || !intInRange(act.x) || !intInRange(act.y)) return null;
-      Object.assign(out, { btype: act.btype, x: act.x, y: act.y }); break;
+      Object.assign(out, { btype: act.btype, x: act.x, y: act.y });
+      if (intInRange(act.dir, 0, 3)) out.dir = act.dir; // orientation d'un lieu de loisirs
+      break;
     case 'toggle_bld_pause':
       if (!intInRange(act.x) || !intInRange(act.y)) return null;
       Object.assign(out, { x: act.x, y: act.y, paused: !!act.paused }); break;
@@ -789,6 +791,12 @@ function sanitizeAction(client, msg) {
     case 'rename_bld':
       if (!intInRange(act.x) || !intInRange(act.y) || !validName(act.name, 64)) return null;
       Object.assign(out, { x: act.x, y: act.y, name: act.name || null }); break;
+    case 'set_leisure_radius':
+      if (!intInRange(act.x) || !intInRange(act.y) || !intInRange(act.r, 1, 1000)) return null;
+      Object.assign(out, { x: act.x, y: act.y, r: act.r }); break;
+    case 'set_leisure_dir':
+      if (!intInRange(act.x) || !intInRange(act.y) || !intInRange(act.dir, 0, 3)) return null;
+      Object.assign(out, { x: act.x, y: act.y, dir: act.dir }); break;
     case 'pause': break;
     case 'traffic_lights': out.off = !!act.off; break;
     case 'speed':

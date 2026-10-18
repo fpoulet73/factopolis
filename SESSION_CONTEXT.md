@@ -240,6 +240,16 @@ clé = type moteur), vérifiés et prélevés comme pour les ports et aéroports
   action réseau `set_leisure_radius`, cercle rose autour du lieu sélectionné). `leisureRadiusOf(b)`.
   Un arrêt / une gare / un port / un aéroport situé dans ce rayon (peu importe le sien) y envoie
   ses voyageurs sortants.
+- **Orientation** (visuelle) : `b.dir` (quarts de tour 0..3, 0 non stocké), choisie à la pose
+  (touche T / Maj+T ou bouton ⟳ tactile → `leisurePlaceDir`, 04 ; fantôme dessiné avec l'art) et
+  modifiable ensuite (boutons ⟲ ⟳ du panneau ou T sur le lieu sélectionné, `rotateLeisure` /
+  `setLeisureDir`, action réseau `set_leisure_dir`, `dir` dans l'action `build`). L'art
+  (`artLeisure`, 07_rendering_art.js) est décrit dans un repère LOCAL tourné par `_artXf`
+  (`leisureXf` : q = (rot + dir) & 3) : le lieu garde son orientation dans le monde quand la
+  caméra pivote. Les primitives (`artBox`, `artGable`, `artHip`, `artWindowGrid`, `artShadow`)
+  dessinent les faces visibles de l'emprise tournée, `artWindow` masque une façade passée à
+  l'arrière ; les éléments (`flat` / `at` / `atView`) sont triés de l'arrière vers l'avant de la
+  vue (`artRunItems`). Animations : `leisureFxFrame(b).P` applique le même repère (`Pv` : vue).
 - `tickSortantsToHomes` (06) : pour chaque point de transit ayant des passagers
   sortants, `sendSortantsToLeisure` les envoie d'abord vers les lieux dont le rayon
   d'attractivité couvre le point (le plus proche d'abord, `LEISURE_AFFLUX` par heure de jeu, dans

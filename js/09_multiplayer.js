@@ -909,6 +909,7 @@ function applyLeisureState(b, o){
   b.visitsTotal = o.visitsTotal || 0;
   b.leisureIncome = o.leisureIncome || 0;
   b.attractRadius = o.attractRadius > 0 ? o.attractRadius : undefined;
+  setLeisureDir(b, o.dir);
 }
 
 function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
@@ -1405,7 +1406,7 @@ function serializeState(opts = {}){
       stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null, runwayRev:b.runwayRev ? 1 : 0, decor:b.decor ?? null, design:b.design ?? null,
       spacePhase:b.spacePhase || null, launches:b.launches || 0,
       visitors:b.visitors && b.visitors.length ? b.visitors.map(g => ({ ...g })) : null,
-      visitsTotal:b.visitsTotal || 0, leisureIncome:b.leisureIncome || 0, attractRadius:b.attractRadius || 0,
+      visitsTotal:b.visitsTotal || 0, leisureIncome:b.leisureIncome || 0, attractRadius:b.attractRadius || 0, dir:b.dir || 0,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
     news: { flags: Object.keys(newsFlags), log: newsLog, next: nextNewsId },
@@ -2223,6 +2224,7 @@ function applyAction(msg){
       if(cost > 0 && wSender.money < cost) break;
       const b = newBuilding(act.btype, act.x, act.y);
       b.owner = msg.from;
+      if(isLeisure(b)) setLeisureDir(b, act.dir);
       consumeBuildMaterials(act.btype, act.x, act.y, b.w, b.h, msg.from);
       markStarterHomeIfNeeded(b);
       assignBuildingToTown(b, true);
@@ -2271,6 +2273,14 @@ function applyAction(msg){
       if(!isLeisure(b)) break;
       if(b.owner && b.owner !== msg.from) break;
       setLeisureRadius(b, act.r);
+      break;
+    }
+    case 'set_leisure_dir': {
+      if(!validXY(act.x, act.y)) break;
+      const b = bgrid[act.y*N+act.x];
+      if(!isLeisure(b)) break;
+      if(b.owner && b.owner !== msg.from) break;
+      setLeisureDir(b, act.dir);
       break;
     }
     case 'toggle_airbnb_only': {
@@ -3222,7 +3232,7 @@ clickFn = function(x,y){
   const v = canPlace(tool,x,y);
   if(!v.ok){ clickAt(x,y); return; }
   if((BUILD[tool].cost||0) > myWallet().money){ clickAt(x,y); return; }
-  netSend({ type:'build', btype:tool, x, y });
+  netSend(BUILD[tool]?.leisure ? { type:'build', btype:tool, x, y, dir:leisurePlaceDir } : { type:'build', btype:tool, x, y });
   clickAt(x,y);
 };
 

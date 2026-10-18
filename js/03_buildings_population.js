@@ -563,6 +563,13 @@ function setLeisureRadius(b, r){
   r = Math.max(LEISURE_RADIUS_MIN, Math.min(LEISURE_RADIUS_MAX, Math.round(+r) || LEISURE_RADIUS_MIN));
   b.attractRadius = r === BUILD[b.type].leisure.radius ? undefined : r;
 }
+// Orientation d'un lieu de loisirs (quarts de tour 0..3, purement visuelle : cf. leisureXf,
+// 07_rendering_art.js) ; l'orientation 0 n'est pas stockée.
+function setLeisureDir(b, dir){
+  if(!isLeisure(b)) return;
+  const d = (Math.round(+dir) || 0) & 3;
+  b.dir = d || undefined;
+}
 
 function setAirbnbOnly(b, on){
   if(!b || b.dead || !BUILD[b.type]?.resid || b.starterHome) return;

@@ -501,6 +501,7 @@ const PixiSprites = (function(){
       + (AIR_TYPES.includes(b.type) ? '|a' + airNeighborKey(b) : '')
       + (b.type === 'air_terminal' && airportRepresentative(b) === b ? '|R' : '') // badge : gare principale seulement
       + (b.type === 'space_center' ? (spacePadHasRocket(b) ? '|F' : '|f') : '')  // fusée sur le pas de tir ou non
+      + (b.dir ? '|o' + b.dir : '')                                              // orientation d'un lieu de loisirs
       + '|' + _sigTail + ((_sigDiag && bldSelected(b)) ? '|s' : '');
   }
 

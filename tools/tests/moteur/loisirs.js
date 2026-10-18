@@ -150,4 +150,41 @@ tryDo('animations', () => {
   for(const b of placed) delete b.visitors;
 });
 tryDo('art', () => { for(let k = 0; k < 4; k++){ rotate(1); for(const b of placed) drawBuildingBody(b); drawFn(); } });
+
+// orientation : posée (touche T), réglable, sauvegardée, et cohérente avec la rotation caméra
+leisurePlaceDir = 2;
+const turned = T_.build('cinema', 104, 120);
+leisurePlaceDir = 0;
+check('orientation à la pose', turned && leisureDirOf(turned) === 2, turned && turned.dir);
+rotateLeisure(turned.x, turned.y, -1);
+check('pivoter (bouton / T)', leisureDirOf(turned) === 3, turned.dir);
+tryDo('orientation sauvegardée', () => applySnapshot(JSON.parse(JSON.stringify(serializeState()))));
+const turned2 = bgrid[120*N+104];
+check('orientation rechargée', turned2 && leisureDirOf(turned2) === 3, turned2 && turned2.dir);
+// un point du repère local du lieu retombe au même endroit du monde quelle que soit la rotation caméra
+const worldOf = (b, lu, lv) => {
+  const F = leisureFxFrame(b), p = artXfUV(F.X, F.cu + lu, F.cv + lv);
+  return invRotF(p[0], p[1]).map(c => Math.round(c * 1000) / 1000);
+};
+for(const dir of [0, 1, 2, 3]){
+  setLeisureDir(turned2, dir);
+  const ref = JSON.stringify(worldOf(turned2, 0.4, -0.25));
+  for(let k = 0; k < 4; k++){
+    rotate(1);
+    const w = JSON.stringify(worldOf(turned2, 0.4, -0.25));
+    if(w !== ref){ errs.push('orientation ' + dir + ' incohérente à la rotation ' + rot + ' : ' + w + ' ≠ ' + ref); break; }
+  }
+}
+setLeisureDir(turned2, 1);
+check('orientation 1 ≠ 0', JSON.stringify(worldOf(turned2, 0.4, 0)) !== (setLeisureDir(turned2, 0), JSON.stringify(worldOf(turned2, 0.4, 0))));
+tryDo('art orienté', () => {
+  const all = buildings.filter(b => isLeisure(b) && !b.dead);
+  for(const b of all) b.visitors = [{ t:gtime, n:4, o:null }];
+  for(const dir of [1, 2, 3]) for(let k = 0; k < 4; k++){
+    rotate(1);
+    for(const b of all){ setLeisureDir(b, dir); drawBuildingBody(b); for(const t of [0, 2.4]) drawOneLeisureFx(b, leisureFxFrame(b), t, 0.6, 7); }
+  }
+  for(const b of all){ setLeisureDir(b, 0); delete b.visitors; }
+  drawFn();
+});
 return { ok: errs.length === 0, errs };

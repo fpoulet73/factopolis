@@ -89,6 +89,7 @@ window.FACTOPOLIS_TRANSLATIONS.es = {
   'help.control7': '⌨️ <kbd>1</kbd>–<kbd>9</kbd>: seleccionar herramienta',
   'help.control8': '⌨️ <kbd>Esc</kbd>: cancelar — <kbd>Espacio</kbd>: pausa',
   'help.control9': '⌨️ <kbd>H</kbd>: abrir / cerrar esta ayuda',
+  'help.control10': '⌨️ <kbd>T</kbd> / <kbd>Mayús+T</kbd>: girar el lugar de ocio a colocar (o seleccionado)',
   'help.transportTitle': '🚆 Transporte',
   'help.transport1': '🚂 <b>Trenes</b>: coloca vías (giros de 45° máx.), una estación (edificio junto a la vía + andén sobre la vía) y un depósito. Compra un tren, añade vagones, define al menos 2 paradas y levanta la 🚩 bandera verde.',
   'help.transport2': '🚦 Las <b>señales</b> dividen la vía en cantones de sentido único, un tren por cantón. Clic repetido: verde → rojo forzado → quitada. La señal de enlace espera a que una vía siguiente esté libre. En una terminal el tren da la vuelta.',

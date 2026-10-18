@@ -1836,8 +1836,21 @@ function leisureFxFrame(b){
   const u0 = Math.min(r1x, r2x), v0 = Math.min(r1y, r2y);
   const u1 = u0 + Math.abs(r1x - r2x) + 1, v1 = v0 + Math.abs(r1y - r2y) + 1;
   const lift = buildingLiftPx(b);
-  return { u0, v0, u1, v1, wu: u1 - u0, wv: v1 - v0, cu: (u0 + u1) / 2, cv: (v0 + v1) / 2,
-    P: (u, v, z) => liftedIso(u, v, lift + (z || 0)) };
+  // P : point du repère LOCAL du lieu (tourné selon son orientation, cf. leisureXf) ;
+  // Pv : point déjà dans la vue ; R : rectangle local → vue ; faces : face (normale
+  // locale) tournée vers la caméra ; depth : profondeur de vue (tri des personnages).
+  const X = leisureXf(b, u0, v0, u1, v1);
+  const Pv = (u, v, z) => liftedIso(u, v, lift + (z || 0));
+  return { u0, v0, u1, v1, wu: u1 - u0, wv: v1 - v0, cu: (u0 + u1) / 2, cv: (v0 + v1) / 2, X, Pv,
+    P: (u, v, z) => { const p = artXfUV(X, u, v); return Pv(p[0], p[1], z); },
+    R: (a0, b0, a1, b1) => artRectXf(a0, b0, a1, b1, X),
+    faces: (nu, nv) => artFaceVisible(nu, nv, X),
+    depth: (u, v) => { const p = artXfUV(X, u, v); return p[0] + p[1]; } };
+}
+// Le point local (u,v) est-il masqué par le volume local r (vue de la caméra) ?
+function fxHiddenBy(F, r, u, v){
+  const R = F.R(r[0], r[1], r[2], r[3]), p = artXfUV(F.X, u, v), sx = p[0] - p[1];
+  return p[0] < R[2] && p[1] < R[3] && sx > R[0] - R[3] && sx < R[2] - R[1];
 }
 function fxDot(p, r, col){ ctx.fillStyle = col; ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, Math.PI * 2); ctx.fill(); }
 // Petit personnage debout en p (pieds) ; bob = saut en px.
@@ -1846,9 +1859,10 @@ function fxPerson(p, col, bob = 0){
   fxDot([p[0], p[1] - 5.4 - bob], 1.1, '#f0c9a0');
 }
 // Quadrilatère d'une fenêtre (face 'r' : u = k, s le long de v ; face 'l' : v = k, s le long de u).
-function fxWindow(F, face, k, s0, s1, z0, z1, col){
-  const pts = face === 'r' ? [F.P(k, s0, z0), F.P(k, s1, z0), F.P(k, s1, z1), F.P(k, s0, z1)]
-    : [F.P(s0, k, z0), F.P(s1, k, z0), F.P(s1, k, z1), F.P(s0, k, z1)];
+// P : projection utilisée (F.Pv pour une face donnée dans la vue).
+function fxWindow(P, face, k, s0, s1, z0, z1, col){
+  const pts = face === 'r' ? [P(k, s0, z0), P(k, s1, z0), P(k, s1, z1), P(k, s0, z1)]
+    : [P(s0, k, z0), P(s1, k, z0), P(s1, k, z1), P(s0, k, z1)];
   ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
   for(let i = 1; i < 4; i++) ctx.lineTo(pts[i][0], pts[i][1]);
   ctx.closePath(); ctx.fill();
@@ -2015,7 +2029,7 @@ function drawLeisureFx(){
   }
 }
 function drawOneLeisureFx(b, F, T, occ, seed){
-  const { u0, v0, u1, v1, wu, wv, cu, cv, P } = F;
+  const { u0, v0, u1, v1, wu, wv, cu, cv, P, Pv } = F;
   const S = Math.max(wu, wv);
   const crowd = n => Math.max(1, Math.round(n * (0.3 + 0.7 * occ)));
   const lerp = (a, c, s) => a + (c - a) * s;
@@ -2039,7 +2053,7 @@ function drawOneLeisureFx(b, F, T, occ, seed){
       }
       const from = k % 2, ba = lerp(sideA(from), sideA(1 - from), s), bc = lerp(tb(k - 1), tb(k), s);
       figs.push({ a: ba, c: bc, ball: true, zz: 2 + 9 * Math.sin(Math.PI * s) });
-      figs.sort((x, y) => (x.a + x.c) - (y.a + y.c));
+      figs.sort((x, y) => F.depth(a0 + x.a, b0 + x.c) - F.depth(a0 + y.a, b0 + y.c));
       for(const f of figs){
         if(f.ball){ fxDot(Q(f.a, f.c, f.zz), 1, '#d8f23a'); continue; }
         fxPerson(Q(f.a, f.c, 0.8), f.col, Math.abs(Math.sin(T * 8 + f.a)) * 0.5);
@@ -2064,7 +2078,7 @@ function drawOneLeisureFx(b, F, T, occ, seed){
       const h = figs[team * 5 + (c % 5)];
       const hs = Math.min(1, s / 0.75);
       h.u = lerp(g.cu0 + (g.cu1 - g.cu0) * 0.5, hoopU + (team ? 0.3 : -0.3), hs); h.v = lerp(vm + 0.15, vm, hs);
-      figs.sort((x, y) => (x.u + x.v) - (y.u + y.v));
+      figs.sort((x, y) => F.depth(x.u, x.v) - F.depth(y.u, y.v));
       for(const f of figs) fxPerson(P(f.u, f.v, 0.8), f.col, f === h && s > 0.75 ? 2 : Math.abs(Math.sin(T * 9 + f.i)) * 0.6);
       if(s < 0.75) fxDot(P(h.u + 0.04, h.v + 0.03, 1 + Math.abs(Math.sin(T * 9)) * 4), 1.2, '#e8782a');
       else {
@@ -2100,7 +2114,7 @@ function drawOneLeisureFx(b, F, T, occ, seed){
         const A = bases[seg], B = bases[(seg + 1) % 4];
         figs.push({ u: lerp(A[0], B[0], f), v: lerp(A[1], B[1], f), col: '#c8402f', run: true });
       }
-      figs.sort((x, y) => (x.u + x.v) - (y.u + y.v));
+      figs.sort((x, y) => F.depth(x.u, x.v) - F.depth(y.u, y.v));
       for(const f of figs){
         fxPerson(P(f.u, f.v, 0.9), f.col, f.run ? Math.abs(Math.sin(T * 10)) * 0.8 : 0);
         if(f.bat){
@@ -2140,7 +2154,7 @@ function drawOneLeisureFx(b, F, T, occ, seed){
         players.push({ u: pu0 + pw * u, v: pv0 + ph * v, col: k === 0 ? '#f2c94c' : (team ? '#3f6fd8' : '#e0453a'), i });
       }
       players.push({ u: pu0 + pw * bu, v: pv0 + ph * bv, ball: true });
-      players.sort((a, c) => (a.u + a.v) - (c.u + c.v));
+      players.sort((a, c) => F.depth(a.u, a.v) - F.depth(c.u, c.v));
       for(const p of players){
         if(p.ball){ fxDot(P(p.u, p.v, 1.2 + Math.abs(Math.sin(T * 6)) * 2), 1.2, '#ffffff'); continue; }
         fxPerson(P(p.u, p.v, 0.9), p.col, Math.abs(Math.sin(T * 9 + p.i)) * 0.7);
@@ -2148,12 +2162,13 @@ function drawOneLeisureFx(b, F, T, occ, seed){
       for(let k = 0; k < crowd(6); k++){
         if(leisureFxRnd(seed + Math.floor(T * 4), k) < 0.75) continue;
         const u = u0 + 0.12 + (pu0 - u0 - 0.2) * leisureFxRnd(seed, k + 40), v = v0 + 0.15 + (wv - 0.3) * leisureFxRnd(seed, k + 60);
-        fxDot(P(u, v, 6 + 16 * leisureFxRnd(seed, k + 80)), 1.6, 'rgba(255,255,240,.95)');
+        fxDot(Pv(u, v, 6 + 16 * leisureFxRnd(seed, k + 80)), 1.6, 'rgba(255,255,240,.95)'); // tribune haute (vue)
       }
       break;
     }
     case 'concert_hall': {
       // projecteurs qui balaient la scène, musiciens et public qui sautent
+      if(!F.faces(1, 0)) break; // scène derrière la salle : masquée
       const hu1 = u1 - wu * 0.32, su0 = hu1 + 0.15, su1 = u1 - 0.12, sv0 = v0 + wv * 0.25, sv1 = v1 - wv * 0.25;
       const cols = ['255,106,213', '106,213,255', '255,230,106', '140,255,140'];
       ctx.globalCompositeOperation = 'lighter';
@@ -2259,23 +2274,25 @@ function drawOneLeisureFx(b, F, T, occ, seed){
         ctx.lineTo(base[0] + Math.cos(ang + w) * L, base[1] + Math.sin(ang + w) * L); ctx.closePath(); ctx.fill();
       }
       const chase = Math.floor(T * 8);
+      const [a0, b0, a1, b1] = F.R(hu0, hv0, hu1, hv1); // palais dans la vue : arêtes avant
       for(const zz of [H - 1, 2]){
         for(let i = 0; i <= 14; i++){
           const on = (i + chase) % 3 === 0;
-          fxDot(P(hu1, hv0 + (hv1 - hv0) * i / 14, zz), on ? 1.2 : 0.6, on ? '#ff6ad5' : 'rgba(255,106,213,.35)');
-          fxDot(P(hu0 + (hu1 - hu0) * i / 14, hv1, zz), on ? 1.2 : 0.6, on ? '#6ad5ff' : 'rgba(106,213,255,.35)');
+          fxDot(Pv(a1, b0 + (b1 - b0) * i / 14, zz), on ? 1.2 : 0.6, on ? '#ff6ad5' : 'rgba(255,106,213,.35)');
+          fxDot(Pv(a0 + (a1 - a0) * i / 14, b1, zz), on ? 1.2 : 0.6, on ? '#6ad5ff' : 'rgba(106,213,255,.35)');
         }
       }
       ctx.globalCompositeOperation = 'source-over';
       const n = crowd(6);
       for(let k = 0; k < n; k++){
         const s = (T * 0.06 + leisureFxRnd(seed, k)) % 1;
-        fxPerson(P(hu1 + 0.12, hv0 + (hv1 - hv0) * s, 0.7), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, k + 50)) + ',50%,45%)');
+        fxPerson(Pv(a1 + 0.12, b0 + (b1 - b0) * s, 0.7), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, k + 50)) + ',50%,45%)');
       }
       break;
     }
     case 'cinema': {
       // ampoules de la marquise qui défilent, file d'attente devant l'entrée
+      if(!F.faces(1, 0)) break; // entrée derrière la salle : masquée
       const k = u1 - 0.12, chase = Math.floor(T * 7);
       for(let i = 0; i <= 12; i++){
         const on = (i + chase) % 3 === 0;
@@ -2288,16 +2305,20 @@ function drawOneLeisureFx(b, F, T, occ, seed){
     case 'restaurant': {
       // clients attablés sous les parasols, serveur qui fait la navette
       const tables = [[u1 - 0.16, v0 + 0.22], [u1 - 0.16, v1 - 0.18], [u0 + 0.24, v1 - 0.14]];
+      const hall = [u0 + 0.12, v0 + 0.12, u0 + wu * 0.62, v0 + wv * 0.66];
       tables.forEach(([u, v], i) => {
+        if(fxHiddenBy(F, hall, u, v)) return; // terrasse derrière la salle
         for(let k = 0; k < 2; k++) fxPerson(P(u + (k ? 0.07 : -0.07), v + 0.04, 0.6), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, i * 2 + k)) + ',45%,50%)', Math.max(0, Math.sin(T * 1.7 + i * 2 + k)) * 0.5);
       });
       const s = 0.5 + 0.5 * Math.sin(T * 0.8), w = s < 0.5 ? s * 2 : (s - 0.5) * 2;
       const [a, e] = s < 0.5 ? [tables[0], tables[1]] : [tables[1], tables[2]];
-      fxPerson(P(a[0] + (e[0] - a[0]) * w - 0.08, a[1] + (e[1] - a[1]) * w, 0.6), '#f4f4f4');
+      const wu_ = a[0] + (e[0] - a[0]) * w - 0.08, wv_ = a[1] + (e[1] - a[1]) * w;
+      if(!fxHiddenBy(F, hall, wu_, wv_)) fxPerson(P(wu_, wv_, 0.6), '#f4f4f4');
       break;
     }
     case 'museum': {
       // visiteurs qui flânent devant la colonnade
+      if(!F.faces(1, 0)) break; // colonnade derrière le musée : masquée
       const n = crowd(8);
       for(let k = 0; k < n; k++){
         const s = 0.5 + 0.5 * Math.sin(T * 0.25 + leisureFxRnd(seed, k) * 6.28);
@@ -2371,13 +2392,14 @@ function drawOneLeisureFx(b, F, T, occ, seed){
           for(let col = 0; col < cols; col++, i++){
             const lit = leisureFxRnd(seed + Math.floor(T * 0.4 + leisureFxRnd(seed, i) * 7), i) < 0.35 + 0.4 * occ;
             const s0 = a0 + (a1 - a0) * (col + 0.22) / cols, s1 = a0 + (a1 - a0) * (col + 0.78) / cols;
-            fxWindow(F, fc, k, s0, s1, fz0, fz1, lit ? 'rgba(255,226,150,.95)' : 'rgba(28,40,58,.85)');
+            fxWindow(Pv, fc, k, s0, s1, fz0, fz1, lit ? 'rgba(255,226,150,.95)' : 'rgba(28,40,58,.85)');
           }
         }
       };
-      face('r', tu1, tv0, tv1);
-      face('l', tv1, tu0, tu1);
-      fxPerson(P(tu1 + 0.1, (tv0 + tv1) / 2 + 0.25, 0.6), '#a8382a');
+      const [a0, b0, a1, b1] = F.R(tu0, tv0, tu1, tv1); // tour dans la vue
+      face('r', a1, b0, b1);
+      face('l', b1, a0, a1);
+      if(F.faces(1, 0)) fxPerson(P(tu1 + 0.1, (tv0 + tv1) / 2 + 0.25, 0.6), '#a8382a'); // portier
       break;
     }
   }
@@ -4490,10 +4512,17 @@ function draw(){
       // emprise tournée : coin minimal des fp×fp cases dans l'espace caméra
       let gx0 = grx, gy0 = gry;
       for(const [ex, ey] of [[fp-1,0],[0,fp-1],[fp-1,fp-1]]){ const [qx, qy] = rotIdx(mouse.tx+ex, mouse.ty+ey); gx0 = Math.min(gx0, qx); gy0 = Math.min(gy0, qy); }
-      const tc = prism(gx0, gy0, gx0+fp, gy0+fp, d.hgt, packBuildingColor(ghost, d), terrainLiftPxAt(mouse.tx, mouse.ty));
-      ctx.font = (TH*0.62)+'px "Segoe UI Emoji",sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(d.ic, tc[0], tc[1]+1);
+      // lieu de loisirs : son art, dans l'orientation choisie (touche T)
+      if(d.leisure) ghost.dir = leisurePlaceDir;
+      const lift = terrainLiftPxAt(mouse.tx, mouse.ty);
+      const art = d.leisure && !drawFast && typeof drawBuildingArt === 'function'
+        && drawBuildingArt(ghost, gx0, gy0, fp, fp, lift, d.hgt, packBuildingColor(ghost, d));
+      if(!art){
+        const tc = prism(gx0, gy0, gx0+fp, gy0+fp, d.hgt, packBuildingColor(ghost, d), lift);
+        ctx.font = (TH*0.62)+'px "Segoe UI Emoji",sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(d.ic, tc[0], tc[1]+1);
+      }
       ctx.globalAlpha = 1;
     }
   } else if(tool==='select' && inMap(mouse.tx,mouse.ty)){
