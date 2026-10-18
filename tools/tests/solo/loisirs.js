@@ -68,7 +68,7 @@ check('démolition : visiteurs à l’arrêt', (stop2.passengers || 0) >= p1 + n
 // panneau et rendu de chaque lieu (4 rotations)
 const spots = { restaurant:[104, 104], cinema:[107, 104], museum:[110, 104], treetop:[113, 104], marina:[116, 104], spa:[119, 104],
   hotel:[122, 104], concert_hall:[104, 108], zoo:[108, 108], casino:[112, 108], stadium:[116, 108], theme_park:[121, 108], tennis:[104, 113], basketball:[107, 113], baseball:[110, 113] };
-terrain[102*N+113] = T.TREE; T_.water(116, 103, 118, 104);
+terrain[102*N+113] = T.TREE; T_.water(115, 94, 124, 104);
 const placed = [];
 LEISURE_TYPES.forEach(t => {
   const [x, y] = spots[t];
@@ -98,6 +98,17 @@ tryDo('animations', () => {
     for(const b of placed) for(const t of [0, 1.7, 9.3]) drawOneLeisureFx(b, leisureFxFrame(b), t, 0.5, 7);
     drawLeisureFx(); drawFn();
   }
+  // base nautique : flottille sur les cases d'eau du rayon, tous les types d'engins
+  const marina = placed.find(b => b.type === 'marina');
+  const wt = marinaWaterTiles(marina);
+  if(wt.length < 2) throw new Error('cases d’eau autour de la base nautique : ' + wt.length);
+  if(wt.some(t => terrain[t.y*N+t.x] !== T.WATER)) throw new Error('engin hors de l’eau');
+  const touchesShore = t => { for(let dy = -1; dy <= 1; dy++) for(let dx = -1; dx <= 1; dx++) if(terrain[(t.y+dy)*N + t.x+dx] !== T.WATER) return true; return false; };
+  if(wt.some(touchesShore)) throw new Error('engin sur une case d’eau collée à la rive');
+  for(let k = 0; k < WATER_CRAFT.length; k++) drawWaterCraft(wt[k % wt.length], k, 3.3, 7);
+  // poissons : animés au zoom proche (plus cuits dans le sol), cuits sinon
+  if(!fishAnimated()) throw new Error('poissons non animés au zoom max');
+  drawFishFx();
   cam.z = z0;
   for(const b of placed) delete b.visitors;
 });

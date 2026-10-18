@@ -210,13 +210,26 @@ function drawWaterBankFaces(rx, ry, x, y, t, snowAmount){
 // --- Poissons dans les lacs ---
 let _fishTilesCache = null, _fishTerrainRef = null, _fishTerrainVersion = -1;
 
+// Case d'eau assez loin de la rive pour un poisson ou une activité nautique : toutes les
+// cases à moins de lac.poissonDistanceMin (Chebyshev, diagonales comprises) sont de l'eau.
+// 2 = au moins une case d'eau entre elle et le bord.
+const SHORE_MIN_DIST = Math.max(1, (CFG.lac?.poissonDistanceMin ?? 2) | 0);
+function waterAwayFromShore(x, y){
+  const r = SHORE_MIN_DIST - 1;
+  for(let dy = -r; dy <= r; dy++) for(let dx = -r; dx <= r; dx++){
+    const nx = x + dx, ny = y + dy;
+    if(nx < 0 || ny < 0 || nx >= N || ny >= N || terrain[ny * N + nx] !== T.WATER) return false;
+  }
+  return true;
+}
+
 function computeFishTiles(){
   const SHORE_MAX = (CFG.lac?.poissonRayon ?? 4) | 0;
   const THRESH    = Math.round((CFG.lac?.poissonPct ?? 0.05) * 256);
   const fish = new Set();
   for(let y = 0; y < N; y++){
     for(let x = 0; x < N; x++){
-      if(terrain[y*N+x] !== T.WATER) continue;
+      if(!waterAwayFromShore(x, y)) continue;
       let near = false;
       outer: for(let dy = -SHORE_MAX; dy <= SHORE_MAX; dy++){
         for(let dx = -SHORE_MAX; dx <= SHORE_MAX; dx++){
@@ -240,6 +253,12 @@ function getFishTiles(){
   }
   return _fishTilesCache;
 }
+
+// Zoom proche : les poissons ne sont plus cuits dans le sol mais animés par
+// drawFishFx (couche du dessus). cam.z fait partie de la clé du buffer de sol, donc
+// franchir le seuil reconstruit le sol avec ou sans eux.
+const FISH_ANIM_ZOOM = +(CFG.lac?.zoomAnimationPoissons) || 1.0;
+const fishAnimated = () => (cam.z || 1) >= FISH_ANIM_ZOOM;
 
 function drawFishOnTile(rx, ry, x, y){
   const c = tileCenterIso(rx, ry, x, y);
@@ -1814,12 +1833,152 @@ function fxWindow(F, face, k, s0, s1, z0, z1, col){
   for(let i = 1; i < 4; i++) ctx.lineTo(pts[i][0], pts[i][1]);
   ctx.closePath(); ctx.fill();
 }
+// Base nautique : cases d'eau à moins de MARINA_FX_RADIUS cases de l'emprise et loin de
+// la rive (waterAwayFromShore), dans un ordre pseudo-aléatoire stable (un engin par case
+// retenue). Mis en cache par lieu.
+const MARINA_FX_RADIUS = 8;
+function marinaWaterTiles(b){
+  const key = terrainVersion + '|' + N + '|' + b.x + ',' + b.y;
+  if(b._fxWaterKey === key) return b._fxWater;
+  const R = MARINA_FX_RADIUS, out = [];
+  for(let y = b.y - R; y < b.y + b.h + R; y++) for(let x = b.x - R; x < b.x + b.w + R; x++){
+    if(!inMap(x, y) || !waterAwayFromShore(x, y)) continue; // pas collé à la rive (comme les poissons)
+    const dx = x < b.x ? b.x - x : (x >= b.x + b.w ? x - (b.x + b.w - 1) : 0);
+    const dy = y < b.y ? b.y - y : (y >= b.y + b.h ? y - (b.y + b.h - 1) : 0);
+    if(dx * dx + dy * dy > R * R) continue;
+    out.push({ x, y, h: hash(x * 7 + 3, y * 13 + 5) >>> 0 });
+  }
+  out.sort((a, c) => a.h - c.h);
+  b._fxWater = out; b._fxWaterKey = key;
+  return out;
+}
+// Un engin nautique qui tourne dans sa case d'eau (k : type, cyclique).
+const WATER_CRAFT = ['kayak', 'sail', 'pedalo', 'jetski', 'paddle', 'swim', 'kayak', 'sail'];
+function drawWaterCraft(tile, k, T, seed){
+  const kind = WATER_CRAFT[k % WATER_CRAFT.length];
+  const [rx, ry] = rotIdx(tile.x, tile.y), lift = terrainLiftPxAt(tile.x, tile.y) + 0.4;
+  const r = 0.16 + 0.16 * leisureFxRnd(seed, k + 300), dir = leisureFxRnd(seed, k + 400) < 0.5 ? 1 : -1;
+  const spd = { kayak:0.45, sail:0.18, pedalo:0.22, jetski:1.6, paddle:0.25, swim:0.3 }[kind];
+  const at = a => liftedIso(rx + 0.5 + Math.cos(a) * r, ry + 0.5 + Math.sin(a) * r, lift);
+  const a = dir * T * spd / Math.max(0.2, r) * 0.3 + leisureFxRnd(seed, k + 500) * 6.28;
+  const p = at(a), q = at(a + dir * 0.15);
+  const head = Math.atan2(q[1] - p[1], q[0] - p[0]);
+  const along = (d, off = 0) => [p[0] + Math.cos(head) * d - Math.sin(head) * off, p[1] + Math.sin(head) * d * 0.6 + Math.cos(head) * off * 0.6];
+  ctx.strokeStyle = 'rgba(235,250,255,.55)'; ctx.lineWidth = 0.7;
+  ctx.beginPath(); ctx.ellipse(p[0], p[1] + 0.6, 5.5, 2, 0, 0, Math.PI * 2); ctx.stroke();
+  const hull = (len, wid, col) => {
+    const f = along(len), bk = along(-len), l = along(0, wid), rr = along(0, -wid);
+    ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(f[0], f[1]); ctx.quadraticCurveTo(l[0], l[1], bk[0], bk[1]); ctx.quadraticCurveTo(rr[0], rr[1], f[0], f[1]); ctx.fill();
+  };
+  const col = ['#e8574a', '#f2c94c', '#3fb87a', '#3f8fd9', '#ff8c42'][k % 5];
+  switch(kind){
+    case 'kayak': {
+      hull(5, 1.6, col);
+      fxDot([p[0], p[1] - 2.2], 1.1, '#f0c9a0');
+      const pa = Math.sin(T * 6 + k) * 3;
+      artLine([p[0] - 3.5, p[1] - 1.2 + pa * 0.4], [p[0] + 3.5, p[1] - 1.2 - pa * 0.4], '#5a4030', 0.8);
+      break;
+    }
+    case 'sail': {
+      hull(5.5, 2, '#f4f1ea');
+      const sway = Math.sin(T * 1.3 + k) * 0.8;
+      artLine([p[0], p[1] - 1], [p[0] + sway, p[1] - 13], '#6a5a48', 0.9);
+      ctx.fillStyle = col === '#f2c94c' ? '#ffffff' : col;
+      ctx.beginPath(); ctx.moveTo(p[0] + sway, p[1] - 13); ctx.lineTo(p[0] + sway * 0.5 + 6 * Math.cos(head), p[1] - 2); ctx.lineTo(p[0], p[1] - 2); ctx.closePath(); ctx.fill();
+      break;
+    }
+    case 'pedalo': {
+      hull(4, 2.6, '#f4f4f4');
+      fxDot(along(1.2, 0), 1.6, col);
+      fxDot([p[0] - 1.3, p[1] - 2.4], 1, '#f0c9a0'); fxDot([p[0] + 1.3, p[1] - 2.4], 1, '#f0c9a0');
+      break;
+    }
+    case 'jetski': {
+      for(let i = 1; i <= 5; i++){
+        const w = at(a - dir * i * 0.12);
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.55 - i * 0.09).toFixed(2) + ')';
+        ctx.beginPath(); ctx.ellipse(w[0], w[1], 1.6 + i * 0.5, 0.9 + i * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      hull(3.4, 1.4, '#c8302a');
+      fxDot([p[0], p[1] - 2.4 - Math.abs(Math.sin(T * 9)) * 0.6], 1.1, '#f0c9a0');
+      break;
+    }
+    case 'paddle': {
+      hull(5, 1, '#f2e6c8');
+      fxPerson([p[0], p[1]], col, Math.abs(Math.sin(T * 2 + k)) * 0.4);
+      artLine([p[0] + 2, p[1] - 6], [p[0] + 3 + Math.sin(T * 3 + k) * 1.5, p[1] + 0.5], '#3a3f46', 0.7);
+      break;
+    }
+    case 'swim': {
+      fxDot([p[0], p[1] - 0.6], 1.2, '#f0c9a0');
+      const st = Math.sin(T * 5 + k);
+      artLine([p[0] - 1, p[1]], [p[0] - 2.5, p[1] - 1.5 - st * 1.2], '#f0c9a0', 0.8);
+      ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.beginPath(); ctx.arc(p[0] + 2 * st, p[1] + 0.4, 0.9, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+  }
+}
+
+// Poissons animés (zoom ≥ FISH_ANIM_ZOOM) : ils nagent en rond dans leur case, la queue
+// battante, et l'un d'eux saute de temps en temps (arc au-dessus de l'eau + ronds dans l'eau).
+function drawFishFx(){
+  if(drawFast || !fishAnimated()) return;
+  const T = _leisureFxT, z = cam.z || 1;
+  const x0 = cam.x - 40, x1 = cam.x + W / z + 40, y0 = cam.y - 40, y1 = cam.y + H / z + 40;
+  ctx.save();
+  for(const i of getFishTiles()){
+    const x = i % N, y = (i / N) | 0;
+    const [rx, ry] = rotIdx(x, y);
+    const c = tileCenterIso(rx, ry, x, y);
+    if(c[0] < x0 || c[0] > x1 || c[1] < y0 || c[1] > y1) continue;
+    const hs = hash(x, y);
+    for(let k = 0; k < 3; k++){
+      const k5 = k * 5;
+      const bx = c[0] + (((hs >> k5) & 15) / 15 * TW * 0.36 - TW * 0.18);
+      const by = c[1] + (((hs >> (k5 + 4)) & 7) / 7 * TH * 0.34 - TH * 0.17);
+      const sz = 2.6 + ((hs >> (k5 + 8)) & 3) * 0.45;
+      const spin = ((hs >> (k5 + 13)) & 1) ? 1 : -1;
+      const sp = 0.35 + ((hs >> (k5 + 15)) & 3) * 0.12;
+      const a = spin * T * sp + k * 2.1 + (hs & 255) / 40;
+      const px = bx + Math.cos(a) * TW * 0.09, py = by + Math.sin(a) * TH * 0.09;
+      const dir = (-Math.sin(a) * spin) >= 0 ? 1 : -1;          // sens de nage à l'écran
+      // saut : une fenêtre de ~0,9 s toutes les ~8 s, décalée par case et par poisson
+      const jp = (T / 8 + ((hs >>> (k5 + 2)) & 255) / 256 + k * 0.33) % 1;
+      if(jp < 0.11){
+        const s = jp / 0.11, hgt = Math.sin(Math.PI * s) * 9;
+        const jx = px + dir * (s - 0.5) * 10, jy = py - hgt;
+        ctx.save(); ctx.translate(jx, jy); ctx.rotate(dir * (s - 0.5) * 1.6);
+        drawFishShape(0, 0, sz, dir, 0, 0.95); ctx.restore();
+        const ring = s < 0.5 ? 1 - s * 2 : (s - 0.5) * 2;
+        ctx.strokeStyle = 'rgba(235,250,255,' + (0.5 * ring).toFixed(2) + ')'; ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.ellipse(s < 0.5 ? px - dir * 5 : px + dir * 5, py, 3 + (1 - ring) * 4, 1.4 + (1 - ring) * 1.6, 0, 0, Math.PI * 2); ctx.stroke();
+        continue;
+      }
+      drawFishShape(px, py, sz, dir, Math.sin(T * 9 + k + i) * 0.35, 0.85);
+    }
+  }
+  ctx.restore();
+}
+// Poisson vu de dessus (même dessin que drawFishOnTile) ; wag : battement de queue.
+function drawFishShape(px, py, sz, dir, wag, alpha){
+  ctx.fillStyle = 'rgba(150,205,240,' + (alpha * 0.92).toFixed(2) + ')';
+  ctx.beginPath();
+  ctx.moveTo(px - dir * sz * 0.85, py);
+  ctx.lineTo(px - dir * sz * 1.65, py - sz * (0.55 - wag));
+  ctx.lineTo(px - dir * sz * 1.65, py + sz * (0.55 + wag));
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(195,228,255,' + alpha.toFixed(2) + ')';
+  ctx.beginPath(); ctx.ellipse(px, py, sz, sz * 0.42, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(10,30,55,0.85)';
+  ctx.beginPath(); ctx.arc(px + dir * sz * 0.45, py, 0.9, 0, Math.PI * 2); ctx.fill();
+}
+
 function drawLeisureFx(){
   const now = performance.now();
   const dt = _leisureFxLast ? Math.min(0.1, (now - _leisureFxLast) / 1000) : 0;
   _leisureFxLast = now;
+  if(!paused) _leisureFxT += dt * Math.min(2, speed || 1); // horloge partagée avec drawFishFx
   if(drawFast || (cam.z || 1) < LEISURE_FX_ZOOM) return;
-  if(!paused) _leisureFxT += dt * Math.min(2, speed || 1);
   const T = _leisureFxT, z = cam.z || 1;
   const creativeFx = WORLD?.mode === 'creative';
   for(const b of buildings){
@@ -1827,7 +1986,8 @@ function drawLeisureFx(){
     if(b.dead || !BUILD[b.type]?.leisure || (!creativeFx && !(b.visitors && b.visitors.length))) continue;
     const F = leisureFxFrame(b);
     const c = F.P(F.cu, F.cv, 0);
-    if(c[0] < cam.x - 220 || c[0] > cam.x + W / z + 220 || c[1] < cam.y - 60 || c[1] > cam.y + H / z + 260) continue;
+    const m = b.type === 'marina' ? MARINA_FX_RADIUS * TW + 60 : 220; // la flottille déborde du lieu
+    if(c[0] < cam.x - m || c[0] > cam.x + W / z + m || c[1] < cam.y - m * 0.6 || c[1] > cam.y + H / z + Math.max(260, m)) continue;
     const occ = creativeFx && !leisureVisitorsOf(b) ? 1 : Math.min(1, leisureVisitorsOf(b) / Math.max(1, BUILD[b.type].leisure.capacity));
     const seed = (b.x * 73 + b.y * 151) % 997;
     ctx.save();
@@ -2146,24 +2306,11 @@ function drawOneLeisureFx(b, F, T, occ, seed){
       break;
     }
     case 'marina': {
-      // kayaks qui pagaient sur l'eau voisine
-      let wx = -1, wy = -1;
-      for(let y = b.y - 1; y <= b.y + b.h && wx < 0; y++) for(let x = b.x - 1; x <= b.x + b.w; x++){
-        if(inMap(x, y) && terrain[y * N + x] === T.WATER){ wx = x; wy = y; break; }
-      }
-      if(wx >= 0){
-        const [rx, ry] = rotIdx(wx, wy), lift = terrainLiftPxAt(wx, wy);
-        const n = Math.min(3, crowd(3));
-        for(let k = 0; k < n; k++){
-          const a = T * 0.5 + k * 2.1;
-          const p = liftedIso(rx + 0.5 + Math.cos(a) * 0.3, ry + 0.5 + Math.sin(a) * 0.3, lift + 0.5);
-          ctx.fillStyle = ['#e8574a', '#f2c94c', '#3fb87a'][k];
-          ctx.beginPath(); ctx.ellipse(p[0], p[1], 4, 1.4, Math.atan2(Math.cos(a), -Math.sin(a)) * 0.3, 0, Math.PI * 2); ctx.fill();
-          fxDot([p[0], p[1] - 2.4], 1, '#f0c9a0');
-          const pa = Math.sin(T * 6 + k) * 3;
-          ctx.strokeStyle = '#5a4030'; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(p[0] - 3, p[1] - 1 + pa * 0.3); ctx.lineTo(p[0] + 3, p[1] - 1 - pa * 0.3); ctx.stroke();
-        }
-      }
+      // flottille sur les cases d'eau à moins de MARINA_FX_RADIUS cases : kayaks, pédalos,
+      // voiliers, paddles, jet-skis et nageurs, chacun tournant dans sa case
+      const tiles = marinaWaterTiles(b);
+      const n = Math.min(tiles.length, Math.round(3 + 9 * occ));
+      for(let k = 0; k < n; k++) drawWaterCraft(tiles[k], k, T, seed);
       for(let k = 0; k < Math.min(3, crowd(3)); k++){
         const s = 0.5 + 0.5 * Math.sin(T * 0.3 + k * 2);
         fxPerson(P(u0 + wu * (0.25 + 0.5 * s), v0 + wv * 0.48, 0.7), 'hsl(' + Math.floor(360 * leisureFxRnd(seed, k)) + ',50%,50%)');
@@ -3778,7 +3925,7 @@ function draw(){
       }
     }
 
-    if(!drawFast && t===T.WATER && getFishTiles().has(i)) visibleFish.push({ rx, ry, x, y });
+    if(!drawFast && t===T.WATER && !fishAnimated() && getFishTiles().has(i)) visibleFish.push({ rx, ry, x, y });
     drawWaterBankFaces(rx, ry, x, y, t, snowAmount);
     } // fin if(groundDirty) — dessin du sol
 
@@ -4321,7 +4468,8 @@ function draw(){
   drawSmoke();
   // fusées des centres spatiaux (décollage, retour de capsule)
   drawRocketFx();
-  // lieux de loisirs animés (zoom proche, visiteurs présents)
+  // poissons animés puis lieux de loisirs animés (zoom proche, visiteurs présents)
+  drawFishFx();
   drawLeisureFx();
 
   // textes flottants

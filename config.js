@@ -651,9 +651,12 @@ const CONFIG = {
 
   lac: {
     poissonRayon:             4,    // distance max depuis la rive (Manhattan) pour placer des poissons
+    poissonDistanceMin:       2,    // distance min à la rive (cases, diagonales comprises) des poissons ET des activités
+                                    // de la base nautique : 2 = jamais sur une case d'eau qui touche le bord
     poissonPct:               0.03, // fraction de tuiles de rive éligibles qui reçoivent des poissons
     sablePct:                 0.12, // fraction des tuiles de rive en herbe remplacées par du sable
     argilePct:                0.08, // fraction des tuiles de rive en herbe remplacées par de l'argile
+    zoomAnimationPoissons:    1.0,  // zoom minimal (0.35 → 2.4) au-delà duquel les poissons nagent et sautent
   },
 
   /* ---------- SONS ----------

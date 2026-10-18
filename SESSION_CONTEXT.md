@@ -234,7 +234,11 @@ clé = type moteur), vérifiés et prélevés comme pour les ports et aéroports
   `drawLeisureFx` (07_rendering.js, couche 2D au-dessus des sprites) quand
   `cam.z >= LEISURE_FX_ZOOM` (`loisirs.zoomAnimation`) et que le lieu a des visiteurs ;
   géométrie identique à `artLeisure` (le parcours dans les arbres rejoue son hasard
-  via `artSeedOf`). Test :
+  via `artSeedOf`). Base nautique : flottille (`drawWaterCraft`, types `WATER_CRAFT`)
+  sur les cases d'eau à moins de `MARINA_FX_RADIUS` (8) cases (`marinaWaterTiles`,
+  cache `b._fxWater`). Poissons : au zoom ≥ `FISH_ANIM_ZOOM` (`lac.zoomAnimationPoissons`)
+  ils ne sont plus cuits dans le sol (`fishAnimated`, la clé du buffer inclut cam.z)
+  mais animés par `drawFishFx` (nage, queue, sauts). Test :
   `tools/tests/solo/loisirs.js`.
 
 ## Boucle de simulation
