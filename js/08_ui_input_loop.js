@@ -241,19 +241,31 @@ function adjustLeisureRadius(x, y, delta){
   const p = $('info'); if(p) p._html = null;
   if(typeof renderInfo === 'function') renderInfo();
 }
-// Détail des voyageurs d'un bus (panneau du véhicule) : déplié par un clic sur « Cargaison ».
-let busCargoOpenId = null;
+// Détail des voyageurs par joueur (panneau d'un bus ou d'un lieu de loisirs) : déplié par défaut,
+// replié par un clic sur la ligne « Voyageurs » / « Visiteurs ».
+const voyageursClosed = new Set();
 // Délégation sur pointerdown : le panneau est reconstruit en continu, un clic (down + up) pouvait se perdre.
 $('info').addEventListener('pointerdown', e => {
-  const row = e.target.closest && e.target.closest('[data-bus-cargo]');
+  const row = e.target.closest && e.target.closest('[data-voy-toggle]');
   if(!row) return;
   e.preventDefault();
-  toggleBusCargo(+row.dataset.busCargo);
+  toggleVoyageurs(row.dataset.voyToggle);
 });
-function toggleBusCargo(id){
-  busCargoOpenId = busCargoOpenId === id ? null : id;
+function toggleVoyageurs(key){
+  if(!voyageursClosed.delete(key)) voyageursClosed.add(key);
   const p = $('info'); if(p) p._html = null;
   if(typeof renderInfo === 'function') renderInfo();
+}
+// Lignes « ● joueur : n voyageurs » ; lines = [{ owner, n }].
+function voyageursLinesHtml(lines, unit){
+  return lines.map(l => '<div class="row" style="padding-left:14px"><span><span style="color:'+playerColor(l.owner)+'">●</span> '
+    + escHtml(l.owner == null ? 'Voyageurs' : playerName(l.owner))+'</span><b>'+l.n+' '+unit+(l.n > 1 ? 's' : '')+'</b></div>').join('');
+}
+// Visiteurs d'un lieu de loisirs regroupés par joueur d'origine.
+function leisureVisitorLines(b){
+  const m = new Map();
+  for(const g of (b.visitors || [])) m.set(g.o ?? null, (m.get(g.o ?? null) || 0) + g.n);
+  return [...m].filter(([, n]) => n >= 1).map(([owner, n]) => ({ owner, n })).sort((a, c) => c.n - a.n);
 }
 function homeOccupancyHtml(home){
   const key = home.x + ',' + home.y;
@@ -1796,11 +1808,10 @@ function renderInfo(){
       h += '<div class="status">'+stateLabel+'</div>';
       h += ownerRowHtml(veh.garageRef?.owner ?? null);
       if(isBusVeh && veh.cargo > 0){
-        // clic sur « Cargaison » : une ligne par joueur ayant au moins 1 voyageur dans le bus
-        const open = busCargoOpenId === veh.id;
-        h += '<div class="row" data-bus-cargo="'+veh.id+'" style="cursor:pointer" title="Voir le détail des voyageurs"><span>Voyageurs '+(open ? '▾' : '▸')+'</span><b>'+cargoStr+'</b></div>';
-        if(open) for(const l of busCargoLines(veh))
-          h += '<div class="row" style="padding-left:14px"><span><span style="color:'+playerColor(l.owner)+'">●</span> '+escHtml(l.owner == null ? 'Voyageurs' : playerName(l.owner))+'</span><b>'+l.n+' voyageur'+(l.n > 1 ? 's' : '')+'</b></div>';
+        // clic sur « Voyageurs » : une ligne par joueur ayant au moins 1 voyageur dans le bus
+        const open = !voyageursClosed.has('bus'+veh.id);
+        h += '<div class="row" data-voy-toggle="bus'+veh.id+'" style="cursor:pointer" title="Voir le détail des voyageurs"><span>Voyageurs '+(open ? '▾' : '▸')+'</span><b>'+cargoStr+'</b></div>';
+        if(open) h += voyageursLinesHtml(busCargoLines(veh), 'voyageur');
       } else h += '<div class="row"><span>'+(isBusVeh ? 'Voyageurs' : 'Cargaison')+'</span><b>'+cargoStr+'</b></div>';
       if(passengerStr) h += '<div class="row"><span>Voyageurs</span><b style="color:#c8e040">'+passengerStr+'</b></div>';
       h += '<div class="row"><span>Source</span><b style="color:#4dd9ff">'+srcNameDisplay+'</b></div>';
@@ -2059,8 +2070,10 @@ function renderInfo(){
   }
   if(d.leisure){
     const L = d.leisure, cap = leisureCapacityOf(b), inside = leisureVisitorsOf(b);
-    h += '<div class="row"><span>Visiteurs</span><b style="color:#ffc2ea">🎟️ '+inside+' / '+cap
+    const vOpen = inside > 0 && !voyageursClosed.has('lieu'+b.x+','+b.y);
+    h += '<div class="row"'+(inside > 0 ? ' data-voy-toggle="lieu'+b.x+','+b.y+'" style="cursor:pointer" title="Voir le détail des visiteurs par joueur"' : '')+'><span>Visiteurs'+(inside > 0 ? ' '+(vOpen ? '▾' : '▸') : '')+'</span><b style="color:#ffc2ea">🎟️ '+inside+' / '+cap
        + (cap < L.capacity ? ' <span style="opacity:.7">(max '+L.capacity+')</span>' : '')+'</b></div>';
+    if(vOpen) h += voyageursLinesHtml(leisureVisitorLines(b), 'visiteur');
     if(cap < L.capacity)
       h += '<div class="warn">⚠️ Personnel incomplet : la capacité baisse au prorata des employés en poste.</div>';
     h += '<div class="row"><span>Entrée</span><b style="color:#ffe9a0">'+L.fee+' $ / visiteur</b></div>';

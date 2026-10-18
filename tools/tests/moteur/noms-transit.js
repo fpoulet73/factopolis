@@ -49,11 +49,22 @@ v.cargo = 0; check('bus vide : aucune ligne', busCargoLines(v).length === 0);
 // panneau du bus : « Voyageurs », un clic (pointerdown) déplie une ligne par joueur
 v.cargo = 5; v.cargoOwners = { 1: 3, 2: 2 }; v.state = 'to_dest';
 selectedVehicle = v; selected = null; $('info')._html = null; renderInfo();
-const row = $('info').querySelector('[data-bus-cargo]');
+const row = $('info').querySelector('[data-voy-toggle]');
 check('ligne Voyageurs', !!row && /Voyageurs/.test(row.textContent) && !/Cargaison/.test($('info').textContent), row && row.textContent);
+check('détail déplié par défaut', $('info').querySelectorAll('.row[style*="padding-left"]').length === 2, $('info').innerHTML.length);
 row?.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, cancelable:true }));
-check('détail déplié', $('info').querySelectorAll('.row[style*="padding-left"]').length === 2, $('info').innerHTML.length);
+check('détail replié au clic', $('info').querySelectorAll('.row[style*="padding-left"]').length === 0);
+row?.dispatchEvent(new PointerEvent('pointerdown', { bubbles:true, cancelable:true }));
 selectedVehicle = null;
+// panneau d'un lieu de loisirs : visiteurs par joueur d'origine
+const lieu = T_.build('stadium', 100, 60);
+if(lieu){
+  lieu.visitors = [{ t: gtime, n: 3, o: 1 }, { t: gtime, n: 2, o: 2 }, { t: gtime, n: 1, o: 1 }];
+  selected = lieu; selectedVehicle = null; $('info')._html = null; renderInfo();
+  const vl = $('info').querySelectorAll('.row[style*="padding-left"]');
+  check('détail lieu : 2 joueurs', vl.length === 2 && /4 visiteurs/.test(vl[0].textContent), [...vl].map(x => x.textContent));
+  selected = null;
+}
 
 // piétons : contournent les bâtiments (jamais de trace à l'intérieur d'un bâtiment tiers)
 T_.flatWorld(false);
