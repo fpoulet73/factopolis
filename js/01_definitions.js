@@ -943,12 +943,15 @@ const LEISURE_DEFS = [
   ['museum',       'musee',           'Musée',                 '🏛️', '#d8cfb8', 24, { cout:5000,  taille:2, capacite:50,  duree:2,   tarif:30,  ouvriers:3,  entretien:2 },  'Colonnade et collections : une visite culturelle.'],
   ['treetop',      'accrobranche',    'Parcours dans les arbres', '🧗', '#5a8a3a', 26, { cout:2500,  taille:2, capacite:30,  duree:1.5, tarif:45,  ouvriers:2,  entretien:1, pres:'arbres' }, 'Tyroliennes et ponts de singe : à poser près d’arbres.'],
   ['marina',       'baseNautique',    'Base nautique',         '🛶', '#3a8fb8', 14, { cout:4000,  taille:2, capacite:40,  duree:2,   tarif:55,  ouvriers:3,  entretien:2, pres:'eau' }, 'Kayaks et pédalos : à poser au bord de l’eau.'],
-  ['spa',          'spa',             'Thermes & spa',         '♨️', '#7fb8b0', 18, { cout:9000,  taille:2, capacite:40,  duree:3,   tarif:120, ouvriers:4,  entretien:3 },  'Bassins chauds et massages : une cure de détente.'],
+  ['tennis',       'tennis',          'Court de tennis',       '🎾', '#3f6fb8', 12, { cout:2000,  taille:2, capacite:24,  duree:1,   tarif:30,  ouvriers:1,  entretien:1 },  'Simple ou double : échanges du fond de court.'],
+  ['basketball',   'basket',          'Terrain de basket',     '🏀', '#d9783a', 12, { cout:2500,  taille:2, capacite:40,  duree:1,   tarif:20,  ouvriers:2,  entretien:1 },  'Playground en plein air : dribbles et paniers à trois points.'],
+  ['spa',          'spa',           'Thermes & spa',         '♨️', '#7fb8b0', 18, { cout:9000,  taille:2, capacite:40,  duree:3,   tarif:120, ouvriers:4,  entretien:3 },  'Bassins chauds et massages : une cure de détente.'],
   ['hotel',        'hotel',           'Hôtel',                 '🏨', '#c9b48a', 40, { cout:8000,  taille:2, capacite:80,  duree:12,  tarif:180, ouvriers:6,  entretien:4 },  'Séjour sur place : long et bien payé.'],
   ['concert_hall', 'salleConcert',    'Salle de concert',      '🎸', '#6a3a8a', 28, { cout:12000, taille:3, capacite:150, duree:2,   tarif:70,  ouvriers:6,  entretien:5 },  'Scène, lumières et foule.'],
   ['zoo',          'zoo',             'Zoo',                   '🦒', '#7a9a4a', 18, { cout:15000, taille:3, capacite:120, duree:3,   tarif:60,  ouvriers:8,  entretien:6 },  'Enclos, volière et bassin des otaries.'],
   ['casino',       'casino',          'Casino',                '🎰', '#a8302a', 30, { cout:20000, taille:3, capacite:100, duree:2.5, tarif:200, ouvriers:8,  entretien:8 },  'Néons et machines à sous : le plus lucratif par visiteur.'],
-  ['stadium',      'stade',           'Stade de foot',         '🏟️', '#9aa3ad', 30, { cout:30000, taille:4, capacite:400, duree:1.5, tarif:50,  ouvriers:10, entretien:10 }, 'Un match : énorme capacité, visite courte.'],
+  ['baseball',     'baseball',        'Terrain de baseball',   '⚾', '#5f9a4a', 24, { cout:18000, taille:3, capacite:200, duree:1.5, tarif:40,  ouvriers:6,  entretien:6 },  'Lanceur, frappeur et coups de circuit sous les projecteurs.'],
+  ['stadium',      'stade',          'Stade de foot',         '🏟️', '#9aa3ad', 30, { cout:30000, taille:4, capacite:400, duree:1.5, tarif:50,  ouvriers:10, entretien:10 }, 'Un match : énorme capacité, visite courte.'],
   ['theme_park',   'parcAttractions', 'Parc d’attractions',    '🎢', '#d94a6a', 44, { cout:40000, taille:4, capacite:300, duree:4,   tarif:110, ouvriers:14, entretien:12 }, 'Montagnes russes et grande roue : plusieurs jours de manèges.'],
 ];
 // « 1 jour », « 1,5 jour », « 2 jours »

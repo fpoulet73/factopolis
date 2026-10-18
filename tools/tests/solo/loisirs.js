@@ -9,7 +9,7 @@ const tryDo = (label, fn) => { try { fn(); } catch(e){ errs.push(label + ': ' + 
 for(const t of T_.line(88, 99, 112, 99)) road[t.y*N+t.x] = 1;
 markGroundDirty();
 
-check('12 lieux', LEISURE_TYPES.length === 12, LEISURE_TYPES);
+check('15 lieux', LEISURE_TYPES.length === 15, LEISURE_TYPES);
 check('menu Loisirs', !!document.querySelector('[data-leisure-tool="stadium"]'));
 // contraintes de site
 check('accrobranche sans arbre refusé', !canPlace('treetop', 120, 120).ok);
@@ -67,7 +67,7 @@ check('démolition : visiteurs à l’arrêt', (stop2.passengers || 0) >= p1 + n
 
 // panneau et rendu de chaque lieu (4 rotations)
 const spots = { restaurant:[104, 104], cinema:[107, 104], museum:[110, 104], treetop:[113, 104], marina:[116, 104], spa:[119, 104],
-  hotel:[122, 104], concert_hall:[104, 108], zoo:[108, 108], casino:[112, 108], stadium:[116, 108], theme_park:[121, 108] };
+  hotel:[122, 104], concert_hall:[104, 108], zoo:[108, 108], casino:[112, 108], stadium:[116, 108], theme_park:[121, 108], tennis:[104, 113], basketball:[107, 113], baseball:[110, 113] };
 terrain[102*N+113] = T.TREE; T_.water(116, 103, 118, 104);
 const placed = [];
 LEISURE_TYPES.forEach(t => {

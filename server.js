@@ -507,7 +507,7 @@ const ALLOWED_BUILD_TYPES = new Set([
   'jeweler', 'quantum_lab',
   // lieux de loisirs
   'restaurant', 'cinema', 'museum', 'treetop', 'marina', 'spa', 'hotel', 'concert_hall', 'zoo',
-  'casino', 'stadium', 'theme_park',
+  'casino', 'stadium', 'theme_park', 'tennis', 'basketball', 'baseball',
 ]);
 const ALLOWED_VEHICLE_TYPES = new Set([
   // types achetables actuels

@@ -1280,10 +1280,85 @@ function artBulbs(p, q, n, col){
     ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 0.9, 0, Math.PI * 2); ctx.fill();
   }
 }
+// Géométrie des terrains de sport (emprise tournée), partagée avec les animations (07_rendering.js).
+const tennisCourtRect = (u0, v0, u1, v1) => [u0 + 0.06, v0 + 0.06, u1 - 0.06, v1 - 0.06];
+// terrain de basket : gradins sur la bande du fond (côté v0), panneaux aux deux bouts (axe u)
+const basketCourtGeom = (u0, v0, u1, v1) => ({ cu0: u0 + 0.12, cv0: v0 + 0.42, cu1: u1 - 0.12, cv1: v1 - 0.14 });
+// baseball : marbre au coin du fond, losange vers l'avant, clôture du champ extérieur en arc
+function baseballGeom(u0, v0, u1, v1){
+  const S = Math.max(u1 - u0, v1 - v0), hu = u0 + 0.55, hv = v0 + 0.55;
+  return { hu, hv, d: 0.3 * S, R: Math.min(u1 - hu, v1 - hv) - 0.12 };
+}
 function artLeisure(b, u0, v0, u1, v1, rng, d){
   const wu = u1 - u0, wv = v1 - v0, cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
   const S = Math.max(wu, wv);
   switch(b.type){
+    case 'tennis': {
+      // court en résine bleue, grillage, filet
+      artGround(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, '#5f8f5a');
+      const c = artTennisCourt(...tennisCourtRect(u0, v0, u1, v1), '#3f6fb8');
+      artTennisFence(c, false);
+      artTennisNet(c);
+      artTennisFence(c, true);
+      return artP(cu, cv, 14);
+    }
+    case 'basketball': {
+      // playground : gradins au fond, parquet orange tracé, deux panneaux
+      artGround(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, '#6a6e74');
+      for(let k = 0; k < 3; k++)
+        artBox(u0 + 0.15, v0 + 0.08 + k * 0.09, u1 - 0.15, v0 + 0.17 + k * 0.09, 0, 6 - k * 1.8, shade('#c8402f', k * 0.06));
+      const g = basketCourtGeom(u0, v0, u1, v1), um = (g.cu0 + g.cu1) / 2, vm = (g.cv0 + g.cv1) / 2;
+      artGround(g.cu0, g.cv0, g.cu1, g.cv1, '#d9783a', 0.7);
+      for(const [k0, k1] of [[g.cu0, g.cu0 + 0.32], [g.cu1 - 0.32, g.cu1]])
+        artGround(k0, vm - 0.14, k1, vm + 0.14, '#3f6fb8', 0.75);
+      const Lc = 'rgba(255,255,255,.92)', z = 0.8;
+      artLine(artP(g.cu0, g.cv0, z), artP(g.cu1, g.cv0, z), Lc, 0.8); artLine(artP(g.cu1, g.cv0, z), artP(g.cu1, g.cv1, z), Lc, 0.8);
+      artLine(artP(g.cu1, g.cv1, z), artP(g.cu0, g.cv1, z), Lc, 0.8); artLine(artP(g.cu0, g.cv1, z), artP(g.cu0, g.cv0, z), Lc, 0.8);
+      artLine(artP(um, g.cv0, z), artP(um, g.cv1, z), Lc, 0.8);
+      const mc = artP(um, vm, z);
+      ctx.strokeStyle = Lc; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.ellipse(mc[0], mc[1], 0.22 * TW2 * Math.SQRT2, 0.22 * TH2 * Math.SQRT2, 0, 0, Math.PI * 2); ctx.stroke();
+      for(const [hu, dir] of [[g.cu0 + 0.06, 1], [g.cu1 - 0.06, -1]]){
+        artLine(artP(hu - dir * 0.06, vm, 0), artP(hu - dir * 0.06, vm, 15), '#3a3f46', 1.6);
+        artPoly([artP(hu, vm - 0.12, 11), artP(hu, vm + 0.12, 11), artP(hu, vm + 0.12, 17), artP(hu, vm - 0.12, 17)], '#f4f4f4', 'rgba(0,0,0,.35)', 0.6);
+        const r = artP(hu + dir * 0.08, vm, 12);
+        ctx.strokeStyle = '#e8572a'; ctx.lineWidth = 1.1;
+        ctx.beginPath(); ctx.ellipse(r[0], r[1], 3, 1.4, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+      return artP(cu, cv, 18);
+    }
+    case 'baseball': {
+      // gradins derrière le marbre, losange en terre battue, clôture du champ extérieur, projecteurs
+      artLawn(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, rng, true);
+      const g = baseballGeom(u0, v0, u1, v1), { hu, hv, d: bd, R } = g;
+      for(let k = 0; k < 3; k++){
+        artBox(u0 + 0.05 + k * 0.08, v0 + 0.05, u0 + 0.13 + k * 0.08, v0 + 1.5, 0, 10 - k * 3, shade('#3f6fb8', k * 0.06));
+        artBox(u0 + 0.3, v0 + 0.05 + k * 0.08, u0 + 1.5, v0 + 0.13 + k * 0.08, 0, 10 - k * 3, shade('#3f6fb8', k * 0.06));
+      }
+      artPoly([artP(hu - 0.1, hv - 0.1, 0.8), artP(hu + bd + 0.14, hv - 0.04, 0.8), artP(hu + bd + 0.14, hv + bd + 0.14, 0.8), artP(hu - 0.04, hv + bd + 0.14, 0.8)], '#c49a6a');
+      artPoly([artP(hu + 0.13, hv + 0.13, 0.85), artP(hu + bd - 0.13, hv + 0.13, 0.85), artP(hu + bd - 0.13, hv + bd - 0.13, 0.85), artP(hu + 0.13, hv + bd - 0.13, 0.85)], '#5a9a4a');
+      const Lc = 'rgba(255,255,255,.9)';
+      artLine(artP(hu, hv, 0.9), artP(u1 - 0.1, hv, 0.9), Lc, 0.8);
+      artLine(artP(hu, hv, 0.9), artP(hu, v1 - 0.1, 0.9), Lc, 0.8);
+      const mound = artP(hu + bd / 2, hv + bd / 2, 0.9);
+      ctx.fillStyle = '#b8895a'; ctx.beginPath(); ctx.ellipse(mound[0], mound[1], 4, 2, 0, 0, Math.PI * 2); ctx.fill();
+      for(const [bu, bv] of [[hu, hv], [hu + bd, hv], [hu + bd, hv + bd], [hu, hv + bd]]){
+        const p = artP(bu, bv, 1); ctx.fillStyle = '#ffffff'; ctx.fillRect(p[0] - 1.6, p[1] - 0.8, 3.2, 1.6);
+      }
+      // clôture du champ extérieur (arc de rayon R autour du marbre)
+      const n = 10;
+      for(let i = 0; i < n; i++){
+        const a = Math.PI / 2 * i / n, e = Math.PI / 2 * (i + 1) / n;
+        const p0 = [hu + R * Math.cos(a), hv + R * Math.sin(a)], p1 = [hu + R * Math.cos(e), hv + R * Math.sin(e)];
+        artPoly([artP(p0[0], p0[1], 0.6), artP(p1[0], p1[1], 0.6), artP(p1[0], p1[1], 3.5), artP(p0[0], p0[1], 3.5)], '#2f6a3a');
+        artLine(artP(p0[0], p0[1], 3.5), artP(p1[0], p1[1], 3.5), '#f2c94c', 0.8);
+      }
+      for(const [pu, pv] of [[u0 + 0.12, v1 - 0.18], [u1 - 0.18, v0 + 0.12], [u1 - 0.14, v1 - 0.14]]){
+        artLine(artP(pu, pv, 0), artP(pu, pv, 40), '#5a6068', 1.5);
+        const p = artP(pu, pv, 40); ctx.fillStyle = '#fff6c8'; ctx.fillRect(p[0] - 4, p[1] - 3, 8, 4);
+      }
+      return artP(cu, cv, 30);
+    }
     case 'restaurant': {
       // salle à toit rouge, auvent rayé, terrasse et parasols
       artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#c9b99a');

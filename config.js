@@ -114,6 +114,9 @@ const CONFIG = {
       museum:         { concrete: 8, steel_beam: 2, window: 6, glass: 4, paint: 2 },
       treetop:        { wood: 12, rope: 10, nails: 6 },                                        // parcours dans les arbres
       marina:         { wood: 8, rope: 8, plastic: 6, paint: 2 },                              // base nautique
+      tennis:         { concrete: 4, paint: 2, rope: 2, steel_beam: 1 },                    // court de tennis
+      basketball:     { concrete: 6, paint: 2, steel_beam: 2, steel_plate: 1 },             // terrain de basket
+      baseball:       { concrete: 12, steel_beam: 8, steel_plate: 4, copper_wire: 4, paint: 3 },
       spa:            { concrete: 6, steel_plate: 3, window: 4, copper_wire: 2, furniture: 2 },
       hotel:          { concrete: 12, steel_beam: 6, window: 10, furniture: 8, appliances: 2 },
       concert_hall:   { concrete: 12, steel_beam: 8, steel_plate: 4, copper_wire: 6, circuit: 3 },
@@ -170,6 +173,9 @@ const CONFIG = {
       musee:           { cout: 5000,  taille: 2, capacite: 50,  duree: 2,   tarif: 30,  ouvriers: 3,  entretien: 2 },
       accrobranche:    { cout: 2500,  taille: 2, capacite: 30,  duree: 1.5, tarif: 45,  ouvriers: 2,  entretien: 1, pres: 'arbres' },
       baseNautique:    { cout: 4000,  taille: 2, capacite: 40,  duree: 2,   tarif: 55,  ouvriers: 3,  entretien: 2, pres: 'eau' },
+      tennis:          { cout: 2000,  taille: 2, capacite: 24,  duree: 1,   tarif: 30,  ouvriers: 1,  entretien: 1 },
+      basket:          { cout: 2500,  taille: 2, capacite: 40,  duree: 1,   tarif: 20,  ouvriers: 2,  entretien: 1 },
+      baseball:        { cout: 18000, taille: 3, capacite: 200, duree: 1.5, tarif: 40,  ouvriers: 6,  entretien: 6 },
       spa:             { cout: 9000,  taille: 2, capacite: 40,  duree: 3,   tarif: 120, ouvriers: 4,  entretien: 3 },
       hotel:           { cout: 8000,  taille: 2, capacite: 80,  duree: 12,  tarif: 180, ouvriers: 6,  entretien: 4 },
       salleConcert:    { cout: 12000, taille: 3, capacite: 150, duree: 2,   tarif: 70,  ouvriers: 6,  entretien: 5 },

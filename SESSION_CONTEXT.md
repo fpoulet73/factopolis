@@ -206,10 +206,12 @@ L'art (`artSpaceCenter`) montre la fusée sur le pas de tir pendant l'assemblage
 
 ### Lieux de loisirs
 
-12 types (`LEISURE_TYPES`, définis par `LEISURE_DEFS` dans 01_definitions.js,
+15 types (`LEISURE_TYPES`, définis par `LEISURE_DEFS` dans 01_definitions.js,
 réglages `config.js` `loisirs.lieux`) : restaurant, cinema, museum, treetop
 (parcours dans les arbres, arbre à 2 cases), marina (base nautique, bord de l'eau),
-spa, hotel, concert_hall, zoo, casino, stadium, theme_park. `BUILD[t].leisure` =
+tennis, basketball, spa, hotel, concert_hall, zoo, casino, baseball, stadium,
+theme_park. Géométrie des terrains de sport partagée art/animations :
+`tennisCourtRect`, `basketCourtGeom`, `baseballGeom` (07_rendering_art.js). `BUILD[t].leisure` =
 `{ capacity, days, fee, near }` (`days` : jours de jeu sur place) ; emprise carrée `size` + `noMerge` (ouvriers et
 entretien comptés une fois). Menu 🎡 Loisirs de la barre d'outils (ancre
 `restaurant` dans `TOOL_ORDER`). Contrainte de site : `leisureNearError` (04).

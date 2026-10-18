@@ -1836,7 +1836,112 @@ function drawOneLeisureFx(b, F, T, occ, seed){
   const { u0, v0, u1, v1, wu, wv, cu, cv, P } = F;
   const S = Math.max(wu, wv);
   const crowd = n => Math.max(1, Math.round(n * (0.3 + 0.7 * occ)));
+  const lerp = (a, c, s) => a + (c - a) * s;
   switch(b.type){
+    case 'tennis': {
+      // échanges : la balle file d'un fond de court à l'autre, les joueurs se replacent
+      const [a0, b0, a1, b1] = tennisCourtRect(u0, v0, u1, v1);
+      const L = a1 - a0, Wd = b1 - b0, aa0 = L * 0.1, aa1 = L * 0.9, bb0 = Wd * 0.14, bb1 = Wd * 0.86, cen = (bb0 + bb1) / 2;
+      const Q = (a, c, zz) => P(a0 + a, b0 + c, zz);
+      const per = 1.4, k = Math.floor(T / per), s = (T / per) % 1;
+      const tb = i => bb0 + 0.08 + (bb1 - bb0 - 0.16) * leisureFxRnd(seed, i);
+      const sideA = p => p ? aa1 + 0.04 : aa0 - 0.04;
+      // coup k : du côté (k % 2) vers l'autre ; le joueur qui reçoit court vers tb(k)
+      const tgt = (p, i) => (1 - (i % 2)) === p ? tb(i) : cen;
+      const doubles = occ > 0.5;
+      const figs = [];
+      for(let p = 0; p < 2; p++){
+        const bpos = lerp(tgt(p, k - 1), tgt(p, k), Math.min(1, s * 1.4));
+        figs.push({ a: sideA(p), c: bpos, col: p ? '#f4f4f4' : '#e8574a' });
+        if(doubles) figs.push({ a: p ? aa1 - L * 0.22 : aa0 + L * 0.22, c: bb0 + bb1 - bpos, col: p ? '#f4f4f4' : '#e8574a' });
+      }
+      const from = k % 2, ba = lerp(sideA(from), sideA(1 - from), s), bc = lerp(tb(k - 1), tb(k), s);
+      figs.push({ a: ba, c: bc, ball: true, zz: 2 + 9 * Math.sin(Math.PI * s) });
+      figs.sort((x, y) => (x.a + x.c) - (y.a + y.c));
+      for(const f of figs){
+        if(f.ball){ fxDot(Q(f.a, f.c, f.zz), 1, '#d8f23a'); continue; }
+        fxPerson(Q(f.a, f.c, 0.8), f.col, Math.abs(Math.sin(T * 8 + f.a)) * 0.5);
+      }
+      break;
+    }
+    case 'basketball': {
+      // 5 contre 5 : le porteur dribble vers le panier puis tire
+      const g = basketCourtGeom(u0, v0, u1, v1), vm = (g.cv0 + g.cv1) / 2;
+      const per = 5, c = Math.floor(T / per), s = (T / per) % 1, team = c % 2;
+      const hoopU = team ? g.cu0 + 0.14 : g.cu1 - 0.14;
+      const toward = (fu, dir) => g.cu0 + (g.cu1 - g.cu0) * fu + dir * 0.25 * (0.5 + 0.5 * s);
+      const figs = [];
+      for(let i = 0; i < 10; i++){
+        const t2 = i < 5 ? 0 : 1;
+        const fu = 0.2 + 0.6 * leisureFxRnd(seed, i), fv = 0.12 + 0.76 * leisureFxRnd(seed, i + 30);
+        const dir = team ? -1 : 1;
+        const u = Math.min(g.cu1 - 0.05, Math.max(g.cu0 + 0.05, toward(fu, dir) + 0.04 * Math.sin(T * 2 + i)));
+        const v = g.cv0 + (g.cv1 - g.cv0) * fv + 0.04 * Math.cos(T * 1.7 + i * 2);
+        figs.push({ u, v, col: t2 ? '#2f5fb8' : '#f4f4f4', i });
+      }
+      const h = figs[team * 5 + (c % 5)];
+      const hs = Math.min(1, s / 0.75);
+      h.u = lerp(g.cu0 + (g.cu1 - g.cu0) * 0.5, hoopU + (team ? 0.3 : -0.3), hs); h.v = lerp(vm + 0.15, vm, hs);
+      figs.sort((x, y) => (x.u + x.v) - (y.u + y.v));
+      for(const f of figs) fxPerson(P(f.u, f.v, 0.8), f.col, f === h && s > 0.75 ? 2 : Math.abs(Math.sin(T * 9 + f.i)) * 0.6);
+      if(s < 0.75) fxDot(P(h.u + 0.04, h.v + 0.03, 1 + Math.abs(Math.sin(T * 9)) * 4), 1.2, '#e8782a');
+      else {
+        const k2 = (s - 0.75) / 0.25;
+        fxDot(P(lerp(h.u, hoopU + (team ? -0.06 : 0.06), k2), lerp(h.v, vm, k2), 6 + 14 * Math.sin(Math.PI * k2 * 0.8) + 6 * k2), 1.2, '#e8782a');
+      }
+      break;
+    }
+    case 'baseball': {
+      // lancer, frappe, chandelle vers le champ extérieur, coureur sur les bases, flashs en tribune
+      const { hu, hv, d: bd, R } = baseballGeom(u0, v0, u1, v1);
+      const per = 4, c = Math.floor(T / per), s = (T / per) % 1;
+      const hit = leisureFxRnd(seed, c) > 0.35;
+      const ang = 0.15 + 1.25 * leisureFxRnd(seed, c + 100), dist = R * (0.55 + 0.55 * leisureFxRnd(seed, c + 200));
+      const land = [hu + dist * Math.cos(ang), hv + dist * Math.sin(ang)];
+      const outs = [0.35, 0.78, 1.22].map(a => [hu + R * 0.78 * Math.cos(a), hv + R * 0.78 * Math.sin(a)]);
+      let nearest = 0, nd = Infinity;
+      outs.forEach((o, i) => { const dd = Math.hypot(o[0] - land[0], o[1] - land[1]); if(dd < nd){ nd = dd; nearest = i; } });
+      const figs = [
+        { u: hu + bd / 2, v: hv + bd / 2, col: '#f4f4f4' },                     // lanceur
+        { u: hu - 0.09, v: hv - 0.09, col: '#3a3f46' },                         // receveur
+        { u: hu + bd - 0.04, v: hv + 0.14, col: '#f4f4f4' }, { u: hu + bd + 0.06, v: hv + bd * 0.62, col: '#f4f4f4' },
+        { u: hu + bd * 0.62, v: hv + bd + 0.06, col: '#f4f4f4' }, { u: hu + 0.14, v: hv + bd - 0.04, col: '#f4f4f4' },
+      ];
+      outs.forEach((o, i) => {
+        const run = hit && i === nearest && s > 0.3 ? Math.min(1, (s - 0.3) / 0.5) * Math.min(1, R * 0.35 / Math.max(0.01, nd)) : 0;
+        figs.push({ u: lerp(o[0], land[0], run), v: lerp(o[1], land[1], run), col: '#f4f4f4' });
+      });
+      figs.push({ u: hu + 0.07, v: hv - 0.06, col: '#c8402f', bat: true });       // frappeur
+      if(occ > 0.3){
+        const bases = [[hu, hv], [hu + bd, hv], [hu + bd, hv + bd], [hu, hv + bd]];
+        const rs = (T / 12) % 1, seg = Math.floor(rs * 4), f = rs * 4 - seg;
+        const A = bases[seg], B = bases[(seg + 1) % 4];
+        figs.push({ u: lerp(A[0], B[0], f), v: lerp(A[1], B[1], f), col: '#c8402f', run: true });
+      }
+      figs.sort((x, y) => (x.u + x.v) - (y.u + y.v));
+      for(const f of figs){
+        fxPerson(P(f.u, f.v, 0.9), f.col, f.run ? Math.abs(Math.sin(T * 10)) * 0.8 : 0);
+        if(f.bat){
+          const p = P(f.u, f.v, 5), sw = s > 0.22 && s < 0.32 ? (s - 0.22) / 0.1 * Math.PI : 0;
+          artLine(p, [p[0] + Math.cos(-2.2 + sw) * 5, p[1] + Math.sin(-2.2 + sw) * 5], '#8a5a20', 1.1);
+        }
+      }
+      if(s < 0.25){
+        const k2 = s / 0.25;
+        fxDot(P(lerp(hu + bd / 2, hu + 0.03, k2), lerp(hv + bd / 2, hv + 0.03, k2), 6 - 2 * k2), 1, '#ffffff');
+      } else if(hit && s < 0.8){
+        const k2 = (s - 0.27) / 0.53;
+        if(k2 > 0) fxDot(P(lerp(hu, land[0], k2), lerp(hv, land[1], k2), 4 + 40 * Math.sin(Math.PI * k2)), 1.1, '#ffffff');
+      }
+      for(let k = 0; k < crowd(6); k++){
+        if(leisureFxRnd(seed + Math.floor(T * 4), k) < 0.75) continue;
+        const along = k % 2, t2 = leisureFxRnd(seed, k + 40);
+        const u = along ? u0 + 0.3 + 1.1 * t2 : u0 + 0.06 + 0.2 * leisureFxRnd(seed, k + 60);
+        const v = along ? v0 + 0.06 + 0.2 * leisureFxRnd(seed, k + 60) : v0 + 0.1 + 1.3 * t2;
+        fxDot(P(u, v, 5 + 5 * leisureFxRnd(seed, k + 80)), 1.5, 'rgba(255,255,240,.95)');
+      }
+      break;
+    }
     case 'stadium': {
       // deux équipes de 6 qui suivent le ballon, flashs des photographes en tribune
       const t = 0.18 * S / 2, pu0 = u0 + t + 0.32, pv0 = v0 + t + 0.32, pu1 = u1 - t - 0.3, pv1 = v1 - t - 0.3;
