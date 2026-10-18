@@ -983,6 +983,45 @@ const leisureRadiusOf = b => {
   return Math.max(LEISURE_RADIUS_MIN, Math.min(LEISURE_RADIUS_MAX, Number.isFinite(r) && r > 0 ? r : base));
 };
 
+// ---------- magasins ----------
+// Un magasin vierge (`shop`) se spécialise une fois (applyPlantUpgrade, 03) en l'un des types
+// ci-dessous. Il se ravitaille auprès des entrepôts proches (camions) et vend aux logements de
+// son rayon, au profit de son propriétaire (tickShops, 06_simulation.js). Réglages : config.js `magasins`.
+const SHOP_CFG = CFG.magasins || {};
+const SHOP_SALES_PER_SEC = Math.max(0.1, +SHOP_CFG.ventesParSeconde || 2);
+const SHOP_CHAIN_PER_SEC = Math.max(0, +SHOP_CFG.chaineParSeconde || 4);
+// [type moteur, clé config, nom, icône, couleur, hauteur, défauts, description]
+const SHOP_DEFS = [
+  ['shop_food',     'epicerie',    'Épicerie',            '🛒', '#c9763a', 16, { cout:800,  rayon:14, capacite:60, marge:1.5, entretien:1, ressources:['fish_fillet','bread','fish_oil'] },            'Produits alimentaires pour les habitants du quartier.'],
+  ['shop_supplies', 'fournitures', 'Magasin de fournitures', '🛍️', '#a86fc0', 16, { cout:1200, rayon:14, capacite:40, marge:1.5, entretien:1, ressources:['clothes','furniture','appliances','jewelry'] }, 'Vêtements, meubles, électroménager et bijoux.'],
+  ['shop_tools',    'outils',      'Magasin d’outils',    '🔧', '#d8a43a', 16, { cout:1000, rayon:14, capacite:80, marge:1.5, entretien:1, ressources:['goods'] },                                    'Outils de construction pour agrandir les logements.'],
+  ['shop_diy',      'bricolage',   'Magasin de bricolage', '🔨', '#4a8f9a', 16, { cout:1000, rayon:14, capacite:60, marge:1.5, entretien:1, ressources:['window','concrete','steel_beam'] },          'Vitres, béton et poutrelles pour les gros travaux.'],
+];
+const SHOP_TYPES = [];
+const SHOP_UPGRADES = {};
+BUILD.shop = { n:'Magasin', ic:'🏪', hk:'', cost: SHOP_CFG.cout ?? 500, col:'#8a7a5a', hgt:14, shopBlank:true,
+  desc:'Magasin vierge. À spécialiser (alimentation, fournitures, outils, bricolage) : il se ravitaille dans les entrepôts proches et vend aux logements de son rayon.' };
+for(const [type, key, n, ic, col, hgt, def, note] of SHOP_DEFS){
+  const c = { ...def, ...(SHOP_CFG[key] || {}) };
+  const res = (Array.isArray(c.ressources) ? c.ressources : def.ressources).filter(r => RES[r]);
+  const shop = {
+    res,
+    capacity: Math.max(1, Math.round(+c.capacite || 1)),
+    radius:   Math.max(1, Math.round(+c.rayon || 14)),
+    margin:   Math.max(0.1, +c.marge || 1),
+  };
+  BUILD[type] = { n, ic, hk:'', cost: c.cout ?? 1000, col, hgt, noMerge:true, upkeep: +c.entretien || 0, shop,
+    desc: note + ' Vend ' + res.map(r => RES[r].n.toLowerCase()).join(', ') + ' dans un rayon de ' + shop.radius
+      + ' cases ; stock de ' + shop.capacity + ' par produit, ravitaillé par les entrepôts proches.' };
+  SHOP_TYPES.push(type);
+  SHOP_UPGRADES[type] = { label:n, type, icon:ic };
+}
+const isShop = b => !!b && !!BUILD[b.type]?.shop;
+const isBlankShop = b => !!b && b.type === 'shop';
+const shopRadiusOf = b => BUILD[b?.type]?.shop?.radius ?? 0;
+// Prix payé par un habitant pour une unité achetée au magasin.
+const shopUnitPrice = (b, res) => Math.max(1, Math.round((RESID_PRICES[res] || 6) * (BUILD[b.type].shop.margin || 1)));
+
 const PLANT_UPGRADES = {
   smelter: { label:'Aciérie',       type:'smelter', icon:'🔥', cat:'metal' },
   farm:    { label:'Ferme',         type:'farm',    icon:'🌾', cat:'food' },
@@ -1792,5 +1831,5 @@ const BUILD_MATERIALS = (()=>{
 // pose un quai sur un rail : la clé est alors train_platform.
 const buildMaterialsOf = type => BUILD_MATERIALS[type] || null;
 
-const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','oil_well','plant','house','space_center','restaurant','depot','market','tank','pump','garage','bus_stop','air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco','terraform','fill_water','terraform_dig','terraform_raise','terraform_canal'];
+const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','oil_well','plant','house','space_center','restaurant','depot','market','shop','tank','pump','garage','bus_stop','air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco','terraform','fill_water','terraform_dig','terraform_raise','terraform_canal'];
 const MILESTONES = [25, 50, 100, 200, 400];

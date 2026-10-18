@@ -3811,6 +3811,10 @@ function draw(){
     center: centerOfBuilding(selected),
     r: leisureRadiusOf(selected),
   } : null;
+  const shopRadiusSel = selected && !selected.dead && isShop(selected) ? {
+    center: centerOfBuilding(selected),
+    r: shopRadiusOf(selected),
+  } : null;
   const tankRadiusSel = selected && !selected.dead && selected.type === 'tank' ? {
     center: centerOfBuilding(selected),
     r: tankRadiusOf(selected),
@@ -4351,6 +4355,10 @@ function draw(){
   // rayon d'attractivité du lieu de loisirs sélectionné (rose)
   if(leisureRadiusSel)
     drawWorkRadiusOverlay(leisureRadiusSel.center, leisureRadiusSel.r, '#ff7ad9', minRx, maxRx, minRy, maxRy);
+
+  // rayon de chalandise du magasin sélectionné (jaune)
+  if(shopRadiusSel)
+    drawWorkRadiusOverlay(shopRadiusSel.center, shopRadiusSel.r, '#ffd27a', minRx, maxRx, minRy, maxRy);
 
   // rayon de la citerne sélectionnée (bleu)
   if(tankRadiusSel)

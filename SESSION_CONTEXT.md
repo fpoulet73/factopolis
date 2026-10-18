@@ -221,6 +221,24 @@ Le créateur du monde (`MP.roomCreator`, `mpIsWorldOwner`) peut démolir les bâ
 joueurs (`demolishForeignBuilding`, 04) après confirmation ; le remboursement revient à leur
 propriétaire. Tous les clients valident l'action `bulldoze_bld` avec `msg.fromUsername`.
 
+### Magasins
+Un **Magasin** vierge (`shop`, menu Bâtiments) se spécialise une fois, comme une usine abandonnée
+(même action réseau `upgrade_plant`, `plantUpgradeError` / `applyPlantUpgrade`) : épicerie, fournitures,
+outils, bricolage (`SHOP_DEFS`, 01 ; réglages `config.js` `magasins` : coût, rayon, capacité, marge,
+produits). Un type spécialisé porte `BUILD[t].shop = { res, capacity, radius, margin }`.
+- **Ravitaillement** : le magasin accepte ses produits (`accepts` / `capOf`, 03) mais seuls les entrepôts
+  lui livrent (`tryDispatch`, 05) dans leur rayon ; il ne ré-expédie jamais (`dispatchBuilding`).
+- **Ventes** : `tickShops` (06, chaque seconde) transfère les unités du stock du magasin vers les logements
+  de son rayon qui les consomment ou les attendent (`residDeliveryResourcesOf`, `space`), les moins
+  approvisionnés d'abord, dans la limite de `ventesParSeconde`. Le propriétaire du logement paie
+  (`shopUnitPrice` = prix habitants × marge, catégorie financière `achats`), celui du magasin encaisse
+  (`ventes`). Compteurs `b.shopSales` / `b.shopIncome`, sauvegardés et synchronisés.
+- **Chaîne** : les magasins du même type et du même propriétaire dont l'un est dans le rayon de l'autre
+  forment une chaîne transitive (`shopChainOf`). `tickShopChains` équilibre chaque produit sur la chaîne
+  (les mieux remplis cèdent aux moins remplis, `chaineParSeconde`) : un magasin hors de portée d'un
+  entrepôt est ravitaillé par un voisin qui en a un.
+- Panneau : stock par produit, logements dans le rayon, chaîne, recettes ; cercle jaune du rayon à la sélection.
+
 ### Lieux de loisirs
 
 15 types (`LEISURE_TYPES`, définis par `LEISURE_DEFS` dans 01_definitions.js,

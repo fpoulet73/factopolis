@@ -170,6 +170,7 @@ function capOf(b,res){
     return (d.stockPerCell ?? DEPOT_STOCK_PER_CELL) * b.w * b.h;
   }
   if(b.type==='terrassement') return res === 'dirt' ? 80 : 0;
+  if(d?.shop) return d.shop.res.includes(res) ? d.shop.capacity : 0; // magasin : stock par produit
   const r = recipeOf(b);
   // les stocks des bâtiments industriels fusionnés grandissent avec leur taille
   return ((r && res in r.out) ? OUTCAP : INCAP) * (BUILD[b.type].ind ? b.w*b.h : 1);
@@ -184,6 +185,7 @@ function accepts(b,res){
   }
   if(b.type==='tank') return false;
   if(b.type==='terrassement') return res === 'dirt' && (b.storage['dirt']||0) < 80;
+  if(BUILD[b.type]?.shop) return BUILD[b.type].shop.res.includes(res);
   if(BUILD[b.type]?.storageHub) return b.allow?.[res] !== false;
   if(BUILD[b.type].resid){
     if(!residDeliveryResourcesOf(b).includes(res)) return false;
@@ -640,6 +642,11 @@ function setBuildingPaused(b, pausedState, broadcastChange=true){
 // checkMaterials=false : seules les règles de terrain (le panneau affiche alors les
 // spécialisations en attente de matériaux au lieu de les masquer).
 function plantUpgradeError(b, targetType, checkMaterials = true){
+  // magasin vierge : mêmes règles (une seule spécialisation), sans contrainte de terrain
+  if(b && !b.dead && b.type === 'shop'){
+    if(!SHOP_UPGRADES[targetType]) return 'Type de magasin invalide';
+    return checkMaterials ? buildMaterialsError(targetType, b.x, b.y, b.w, b.h, b.owner ?? null) : '';
+  }
   if(!b || b.dead || b.type !== 'plant') return 'Usine déjà spécialisée';
   if(!PLANT_UPGRADES[targetType]) return 'Type d\'usine invalide';
   if(targetType === 'farm'){
@@ -675,6 +682,6 @@ function applyPlantUpgrade(b, targetType){
   b.trucksOut = 0;
   b.paused = false;
   b.name = null;
-  assignIndustryName(b);
+  if(!isShop(b)) assignIndustryName(b);
   return '';
 }

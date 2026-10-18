@@ -31,7 +31,7 @@ let terraformRadius = 1; // 1..4 : taille du carré N×N affecté par Creuser/Re
 let speed = 1, paused = false;
 let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0, passengerCycleTimer = 0;
 let autoSaveTimer = AUTO_SAVE_INTERVAL; // décompte en secondes (temps réel)
-const FIN_ZERO = ()=> ({ ventes:0, vehicules:0, taxes:0, rembours:0, primes:0, construction:0, entretien:0, entretienVehicules:0, peageRecu:0, peagePaye:0, expansion:0, airbnb:0, loisirs:0 });
+const FIN_ZERO = ()=> ({ ventes:0, vehicules:0, taxes:0, rembours:0, primes:0, construction:0, entretien:0, entretienVehicules:0, peageRecu:0, peagePaye:0, expansion:0, airbnb:0, loisirs:0, achats:0 });
 const START_HOMELESS = 0;
 let rot = 0; // orientation de la vue (0..3)
 const cam = { x:0, y:0, z:1 };

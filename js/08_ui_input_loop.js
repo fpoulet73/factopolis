@@ -483,7 +483,7 @@ function renderFinance(){
   const hasExp  = hasRow('expansion');
 
   const incCats = ['ventes','vehicules','taxes','rembours','primes','peageRecu','airbnb','loisirs'];
-  const outCats = ['construction','entretien','entretienVehicules','peagePaye','expansion'];
+  const outCats = ['construction','entretien','entretienVehicules','peagePaye','expansion','achats'];
   const netVal = read => incCats.reduce((a,c)=>a+read(c),0) - outCats.reduce((a,c)=>a+read(c),0);
   const netDeltas = months.map(m => netVal(c => (m.end ? (m.end.fin?.[c]||0) : (fin[c]||0)) - (m.start.fin?.[c]||0)));
   const hdrCells = months.map(m=>'<td class="r">'+monthLabel(m.ym)+'</td>').join('');
@@ -505,6 +505,7 @@ function renderFinance(){
     + row('Construction','construction','−','out')
     + row('Entretien industriel','entretien','−','out')
     + row('Entretien véhicules','entretienVehicules','−','out')
+    + (hasRow('achats') ? row('Achats en magasin','achats','−','out') : '')
     + (hasPaye ? row('Péages rails payés','peagePaye','−','out') + playerSubRows(peageDetail.paid,'ppaid','à','out') : '')
     + (hasExp ? row('Expansions carte','expansion','−','out') : '')
     + '<tr class="net"><td>Bilan</td>'+cells(netDeltas,'auto')+'</tr>'
@@ -1666,6 +1667,7 @@ function statusOf(b){
     return pasStr + (depot ? ' · Entrepôt lié' : '');
   }
   if(b.type === 'plant') return 'Usine abandonnée — choisir une spécialisation';
+  if(b.type === 'shop') return 'Magasin vierge — choisir une spécialisation';
   if(usesWater(b) && !tankNear(b)) return '⚠️ Aucune citerne proche pour recevoir l’eau';
   if(b.type === 'space_center'){
     if(b.spacePhase === 'flight') return '🛰️ Fusée en mission — la capsule rapportera '+resAmountsIcons(SPACE_CARGO);
@@ -2053,6 +2055,46 @@ function renderInfo(){
           + '</button>';
       }
     }
+  }
+  if(b.type === 'shop'){
+    const canUpgrade = !MP.connected || !b.owner || b.owner === MP.myId;
+    h += '<div style="margin-top:8px;color:#8fa3bf">Spécialisation</div>';
+    h += '<div style="font-size:11px;color:#8fa3bf;margin-bottom:4px">Choisir une seule fois le type de magasin. Il se ravitaille dans les entrepôts proches et vend aux logements de son rayon.</div>';
+    for(const opt of Object.values(SHOP_UPGRADES)){
+      const d2 = BUILD[opt.type], sh = d2.shop;
+      const mats = buildMaterialsFor(opt.type);
+      const miss = mats ? buildMaterialsMissing(opt.type, b.x, b.y, b.w, b.h, b.owner ?? null) : null;
+      h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:3px'+(miss ? ';opacity:.6' : '')+'" data-plant-upgrade="'+opt.type+'"'
+        + ' title="'+escHtml(d2.desc)+'"' + (!canUpgrade ? ' disabled' : '') + '>'
+        + opt.icon+' '+opt.label+' <span style="color:#8fa3bf">— '+(d2.cost||0)+' $'+(mats ? ' 🏗️' : '')+'</span>'
+        + '<br><span style="font-size:10px;color:#9fb3c8">Vend : '+sh.res.map(r => RES[r].ic+' '+RES[r].n).join(', ')+' · rayon '+sh.radius+'</span>'
+        + (miss ? '<br><span style="font-size:10px;color:#ff9a8a">Manque : '+escHtml(resAmountsIcons(miss))+'</span>' : '')
+        + '</button>';
+    }
+  }
+  if(d.shop){
+    const sh = d.shop, c = centerOfBuilding(b), R = shopRadiusOf(b);
+    const homes = buildings.filter(o => !o.dead && BUILD[o.type]?.resid && !o.starterHome
+      && Math.max(Math.abs(centerOfBuilding(o).x - c.x), Math.abs(centerOfBuilding(o).y - c.y)) <= R).length;
+    h += '<div class="row"><span>Rayon de chalandise</span><b style="color:#ffd27a">'+R+' cases · '+homes+' logement'+(homes > 1 ? 's' : '')+'</b></div>';
+    for(const res of sh.res){
+      const n = Math.floor(b.storage[res] || 0), inc = Math.floor(b.inc[res] || 0);
+      h += '<div class="row"><span>'+RES[res].ic+' '+RES[res].n+'</span><b>'+n+' / '+sh.capacity
+        + (inc ? ' <span style="opacity:.7">(+'+inc+' en route)</span>' : '')
+        + ' <span style="color:#ffe9a0">· '+shopUnitPrice(b, res)+' $</span></b></div>';
+    }
+    h += '<div class="row"><span>Ventes / recettes</span><b>'+(b.shopSales || 0).toLocaleString('fr-FR')+' · '+Math.round(b.shopIncome || 0).toLocaleString('fr-FR')+' $</b></div>';
+    if(d.upkeep) h += '<div class="row"><span>Entretien</span><b>'+(Math.round(upkeepOf(b)*10)/10)+' $ / '+IND_UPKEEP_INTERVAL+' s</b></div>';
+    const chain = shopChainOf(b);
+    if(chain.length > 1)
+      h += '<div class="row"><span title="Magasins du même type dans le rayon les uns des autres : stocks équilibrés">Chaîne</span><b>'+chain.length+' magasins</b></div>';
+    const served = o => buildings.some(e => !e.dead && isStorageDepot(e) && buildingDistance(e, o) <= depotRadiusOf(e));
+    if(!chain.some(served))
+      h += '<div class="warn">⚠️ Aucun entrepôt ne couvre ce magasin ni sa chaîne : il ne sera pas ravitaillé.</div>';
+    else if(!served(b))
+      h += '<div class="status" style="opacity:.8">Hors d\'un entrepôt : ravitaillé par les magasins voisins de la chaîne.</div>';
+    else
+      h += '<div class="status" style="opacity:.8">Ravitaillé par les entrepôts proches ; chaque unité prise par un logement du rayon est payée au propriétaire.</div>';
   }
   if(d.ind && b.name) h += '<div style="color:#8fa3bf;font-size:11px;margin-top:6px;margin-bottom:2px">'+d.n+'</div>';
   if(d.workers){
@@ -2545,9 +2587,9 @@ function renderInfo(){
       const targetDef = BUILD[targetType];
       const cost = targetDef.cost || 0;
       if(myWallet().money < cost){ toast('Fonds insuffisants ('+cost+' $)','err'); return; }
-      const label = (PLANT_UPGRADES[targetType]||{}).label || targetDef.n;
+      const label = (PLANT_UPGRADES[targetType]||SHOP_UPGRADES[targetType]||{}).label || targetDef.n;
       if(!await confirmAction('Créer '+label+' pour '+cost+' $ ?\nCe choix sera définitif.', {
-        title: 'Spécialiser l’usine',
+        title: isBlankShop(b) ? 'Spécialiser le magasin' : 'Spécialiser l’usine',
         okText: 'Créer',
       })) return;
       spendMoney(cost, 'construction');
@@ -2557,7 +2599,7 @@ function renderInfo(){
       selected = b;
       p._html = null;
       renderInfo();
-      toast('🏭 Usine créée : '+targetDef.n, 'win', eventTargetForBuilding(b));
+      toast((isShop(b) ? '🏪 Magasin créé : ' : '🏭 Usine créée : ')+targetDef.n, 'win', eventTargetForBuilding(b));
     };
   });
   p.querySelectorAll('[data-station-depot-toggle-res]').forEach(el=>{
@@ -2975,7 +3017,7 @@ let storageToolbarMenu = null;
 const STORAGE_TOOLBAR_TOOLS = ['depot','tank'];
 let buildingToolbarGroup = null;
 let buildingToolbarMenu = null;
-const BUILDING_TOOLBAR_TOOLS = ['house','lux_house','plant','market','space_center'];
+const BUILDING_TOOLBAR_TOOLS = ['house','lux_house','plant','shop','market','space_center'];
 let leisureToolbarGroup = null;
 let leisureToolbarMenu = null;
 // Infobulle d'un outil : description + matériaux de chantier exigés (entrepôt proche).
@@ -3281,7 +3323,7 @@ function buildToolbar(){
     }
     if(k === 'lumber' || k === 'fisher' || k === 'pump' || k === 'oil_well') continue; // regroupés sous "Ressources"
     if(k === 'tank') continue; // regroupé sous "Stockage"
-    if(k === 'house' || k === 'market' || k === 'space_center') continue; // regroupés sous "Bâtiments"
+    if(k === 'house' || k === 'market' || k === 'shop' || k === 'space_center') continue; // regroupés sous "Bâtiments"
     if(k === 'terraform_raise' || k === 'terraform_canal') continue; // regroupés sous "Terraforming"
     if(k === 'terraform_dig'){
       const group = document.createElement('div');

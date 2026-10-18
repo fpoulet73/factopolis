@@ -1866,6 +1866,23 @@ function artLeisureScene(b, u0, v0, u1, v1, rng, flat, at, pt, atView){
   return null;
 }
 
+// --- Magasins ---------------------------------------------------------------
+// Boutique : volume clair, vitrine et auvent rayé aux couleurs du type (gris pour un magasin vierge).
+function artShop(b, u0, v0, u1, v1, d){
+  const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2, H = 13;
+  const col = d.shop ? d.col : '#9a9a9a';
+  artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#b8b3a8');
+  artShadow(u0 + 0.1, v0 + 0.1, u1 - 0.1, v1 - 0.1, H + 4);
+  artBox(u0 + 0.1, v0 + 0.1, u1 - 0.1, v1 - 0.1, 0, H, '#efe6d2', { topCol:shade(col, 0.15) });
+  artWindow('r', u1 - 0.1, v0 + 0.22, v1 - 0.22, 2, 8, 'rgba(255,226,150,.92)');
+  artWindow('l', v1 - 0.1, u0 + 0.22, u1 - 0.22, 2, 8, 'rgba(40,56,78,.85)');
+  // auvent rayé sur la façade +u
+  const n = 5, s0 = v0 + 0.14, sw = (v1 - v0 - 0.28) / n;
+  for(let k = 0; k < n; k++)
+    artPoly([artP(u1 - 0.1, s0 + sw * k, 10), artP(u1 - 0.1, s0 + sw * (k + 1), 10), artP(u1 + 0.04, s0 + sw * (k + 1), 7.5), artP(u1 + 0.04, s0 + sw * k, 7.5)], k % 2 ? '#f4f1ea' : col);
+  return artP(cu, cv, H + 6);
+}
+
 // --- Stockage et transport ------------------------------------------------
 function artStorage(b, u0, v0, u1, v1, rng, d, bCol){
   const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
@@ -2195,6 +2212,9 @@ function drawBuildingArt(b, rx0, ry0, rw, rh, lift, hgt, bCol){
       _artXf = leisureXf(b, u0, v0, u1, v1);
       try { tc = artLeisure(b, u0, v0, u1, v1, rng, d); } finally { _artXf = null; }
       if(tc && d.ic) artSign(tc[0] + 10, tc[1] + 2, d.ic, '#ffc2ea');
+    } else if(d.shop || d.shopBlank){
+      tc = artShop(b, u0, v0, u1, v1, d);
+      if(tc && d.shop && d.ic) artSign(tc[0] + 10, tc[1] + 2, d.ic, '#ffd27a');
     } else {
       tc = artStorage(b, u0, v0, u1, v1, rng, d, bCol);
       // gares d'aéroport fusionnées : un seul badge, sur la gare principale (comme une gare ferroviaire)

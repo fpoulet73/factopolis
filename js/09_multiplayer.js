@@ -911,6 +911,11 @@ function applyLeisureState(b, o){
   b.attractRadius = o.attractRadius > 0 ? o.attractRadius : undefined;
   setLeisureDir(b, o.dir);
 }
+// Magasin : recettes et ventes cumulées de l'état reçu / chargé.
+function applyShopState(b, o){
+  b.shopIncome = o.shopIncome || 0;
+  b.shopSales = o.shopSales || 0;
+}
 
 function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   const prevProg = b.prog || 0;
@@ -969,6 +974,7 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
     b.launches = o.launches || 0;
   }
   if(BUILD[b.type]?.leisure) applyLeisureState(b, o);
+  if(BUILD[b.type]?.shop) applyShopState(b, o);
   const r = recipeOf(b);
   if(r && syncGtime != null && prevSyncGtime != null && syncGtime > prevSyncGtime){
     const deltaG = syncGtime - prevSyncGtime;
@@ -1407,6 +1413,7 @@ function serializeState(opts = {}){
       spacePhase:b.spacePhase || null, launches:b.launches || 0,
       visitors:b.visitors && b.visitors.length ? b.visitors.map(g => ({ ...g })) : null,
       visitsTotal:b.visitsTotal || 0, leisureIncome:b.leisureIncome || 0, attractRadius:b.attractRadius || 0, dir:b.dir || 0,
+      shopIncome:b.shopIncome || 0, shopSales:b.shopSales || 0,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
     news: { flags: Object.keys(newsFlags), log: newsLog, next: nextNewsId },
@@ -1794,6 +1801,7 @@ function applySnapshot(d){
     if(o.spacePhase) b.spacePhase = o.spacePhase;
     if(o.launches) b.launches = o.launches;
     if(BUILD[b.type]?.leisure) applyLeisureState(b, o);
+    if(BUILD[b.type]?.shop) applyShopState(b, o);
     buildings.push(b);
     setGrid(b,b);
     if(b.stationGroupId != null) nextTrainStationId = Math.max(nextTrainStationId, b.stationGroupId + 1);

@@ -169,8 +169,8 @@ function dispatchBuilding(b){
       if(b.allow?.[k] === false) continue;
       tryDispatch(b, k);
     }
-  } else if(BUILD[b.type]?.resid || b.type === 'terrassement'){
-    // logements et puits purs : ne ré-expédient jamais leur stock
+  } else if(BUILD[b.type]?.resid || b.type === 'terrassement' || BUILD[b.type]?.shop || b.type === 'shop'){
+    // logements, magasins et puits purs : ne ré-expédient jamais leur stock
   } else {
     // bâtiment de production : tenter un dispatch pour chaque ressource éligible
     // (indépendamment — une sortie bloquée ne bloque pas les autres)
@@ -335,6 +335,7 @@ function update(dt){
   updateVehicles(dt);
   updateWalkers(dt);
   tickSortantsToHomes(dt);
+  tickShops(dt);
 
   // Rapatrier sur la gare les compteurs éventuellement accumulés sur un arrêt
   // de bus fusionné (notamment dans les sauvegardes créées avant cette règle).
@@ -1044,6 +1045,95 @@ function tickSortantsToHomes(dt){
     else spawnTransitWalkers(hub, best, 1);
   }
 }
+// ---------- magasins ----------
+// Chaque seconde de jeu, un magasin vend à ses logements voisins (rayon de chalandise) les
+// produits qu'ils consomment ou attendent : l'unité passe du stock du magasin au stock du
+// logement (comme une livraison), payée par le propriétaire du logement au propriétaire du
+// magasin au prix des habitants × marge. Les logements les moins approvisionnés passent d'abord.
+// Chaîne d'approvisionnement : les magasins du MÊME type et du même propriétaire dont l'un se trouve
+// dans le rayon de l'autre forment une chaîne (transitive). Un magasin sans accès à un entrepôt est
+// ainsi ravitaillé par un voisin qui en a un (shopChainOf, tickShopChains).
+function shopChainOf(s){
+  const chain = [s], seen = new Set([s]);
+  for(let i = 0; i < chain.length; i++){
+    const a = chain[i], ca = centerOfBuilding(a), R = shopRadiusOf(a);
+    for(const o of buildings){
+      if(seen.has(o) || o.dead || o.type !== s.type || (o.owner ?? null) !== (s.owner ?? null)) continue;
+      const co = centerOfBuilding(o);
+      if(Math.max(Math.abs(co.x - ca.x), Math.abs(co.y - ca.y)) > Math.max(R, shopRadiusOf(o))) continue;
+      seen.add(o); chain.push(o);
+    }
+  }
+  return chain;
+}
+// Équilibre les stocks de chaque produit sur la chaîne : les magasins les mieux remplis (en
+// proportion de leur capacité) cèdent aux moins remplis, dans la limite de chaineParSeconde.
+function tickShopChains(elapsed){
+  const done = new Set();
+  for(const s of buildings){
+    if(s.dead || !isShop(s) || done.has(s)) continue;
+    const chain = shopChainOf(s);
+    for(const c of chain) done.add(c);
+    if(chain.length < 2 || SHOP_CHAIN_PER_SEC <= 0) continue;
+    for(const res of BUILD[s.type].shop.res){
+      let budget = Math.ceil(SHOP_CHAIN_PER_SEC * elapsed);
+      const cap = BUILD[s.type].shop.capacity;
+      while(budget-- > 0){
+        let hi = null, lo = null;
+        for(const c of chain){
+          const n = c.storage[res] || 0;
+          if(!hi || n > (hi.storage[res] || 0)) hi = c;
+          if(!lo || n < (lo.storage[res] || 0)) lo = c;
+        }
+        // un transfert ne se fait que s'il réduit l'écart (au moins 2 unités d'écart)
+        if(!hi || (hi.storage[res] || 0) - (lo.storage[res] || 0) < 2 || (lo.storage[res] || 0) >= cap) break;
+        hi.storage[res]--; lo.storage[res] = (lo.storage[res] || 0) + 1;
+      }
+    }
+  }
+}
+let shopTimer = 0;
+function tickShops(dt){
+  shopTimer += dt;
+  if(shopTimer < 1) return;
+  const elapsed = shopTimer;
+  shopTimer = 0;
+  tickShopChains(elapsed);
+  for(const s of buildings){
+    if(s.dead || !isShop(s) || s.paused) continue;
+    const d = BUILD[s.type].shop;
+    if(!d.res.some(r => (s.storage[r] || 0) >= 1)) { s.saleBudget = 0; continue; }
+    s.saleBudget = Math.min(10, (s.saleBudget || 0) + SHOP_SALES_PER_SEC * elapsed);
+    if(s.saleBudget < 1) continue;
+    const c = centerOfBuilding(s), R = shopRadiusOf(s), want = [];
+    for(const h of buildings){
+      if(h.dead || !BUILD[h.type]?.resid || h.starterHome) continue;
+      const hc = centerOfBuilding(h);
+      if(Math.max(Math.abs(hc.x - c.x), Math.abs(hc.y - c.y)) > R) continue;
+      const need = residDeliveryResourcesOf(h);
+      for(const res of d.res)
+        if((s.storage[res] || 0) >= 1 && need.includes(res) && space(h, res) > 0)
+          want.push({ h, res, ratio: residSupplyRatio(h, res) });
+    }
+    want.sort((a, b) => a.ratio - b.ratio);
+    const ws = walletOf(s.owner);
+    for(const { h, res } of want){
+      if(s.saleBudget < 1) break;
+      if((s.storage[res] || 0) < 1 || space(h, res) <= 0) continue;
+      const price = shopUnitPrice(s, res), wb = walletOf(h.owner);
+      if(wb.money < price) continue;
+      if(!depositResourceIntoBuilding(h, res, 1)) continue;
+      s.storage[res]--;
+      s.saleBudget--;
+      wb.money -= price; wb.fin.achats = (wb.fin.achats || 0) + price;
+      earnMoney(price, 'ventes', ws);
+      recordVente(ws, 'res', res, price);
+      s.shopIncome = (s.shopIncome || 0) + price;
+      s.shopSales = (s.shopSales || 0) + 1;
+    }
+  }
+}
+
 // ---------- lieux de loisirs ----------
 // Visiteurs d'un lieu : lots { t: heure d'arrivée (gtime), n, o: joueur d'origine } dans
 // l'ordre d'arrivée. Ils comptent parmi les passagers de leur joueur (transitByOwner) :

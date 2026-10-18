@@ -579,6 +579,8 @@ const ALLOWED_BUILD_TYPES = new Set([
   'nail_factory', 'cement_plant', 'concrete_plant', 'glassworks', 'glazier', 'ropery', 'refinery',
   'chem_plant', 'paint_factory', 'electronics_plant', 'furniture_factory', 'appliance_factory',
   'jeweler', 'quantum_lab',
+  // magasins (vierge, puis spécialisation par upgrade_plant)
+  'shop', 'shop_food', 'shop_supplies', 'shop_tools', 'shop_diy',
   // lieux de loisirs
   'restaurant', 'cinema', 'museum', 'treetop', 'marina', 'spa', 'hotel', 'concert_hall', 'zoo',
   'casino', 'stadium', 'theme_park', 'tennis', 'basketball', 'baseball',

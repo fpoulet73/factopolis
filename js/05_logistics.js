@@ -613,6 +613,7 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
     if(c===b || c.dead || !accepts(c,res) || space(c,res)<=0) continue;
     if(res === 'water' && b.type === 'pump' && c.type !== 'tank') continue; // l'eau transite par une citerne
     if(isStorageHub(b) && isStorageHub(c)) continue;
+    if(BUILD[c.type]?.shop && !isStorageHub(b)) continue; // un magasin ne se ravitaille que dans les entrepôts
     const pumpToTank = b.type === 'pump' && res === 'water' && c.type === 'tank';
 
     // vérifier le rayon de l'expéditeur
@@ -645,7 +646,7 @@ function tryDispatch(b, res, load = TRUCK_LOAD){
     const demand = rcc ? residDeliveryResourcesOf(c) : [];
     const residRatio = demand.length ? Math.min(...demand.map(r => residSupplyRatio(c, r))) : 0;
     const cap = capOf(c, res);
-    const indRatio = (targetIsInd && cap > 0) ? ((c.storage[res]||0) + (c.inc[res]||0)) / cap : 0;
+    const indRatio = ((targetIsInd || BUILD[c.type]?.shop) && cap > 0) ? ((c.storage[res]||0) + (c.inc[res]||0)) / cap : 0;
     const stockRatio = rcc ? residRatio : indRatio;
 
     // distance réelle : route si disponible, sinon vol direct

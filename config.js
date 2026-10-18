@@ -191,6 +191,26 @@ const CONFIG = {
     },
   },
 
+  /* ---------- MAGASINS ----------
+     Un magasin vierge (cout) se spécialise une seule fois (comme une usine abandonnée). Il se
+     ravitaille auprès des entrepôts proches (camions) et vend ses produits aux logements situés
+     dans son rayon : chaque unité prise par un logement est payée au propriétaire du magasin.
+       cout      : prix de la spécialisation
+       rayon     : rayon de chalandise (cases)
+       capacite  : stock maximum par produit
+       marge     : multiplicateur du prix de vente aux habitants (1 = prix de base)
+       ressources: produits vendus
+       entretien : $ par cycle d'entretien */
+  magasins: {
+    cout: 500,              // magasin vierge
+    ventesParSeconde: 2,    // unités vendues par seconde de jeu et par magasin
+    chaineParSeconde: 4,    // unités échangées par seconde de jeu entre magasins d'une même chaîne
+    epicerie:  { cout: 800,  rayon: 14, capacite: 60, marge: 1.5, entretien: 1, ressources: ['fish_fillet', 'bread', 'fish_oil'] },
+    fournitures:{ cout: 1200, rayon: 14, capacite: 40, marge: 1.5, entretien: 1, ressources: ['clothes', 'furniture', 'appliances', 'jewelry'] },
+    outils:    { cout: 1000, rayon: 14, capacite: 80, marge: 1.5, entretien: 1, ressources: ['goods'] },
+    bricolage: { cout: 1000, rayon: 14, capacite: 60, marge: 1.5, entretien: 1, ressources: ['window', 'concrete', 'steel_beam'] },
+  },
+
   /* ---------- BÂTIMENTS CIVILS ---------- */
   batiments: {
     route:          { cout: 10  },
