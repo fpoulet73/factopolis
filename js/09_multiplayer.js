@@ -2652,6 +2652,12 @@ function mpConnect(url){
         if(msg.role === 'host') adoptSoloBuildings(MP.myId);
         ensureHomelessForOwner(MP.myId);
         resetSelectedTown();
+        if(msg.role === 'host' && MP.pendingNewWorld){ // monde tout juste créé : carte selon ses réglages (eau, taille, mode)
+          genWorld(MP.pendingNewWorld);
+          adoptSoloBuildings(MP.myId);
+          MP.ws.send(JSON.stringify({ type:'new_world', config:WORLD, state:packStateForStorage(serializeState()) }));
+        }
+        MP.pendingNewWorld = null;
         toast((msg.role==='host' ? '👑 Tu es l\'hôte' : '👥 Tu as rejoint la partie')+' (#'+msg.id+')');
         mpUpdateUI();
         mpRenderSaves();
@@ -3235,6 +3241,19 @@ function mpInjectUI(){
   <div id="mpCreateRoomBlock" style="display:none;margin-top:6px">
     <div style="border-top:1px solid #36465e;margin:8px 0"></div>
     <input id="mpNewRoomName" type="text" placeholder="Nom du nouveau monde" style="${INP}">
+    <label style="display:block;color:#8fa3bf;font-size:11px">Taille de carte</label>
+    <select id="mpRoomSize" style="${INP}">
+      <option value="128">128×128</option>
+      <option value="192">192×192</option>
+      <option value="256">256×256</option>
+    </select>
+    <label style="display:block;color:#8fa3bf;font-size:11px">Eau (% de la carte)</label>
+    <input id="mpRoomWater" type="number" min="0" max="80" step="1" value="${WORLD_DEFAULTS.waterPct}" style="${INP}">
+    <label style="display:block;color:#8fa3bf;font-size:11px">Mode de jeu</label>
+    <select id="mpRoomMode" style="${INP}">
+      <option value="normal">Normal</option>
+      <option value="creative">Créatif (argent illimité, sans matériaux)</option>
+    </select>
     <button class="tbtn" id="mpBtnCreateRoom" style="width:100%">+ Créer un monde</button>
     <div id="mpRoomErr" style="color:#ff9a8a;font-size:11px;min-height:14px;margin-top:4px"></div>
   </div>
@@ -3257,6 +3276,13 @@ function mpInjectUI(){
       <option value="128">128×128</option>
       <option value="192">192×192</option>
       <option value="256">256×256</option>
+    </select>
+    <label style="display:block;color:#8fa3bf;font-size:11px">Eau (% de la carte)</label>
+    <input id="mpWaterPct" type="number" min="0" max="80" step="1" style="${INP}">
+    <label style="display:block;color:#8fa3bf;font-size:11px">Mode de jeu</label>
+    <select id="mpGameMode" style="${INP}">
+      <option value="normal">Normal</option>
+      <option value="creative">Créatif (argent illimité, sans matériaux)</option>
     </select>
     <label style="display:block;color:#8fa3bf;font-size:11px">Montagnes (% de la carte)</label>
     <input id="mpMountainPct" type="number" min="0" max="80" step="1" style="${INP}">
@@ -3322,7 +3348,11 @@ function mpInjectUI(){
     const name = $('mpNewRoomName').value.trim();
     if(!name){ $('mpRoomErr').textContent = 'Entre un nom de monde'; return; }
     $('mpRoomErr').textContent = '';
-    MP.ws.send(JSON.stringify({ type:'create_room', name }));
+    // carte générée à l'arrivée dans le monde (message 'hello') avec ces réglages
+    const cfg = normalizeWorldConfig({ ...WORLD_DEFAULTS, size: $('mpRoomSize').value, waterPct: $('mpRoomWater').value,
+      mode: $('mpRoomMode').value, seed: undefined });
+    MP.pendingNewWorld = cfg;
+    MP.ws.send(JSON.stringify({ type:'create_room', name, worldConfig:cfg }));
   };
   $('mpBtnNewToggle').onclick = ()=>{
     mpNewCollapsed = !mpNewCollapsed;
@@ -3362,6 +3392,8 @@ function mpInjectUI(){
     })) return;
     const config = normalizeWorldConfig({
       size: $('mpWorldSize').value,
+      waterPct: $('mpWaterPct').value,
+      mode: $('mpGameMode').value,
       mountainPct: $('mpMountainPct').value,
       mountainMaxHeight: $('mpMountainMaxHeight').value,
       resourceFactor: Number($('mpResourceFactor').value) / 100,
@@ -3456,6 +3488,8 @@ function mpRenderNewCollapse(){
 function mpSyncWorldInputs(){
   if(!$('mpWorldSize')) return;
   $('mpWorldSize').value = WORLD.size;
+  $('mpWaterPct').value = WORLD.waterPct;
+  $('mpGameMode').value = WORLD.mode || 'normal';
   $('mpMountainPct').value = WORLD.mountainPct;
   $('mpMountainMaxHeight').value = WORLD.mountainMaxHeight;
   $('mpResourceFactor').value = Math.round((WORLD.resourceFactor ?? 1) * 100);

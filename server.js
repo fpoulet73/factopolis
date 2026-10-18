@@ -465,6 +465,10 @@ function sanitizeWorldConfig(config = {}) {
     size:       snapMapSize(config.size, base.size),
     maxPlayers: clampInt(config.maxPlayers, 1, 32, base.maxPlayers),
     reliefEnabled: config.reliefEnabled !== false,
+    // % d'eau : absent → valeur par défaut du client (config.js)
+    ...(config.waterPct !== undefined && config.waterPct !== null && config.waterPct !== '' && Number.isFinite(Number(config.waterPct))
+      ? { waterPct: clampInt(config.waterPct, 0, 80, 10) } : {}),
+    mode: config.mode === 'creative' ? 'creative' : 'normal',
     mountainPct:       clampInt(config.mountainPct, 0, 80, base.mountainPct),
     mountainMaxHeight: clampInt(config.mountainMaxHeight, 1, 12, base.mountainMaxHeight),
     resourceFactor,

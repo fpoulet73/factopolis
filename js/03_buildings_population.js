@@ -350,7 +350,7 @@ function terrassementNear(x, y, owner, minDirt = FILL_WATER_COST){
 // exigent, en plus de leur prix, des matériaux stockés dans un entrepôt du joueur
 // dont le rayon d'action couvre le chantier. Ils sont prélevés à la construction,
 // dans les entrepôts les plus proches d'abord.
-const buildMaterialsActive = () => BUILD_MATERIALS_ON && WORLD?.buildMaterials !== false;
+const buildMaterialsActive = () => BUILD_MATERIALS_ON && WORLD?.buildMaterials !== false && WORLD?.mode !== 'creative';
 const buildMaterialsFor = type => buildMaterialsActive() ? buildMaterialsOf(type) : null;
 // type réellement construit par un outil : l'outil « Gare » pose un quai sur un rail
 const materialTypeForTool = (t, x, y) => t === 'train_station' && inMap(x, y) && rail[y*N+x] ? 'train_platform' : t;

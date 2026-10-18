@@ -185,8 +185,11 @@ function dispatchBuilding(b){
   }
 }
 
+const CREATIVE_MONEY = 999999999;
 function update(dt){
   gtime += dt;
+  // mode créatif : argent illimité (les coûts sont débités, la caisse est remplie à chaque pas)
+  if(WORLD.mode === 'creative') for(const k in WALLETS) if(WALLETS[k].money < CREATIVE_MONEY) WALLETS[k].money = CREATIVE_MONEY;
   roadTick++; // nouveau pas : la liste des véhicules routiers est reconstruite à la demande
   objectivesTimer += dt;
   if(objectivesTimer >= 1){ objectivesTimer = 0; updateObjectives(); if(typeof updateNews === 'function') updateNews(); }

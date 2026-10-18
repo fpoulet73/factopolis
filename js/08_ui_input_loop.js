@@ -1575,6 +1575,7 @@ function statusOf(b){
   if(b.type==='market') return 'Marché — vente aux autres joueurs';
   if(BUILD[b.type].leisure){
     const n = leisureVisitorsOf(b);
+    if(n <= 0 && WORLD?.mode === 'creative') return '🎨 Animation permanente (mode créatif)';
     return n > 0 ? '🎟️ '+n+' visiteur'+(n > 1 ? 's' : '')+' sur place' : 'En attente de visiteurs';
   }
   if(isVehicleDepot(b)){

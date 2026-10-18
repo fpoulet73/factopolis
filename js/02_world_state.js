@@ -221,7 +221,9 @@ function normalizeWorldConfig(config){
   return {
     size: snapMapSize(c.size, WORLD_DEFAULTS.size),
     maxPlayers: Math.round(clampNum(c.maxPlayers, 1, 32, WORLD_DEFAULTS.maxPlayers)),
-    waterPct: WORLD_DEFAULTS.waterPct,
+    waterPct: clampNum(c.waterPct, 0, 80, WORLD_DEFAULTS.waterPct),
+    // 'normal' ou 'creative' (argent illimité, pas de matériaux de chantier)
+    mode: c.mode === 'creative' ? 'creative' : 'normal',
     reliefEnabled: c.reliefEnabled !== false,
     mountainPct: clampNum(c.mountainPct, 0, 80, WORLD_DEFAULTS.mountainPct),
     mountainMaxHeight: Math.round(clampNum(c.mountainMaxHeight, 1, 12, WORLD_DEFAULTS.mountainMaxHeight)),

@@ -1821,12 +1821,14 @@ function drawLeisureFx(){
   if(drawFast || (cam.z || 1) < LEISURE_FX_ZOOM) return;
   if(!paused) _leisureFxT += dt * Math.min(2, speed || 1);
   const T = _leisureFxT, z = cam.z || 1;
+  const creativeFx = WORLD?.mode === 'creative';
   for(const b of buildings){
-    if(b.dead || !b.visitors || !b.visitors.length || !BUILD[b.type]?.leisure) continue;
+    // mode créatif : animé en permanence, sans visiteur
+    if(b.dead || !BUILD[b.type]?.leisure || (!creativeFx && !(b.visitors && b.visitors.length))) continue;
     const F = leisureFxFrame(b);
     const c = F.P(F.cu, F.cv, 0);
     if(c[0] < cam.x - 220 || c[0] > cam.x + W / z + 220 || c[1] < cam.y - 60 || c[1] > cam.y + H / z + 260) continue;
-    const occ = Math.min(1, leisureVisitorsOf(b) / Math.max(1, BUILD[b.type].leisure.capacity));
+    const occ = creativeFx && !leisureVisitorsOf(b) ? 1 : Math.min(1, leisureVisitorsOf(b) / Math.max(1, BUILD[b.type].leisure.capacity));
     const seed = (b.x * 73 + b.y * 151) % 997;
     ctx.save();
     try { drawOneLeisureFx(b, F, T, occ, seed); } finally { ctx.restore(); }
