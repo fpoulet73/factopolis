@@ -8,7 +8,7 @@ function newBuilding(type,x,y,w,h){
               mpCreatedAt: performance.now(), mpConfirmedAt: null };
   // décor d'aéroport : style tiré au hasard à la pose (puis stocké, synchronisé, sauvegardé)
   // logements : design tiré au hasard à la pose et à chaque fusion (puis stocké, synchronisé, sauvegardé)
-  if(d?.resid) b.design = Math.floor(Math.random() * (typeof ART_VARIANTS !== 'undefined' ? ART_VARIANTS : 8));
+  if(d?.resid) b.design = Math.floor(Math.random() * (typeof RESID_DESIGNS !== 'undefined' ? RESID_DESIGNS : 12));
   if(type==='air_deco') b.decor = Math.floor(Math.random() * AIR_DECO_STYLES);
   if(type==='mine')  b.ore = DEPOSIT_ORES[terrain[y*N+x]] || 'coal';
   if(d?.storageHub && type !== 'tank'){

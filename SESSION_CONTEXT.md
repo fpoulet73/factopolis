@@ -352,6 +352,17 @@ d'un logement : `habitants.rayonTravail` (4 + 2 × plus grand côté).
 Les fusions résidentielles demandent un rectangle complet de logements
 plus petits, pleins et approvisionnés.
 
+Apparence : `b.design` (0…`RESID_DESIGNS`−1, tiré à la pose et à chaque
+fusion, sauvegardé et synchronisé) choisit une architecture parmi 4 par
+niveau (`design % 4`, `artRowStyled` / `artApartmentStyled` /
+`artTowerStyled`, 07_rendering_art.js) puis la palette :
+- `duplex`/`row` : toit commun, pignons sur rue en brique, toits plats
+  contemporains, cottage à croupes et lucarnes ;
+- `residence`/`tower`/`bigtower` : bloc à commerces, brique à balcons,
+  gradins à terrasses plantées, haussmannien mansardé ;
+- `tower3`/`sky` : tour vitrée en gradins, tour cylindrique à héliport,
+  tours jumelles sur socle, tour à balcons filants colorés.
+
 Niveaux (du plus petit au plus grand) :
 - `house` 1×1 ;
 - `duplex` 2×1 / 1×2 ;

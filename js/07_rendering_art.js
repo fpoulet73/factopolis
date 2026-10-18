@@ -83,7 +83,7 @@ function artRng(seed){
 const ART_VARIANTS = 8;
 function artVariantOf(b){
   if(b.type === 'air_deco' && Number.isInteger(b.decor)) return b.decor % ART_VARIANTS;
-  if(Number.isInteger(b.design) && BUILD[b.type]?.resid) return b.design % ART_VARIANTS; // design aléatoire du logement (sauvegardé)
+  if(Number.isInteger(b.design) && BUILD[b.type]?.resid) return b.design % RESID_DESIGNS; // design aléatoire du logement (sauvegardé)
   return (hash(b.x * 31 + b.w, b.y * 17 + b.h) >>> 0) % ART_VARIANTS;
 }
 
@@ -414,6 +414,372 @@ function artTower(b, u0, v0, u1, v1, rng, d, floors){
     ctx.fillStyle = '#ff4b4b'; ctx.beginPath(); ctx.arc(t2[0], t2[1], 1.6, 0, Math.PI * 2); ctx.fill();
   }
   return artP(cu, cv, z + 2);
+}
+
+// --- Logements fusionnés : plusieurs architectures par niveau -------------
+// Le design tiré à la fusion (b.design, sauvegardé et synchronisé) choisit
+// l'architecture (design % nb de styles) ; la graine de l'art qui en découle
+// fait varier la palette au sein d'un même style.
+const RESID_DESIGNS = 12;
+const residStyleOf = (b, n) => artVariantOf(b) % n;
+const ART_BRICKS = ['#a5553f', '#b4674a', '#8e4a3a', '#c07a55', '#9b5e48', '#d1b38c', '#e3d5bd', '#b98a6a'];
+const ART_MODERN = ['#f2f2ee', '#e9e6df', '#3d4148', '#c89b6d', '#d9d4c7', '#8f969c', '#b07a52'];
+const ART_STONE  = ['#e8dcc0', '#efe4cc', '#e2d6bd', '#ece6d8'];
+const ART_ACCENTS = ['#d9822b', '#3f8fbf', '#7cb342', '#c0504d', '#e0b43a', '#8e6fb5'];
+const ART_LIT  = 'rgba(255,226,150,.92)';
+const ART_DARK = 'rgba(40,56,78,.85)';
+
+// Garde-corps (vitré ou métallique) : un pan translucide + une lisse.
+function artRailing(face, k, s0, s1, z0, z1, col){
+  artWindow(face, k, s0, s1, z0, z1, col || 'rgba(214,228,236,.5)');
+  const a = face === 'r' ? artP(k, s0, z1) : artP(s0, k, z1), c = face === 'r' ? artP(k, s1, z1) : artP(s1, k, z1);
+  artLine(a, c, 'rgba(60,66,72,.8)', 0.7);
+}
+
+// Panneaux solaires inclinés sur un toit plat.
+function artSolar(u0, v0, u1, v1, z){
+  artPoly([artP(u0, v1, z), artP(u1, v1, z), artP(u1, v0, z + 3), artP(u0, v0, z + 3)], '#2c3e66', 'rgba(170,190,220,.55)', 0.5);
+}
+
+// Rangées : maisons accolées le long du grand axe, façade sur la face visible.
+function rowGeom(b, u0, v0, u1, v1){
+  const alongU = u1 - u0 >= v1 - v0, n = Math.max(b.w, b.h);
+  const a = u0 + 0.08, c = u1 - 0.08, e = v0 + 0.08, f = v1 - 0.08;
+  const start = alongU ? a : e, L = (alongU ? c - a : f - e) / n;
+  // emprise du lot i (ordre arrière → avant)
+  const unit = i => alongU ? [start + i * L, e, start + (i + 1) * L, f] : [a, start + i * L, c, start + (i + 1) * L];
+  return { alongU, n, a, c, e, f, start, L, unit, face: alongU ? 'l' : 'r', k: alongU ? f : c };
+}
+
+function artRowStyled(b, u0, v0, u1, v1, rng, d){
+  switch(residStyleOf(b, 4)){
+    case 1: return artRowGabled(b, u0, v0, u1, v1, rng, d);
+    case 2: return artRowModern(b, u0, v0, u1, v1, rng, d);
+    case 3: return artRowHipped(b, u0, v0, u1, v1, rng, d);
+    default: return artRowHouse(b, u0, v0, u1, v1, rng, d);
+  }
+}
+
+// Maisons de ville en brique, pignons sur rue, hauteurs et teintes différentes.
+function artRowGabled(b, u0, v0, u1, v1, rng, d){
+  const G = rowGeom(b, u0, v0, u1, v1), roofs = artRoofPalette();
+  artGround(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, '#a8a394');
+  artShadow(G.a, G.e, G.c, G.f, d.hgt);
+  let top = 0;
+  for(let i = 0; i < G.n; i++){
+    const [hu0, hv0, hu1, hv1] = G.unit(i);
+    const wall = ART_BRICKS[Math.floor(rng() * ART_BRICKS.length)];
+    const roof = roofs[Math.floor(rng() * roofs.length)];
+    const H = d.hgt - 10 + Math.floor(rng() * 3) * 3, R = 8 + Math.floor(rng() * 4);
+    const s = G.alongU ? hu0 : hv0, Lu = G.L;
+    artBox(hu0, hv0, hu1, hv1, 0, H, wall, { top:false });
+    // porte, fenêtre du séjour, deux fenêtres à l'étage, encadrements clairs
+    artWindow(G.face, G.k, s + Lu * 0.12, s + Lu * 0.34, 0, 8.5, shade(roof, -0.35));
+    artWindow(G.face, G.k, s + Lu * 0.48, s + Lu * 0.86, 3, 8.5, shade(wall, 0.35));
+    artWindow(G.face, G.k, s + Lu * 0.52, s + Lu * 0.82, 3.6, 8, rng() < 0.35 ? ART_LIT : '#9fbfcd');
+    for(const o of [0.14, 0.56]){
+      artWindow(G.face, G.k, s + Lu * o, s + Lu * (o + 0.28), H - 7, H - 2, shade(wall, 0.35));
+      artWindow(G.face, G.k, s + Lu * (o + 0.03), s + Lu * (o + 0.25), H - 6.5, H - 2.5, rng() < 0.35 ? ART_LIT : '#9fbfcd');
+    }
+    // faîtage perpendiculaire à la rangée : le pignon donne sur la rue
+    artGable(hu0, hv0, hu1, hv1, H, H + R, roof, wall, G.alongU ? 'v' : 'u', 0.03);
+    const m = s + Lu * 0.4;
+    artWindow(G.face, G.k + 0.005, m, m + Lu * 0.2, H + 1.5, H + 4.5, rng() < 0.3 ? ART_LIT : '#9fbfcd');
+    top = Math.max(top, H + R);
+  }
+  return artP((u0 + u1) / 2, (v0 + v1) / 2, top);
+}
+
+// Maisons contemporaines : toits plats, bardages variés, baies vitrées.
+function artRowModern(b, u0, v0, u1, v1, rng, d){
+  const G = rowGeom(b, u0, v0, u1, v1);
+  artGround(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, '#b9b4a6');
+  artShadow(G.a, G.e, G.c, G.f, d.hgt);
+  let top = 0;
+  for(let i = 0; i < G.n; i++){
+    const [hu0, hv0, hu1, hv1] = G.unit(i);
+    const wall = ART_MODERN[Math.floor(rng() * ART_MODERN.length)];
+    const H = d.hgt - 8 + (rng() < 0.45 ? 6 : 0);
+    const s = G.alongU ? hu0 : hv0, Lu = G.L;
+    artBox(hu0, hv0, hu1, hv1, 0, H, wall, { topCol:'#8d9399' });
+    // grande baie au rez, bandeau vitré à l'étage, porte en bois
+    artWindow(G.face, G.k, s + Lu * 0.08, s + Lu * 0.26, 0, 8, '#6b4a33');
+    artWindow(G.face, G.k, s + Lu * 0.34, s + Lu * 0.92, 0.8, 8.5, rng() < 0.4 ? 'rgba(255,236,190,.9)' : '#8fb4c6');
+    artWindow(G.face, G.k, s + Lu * 0.12, s + Lu * 0.88, H - 7.5, H - 3, rng() < 0.35 ? ART_LIT : '#7fa6ba');
+    // acrotère + toit-terrasse (panneaux solaires ou édicule)
+    artBox(hu0, hv0, hu1, hv1, H, H + 1.4, shade(wall, -0.08), { top:false, edges:false });
+    const cu = (hu0 + hu1) / 2, cv = (hv0 + hv1) / 2;
+    if(rng() < 0.55) artSolar(cu - 0.18, cv - 0.18, cu + 0.18, cv + 0.12, H + 1);
+    else artBox(cu - 0.14, cv - 0.14, cu + 0.1, cv + 0.1, H, H + 5, shade(wall, 0.05));
+    top = Math.max(top, H + 5);
+  }
+  return artP((u0 + u1) / 2, (v0 + v1) / 2, top);
+}
+
+// Cottages : volume continu, toit à croupes et lucarnes.
+function artRowHipped(b, u0, v0, u1, v1, rng, d){
+  const G = rowGeom(b, u0, v0, u1, v1), roofs = artRoofPalette();
+  const wall = ART_WALLS[Math.floor(rng() * ART_WALLS.length)];
+  const roof = roofs[Math.floor(rng() * roofs.length)];
+  const H = d.hgt - 12, R = 11;
+  artGround(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, shade('#6fae4a', -0.05));
+  artShadow(G.a, G.e, G.c, G.f, H + R);
+  artBox(G.a, G.e, G.c, G.f, 0, H, wall, { top:false });
+  for(let i = 0; i < G.n; i++){
+    const s = G.start + i * G.L, Lu = G.L;
+    artWindow(G.face, G.k, s + Lu * 0.4, s + Lu * 0.6, 0, 8.5, shade(roof, -0.4));
+    for(const o of [0.12, 0.68]) artWindow(G.face, G.k, s + Lu * o, s + Lu * (o + 0.2), 3, 8.5, rng() < 0.4 ? ART_LIT : '#a4c4d3');
+    if(i) artWindow(G.face, G.k, s - 0.012, s + 0.012, 0, H, shade(wall, -0.15));
+  }
+  const depth = G.alongU ? G.f - G.e : G.c - G.a;
+  artHip(G.a, G.e, G.c, G.f, H, H + R, roof, depth / 2);
+  // une lucarne par logement sur le pan de façade
+  for(let i = 0; i < G.n; i++){
+    const s = G.start + (i + 0.5) * G.L, hw = Math.min(0.16, G.L * 0.2);
+    const [du0, dv0, du1, dv1] = G.alongU ? [s - hw, G.f - 0.26, s + hw, G.f - 0.04] : [G.c - 0.26, s - hw, G.c - 0.04, s + hw];
+    artBox(du0, dv0, du1, dv1, H + 1, H + 6, wall, { top:false, edges:false });
+    artWindow(G.face, G.alongU ? dv1 : du1, s - hw * 0.6, s + hw * 0.6, H + 2, H + 5.5, rng() < 0.35 ? ART_LIT : '#a4c4d3');
+    artGable(du0, dv0, du1, dv1, H + 6, H + 9, roof, wall, G.alongU ? 'v' : 'u', 0.03);
+  }
+  return artP((u0 + u1) / 2, (v0 + v1) / 2, H + R);
+}
+
+function artApartmentStyled(b, u0, v0, u1, v1, rng, d, floors, opts = {}){
+  switch(residStyleOf(b, 4)){
+    case 1: return artAptBalcony(b, u0, v0, u1, v1, rng, d, floors, opts);
+    case 2: return artAptStepped(b, u0, v0, u1, v1, rng, d, floors, opts);
+    case 3: return artAptMansard(b, u0, v0, u1, v1, rng, d, floors, opts);
+    default: return artApartment(b, u0, v0, u1, v1, rng, d, floors, opts);
+  }
+}
+
+// Balcons en saillie sur les deux faces visibles d'un volume (étages ≥ 1).
+function artBalconies(u0, v0, u1, v1, z0, z1, fh, perTile, rng, slab, rail){
+  const p = 0.09;
+  const doFace = (face, k, a0, a1) => {
+    const cols = Math.max(1, Math.round((a1 - a0) * perTile / 2)), phase = Math.floor(rng() * 3);
+    for(let z = z0 + fh; z + fh <= z1 + 0.5; z += fh){
+      for(let c = 0; c < cols; c++){
+        if(cols > 2 && (c + phase) % 3 === 2) continue; // colonnes de balcons, une sur trois sans
+        const s0 = a0 + (a1 - a0) * (c + 0.1) / cols, s1 = a0 + (a1 - a0) * (c + 0.9) / cols;
+        if(face === 'r') artBox(k, s0, k + p, s1, z, z + 1.3, slab, { edges:false });
+        else artBox(s0, k, s1, k + p, z, z + 1.3, slab, { edges:false });
+        artRailing(face, k + p, s0, s1, z + 1.3, z + 4.2, rail);
+      }
+    }
+  };
+  doFace('r', u1, v0 + 0.05, v1 - 0.12);
+  doFace('l', v1, u0 + 0.05, u1 - 0.12);
+}
+
+// Immeuble en brique à balcons, hall vitré, toit plat à citerne.
+function artAptBalcony(b, u0, v0, u1, v1, rng, d, floors, opts){
+  const wall = ART_BRICKS[Math.floor(rng() * ART_BRICKS.length)];
+  const fh = 9.5, H = floors * fh + 3, i = 0.12;
+  const a0 = u0 + i, b0 = v0 + i, a1 = u1 - i, b1 = v1 - i;
+  artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#8c9196');
+  artShadow(a0, b0, a1, b1, H);
+  artBox(a0, b0, a1, b1, 0, H, wall);
+  artBox(a0 - 0.01, b0 - 0.01, a1 + 0.01, b1 + 0.01, 0, fh, shade(wall, -0.22), { top:false, edges:false });
+  artWindowGrid(a0, b0, a1, b1, fh, H - 2, fh, rng, { lit:0.3, perTile: opts.perTile || 2.4 });
+  // hall d'entrée vitré
+  const vm = (b0 + b1) / 2;
+  artWindow('r', a1, vm - 0.2, vm + 0.2, 0, fh - 1.5, 'rgba(200,226,236,.9)');
+  artBalconies(a0, b0, a1, b1, 0, H - 2, fh, opts.perTile || 2.4, rng, '#d9d6cf');
+  artBox(a0, b0, a1, b1, H, H + 1.6, shade(wall, 0.18), { topCol:'#7e858b' });
+  const cu = a0 + (a1 - a0) * 0.3, cv = b0 + (b1 - b0) * 0.35;
+  artCylinder(cu, cv, 0.11, H + 1.6, H + 8, '#8a6a52', { bands:1 });
+  return artP((u0 + u1) / 2, (v0 + v1) / 2, H + 4);
+}
+
+// Immeuble en gradins : retraits successifs, terrasses plantées.
+function artAptStepped(b, u0, v0, u1, v1, rng, d, floors, opts){
+  const palette = ['#ece8de', '#dfe4e2', '#e7dccb', '#d5dde3'];
+  const wall = palette[Math.floor(rng() * palette.length)];
+  const accent = ART_ACCENTS[Math.floor(rng() * ART_ACCENTS.length)];
+  const fh = 9.5, tiers = floors >= 6 ? 3 : 2;
+  let a0 = u0 + 0.1, b0 = v0 + 0.1, a1 = u1 - 0.1, b1 = v1 - 0.1;
+  const du = (a1 - a0) * (tiers === 3 ? 0.2 : 0.3), dv = (b1 - b0) * (tiers === 3 ? 0.2 : 0.3);
+  artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#8f958f');
+  artShadow(a0, b0, a1, b1, floors * fh);
+  let z = 0, left = floors;
+  for(let t = 0; t < tiers; t++){
+    const nf = t === tiers - 1 ? left : Math.max(1, Math.round(floors / tiers + (t === 0 ? 0.5 : 0)));
+    left -= nf;
+    const h = nf * fh, last = t === tiers - 1;
+    artBox(a0, b0, a1, b1, z, z + h, wall, { topCol: last ? '#7e858b' : '#6fa64f' });
+    if(t === 0) artBox(a0 - 0.01, b0 - 0.01, a1 + 0.01, b1 + 0.01, 0, fh, shade(wall, -0.2), { top:false, edges:false });
+    artWindowGrid(a0, b0, a1, b1, z + (t === 0 ? fh : 0), z + h - 1, fh, rng, { lit:0.3, perTile: opts.perTile || 2.4 });
+    // bandeau de couleur sous la terrasse
+    artBox(a0, b0, a1, b1, z + h - 1.6, z + h, accent, { top:false, edges:false });
+    z += h;
+    if(!last){
+      // garde-corps vitré + jardinières sur le bord de la terrasse
+      const na1 = a1 - du, nb1 = b1 - dv;
+      artRailing('r', a1, b0 + 0.04, b1 - 0.02, z, z + 3);
+      artRailing('l', b1, a0 + 0.04, a1 - 0.02, z, z + 3);
+      artBox(na1 + 0.06, b0 + 0.1, a1 - 0.06, nb1, z, z + 2.2, '#5c8f3e', { edges:false });
+      artBox(a0 + 0.1, nb1 + 0.06, a1 - 0.06, b1 - 0.06, z, z + 2.2, '#5c8f3e', { edges:false });
+      a1 = na1; b1 = nb1;
+    }
+  }
+  artBox(a0, b0, a1, b1, z, z + 1.5, shade(wall, -0.12), { topCol:'#7e858b' });
+  if(opts.greenRoof) artGround(a0 + 0.05, b0 + 0.05, a1 - 0.05, b1 - 0.05, '#5f9a48', z + 1.6);
+  else artSolar(a0 + 0.08, b0 + 0.08, (a0 + a1) / 2, (b0 + b1) / 2, z + 1.5);
+  return artP((u0 + u1) / 2, (v0 + v1) / 2, z + 3);
+}
+
+// Immeuble haussmannien : pierre de taille, balcons filants, toit mansardé.
+function artAptMansard(b, u0, v0, u1, v1, rng, d, floors, opts){
+  const wall = ART_STONE[Math.floor(rng() * ART_STONE.length)];
+  const slate = ['#4d5866', '#56606c', '#47505c'][Math.floor(rng() * 3)];
+  const fh = 10, H = Math.max(1, floors - 1) * fh + 3, i = 0.12;
+  const a0 = u0 + i, b0 = v0 + i, a1 = u1 - i, b1 = v1 - i;
+  artGround(u0 + 0.03, v0 + 0.03, u1 - 0.03, v1 - 0.03, '#9a958a');
+  artShadow(a0, b0, a1, b1, H + 12);
+  artBox(a0, b0, a1, b1, 0, H, wall, { top:false });
+  // rez-de-chaussée à bossages + porte cochère
+  artBox(a0 - 0.01, b0 - 0.01, a1 + 0.01, b1 + 0.01, 0, fh, shade(wall, -0.12), { top:false, edges:false });
+  const vm = (b0 + b1) / 2;
+  artWindow('r', a1 + 0.01, vm - 0.14, vm + 0.14, 0, fh - 1, '#4a3528');
+  artWindowGrid(a0, b0, a1, b1, 0, fh, fh, rng, { lit:0.8, glow:'rgba(255,240,200,.85)', perTile:1.6 });
+  artWindowGrid(a0, b0, a1, b1, fh, H - 1, fh, rng, { lit:0.3, perTile: opts.perTile || 2.4 });
+  // balcons filants au 2e et au dernier étage, corniche sous le toit
+  for(const z of [fh * 2, H - fh].filter((z, k, A) => z > fh && A.indexOf(z) === k)){
+    artBox(a0 - 0.05, b0 - 0.05, a1 + 0.05, b1 + 0.05, z, z + 1, shade(wall, 0.12), { top:false, edges:false });
+    artRailing('r', a1 + 0.05, b0, b1 + 0.05, z + 1, z + 3.6, 'rgba(40,40,44,.35)');
+    artRailing('l', b1 + 0.05, a0, a1 + 0.05, z + 1, z + 3.6, 'rgba(40,40,44,.35)');
+  }
+  artBox(a0 - 0.04, b0 - 0.04, a1 + 0.04, b1 + 0.04, H - 1.5, H, shade(wall, 0.15), { top:false, edges:false });
+  artHip(a0, b0, a1, b1, H, H + 12, slate, Math.min(0.22, (a1 - a0) / 2, (b1 - b0) / 2));
+  // lucarnes sur les deux pans visibles
+  const dorm = (face, a, z0) => {
+    const [du0, dv0, du1, dv1] = face === 'r' ? [a1 - 0.14, a - 0.07, a1 - 0.02, a + 0.07] : [a - 0.07, b1 - 0.14, a + 0.07, b1 - 0.02];
+    artBox(du0, dv0, du1, dv1, z0, z0 + 6, wall, { top:false, edges:false });
+    artWindow(face, face === 'r' ? du1 : dv1, a - 0.04, a + 0.04, z0 + 1, z0 + 5, rng() < 0.35 ? ART_LIT : ART_DARK);
+    artGable(du0, dv0, du1, dv1, z0 + 6, z0 + 8.5, slate, wall, face === 'r' ? 'u' : 'v', 0.02);
+  };
+  const perFace = (len) => Math.max(1, Math.round(len * 1.6));
+  for(let k = 0, n = perFace(b1 - b0); k < n; k++) dorm('r', b0 + (b1 - b0) * (k + 0.5) / n, H + 1.5);
+  for(let k = 0, n = perFace(a1 - a0); k < n; k++) dorm('l', a0 + (a1 - a0) * (k + 0.5) / n, H + 1.5);
+  // souches de cheminée en brique sur le terrasson
+  for(const [cu, cv] of [[a0 + 0.3, b0 + 0.28], [a1 - 0.35, b0 + 0.3]]){
+    if(cu < a1 - 0.2 && cv < b1 - 0.2) artBox(cu - 0.06, cv - 0.04, cu + 0.06, cv + 0.04, H + 10, H + 16, '#9a5a44');
+  }
+  return artP((u0 + u1) / 2, (v0 + v1) / 2, H + 12);
+}
+
+function artTowerStyled(b, u0, v0, u1, v1, rng, d, floors){
+  switch(residStyleOf(b, 4)){
+    case 1: return artTowerRound(b, u0, v0, u1, v1, rng, d, floors);
+    case 2: return artTowerTwin(b, u0, v0, u1, v1, rng, d, floors);
+    case 3: return artTowerBands(b, u0, v0, u1, v1, rng, d, floors);
+    default: return artTower(b, u0, v0, u1, v1, rng, d, floors);
+  }
+}
+
+// Socle commercial commun aux tours (2 niveaux vitrés, auvent).
+function artPodium(a0, b0, a1, b1, rng, wall){
+  artBox(a0, b0, a1, b1, 0, 16, wall, { topCol:'#7a8187' });
+  artWindowGrid(a0, b0, a1, b1, 0, 16, 8, rng, { lit:0.85, glow:'rgba(255,240,200,.85)', perTile:1.8 });
+  artBox(a0 - 0.04, b0 - 0.04, a1 + 0.04, b1 + 0.04, 7.5, 8.5, shade(wall, -0.3), { top:false, edges:false });
+  return 16;
+}
+
+// Tour cylindrique vitrée sur socle, couronne et héliport.
+function artTowerRound(b, u0, v0, u1, v1, rng, d, floors){
+  const glass = ['#7f9cb3', '#6f93a8', '#8aa8b8', '#7d8fa6'][Math.floor(rng() * 4)];
+  const fh = 8.5, cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
+  const r = Math.min(u1 - u0, v1 - v0) * 0.3;
+  artGround(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, '#7f868c');
+  const total = floors * fh;
+  artShadow(cu - r, cv - r, cu + r, cv + r, total);
+  const zp = artPodium(u0 + 0.12, v0 + 0.12, u1 - 0.12, v1 - 0.12, rng, '#c9ced2');
+  const z1 = zp + total;
+  artCylinder(cu, cv, r, zp, z1, glass, { bands: floors - 1, topCol:'#cfd5da' });
+  // fenêtres éclairées éparses sur la moitié visible
+  const c0 = artP(cu, cv, 0), rx = r * Math.SQRT2 * TW2;
+  ctx.fillStyle = ART_LIT;
+  for(let f = 0; f < floors; f++) for(let k = 0; k < 7; k++){
+    if(rng() > 0.2) continue;
+    const t = -0.85 + 1.7 * (k + 0.5) / 7, x = c0[0] + rx * t;
+    const y = artP(cu, cv, zp + f * fh + fh * 0.35)[1] + Math.sqrt(1 - t * t) * r * Math.SQRT2 * TH2;
+    ctx.fillRect(x - 1.4, y - 2.6, 2.8, 3.4);
+  }
+  artCylinder(cu, cv, r * 0.82, z1, z1 + 6, shade(glass, -0.2), { topCol:'#5d646b' });
+  // héliport : cercle et H
+  const h = artP(cu, cv, z1 + 6);
+  ctx.strokeStyle = '#f2d24b'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.ellipse(h[0], h[1], rx * 0.55, r * 0.55 * Math.SQRT2 * TH2, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#f2f2f2'; ctx.font = 'bold 7px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('H', h[0], h[1] + 0.5);
+  return artP(cu, cv, z1 + 8);
+}
+
+// Tours jumelles sur un socle commun, hauteurs décalées.
+function artTowerTwin(b, u0, v0, u1, v1, rng, d, floors){
+  const glass = ['#6d8aa3', '#7f9cb3', '#5f7f97', '#8aa6b5'][Math.floor(rng() * 4)];
+  const fh = 8.5, um = (u0 + u1) / 2, vm = (v0 + v1) / 2;
+  artGround(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, '#7f868c');
+  artShadow(u0 + 0.1, v0 + 0.1, u1 - 0.1, v1 - 0.1, floors * fh);
+  const zp = artPodium(u0 + 0.1, v0 + 0.1, u1 - 0.1, v1 - 0.1, rng, '#bfc5ca');
+  const g = 0.08, m = 0.18;
+  // jardin suspendu sur le socle, entre les deux tours
+  artGround(u0 + 0.2, v0 + 0.2, u1 - 0.2, v1 - 0.2, '#6a9f4c', zp + 0.2);
+  // tour gauche (v grand) puis tour droite (u grand) : côte à côte à l'écran
+  const towers = [
+    [u0 + m, vm + g, um - g, v1 - m, floors],
+    [um + g, v0 + m, u1 - m, vm - g, Math.max(4, Math.round(floors * 0.8))],
+  ];
+  if(rng() < 0.5){ const t = towers[0][4]; towers[0][4] = towers[1][4]; towers[1][4] = t; }
+  let top = zp;
+  for(const [a0, b0, a1, b1, nf] of towers){
+    const h = nf * fh;
+    artBox(a0, b0, a1, b1, zp, zp + h, glass, { right:-0.02, left:-0.28, topCol:'#b9c0c6' });
+    ctx.strokeStyle = 'rgba(230,236,242,.5)'; ctx.lineWidth = 0.7;
+    for(let zz = zp + fh; zz < zp + h - 1; zz += fh){
+      const p0 = artP(a1, b0, zz), p1 = artP(a1, b1, zz), p2 = artP(a0, b1, zz);
+      ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.stroke();
+    }
+    artWindowGrid(a0, b0, a1, b1, zp, zp + h, fh, rng, { lit:0.2, dark:'rgba(0,0,0,0)', perTile:3 });
+    // couronne en retrait + mât
+    const ci = Math.min(a1 - a0, b1 - b0) * 0.18;
+    artBox(a0 + ci, b0 + ci, a1 - ci, b1 - ci, zp + h, zp + h + 5, '#d8dde2', { topCol:'#9aa1a7' });
+    const cu = (a0 + a1) / 2, cv = (b0 + b1) / 2, p = artP(cu, cv, zp + h + 5), q = artP(cu, cv, zp + h + 16);
+    artLine(p, q, '#c9ced4', 1.2);
+    ctx.fillStyle = '#ff4b4b'; ctx.beginPath(); ctx.arc(q[0], q[1], 1.4, 0, Math.PI * 2); ctx.fill();
+    top = Math.max(top, zp + h + 5);
+  }
+  return artP(um, vm, top);
+}
+
+// Tour résidentielle à balcons filants et panneaux de couleur.
+function artTowerBands(b, u0, v0, u1, v1, rng, d, floors){
+  const accent = ART_ACCENTS[Math.floor(rng() * ART_ACCENTS.length)];
+  const slab = ['#efede8', '#e4e1da', '#f3f1ec'][Math.floor(rng() * 3)];
+  const fh = 8.5, i = 0.16 + Math.min(u1 - u0, v1 - v0) * 0.1, p = 0.07;
+  const a0 = u0 + i, b0 = v0 + i, a1 = u1 - i, b1 = v1 - i, H = floors * fh;
+  artGround(u0 + 0.02, v0 + 0.02, u1 - 0.02, v1 - 0.02, '#7f868c');
+  artShadow(a0, b0, a1, b1, H);
+  artBox(a0, b0, a1, b1, 0, H, '#56636e', { topCol:'#8a9197' });
+  artWindowGrid(a0, b0, a1, b1, fh, H, fh, rng, { lit:0.25, dark:'rgba(90,110,126,.6)', perTile:3 });
+  artBox(a0 - 0.01, b0 - 0.01, a1 + 0.01, b1 + 0.01, 0, fh, slab, { top:false, edges:false });
+  artWindowGrid(a0, b0, a1, b1, 0, fh, fh, rng, { lit:0.8, glow:'rgba(255,240,200,.85)', perTile:1.6 });
+  const panel = (face, k, s0, s1, z) => artRailing(face, k, s0, s1, z + 1.2, z + 4,
+    rng() < 0.35 ? shade(accent, -0.05) : 'rgba(220,232,238,.45)');
+  for(let z = fh; z < H - 1; z += fh){
+    artBox(a0 - p, b0 - p, a1 + p, b1 + p, z, z + 1.2, slab, { top:false, edges:false });
+    const nr = Math.max(1, Math.round((b1 - b0) * 1.5)), nl = Math.max(1, Math.round((a1 - a0) * 1.5));
+    for(let c = 0; c < nr; c++) panel('r', a1 + p, b0 - p + (b1 - b0 + 2 * p) * c / nr, b0 - p + (b1 - b0 + 2 * p) * (c + 1) / nr, z);
+    for(let c = 0; c < nl; c++) panel('l', b1 + p, a0 - p + (a1 - a0 + 2 * p) * c / nl, a0 - p + (a1 - a0 + 2 * p) * (c + 1) / nl, z);
+  }
+  // attique : couronne colorée + édicules
+  artBox(a0, b0, a1, b1, H, H + 3, accent, { topCol:'#7a8187' });
+  const cu = (a0 + a1) / 2, cv = (b0 + b1) / 2;
+  artBox(cu - 0.25, cv - 0.25, cu + 0.1, cv + 0.1, H + 3, H + 10, '#9ea4aa');
+  if(floors > 12){ const q0 = artP(cu, cv, H + 10), q1 = artP(cu, cv, H + 26); artLine(q0, q1, '#c9ced4', 1.3);
+    ctx.fillStyle = '#ff4b4b'; ctx.beginPath(); ctx.arc(q1[0], q1[1], 1.5, 0, Math.PI * 2); ctx.fill(); }
+  return artP(cu, cv, H + 4);
 }
 
 // --- Maisons de luxe -------------------------------------------------------
@@ -2189,12 +2555,12 @@ function drawBuildingArt(b, rx0, ry0, rw, rh, lift, hgt, bCol){
     if(d.resid){
       switch(b.type){
         case 'house': tc = artHouse(b, u0, v0, u1, v1, rng, d); break;
-        case 'duplex': case 'row': tc = artRowHouse(b, u0, v0, u1, v1, rng, d); break;
-        case 'residence': tc = artApartment(b, u0, v0, u1, v1, rng, d, 3, { perTile:2.2 }); break;
-        case 'tower':     tc = artApartment(b, u0, v0, u1, v1, rng, d, 6, { perTile:2.4 }); break;
-        case 'bigtower':  tc = artApartment(b, u0, v0, u1, v1, rng, d, 9, { perTile:2.4, greenRoof:true }); break;
-        case 'tower3':    tc = artTower(b, u0, v0, u1, v1, rng, d, 12); break;
-        case 'sky':       tc = artTower(b, u0, v0, u1, v1, rng, d, 16); break;
+        case 'duplex': case 'row': tc = artRowStyled(b, u0, v0, u1, v1, rng, d); break;
+        case 'residence': tc = artApartmentStyled(b, u0, v0, u1, v1, rng, d, 3, { perTile:2.2 }); break;
+        case 'tower':     tc = artApartmentStyled(b, u0, v0, u1, v1, rng, d, 6, { perTile:2.4 }); break;
+        case 'bigtower':  tc = artApartmentStyled(b, u0, v0, u1, v1, rng, d, 9, { perTile:2.4, greenRoof:true }); break;
+        case 'tower3':    tc = artTowerStyled(b, u0, v0, u1, v1, rng, d, 12); break;
+        case 'sky':       tc = artTowerStyled(b, u0, v0, u1, v1, rng, d, 16); break;
         case 'lux_house':  tc = artLuxHouse(b, u0, v0, u1, v1, rng); break;
         case 'lux_villa':  tc = artLuxVilla(b, u0, v0, u1, v1, rng); break;
         case 'lux_manor':  tc = artLuxManor(b, u0, v0, u1, v1, rng); break;
