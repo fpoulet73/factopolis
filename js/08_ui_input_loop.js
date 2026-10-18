@@ -1630,8 +1630,9 @@ function statusOf(b){
     const parts = [];
     const linked = transitHubLinkedRepresentative(b);
     if(linked){
+      const inn = Math.floor((linked.passengersEntrant || 0) + (linked.passengersEntrantPending || 0));
       const out = Math.floor(linked.passagersSortant || 0);
-      return '🚉 Gare liée · 👥 '+out+' habitant'+(out>1?'s':'')+' (sortants du point de transit)';
+      return '🚉 Lié · 🚶 '+inn+' entrant'+(inn>1?'s':'')+' · 🚶 '+out+' sortant'+(out>1?'s':'');
     }
     if(cur > 0) parts.push('🚶 '+cur+' entrant'+(cur>1?'s':''));
     if(pS > 0) parts.push('🚶 '+pS+' sortant'+(pS>1?'s':''));
@@ -2267,7 +2268,15 @@ function renderInfo(){
     if(town) h += '<div class="row"><span>Village</span><b style="color:#e8d48b">🏘️ '+escHtml(town.name)+'</b></div>';
     const linkedSt = transitHubLinkedRepresentative(b);
     if(linkedSt){
-      h += '<div class="row"><span>Habitants (sortants du point de transit)</span><b style="color:#7dd8ff">👥 '+Math.floor(linkedSt.passagersSortant||0)+'</b></div>';
+      // arrêt collé à une gare / un port / un aéroport : il partage ses compteurs (entrants et
+      // sortants), affichés comme pour un arrêt seul
+      const pE = Math.floor((linkedSt.passengersEntrant||0) + (linkedSt.passengersEntrantPending||0));
+      const pS = Math.floor(linkedSt.passagersSortant||0);
+      h += '<div class="row"><span>Point de transit lié</span><b style="color:#7dd8ff">🚉 '+escHtml(linkedSt.name || BUILD[linkedSt.type]?.n || '')+'</b></div>';
+      h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'in\')" title="Cliquer : détail par joueur"><span>Passagers entrants</span><b style="color:#c8e040">🚶 '+pE+'</b></div>';
+      h += passengerDetailBlock('in', linkedSt);
+      h += '<div class="row" style="cursor:pointer" onclick="togglePassengerDetail(\'out\')" title="Cliquer : détail par joueur"><span>Passagers sortants</span><b style="color:#9fd4f0">🚶 '+pS+'</b></div>';
+      h += passengerDetailBlock('out', linkedSt);
     } else {
       // même principe que les gares : passagers entrants (en attente) / sortants (arrivés)
       const pE = Math.floor(b.passengers||0), pS = Math.floor(b.passagersSortant||0);

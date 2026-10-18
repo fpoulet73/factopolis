@@ -1266,12 +1266,13 @@ function drawBuildingOverlays(b, g){
     ctx.restore();
   }
   // Nombre de passagers sur les arrêts de bus
-  if(!drawFast && b.type === 'bus_stop' && (b.passengersMax || 0) > 0){
-    const pDisp = Math.floor(b.passengers || 0);
+  const passBadge = !drawFast && b.type === 'bus_stop' ? busStopPassengerBadge(b) : null;
+  if(passBadge){
+    const pDisp = passBadge.n;
     ctx.font = 'bold 11px sans-serif';
     ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 3;
     ctx.strokeText('👥'+pDisp, tc[0], tc[1]-TH*0.75);
-    ctx.fillStyle = pDisp < (b.passengersMax||0) ? '#a0c8e8' : '#7dd8ff';
+    ctx.fillStyle = passBadge.full ? '#7dd8ff' : '#a0c8e8';
     ctx.fillText('👥'+pDisp, tc[0], tc[1]-TH*0.75);
   }
   // Contour vert clignotant sur les bâtiments éligibles lors de l'assignation de route

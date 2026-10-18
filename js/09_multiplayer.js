@@ -903,7 +903,7 @@ function applyPauseSpeedFromSync(d){
 // Lieu de loisirs : visiteurs présents (lots {t, n, o}) et compteurs de l'état reçu / chargé.
 function applyLeisureState(b, o){
   const list = Array.isArray(o.visitors)
-    ? o.visitors.filter(g => g && Number.isFinite(g.t) && g.n > 0).map(g => ({ t:g.t, n:Math.floor(g.n), o:g.o ?? null }))
+    ? o.visitors.filter(g => g && Number.isFinite(g.t) && g.n > 0).map(g => ({ t:g.t, n:Math.floor(g.n), o:g.o ?? null, h:typeof g.h === 'string' ? g.h : null }))
     : [];
   if(list.length) b.visitors = list; else delete b.visitors;
   b.visitsTotal = o.visitsTotal || 0;

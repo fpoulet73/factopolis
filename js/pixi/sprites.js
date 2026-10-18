@@ -696,6 +696,25 @@ const PixiSprites = (function(){
     g.zIndex = 1e9;
   }
 
+  // Pastille de personnes centrée en (cx, py) : pour chaque item, un personnage de sa couleur
+  // suivi de son nombre (texte `it.t`, déjà renseigné). Maisons et arrêts de bus.
+  function drawPeoplePill(g, items, cx0, py){
+    const ICON = 9, GAP = 2, SEP = 6;
+    let pw = 10;
+    items.forEach((it, i) => { pw += ICON + GAP + it.t.width + (i ? SEP : 0); });
+    g.roundRect(cx0 - pw / 2, py - 7.5, pw, 15, 7).fill({ color:0x0c1420, alpha:0.68 });
+    let x = cx0 - pw / 2 + 5;
+    items.forEach((it, i) => {
+      if(i) x += SEP;
+      const cx = x + ICON / 2;
+      g.circle(cx, py - 2.6, 2.5).fill({ color:it.col }).stroke({ color:0x0c1420, width:0.8 });
+      g.ellipse(cx, py + 3.6, 3.9, 3.1).fill({ color:it.col }).stroke({ color:0x0c1420, width:0.8 });
+      x += ICON + GAP;
+      it.t.position.set(x + it.t.width / 2, py); it.t.visible = true;
+      x += it.t.width;
+    });
+  }
+
   function drawBuildingOv(b, geom, ovLayer, idx){
     const d = BUILD[b.type];
     const { tc, rx0, ry0, rw, rh, lift } = geom;
@@ -727,8 +746,9 @@ const PixiSprites = (function(){
     const lack = lacksAccess(b) && (b.type !== 'air_terminal' || airportRepresentative(b) === b);
     const noWorkers = !lack && typeof isUnderstaffedOwnFactory === 'function' && isUnderstaffedOwnFactory(b) && workersAllocatedOf(b) === 0;
     const sale = !!(d.storageHub && b.type !== 'tank' && b.sellTo && Object.values(b.sellTo).some(v=>v));
-    const pass = b.type === 'bus_stop' && (b.passengersMax||0) > 0 ? Math.floor(b.passengers||0) : -1;
-    const passFull = pass >= 0 && pass >= (b.passengersMax||0);
+    const passBadge = b.type === 'bus_stop' ? busStopPassengerBadge(b) : null;
+    const pass = passBadge ? passBadge.groups.map(g => playerColor(g.o) + ':' + g.n).join(',') : '';
+    const passFull = !!passBadge?.full;
     let rc = null;
     if(typeof vehicleRouteMode !== 'undefined' && vehicleRouteMode
        && typeof vehicleRouteEndpointOk === 'function' && vehicleRouteEndpointOk(b)){
@@ -768,23 +788,10 @@ const PixiSprites = (function(){
       if(guestGroups) guestGroups.forEach((gr, i) => {
         const t = s.gt[i], txt = String(gr.n);
         if(t.text !== txt) t.text = txt;
+        if(t.style.fill !== 0xe8f4ff) t.style.fill = 0xe8f4ff; // emplacement partagé avec les arrêts de bus
         items.push({ col:gr.col, t });
       });
-      const ICON = 9, GAP = 2, SEP = 6;
-      let pw = 10;
-      items.forEach((it, i) => { pw += ICON + GAP + it.t.width + (i ? SEP : 0); });
-      const py = tc[1] - TH * 0.62;
-      s.g.roundRect(tc[0] - pw / 2, py - 7.5, pw, 15, 7).fill({ color:0x0c1420, alpha:0.68 });
-      let x = tc[0] - pw / 2 + 5;
-      items.forEach((it, i) => {
-        if(i) x += SEP;
-        const cx = x + ICON / 2;
-        s.g.circle(cx, py - 2.6, 2.5).fill({ color:it.col }).stroke({ color:0x0c1420, width:0.8 });
-        s.g.ellipse(cx, py + 3.6, 3.9, 3.1).fill({ color:it.col }).stroke({ color:0x0c1420, width:0.8 });
-        x += ICON + GAP;
-        it.t.position.set(x + it.t.width / 2, py); it.t.visible = true;
-        x += it.t.width;
-      });
+      drawPeoplePill(s.g, items, tc[0], tc[1] - TH * 0.62);
     }
     // contour propriétaire (MP) + drapeau, ou sélection hors room
     if(ownerCol != null){
@@ -815,11 +822,17 @@ const PixiSprites = (function(){
     }
     // indicateur "en vente"
     if(sale){ s.sale.text = '$'; s.sale.position.set(tc[0]+TW*rw*0.3, tc[1]-3); s.sale.visible = true; }
-    // passagers (arrêts de bus)
-    if(pass >= 0){
-      s.pass.text = '👥'+pass;
-      s.pass.style.fill = passFull ? 0x7dd8ff : 0xa0c8e8;
-      s.pass.position.set(tc[0], tc[1]-TH*0.75); s.pass.visible = true;
+    // passagers entrants (arrêts de bus) : pastille comme les maisons, un personnage de la
+    // couleur de chaque joueur (au plus 4) ; chiffres bleu vif quand l'arrêt est plein
+    if(passBadge){
+      const fill = passFull ? 0x7dd8ff : 0xe8f4ff;
+      const items = passBadge.groups.slice(0, 4).map((gr, i) => {
+        const t = i ? s.gt[i - 1] : s.pop, txt = String(gr.n);
+        if(t.text !== txt) t.text = txt;
+        if(t.style.fill !== fill) t.style.fill = fill;
+        return { col: playerColor(gr.o), t };
+      });
+      drawPeoplePill(s.g, items, tc[0], tc[1] - TH * 0.75);
     }
     // surbrillance lors de l'assignation de route (traits pleins, sans pointillés)
     if(rc != null){ diamondPath(s.g, rx0, ry0, rw, rh, lift); s.g.stroke({ color:rc, width:1.5 }); }
