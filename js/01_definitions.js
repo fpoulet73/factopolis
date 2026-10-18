@@ -934,6 +934,9 @@ BUILD.space_center = { n:'Centre spatial', ic:'🚀', hk:'', cost: SPACE_CFG.cou
 // visite (cf. tickLeisureVisits, 06_simulation.js). Réglages : config.js `loisirs`.
 const LEISURE_CFG = CFG.loisirs || {};
 const LEISURE_AFFLUX = Math.max(1, +LEISURE_CFG.afflux || 10);
+const LEISURE_RADIUS_MIN = Math.max(1, Math.round(+LEISURE_CFG.rayonMin || 4));
+const LEISURE_RADIUS_MAX = Math.max(LEISURE_RADIUS_MIN, Math.round(+LEISURE_CFG.rayonMax || 60));
+const LEISURE_RADIUS_DEFAULT = Math.max(LEISURE_RADIUS_MIN, Math.min(LEISURE_RADIUS_MAX, Math.round(+LEISURE_CFG.rayonDefaut || 16)));
 const LEISURE_FX_ZOOM = +LEISURE_CFG.zoomAnimation || 1.0; // zoom minimal des animations (drawLeisureFx)
 // [type moteur, clé config, nom, icône, couleur, hauteur, défauts, description]
 const LEISURE_DEFS = [
@@ -964,14 +967,21 @@ for(const [type, key, n, ic, col, hgt, def, note] of LEISURE_DEFS){
     days:     Math.max(0.1, +c.duree || 1),   // jours de jeu sur place
     fee:      Math.max(0, +c.tarif || 0),
     near:     c.pres === 'arbres' || c.pres === 'eau' ? c.pres : null,
+    radius:   Math.max(LEISURE_RADIUS_MIN, Math.min(LEISURE_RADIUS_MAX, Math.round(+c.rayon || LEISURE_RADIUS_DEFAULT))), // attractivité (cases)
   };
   BUILD[type] = { n, ic, hk:'', cost: c.cout ?? 1000, workers: Math.max(0, Math.round(+c.ouvriers || 0)),
     col, hgt, size, noMerge:true, upkeep: +c.entretien || 0, leisure,
     desc: note + ' ' + size + '×' + size + ' cases · ' + leisure.capacity + ' visiteurs · '
-      + leisureDaysText(leisure.days) + ' sur place · ' + leisure.fee + ' $ / visiteur.' };
+      + leisureDaysText(leisure.days) + ' sur place · ' + leisure.fee + ' $ / visiteur · attire à ' + leisure.radius + ' cases.' };
   LEISURE_TYPES.push(type);
 }
 const isLeisure = b => !!b && !!BUILD[b.type]?.leisure;
+// Rayon d'attractivité : réglage du lieu (b.attractRadius) ou valeur par défaut de son type.
+const leisureRadiusOf = b => {
+  const r = Math.round(+b?.attractRadius);
+  const base = BUILD[b?.type]?.leisure?.radius ?? LEISURE_RADIUS_DEFAULT;
+  return Math.max(LEISURE_RADIUS_MIN, Math.min(LEISURE_RADIUS_MAX, Number.isFinite(r) && r > 0 ? r : base));
+};
 
 const PLANT_UPGRADES = {
   smelter: { label:'Aciérie',       type:'smelter', icon:'🔥', cat:'metal' },
@@ -1386,18 +1396,85 @@ function assignTrainStationName(groupId){
   if(!pieces.length) return;
   const cx = pieces.reduce((sum, b) => sum + b.x + (b.w || 1) / 2, 0) / pieces.length;
   const cy = pieces.reduce((sum, b) => sum + b.y + (b.h || 1) / 2, 0) / pieces.length;
-  const town = nearestTownToPoint(cx, cy);
-  const baseTownName = town ? town.name : generateTownName(Math.round(cx), Math.round(cy));
-  const baseName = 'Gare ' + deNom(baseTownName);
-  const used = new Set(
-    buildings
-      .filter(b => !b.dead && (b.type === 'train_station' || b.type === 'train_platform'))
-      .filter(b => b.stationGroupId != null && b.stationGroupId !== groupId && b.name)
-      .map(b => b.name)
-  );
-  let name = baseName, suffix = 2;
-  while(used.has(name)) name = baseName + ' ' + (suffix++);
+  const name = uniqueTransitName('train_station', cx, cy, pieces);
   for(const piece of pieces) piece.name = name;
+}
+
+// ---------- noms uniques des points de transit ----------
+// Arrêts de bus, gares, aéroports et ports reçoivent un nom propre à leur emplacement : village
+// ou région de la carte, lieu remarquable à proximité (loisirs, industries nommées…), bord de l'eau,
+// direction par rapport au centre du village ; un numéro départage les derniers homonymes.
+const TRANSIT_NAME_LABEL = { bus_stop:'Arrêt', train_station:'Gare', train_platform:'Gare', air_terminal:'Aéroport', boat_depot:'Port' };
+const isTransitNamed = b => !!b && !!TRANSIT_NAME_LABEL[b.type] && b.type !== 'train_platform';
+const TRANSIT_LANDMARK_RADIUS = 10;   // cases : lieu remarquable pris en compte
+const TRANSIT_TOWN_RADIUS = TOWN_RADIUS * 1.5;
+const COMPASS_FR = ['Est', 'Sud-Est', 'Sud', 'Sud-Ouest', 'Ouest', 'Nord-Ouest', 'Nord', 'Nord-Est'];
+
+// Contexte d'un point de la carte : { place, landmark, water, dir }.
+function placeContextAt(cx, cy, ignore = null){
+  const ctx = { place: null, landmark: null, water: false, dir: null };
+  const town = nearestTownToPoint(cx, cy);
+  const td = town ? Math.hypot(cx - town.cx, cy - town.cy) : Infinity;
+  if(town && td <= TRANSIT_TOWN_RADIUS){
+    ctx.place = town.name;
+    if(td > 3) ctx.dir = COMPASS_FR[(Math.round(Math.atan2(cy - town.cy, cx - town.cx) / (Math.PI / 4)) + 8) % 8];
+  } else if(typeof biomeRegions === 'function'){
+    // hors village : nom de la région (biome) la plus proche portant le même biome
+    const here = biomeIdAt(Math.round(cx), Math.round(cy));
+    let best = null, bd = Infinity;
+    for(const r of biomeRegions()){
+      const d = Math.hypot(cx - r.x, cy - r.y) + (r.b === here ? 0 : 40);
+      if(d < bd){ bd = d; best = r; }
+    }
+    if(best){
+      ctx.place = best.name;
+      if(Math.hypot(cx - best.x, cy - best.y) > 3) ctx.dir = COMPASS_FR[(Math.round(Math.atan2(cy - best.y, cx - best.x) / (Math.PI / 4)) + 8) % 8];
+    }
+  }
+  if(!ctx.place) ctx.place = town ? town.name : generateTownName(Math.round(cx), Math.round(cy));
+  // lieu remarquable le plus proche : lieu de loisirs (type), sinon bâtiment nommé non-transport
+  let bd = TRANSIT_LANDMARK_RADIUS + 1;
+  for(const o of buildings){
+    if(o.dead || (ignore && ignore.includes(o))) continue;
+    const named = BUILD[o.type]?.leisure ? BUILD[o.type].n : (o.name && !TRANSIT_NAME_LABEL[o.type] && BUILD[o.type]?.ind ? o.name : null);
+    if(!named) continue;
+    const d = Math.hypot(cx - (o.x + (o.w || 1) / 2), cy - (o.y + (o.h || 1) / 2));
+    if(d < bd){ bd = d; ctx.landmark = named; }
+  }
+  // bord de l'eau
+  const px = Math.round(cx), py = Math.round(cy);
+  scan: for(let dy = -4; dy <= 4; dy++) for(let dx = -4; dx <= 4; dx++){
+    const x = px + dx, y = py + dy;
+    if(x >= 0 && y >= 0 && x < N && y < N && terrain[y * N + x] === T.WATER){ ctx.water = true; break scan; }
+  }
+  return ctx;
+}
+
+// Nom libre le plus parlant pour un point de transit de type `type` en (cx, cy).
+// `taken` : noms déjà portés (en ignorant les pièces `ignore`).
+function uniqueTransitName(type, cx, cy, ignore = null){
+  const label = TRANSIT_NAME_LABEL[type] || 'Arrêt';
+  const ctx = placeContextAt(cx, cy, ignore);
+  const taken = new Set();
+  for(const o of buildings) if(!o.dead && o.name && !(ignore && ignore.includes(o))) taken.add(o.name);
+  const base = label + ' ' + deNom(ctx.place);
+  const cands = [];
+  if(ctx.landmark){
+    cands.push(base + ' – ' + ctx.landmark);
+    if(ctx.dir) cands.push(base + ' – ' + ctx.landmark + ' (' + ctx.dir + ')');
+  }
+  if(ctx.water) cands.push(base + ' – Bord de l’eau');
+  cands.push(base);
+  if(ctx.dir){ cands.push(base + ' ' + ctx.dir); if(ctx.water) cands.push(base + ' – Bord de l’eau (' + ctx.dir + ')'); }
+  for(const c of cands) if(!taken.has(c)) return c;
+  const root = cands[0];
+  for(let n = 2; ; n++) if(!taken.has(root + ' ' + n)) return root + ' ' + n;
+}
+
+// Nomme un arrêt de bus / aéroport / port non nommé (les gares : assignTrainStationName).
+function assignTransitName(b){
+  if(!isTransitNamed(b) || b.dead || b.name || b.type === 'train_station') return;
+  b.name = uniqueTransitName(b.type, b.x + (b.w || 1) / 2, b.y + (b.h || 1) / 2, [b]);
 }
 
 function assignTrainDepotName(b){

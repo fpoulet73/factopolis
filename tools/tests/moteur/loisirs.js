@@ -65,6 +65,43 @@ check('nouvelle visite', n > 0, n);
 demolishBuilding(r2, r2.owner);
 check('démolition : visiteurs à l’arrêt', (stop2.passengers || 0) >= p1 + n, [stop2.passengers, p1, n]);
 
+// rayon d'attractivité du lieu : l'arrêt doit se trouver dans CE rayon (réglable), peu importe le sien
+const far = T_.build('restaurant', 97, 100);
+const stop3 = T_.build('bus_stop', 112, 100);
+stop2.passagersSortant = 0;
+for(let k = 0; k < 40 && workersAllocatedOf(far) < workersRequiredOf(far); k++) T_.run(0.5, 0.1);
+const dFar = buildingDistance(far, stop3);
+check('lieu : personnel', leisureCapacityOf(far) > 0, [workersAllocatedOf(far), workersRequiredOf(far)]);
+check('rayon par défaut', leisureRadiusOf(far) === BUILD.restaurant.leisure.radius && far.attractRadius === undefined, leisureRadiusOf(far));
+check('arrêt hors du rayon du lieu', dFar > leisureRadiusOf(far), [dFar, leisureRadiusOf(far)]);
+stop3.passagersSortant = 5;
+T_.run(1.05, 0.05);
+check('hors rayon : aucun visiteur', leisureVisitorsOf(far) === 0, leisureVisitorsOf(far));
+setLeisureRadius(far, 9999); check('rayon max', leisureRadiusOf(far) === LEISURE_RADIUS_MAX);
+setLeisureRadius(far, 1); check('rayon min', leisureRadiusOf(far) === LEISURE_RADIUS_MIN);
+const wanted = Math.ceil(dFar) + 1;
+setLeisureRadius(far, wanted);
+check('rayon réglé', leisureRadiusOf(far) === wanted && far.attractRadius === wanted, leisureRadiusOf(far));
+stop3.passagersSortant = 5;
+T_.run(1.05, 0.05);
+check('dans le rayon : visiteurs', leisureVisitorsOf(far) > 0, leisureVisitorsOf(far));
+tryDo('rayon sauvegardé', () => applySnapshot(JSON.parse(JSON.stringify(serializeState()))));
+const far2 = bgrid[100*N+97];
+check('rayon rechargé', far2 && far2.attractRadius === wanted, far2 && far2.attractRadius);
+demolishBuilding(far2, far2.owner);
+
+// personnel manquant : les premiers voyageurs qui se présentent sont recrutés (avant d'être visiteurs)
+const lonely = T_.build('restaurant', 116, 101);
+check('lieu isolé sans personnel', lonely && workersAllocatedOf(lonely) === 0 && workersRequiredOf(lonely) > 0, lonely && [workersAllocatedOf(lonely), workersRequiredOf(lonely)]);
+const stopL = bgrid[100*N+112]; // objets recréés par le rechargement
+stopL.passagersSortant = 6;
+T_.run(1.1, 0.05);
+const walking = walkers.filter(w => w.cj && w.cj.jx === lonely.x && w.cj.jy === lonely.y).reduce((n, w) => n + w.cj.n, 0);
+check('voyageurs recrutés en route', walking + (lonely.workersAssigned || 0) >= workersRequiredOf(lonely), [walking, lonely.workersAssigned, leisureVisitorsOf(lonely)]);
+T_.run(20, 0.1);
+check('poste pourvu par les voyageurs', workersAllocatedOf(lonely) > 0, workersAllocatedOf(lonely));
+demolishBuilding(lonely, lonely.owner);
+
 // panneau et rendu de chaque lieu (4 rotations)
 const spots = { restaurant:[104, 104], cinema:[107, 104], museum:[110, 104], treetop:[113, 104], marina:[116, 104], spa:[119, 104],
   hotel:[122, 104], concert_hall:[104, 108], zoo:[108, 108], casino:[112, 108], stadium:[116, 108], theme_park:[121, 108], tennis:[104, 113], basketball:[107, 113], baseball:[110, 113] };

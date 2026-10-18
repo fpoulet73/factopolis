@@ -1925,9 +1925,10 @@ function dispatchCommuters(hub, job, n, key, field = 'commuters'){
   if(walkers.length > 80 || (typeof objectivesSettleUntil !== 'undefined' && performance.now() < objectivesSettleUntil)){
     deliverCommuters(job.x, job.y, key, n, field); return;
   }
+  const path = walkPath(A, B, hub, job);
   for(let i = 0; i < k; i++){
     const share = Math.floor(n / k) + (i < n % k ? 1 : 0);
-    walkers.push({ id: nextWalkerId++, pts:[A, B], seg:0, t:-i*0.12, target:null, leaving:true,
+    walkers.push({ id: nextWalkerId++, pts: path.map(p => ({ x:p.x, y:p.y })), seg:0, t:-i*0.12, target:null, leaving:true,
                    cj:{ jx:job.x, jy:job.y, key, n:share, field },
                    col: playerColor(hub.owner ?? job.owner), phase: Math.random()*7 });
   }
@@ -1960,13 +1961,97 @@ function deliverCommuters(jx, jy, key, n, field = 'commuters'){
   if(origin && !origin.dead) origin.passagersSortant = (origin.passagersSortant || 0) + n;
 }
 // Piétons purement visuels (au plus 3 par déplacement) entre deux bâtiments.
+// ---------- trajet des piétons autour des bâtiments ----------
+// Les voyageurs ne traversent pas les bâtiments (ni l'eau) : A* sur la grille dans une boîte autour du
+// trajet (8 directions, sans couper les coins), puis lissage en lignes droites libres. Les bâtiments de
+// départ et d'arrivée (`ignore`) restent franchissables. Sans chemin : ligne droite (repli).
+// Renvoie de NOUVEAUX points {x,y} en pixels (shiftWorldOrigin les décale un par un).
+const WALK_PATH_MARGIN = 14, WALK_PATH_MAX_NODES = 7000;
+function walkPath(A, B, ...ignore){
+  const straight = () => [{ x:A.x, y:A.y }, { x:B.x, y:B.y }];
+  const clampT = v => Math.max(0, Math.min(N - 1, Math.floor(v / TILE)));
+  const sx = clampT(A.x), sy = clampT(A.y), gx = clampT(B.x), gy = clampT(B.y);
+  const allowed = new Set(ignore.filter(Boolean));
+  const free = (x, y) => {
+    if(x < 0 || y < 0 || x >= N || y >= N) return true; // hors carte : libre
+    const i = y * N + x;
+    if(terrain[i] === T.WATER) return false;
+    const b = bgrid[i];
+    return !b || allowed.has(b);
+  };
+  const lineClear = (ax, ay, bx, by) => {
+    const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / (TILE * 0.1)));
+    for(let k = 1; k < steps; k++){
+      const x = ax + (bx - ax) * k / steps, y = ay + (by - ay) * k / steps;
+      if(!free(Math.floor(x / TILE), Math.floor(y / TILE))) return false;
+    }
+    return true;
+  };
+  if(lineClear(A.x, A.y, B.x, B.y)) return straight();
+  const x0 = Math.max(0, Math.min(sx, gx) - WALK_PATH_MARGIN), x1 = Math.min(N - 1, Math.max(sx, gx) + WALK_PATH_MARGIN);
+  const y0 = Math.max(0, Math.min(sy, gy) - WALK_PATH_MARGIN), y1 = Math.min(N - 1, Math.max(sy, gy) + WALK_PATH_MARGIN);
+  const W = x1 - x0 + 1, H = y1 - y0 + 1;
+  const g = new Float32Array(W * H).fill(Infinity), from = new Int32Array(W * H).fill(-1), done = new Uint8Array(W * H);
+  const idx = (x, y) => (y - y0) * W + (x - x0);
+  const h = (x, y) => { const dx = Math.abs(x - gx), dy = Math.abs(y - gy); return (dx + dy) + (Math.SQRT2 - 2) * Math.min(dx, dy); };
+  const heap = [];
+  const push = (f, i) => { heap.push([f, i]); let j = heap.length - 1; while(j > 0){ const p = (j - 1) >> 1; if(heap[p][0] <= heap[j][0]) break; [heap[p], heap[j]] = [heap[j], heap[p]]; j = p; } };
+  const pop = () => {
+    const top = heap[0], last = heap.pop();
+    if(heap.length){ heap[0] = last; let j = 0; for(;;){ const l = 2*j+1, r = l+1; let m = j;
+      if(l < heap.length && heap[l][0] < heap[m][0]) m = l; if(r < heap.length && heap[r][0] < heap[m][0]) m = r;
+      if(m === j) break; [heap[m], heap[j]] = [heap[j], heap[m]]; j = m; } }
+    return top;
+  };
+  const start = idx(sx, sy), goal = idx(gx, gy);
+  g[start] = 0; push(h(sx, sy), start);
+  let nodes = 0, found = false;
+  while(heap.length && nodes++ < WALK_PATH_MAX_NODES){
+    const [, cur] = pop();
+    if(done[cur]) continue;
+    done[cur] = 1;
+    if(cur === goal){ found = true; break; }
+    const cx = x0 + cur % W, cy = y0 + ((cur / W) | 0);
+    for(let dy = -1; dy <= 1; dy++) for(let dx = -1; dx <= 1; dx++){
+      if(!dx && !dy) continue;
+      const nx = cx + dx, ny = cy + dy;
+      if(nx < x0 || nx > x1 || ny < y0 || ny > y1) continue;
+      const ni = idx(nx, ny);
+      if(done[ni]) continue;
+      if(ni !== goal && !free(nx, ny)) continue;
+      if(dx && dy && (!free(cx + dx, cy) || !free(cx, cy + dy))) continue; // pas de coin coupé
+      const road_ = road[ny * N + nx] ? 0.7 : 1;
+      const ng = g[cur] + (dx && dy ? Math.SQRT2 : 1) * road_;
+      if(ng < g[ni]){ g[ni] = ng; from[ni] = cur; push(ng + h(nx, ny), ni); }
+    }
+  }
+  if(!found) return straight();
+  const tiles = [];
+  for(let i = goal; i !== -1; i = from[i]) tiles.push({ x:(x0 + i % W + 0.5) * TILE, y:(y0 + ((i / W) | 0) + 0.5) * TILE });
+  tiles.reverse();
+  // lissage : on garde le point le plus lointain visible en ligne droite depuis le point courant
+  const out = [{ x:A.x, y:A.y }];
+  let anchor = out[0], k = 0;
+  while(k < tiles.length - 1){
+    let far = k + 1;
+    for(let j = tiles.length - 1; j > k + 1; j--){
+      if(lineClear(anchor.x, anchor.y, tiles[j].x, tiles[j].y)){ far = j; break; }
+    }
+    out.push({ x:tiles[far].x, y:tiles[far].y });
+    anchor = tiles[far]; k = far;
+  }
+  out.push({ x:B.x, y:B.y });
+  return out;
+}
+
 function spawnTransitWalkers(from, to, n){
   if(!from || !to) return;
   const A = { x:(from.x + (from.w||1)/2)*TILE, y:(from.y + (from.h||1)/2)*TILE };
   const B = { x:(to.x + (to.w||1)/2)*TILE,   y:(to.y + (to.h||1)/2)*TILE };
   const owner = from.owner ?? to.owner ?? null;
+  const path = walkPath(A, B, from, to);
   for(let i = 0; i < Math.min(3, Math.ceil(n)) && walkers.length <= 80; i++){
-    walkers.push({ id: nextWalkerId++, pts:[A, B], seg:0, t:-i*0.12, target:null, leaving:true,
+    walkers.push({ id: nextWalkerId++, pts: path.map(p => ({ x:p.x, y:p.y })), seg:0, t:-i*0.12, target:null, leaving:true,
                    col: playerColor(owner), phase: Math.random()*7 });
   }
 }
@@ -2188,7 +2273,7 @@ function refreshWorkerAllocation(){
         if(job.owner != null && rep.owner != null && job.owner !== rep.owner) continue;
         let d = Infinity;
         for(const st of group) d = Math.min(d, buildingDistance(st, job));
-        if(d <= hubRadius(rep)) near.push({ rep, d });
+        if(d <= (isLeisure(job) ? leisureRadiusOf(job) : hubRadius(rep))) near.push({ rep, d }); // lieu : son rayon d'attractivité
       }
       near.sort((a, b) => a.d - b.d);
       for(const { rep } of near){

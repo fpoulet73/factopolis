@@ -14,6 +14,27 @@ const MP = {
 };
 
 const mpHasAdminRights = () => MP.connected && (MP.role === 'host' || MP.isAdmin);
+// Propriétaire du monde = son créateur (comparé par pseudo, sans tenir compte de la casse).
+// Seul lui peut démolir les bâtiments des autres joueurs (avec confirmation).
+const mpIsWorldOwner = (username = MP.username) =>
+  !!username && MP.roomCreator != null && String(username).toLowerCase() === String(MP.roomCreator).toLowerCase();
+// Démolition d'un bâtiment d'un autre joueur par le propriétaire du monde : confirmation, puis
+// diffusion aux autres clients et démolition locale (le remboursement revient à son propriétaire).
+function demolishForeignBuilding(b){
+  if(depotHasStoredVehicles(b)){
+    toast('⛔ Impossible de détruire ce dépôt tant que des véhicules sont à l’intérieur.','err'); return;
+  }
+  const nUsing = vehiclesUsingBuilding(b).length;
+  confirmAction('Tu es propriétaire du monde : détruire « '+BUILD[b.type].n+' » appartenant à '+playerName(b.owner)+' ?'
+    + (nUsing > 0 ? '\n'+nUsing+' véhicule(s) l’utilisent et retourneront au dépôt.' : '')
+    + '\nLe remboursement revient à son propriétaire.',
+    { title:'Détruire le bâtiment d’un autre joueur ?', okText:'Détruire', danger:true }).then(ok => {
+    if(!ok || b.dead) return;
+    netSend({ type:'bulldoze_bld', bx:b.x, by:b.y });
+    demolishBuilding(b, b.owner);
+    if(selected === b) selected = null;
+  });
+}
 // Vrai uniquement quand on joue dans un monde multijoueur (room rejointe). Connecté
 // au lobby sans room, ou hors ligne, on ne peut pas construire.
 const mpInRoom = () => MP.connected && MP.roomId != null && MP.role != null;
@@ -951,9 +972,11 @@ function clickAt(x,y){
     const railSigDef = rail[i] ? chooseRailSignalDef(x, y) : null;
     if(bgrid[i]){
       const b = bgrid[i];
-      // en multijoueur : impossible de démolir le bâtiment d'un autre joueur
+      // en multijoueur : seul le propriétaire du monde peut démolir le bâtiment d'un autre joueur
       if(MP.connected && b.owner && b.owner !== MP.myId){
-        toast('⛔ Ce bâtiment appartient à un autre joueur','err'); return;
+        if(mpIsWorldOwner()) demolishForeignBuilding(b);
+        else toast('⛔ Ce bâtiment appartient à un autre joueur','err');
+        return;
       }
       if(depotHasStoredVehicles(b)){
         toast('⛔ Impossible de détruire ce dépôt tant que des véhicules sont à l’intérieur.','err'); return;
@@ -1084,6 +1107,7 @@ function clickAt(x,y){
   assignBuildingToTown(b);
   assignIndustryName(b);
   assignTrainDepotName(b);
+  assignTransitName(b);
   buildings.push(b);
   setGrid(b, b);
   selected = b;

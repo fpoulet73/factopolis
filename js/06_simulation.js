@@ -1018,8 +1018,8 @@ function tickSortantsToHomes(dt){
     if(hub.type === 'train_station' && trainStationGroupRepresentative(hub.stationGroupId) !== hub) continue;
     const radius = hub.type === 'train_station' ? TRAIN_STATION_RADIUS
       : hub.type === 'boat_depot' ? PORT_RADIUS : hub.type === 'air_terminal' ? AIRPORT_RADIUS : BUS_STOP_RADIUS;
-    // priorité aux lieux de loisirs à portée (avant un logement / un Airbnb)
-    sendSortantsToLeisure(hub, radius, elapsed);
+    // priorité aux lieux de loisirs dont le rayon d'attractivité couvre le point (avant un logement / un Airbnb)
+    sendSortantsToLeisure(hub, elapsed);
     if(!(hub.passagersSortant >= 1)) continue;
     let best = null, bd = Infinity;
     for(const h of buildings){
@@ -1048,10 +1048,36 @@ function leisureCapacityOf(b){
   return Math.floor(L.capacity * (req > 0 ? workersAllocatedOf(b) / req : 1));
 }
 const leisureStaySecs = b => (BUILD[b.type]?.leisure?.days || 1) * 24 / GAME_HOURS_PER_SEC;
-// Voyageurs arrivés au point de transit `hub` → lieux de loisirs à portée, le plus proche
-// d'abord, au plus LEISURE_AFFLUX par heure de jeu écoulée.
-function sendSortantsToLeisure(hub, radius, elapsed = 1){
-  let budget = Math.min(Math.floor(hub.passagersSortant), Math.max(1, Math.round(LEISURE_AFFLUX * elapsed * GAME_HOURS_PER_SEC)));
+// Voyageurs arrivés au point de transit `hub` → lieux de loisirs dont le rayon d'attractivité
+// (leisureRadiusOf) couvre le point, le plus proche d'abord, au plus LEISURE_AFFLUX par heure de jeu écoulée.
+// Un lieu de loisirs à court de personnel recrute en priorité les premiers voyageurs qui se présentent
+// au point de transit `hub` (dans le rayon d'attractivité du lieu) : ils marchent jusqu'au lieu et y
+// prennent leur poste (deliverCommuters) au lieu d'être des visiteurs.
+function recruitLeisureWorkers(hub){
+  if(!(hub.passagersSortant >= 1)) return;
+  const inbound = new Map();
+  for(const wk of walkers) if(wk.cj) inbound.set(wk.cj.jx + ',' + wk.cj.jy, (inbound.get(wk.cj.jx + ',' + wk.cj.jy) || 0) + wk.cj.n);
+  const jobs = [];
+  for(const b of buildings){
+    if(b.dead || b.paused || !isLeisure(b)) continue;
+    if(b.owner != null && hub.owner != null && b.owner !== hub.owner) continue;
+    const d = buildingDistance(b, hub);
+    if(d <= leisureRadiusOf(b)) jobs.push({ b, d });
+  }
+  jobs.sort((a, c) => a.d - c.d);
+  for(const { b } of jobs){
+    const need = workersRequiredOf(b) - workersAllocatedOf(b) - (inbound.get(b.x + ',' + b.y) || 0);
+    const take = Math.min(Math.floor(hub.passagersSortant), need);
+    if(take < 1) continue;
+    hub.passagersSortant -= take;
+    dispatchCommuters(hub, b, take, hub.x + ',' + hub.y);
+    if(!(hub.passagersSortant >= 1)) break;
+  }
+}
+// `maxBudget` : arrivée d'un véhicule, les `maxBudget` voyageurs descendus partent aussitôt (sans plafond d'afflux).
+function sendSortantsToLeisure(hub, elapsed = 1, maxBudget = null){
+  recruitLeisureWorkers(hub); // les premiers arrivés comblent d'abord les postes vacants
+  let budget = Math.min(Math.floor(hub.passagersSortant), maxBudget != null ? Math.floor(maxBudget) : Math.max(1, Math.round(LEISURE_AFFLUX * elapsed * GAME_HOURS_PER_SEC)));
   if(budget < 1) return;
   const near = [];
   for(const b of buildings){
@@ -1059,7 +1085,7 @@ function sendSortantsToLeisure(hub, radius, elapsed = 1){
     const free = leisureCapacityOf(b) - leisureVisitorsOf(b);
     if(free < 1) continue;
     const d = buildingDistance(b, hub);
-    if(d <= radius) near.push({ b, d, free });
+    if(d <= leisureRadiusOf(b)) near.push({ b, d, free });
   }
   if(!near.length) return;
   near.sort((a, c) => a.d - c.d);
@@ -1127,7 +1153,7 @@ function moveInFromHub(hub, home){
   const A = { x:(hub.x + (hub.w||1)/2)*TILE, y:(hub.y + (hub.h||1)/2)*TILE };
   const B = { x:(home.x + (home.w||1)/2)*TILE, y:(home.y + (home.h||1)/2)*TILE };
   home.pending = (home.pending || 0) + 1;
-  walkers.push({ id: nextWalkerId++, pts:[A, B], seg:0, t:0, target:home, guest:true, guestOwner:hub.owner ?? null,
+  walkers.push({ id: nextWalkerId++, pts: walkPath(A, B, hub, home), seg:0, t:0, target:home, guest:true, guestOwner:hub.owner ?? null,
                  col: playerColor(home.owner), phase: Math.random()*7 });
 }
 // Un voyageur installé chez un autre joueur n'y reste qu'une semaine de jeu : ensuite il

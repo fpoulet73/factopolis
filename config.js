@@ -148,7 +148,7 @@ const CONFIG = {
 
   /* ---------- LIEUX DE LOISIRS ----------
      Bâtiments posés depuis le menu 🎡 Loisirs. Les voyageurs arrivés (passagers sortants)
-     à un arrêt de bus, une gare, un port ou un aéroport dont le rayon couvre le lieu s'y
+     à un arrêt de bus, une gare, un port ou un aéroport situé dans le `rayon` d'attractivité du lieu s'y
      rendent EN PRIORITÉ (avant un logement Airbnb). Chaque visiteur paie `tarif` $ à son
      arrivée au propriétaire du lieu ; au bout de `duree` jours de jeu, il repart vers le
      point de transit le plus proche en passager entrant.
@@ -166,23 +166,28 @@ const CONFIG = {
          pres      : contrainte de pose facultative : 'arbres' (arbre à 2 cases) ou 'eau' (rive à 1 case) */
   loisirs: {
     afflux: 10,
+    // rayon d'attractivité (cases) : les voyageurs sortant d'un arrêt / gare / port / aéroport
+    // situé dans ce rayon se rendent au lieu. Réglable lieu par lieu en jeu, entre min et max.
+    rayonMin: 4,
+    rayonMax: 60,
+    rayonDefaut: 16,
     zoomAnimation: 1.0,
     lieux: {
-      restaurant:      { cout: 1500,  taille: 1, capacite: 20,  duree: 1,   tarif: 35,  ouvriers: 2,  entretien: 1 },
-      cinema:          { cout: 3000,  taille: 2, capacite: 60,  duree: 1.5, tarif: 25,  ouvriers: 3,  entretien: 2 },
-      musee:           { cout: 5000,  taille: 2, capacite: 50,  duree: 2,   tarif: 30,  ouvriers: 3,  entretien: 2 },
-      accrobranche:    { cout: 2500,  taille: 2, capacite: 30,  duree: 1.5, tarif: 45,  ouvriers: 2,  entretien: 1, pres: 'arbres' },
-      baseNautique:    { cout: 4000,  taille: 2, capacite: 40,  duree: 2,   tarif: 55,  ouvriers: 3,  entretien: 2, pres: 'eau' },
-      tennis:          { cout: 2000,  taille: 2, capacite: 24,  duree: 1,   tarif: 30,  ouvriers: 1,  entretien: 1 },
-      basket:          { cout: 2500,  taille: 2, capacite: 40,  duree: 1,   tarif: 20,  ouvriers: 2,  entretien: 1 },
-      baseball:        { cout: 18000, taille: 3, capacite: 200, duree: 1.5, tarif: 40,  ouvriers: 6,  entretien: 6 },
-      spa:             { cout: 9000,  taille: 2, capacite: 40,  duree: 3,   tarif: 120, ouvriers: 4,  entretien: 3 },
-      hotel:           { cout: 8000,  taille: 2, capacite: 80,  duree: 12,  tarif: 180, ouvriers: 6,  entretien: 4 },
-      salleConcert:    { cout: 12000, taille: 3, capacite: 150, duree: 2,   tarif: 70,  ouvriers: 6,  entretien: 5 },
-      zoo:             { cout: 15000, taille: 3, capacite: 120, duree: 3,   tarif: 60,  ouvriers: 8,  entretien: 6 },
-      casino:          { cout: 20000, taille: 3, capacite: 100, duree: 2.5, tarif: 200, ouvriers: 8,  entretien: 8 },
-      stade:           { cout: 30000, taille: 4, capacite: 400, duree: 1.5, tarif: 50,  ouvriers: 10, entretien: 10 },
-      parcAttractions: { cout: 40000, taille: 4, capacite: 300, duree: 4,   tarif: 110, ouvriers: 14, entretien: 12 },
+      restaurant:      { cout: 1500,  taille: 1, capacite: 20,  duree: 1,   tarif: 35,  ouvriers: 2,  entretien: 1, rayon: 10},
+      cinema:          { cout: 3000,  taille: 2, capacite: 60,  duree: 1.5, tarif: 25,  ouvriers: 3,  entretien: 2, rayon: 14},
+      musee:           { cout: 5000,  taille: 2, capacite: 50,  duree: 2,   tarif: 30,  ouvriers: 3,  entretien: 2, rayon: 14},
+      accrobranche:    { cout: 2500,  taille: 2, capacite: 30,  duree: 1.5, tarif: 45,  ouvriers: 2,  entretien: 1, rayon: 14, pres: 'arbres' },
+      baseNautique:    { cout: 4000,  taille: 2, capacite: 40,  duree: 2,   tarif: 55,  ouvriers: 3,  entretien: 2, rayon: 14, pres: 'eau' },
+      tennis:          { cout: 2000,  taille: 2, capacite: 24,  duree: 1,   tarif: 30,  ouvriers: 1,  entretien: 1, rayon: 10},
+      basket:          { cout: 2500,  taille: 2, capacite: 40,  duree: 1,   tarif: 20,  ouvriers: 2,  entretien: 1, rayon: 10},
+      baseball:        { cout: 18000, taille: 3, capacite: 200, duree: 1.5, tarif: 40,  ouvriers: 6,  entretien: 6, rayon: 20},
+      spa:             { cout: 9000,  taille: 2, capacite: 40,  duree: 3,   tarif: 120, ouvriers: 4,  entretien: 3, rayon: 14},
+      hotel:           { cout: 8000,  taille: 2, capacite: 80,  duree: 12,  tarif: 180, ouvriers: 6,  entretien: 4, rayon: 16},
+      salleConcert:    { cout: 12000, taille: 3, capacite: 150, duree: 2,   tarif: 70,  ouvriers: 6,  entretien: 5, rayon: 22},
+      zoo:             { cout: 15000, taille: 3, capacite: 120, duree: 3,   tarif: 60,  ouvriers: 8,  entretien: 6, rayon: 24},
+      casino:          { cout: 20000, taille: 3, capacite: 100, duree: 2.5, tarif: 200, ouvriers: 8,  entretien: 8, rayon: 24},
+      stade:           { cout: 30000, taille: 4, capacite: 400, duree: 1.5, tarif: 50,  ouvriers: 10, entretien: 10, rayon: 30},
+      parcAttractions: { cout: 40000, taille: 4, capacite: 300, duree: 4,   tarif: 110, ouvriers: 14, entretien: 12, rayon: 36},
     },
   },
 

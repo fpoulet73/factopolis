@@ -115,7 +115,7 @@ function serializeVehicleState(v){
     sourceY: v.source && !v.source.dead ? v.source.y : null,
     destX:   v.dest   && !v.dest.dead   ? v.dest.x   : null,
     destY:   v.dest   && !v.dest.dead   ? v.dest.y   : null,
-    state: v.state, cargo: v.cargo, res: v.res || null, busRouteDistance: v.busRouteDistance ?? null,
+    state: v.state, cargo: v.cargo, cargoOwners: v.cargoOwners || null, res: v.res || null, busRouteDistance: v.busRouteDistance ?? null,
     passengersOnBoard: v.passengersOnBoard ?? null,
     passengersFromStationX: v.passengersFromStation && !v.passengersFromStation.dead ? v.passengersFromStation.x : null,
     passengersFromStationY: v.passengersFromStation && !v.passengersFromStation.dead ? v.passengersFromStation.y : null,
@@ -908,6 +908,7 @@ function applyLeisureState(b, o){
   if(list.length) b.visitors = list; else delete b.visitors;
   b.visitsTotal = o.visitsTotal || 0;
   b.leisureIncome = o.leisureIncome || 0;
+  b.attractRadius = o.attractRadius > 0 ? o.attractRadius : undefined;
 }
 
 function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
@@ -999,6 +1000,7 @@ function applyVehicleDynamicState(v, sv){
   v.currentBuilding = currentBuilding || (sv.state === 'idle' ? v.garageRef : null);
   v.state = sv.state || 'idle';
   v.cargo = sv.cargo || 0;
+  v.cargoOwners = sv.cargoOwners || null;
   v.res = sv.res || null;
   v.pinnedRes = sv.pinnedRes || null;
   v.busRouteDistance = sv.busRouteDistance ?? null;
@@ -1403,7 +1405,7 @@ function serializeState(opts = {}){
       stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null, runwayRev:b.runwayRev ? 1 : 0, decor:b.decor ?? null, design:b.design ?? null,
       spacePhase:b.spacePhase || null, launches:b.launches || 0,
       visitors:b.visitors && b.visitors.length ? b.visitors.map(g => ({ ...g })) : null,
-      visitsTotal:b.visitsTotal || 0, leisureIncome:b.leisureIncome || 0,
+      visitsTotal:b.visitsTotal || 0, leisureIncome:b.leisureIncome || 0, attractRadius:b.attractRadius || 0,
     })),
     towns: towns.map(t => ({ id:t.id, name:t.name, cx:t.cx, cy:t.cy })),
     news: { flags: Object.keys(newsFlags), log: newsLog, next: nextNewsId },
@@ -1800,6 +1802,7 @@ function applySnapshot(d){
     if(b.townId == null) assignBuildingToTown(b, true);
     if(BUILD[b.type]?.ind   && !b.name)          assignIndustryName(b);
     if(b.type === 'train_depot' && !b.name)      assignTrainDepotName(b);
+    if(isTransitNamed(b) && !b.name && b.type !== 'train_station') assignTransitName(b);
   }
   for(const groupId of new Set(buildings.filter(b => !b.dead && b.stationGroupId != null).map(b => b.stationGroupId))){
     const pieces = buildings.filter(b => !b.dead && b.stationGroupId === groupId && (b.type === 'train_station' || b.type === 'train_platform'));
@@ -1846,6 +1849,7 @@ function applySnapshot(d){
       v.dest = dest || null;
       v.currentBuilding = currentBuilding || (sv.state === 'idle' ? garage : null);
       v.cargo = sv.cargo || 0;
+      v.cargoOwners = sv.cargoOwners || null;
       v.res = sv.res || null;
       v.pinnedRes = sv.pinnedRes || null;
       if(sv.engineMult != null) v.engineMult = sv.engineMult;
@@ -2182,10 +2186,10 @@ function applyAction(msg){
       if(!validXY(act.bx, act.by)) break;
       const b = bgrid[act.by*N+act.bx];
       if(!b) break;
-      // valider le droit de démolition côté receveur aussi
-      if(b.owner && b.owner !== msg.from) break;
+      // valider le droit de démolition côté receveur aussi : le propriétaire, ou le propriétaire du monde
+      if(b.owner && b.owner !== msg.from && !mpIsWorldOwner(msg.fromUsername)) break;
       if(depotHasStoredVehicles(b)) break;
-      demolishBuilding(b, msg.from);
+      demolishBuilding(b, b.owner || msg.from);
       break;
     }
     case 'build': {
@@ -2224,6 +2228,7 @@ function applyAction(msg){
       assignBuildingToTown(b, true);
       assignIndustryName(b);
       assignTrainDepotName(b);
+      assignTransitName(b);
       buildings.push(b); setGrid(b, b);
       wSender.money -= cost; wSender.fin.construction += cost;
       if(BUILD[b.type].resid) assignHomelessToHousing(b.owner);
@@ -2258,6 +2263,14 @@ function applyAction(msg){
       if(!b || !BUILD[b.type]?.ind) break;
       if(b.owner && b.owner !== msg.from) break;
       b.paused = !!act.paused;
+      break;
+    }
+    case 'set_leisure_radius': {
+      if(!validXY(act.x, act.y)) break;
+      const b = bgrid[act.y*N+act.x];
+      if(!isLeisure(b)) break;
+      if(b.owner && b.owner !== msg.from) break;
+      setLeisureRadius(b, act.r);
       break;
     }
     case 'toggle_airbnb_only': {

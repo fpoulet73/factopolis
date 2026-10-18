@@ -1416,6 +1416,25 @@ function lanePose(pts, seg, t, lane=0.16){
   return { u, v, du, dv };
 }
 
+// Décalage latéral d'un véhicule routier : voie de droite (lane > 0), voie de gauche
+// pendant un dépassement, avec une transition douce au déboîtement et au rabattement
+// (temps réel : la pose est recalculée à chaque image, y compris chez l'invité).
+const LANE_CHANGE_MS = 450;
+function roadLaneAt(unit, now){
+  const k = Math.min(1, (now - unit._laneAt) / LANE_CHANGE_MS);
+  return unit._laneFrom + (unit._laneTo - unit._laneFrom) * k * k * (3 - 2 * k);
+}
+function roadLaneOffset(unit, lane){
+  const target = unit.overtaking ? -lane : lane;
+  const now = performance.now();
+  if(unit._laneTo !== target){
+    unit._laneFrom = unit._laneTo === undefined ? target : roadLaneAt(unit, now);
+    unit._laneTo = target;
+    unit._laneAt = now;
+  }
+  return roadLaneAt(unit, now);
+}
+
 // Direction lissée pour les trains : blend symétrique autour de chaque sommet du
 // tracé. La transition s'étale sur la moitié de chaque segment adjacent et atteint
 // la direction MOYENNE des deux segments pile au sommet, identique des deux côtés.
@@ -2368,7 +2387,7 @@ function drawOneLeisureFx(b, F, T, occ, seed){
 function truckPose(tk){
   const rs = typeof mpTruckRenderState === 'function' ? mpTruckRenderState(tk) : tk;
   if(!rs.pts || !rs.pts.length) return null;
-  const {u, v} = lanePose(rs.pts, rs.seg, rs.t, tk.overtaking ? -0.15 : 0.15);
+  const {u, v} = lanePose(rs.pts, rs.seg, rs.t, roadLaneOffset(tk, 0.15));
   const [bDx, bDy] = trainBlendedDir(rs.pts, rs.seg, rs.t);
   const [du, dv] = rotDir(bDx, bDy);
   return { u, v, du, dv };
@@ -3148,7 +3167,7 @@ function vehiclePose(veh){
   const rs = typeof mpVehicleRenderState === 'function' ? mpVehicleRenderState(veh) : veh;
   if(!rs.pts || !rs.pts.length) return null;
   if(veh.vtype === 'train') return trainPose(veh);
-  const {u, v} = lanePose(rs.pts, rs.seg, rs.t, veh.overtaking ? -0.17 : 0.17);
+  const {u, v} = lanePose(rs.pts, rs.seg, rs.t, roadLaneOffset(veh, 0.17));
   const [bDx, bDy] = trainBlendedDir(rs.pts, rs.seg, rs.t);
   const [du, dv] = rotDir(bDx, bDy);
   return { u, v, du, dv };
@@ -3758,6 +3777,10 @@ function draw(){
     center: centerOfBuilding(selected),
     r: BUILD[selected.type]?.radiusOf ? BUILD[selected.type].radiusOf(selected) : depotRadiusOf(selected),
   } : null;
+  const leisureRadiusSel = selected && !selected.dead && isLeisure(selected) ? {
+    center: centerOfBuilding(selected),
+    r: leisureRadiusOf(selected),
+  } : null;
   const tankRadiusSel = selected && !selected.dead && selected.type === 'tank' ? {
     center: centerOfBuilding(selected),
     r: tankRadiusOf(selected),
@@ -4288,6 +4311,10 @@ function draw(){
   // rayon du dépôt sélectionné (jaune)
   if(depotRadiusSel)
     drawWorkRadiusOverlay(depotRadiusSel.center, depotRadiusSel.r, '#ffd700', minRx, maxRx, minRy, maxRy);
+
+  // rayon d'attractivité du lieu de loisirs sélectionné (rose)
+  if(leisureRadiusSel)
+    drawWorkRadiusOverlay(leisureRadiusSel.center, leisureRadiusSel.r, '#ff7ad9', minRx, maxRx, minRy, maxRy);
 
   // rayon de la citerne sélectionnée (bleu)
   if(tankRadiusSel)

@@ -500,10 +500,7 @@ function assignHomelessToHousing(owner){
       if(protectedResident) home.pendingProtected = (home.pendingProtected||0) + 1;
       walkers.push({
         id: nextWalkerId++,
-        pts:[
-          { x:h.x, y:h.y },
-          { x:(home.x+home.w/2)*TILE, y:(home.y+home.h/2)*TILE },
-        ],
+        pts: walkPath({ x:h.x, y:h.y }, { x:(home.x+home.w/2)*TILE, y:(home.y+home.h/2)*TILE }, home),
         seg:0, t:0, target:home, fromHomeless:true, protectedResident,
         col:h.col, phase:h.phase,
       });
@@ -528,7 +525,7 @@ function routeUnhousedResidents(owner, residents){
     homeless.splice(i, 1);
     walkers.push({
       id: nextWalkerId++,
-      pts:[{ x:h.x, y:h.y }, exit],
+      pts: walkPath({ x:h.x, y:h.y }, exit),
       seg:0, t:0, target:null, leaving:true,
       col:h.col || playerColor(owner), phase:h.phase || Math.random()*7,
     });
@@ -559,6 +556,14 @@ function makeResidentsHomeless(b){
 
 // Passe une maison en / hors « Airbnb uniquement ». En activant, les habitants du propriétaire
 // (hors invités) quittent la maison : ils rejoignent un autre logement libre, sinon la carte.
+// Rayon d'attractivité d'un lieu de loisirs (cases), borné par la config ; la valeur par défaut
+// du type n'est pas stockée.
+function setLeisureRadius(b, r){
+  if(!isLeisure(b)) return;
+  r = Math.max(LEISURE_RADIUS_MIN, Math.min(LEISURE_RADIUS_MAX, Math.round(+r) || LEISURE_RADIUS_MIN));
+  b.attractRadius = r === BUILD[b.type].leisure.radius ? undefined : r;
+}
+
 function setAirbnbOnly(b, on){
   if(!b || b.dead || !BUILD[b.type]?.resid || b.starterHome) return;
   if(!on){ b.airbnbOnly = undefined; return; }

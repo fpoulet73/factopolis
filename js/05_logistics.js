@@ -379,7 +379,7 @@ function transportStopProcess(v, stopB, nextB){
         vehicleLedger(v, own);
         addFloat(stopB.x + ((stopB.w || 1) - 1) / 2, stopB.y, '+' + own + ' $ ' + vt.icone, '#7fd8ff');
       }
-      stopB.passagersSortant = (stopB.passagersSortant || 0) + v.cargo;
+      arriveAtStop(stopB, v.cargo);
     }
     v.cargo = 0; v.res = null; v.passengerBoardStop = null;
     const waiting = Math.floor(stopB.passengersEntrant || 0);
@@ -403,29 +403,128 @@ function transportStopProcess(v, stopB, nextB){
   }
 }
 
+// ---------- dépassement (par la gauche) ----------
+// Un véhicule plus rapide que celui qui le précède déboîte sur la voie de gauche
+// (unit.overtaking, rendu par lanePose avec un décalage négatif) si aucun véhicule
+// n'arrive en sens inverse sur la portion à venir, puis se rabat une fois qu'il a
+// distancé le véhicule dépassé. Les deux voies d'un même sens s'ignorent mutuellement
+// pour l'anti-collision : seul un véhicule sur la même voie freine le suivant.
+const OVERTAKE_LOOKAHEAD  = TILE * 1.1; // on déboîte quand on a rattrapé le véhicule lent
+const OVERTAKE_MAX_SEGS   = 16;         // portée maximale du contrôle de la voie d'en face
+const OVERTAKE_ABORT_SEGS = 2;          // en cours de dépassement : on renonce si ça se ferme ici
+
+function roadUnitSpeed(u){
+  return u.vtype === undefined ? TRUCK_SPEED : (VEHICLE_TYPES[u.vtype]?.speed ?? TRUCK_SPEED);
+}
+
+// Distance (px) le long du tracé de `unit` jusqu'à `other` (négative s'il est
+// derrière sur le même segment), ou null s'il n'est pas sur les maxSegs segments suivants.
+function roadDistAlong(unit, other, maxSegs){
+  const oKey = unitSegKey(other);
+  if(!oKey || !unit.pts) return null;
+  let acc = 0;
+  for(let k = 0; k <= maxSegs; k++){
+    const s = unit.seg + k;
+    if(s >= unit.pts.length - 1) return null;
+    const a = unit.pts[s], b = unit.pts[s+1];
+    const len = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+    const key = k === 0 ? unitSegKey(unit) : segmentKey(unit.pts, s);
+    if(key === oKey) return k === 0 ? (other.t - unit.t) * len : acc + other.t * len;
+    acc += (k === 0 ? 1 - unit.t : 1) * len;
+  }
+  return null;
+}
+
+// Véhicule le plus proche devant `unit` sur la voie indiquée (false = voie normale).
+function roadLeaderAhead(unit, maxDist, overtakingLane){
+  let best = null, bestD = maxDist;
+  for(let k = 0; k <= 2; k++){
+    const s = unit.seg + k;
+    if(s >= unit.pts.length - 1) break;
+    const key = k === 0 ? unitSegKey(unit) : segmentKey(unit.pts, s);
+    const bucket = roadBucket(key);
+    for(let bi = 0; bi < bucket.length; bi++){
+      const o = bucket[bi];
+      if(o === unit || !roadUnitMoving(o) || !!o.overtaking !== overtakingLane) continue;
+      if(unitSegKey(o) !== key) continue;
+      const d = roadDistAlong(unit, o, k);
+      if(d != null && d > 0 && d < bestD){ best = o; bestD = d; }
+    }
+  }
+  return best ? { u:best, d:bestD } : null;
+}
+
+// Vrai si la voie de gauche est libre : pas de carrefour ni de bifurcation sur
+// `roadSegs` segments (avec assez de trajet pour se rabattre), et pas de trafic
+// en sens inverse sur `oncomingSegs` segments.
+function overtakeCorridorClear(unit, roadSegs, oncomingSegs = roadSegs){
+  for(let k = 0; k < Math.max(roadSegs, oncomingSegs); k++){
+    const s = unit.seg + k;
+    if(k < roadSegs){
+      if(s >= unit.pts.length - 2) return false;
+      const tile = roadTileFromPoint(unit.pts[s+1]);
+      if(!tile || roadDegreeCached(tile.x, tile.y) > 2) return false;
+    }
+    if(s < unit.pts.length - 1 && !noOncoming(unit, s)) return false;
+  }
+  return true;
+}
+
+// Peut-on dépasser `leader` ? Il doit être plus lent et rouler (pas arrêté à un feu
+// ni coincé dans une file : on ne double pas une file d'attente). La portion à
+// contrôler dépend de la durée du dépassement : le terrain parcouru doit être sans
+// carrefour, et un véhicule d'en face (supposé aussi rapide) ne doit pas l'atteindre.
+function canOvertake(unit, leader){
+  const v = roadUnitSpeed(unit), dv = v - roadUnitSpeed(leader);
+  if(dv <= 1e-6 || leader._held) return false;
+  const passTime = (OVERTAKE_LOOKAHEAD + VEHICLE_FOLLOW_GAP * 1.2) / TILE / dv;
+  const roadSegs = Math.min(OVERTAKE_MAX_SEGS, Math.ceil(passTime * v) + 1);
+  const oncomingSegs = Math.min(OVERTAKE_MAX_SEGS, Math.ceil(passTime * v * 2) + 1);
+  return overtakeCorridorClear(unit, roadSegs, oncomingSegs);
+}
+
+function endOvertake(unit){
+  unit.overtaking = false;
+  unit._otTarget = null;
+}
+
+function updateOvertaking(unit){
+  if(!unit.overtaking){
+    const lead = roadLeaderAhead(unit, OVERTAKE_LOOKAHEAD, false);
+    if(lead && canOvertake(unit, lead.u)){ unit.overtaking = true; unit._otTarget = lead.u; }
+    return;
+  }
+  const tg = unit._otTarget;
+  if(!tg || !roadUnitMoving(tg)){ endOvertake(unit); return; }
+  // Voie de gauche qui se ferme (véhicule en face, carrefour, fin de trajet) :
+  // on se rabat ; s'il est encore à côté, l'anti-collision nous laisse derrière lui.
+  if(!overtakeCorridorClear(unit, OVERTAKE_ABORT_SEGS)){ endOvertake(unit); return; }
+  const ahead = roadDistAlong(unit, tg, 3);
+  const passed = ahead == null ? roadDistAlong(tg, unit, 3) : -ahead;
+  if(passed == null){ endOvertake(unit); return; }  // il a bifurqué
+  if(passed < VEHICLE_FOLLOW_GAP * 1.2) return;     // pas encore assez distancé
+  // Distancé : un autre véhicule lent juste devant sur la voie normale (convoi) ?
+  // On enchaîne si possible, sinon on se rabat.
+  const next = roadLeaderAhead(unit, VEHICLE_FOLLOW_GAP * 2, false);
+  if(next && canOvertake(unit, next.u)) unit._otTarget = next.u;
+  else endOvertake(unit);
+}
+
 function limitByTrafficAhead(unit, desiredT){
   const key = unitSegKey(unit);
   if(!key) return desiredT;
   const a = unit.pts[unit.seg], b = unit.pts[unit.seg+1];
   const len = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+  const lane = !!unit.overtaking;
   let maxT = desiredT;
-  let wouldBlock = false;
   const bucket = roadBucket(key);
   for(let bi = 0; bi < bucket.length; bi++){
     const other = bucket[bi];
-    if(other === unit || !roadUnitMoving(other)) continue;
+    if(other === unit || !roadUnitMoving(other) || !!other.overtaking !== lane) continue;
     if(unitSegKey(other) !== key) continue;
     if(other.t <= unit.t) continue;
-    const allowed = other.t - VEHICLE_FOLLOW_GAP / len;
-    if(allowed < desiredT - 1e-6) wouldBlock = true;
-    maxT = Math.min(maxT, allowed);
+    maxT = Math.min(maxT, other.t - VEHICLE_FOLLOW_GAP / len);
   }
-  // Dépassement par la droite : pas de véhicule en sens inverse sur ce segment ni le suivant
-  if(wouldBlock && noOncoming(unit, unit.seg) && noOncoming(unit, unit.seg + 1)){
-    unit.overtaking = true;
-    return desiredT;
-  }
-  if(!wouldBlock) unit.overtaking = false;
   return Math.max(unit.t, maxT);
 }
 
@@ -436,19 +535,20 @@ function nextSegmentIsBlocked(unit){
   if(!key) return false;
   const a = unit.pts[nextSeg], b = unit.pts[nextSeg+1];
   const len = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+  const lane = !!unit.overtaking;
   const bucket = roadBucket(key);
   for(let bi = 0; bi < bucket.length; bi++){
     const other = bucket[bi];
-    if(other === unit || !roadUnitMoving(other)) continue;
+    if(other === unit || !roadUnitMoving(other) || !!other.overtaking !== lane) continue;
     if(unitSegKey(other) !== key) continue;
     if(other.t * len < VEHICLE_FOLLOW_GAP) return true;
   }
-  // Si en cours de dépassement, bloquer si trafic en sens inverse sur le segment suivant
-  if(unit.overtaking && !noOncoming(unit, nextSeg)) return true;
   return false;
 }
 
 function advanceRoadUnit(unit, move){
+  updateOvertaking(unit);
+  const requested = move;
   while(move > 0 && unit.seg < unit.pts.length-1){
     const a = unit.pts[unit.seg], b = unit.pts[unit.seg+1];
     const d = Math.hypot(b.x-a.x, b.y-a.y) || 1;
@@ -475,9 +575,10 @@ function advanceRoadUnit(unit, move){
     if(unit.t < 1 - 1e-6) break;
     unit.seg++;
     unit.t = 0;
-    unit.overtaking = false; // réévaluer sur chaque nouveau segment
     roadBucketAdd(unit);
   }
+  // Freiné de plus de moitié (feu, file, véhicule devant) : les autres ne le doublent pas.
+  unit._held = unit.seg < unit.pts.length-1 && move > requested * 0.5;
 }
 
 function tryDispatch(b, res, load = TRUCK_LOAD){
@@ -2514,6 +2615,28 @@ function findNearbyTrainStation(busStop){
 
 // Les voyageurs arrivés ne quittent une gare / un arrêt que si un poste à proximité
 // manque d'ouvriers ou si une maison proche n'est pas pleine.
+// Composition des voyageurs d'un bus : { joueur: nombre } selon le propriétaire du point où ils
+// ont embarqué (clé 'n' = sans propriétaire). Sert au détail « Cargaison » du bus.
+function setBusLoad(v, n, hub){
+  v.cargo = n;
+  v.cargoOwners = n > 0 ? { [hub?.owner ?? 'n']: n } : null;
+}
+function busCargoLines(v){
+  const own = v.cargoOwners;
+  const sum = own ? Object.values(own).reduce((s, x) => s + x, 0) : 0;
+  const map = sum === v.cargo ? own : (v.cargo > 0 ? { [v.garageRef?.owner ?? 'n']: v.cargo } : {});
+  return Object.entries(map || {}).filter(([, n]) => n >= 1)
+    .map(([k, n]) => ({ owner: k === 'n' ? null : +k, n })).sort((a, b) => b.n - a.n);
+}
+
+// Voyageurs descendus à un arrêt / port / aéroport : passagers sortants. Ceux qu'un lieu de loisirs
+// attire (rayon d'attractivité) y vont aussitôt, avant que le véhicule ne les rembarque pour le retour.
+function arriveAtStop(stop, n){
+  stop.passagersSortant = (stop.passagersSortant || 0) + n;
+  if(!isTransitHub(stop) || (stop.type === 'train_station' && trainStationGroupRepresentative(stop.stationGroupId) !== stop)) return;
+  sendSortantsToLeisure(stop, 1, n);
+}
+
 function stopHasDemand(stop, owner){
   if(!stop) return false;
   const radius = isTrainStationPiece(stop) ? TRAIN_STATION_RADIUS : BUS_STOP_RADIUS;
@@ -2808,6 +2931,7 @@ function updateVehicles(dt){
         v.currentBuilding = v.source;
         if(v.vtype === 'bus'){
           // Déposer les passagers retour (arrivés à leur arrêt de quartier - retournent chez eux)
+          let dropped = 0; // descendus à cet arrêt : le bus ne les rembarque pas pour le trajet suivant
           if(v.cargo > 0){
             const sourceStation = isTrainStationPiece(v.source)
               ? (trainStationGroupRepresentative(v.source.stationGroupId) || v.source)
@@ -2817,16 +2941,18 @@ function updateVehicles(dt){
               sourceStation.passengersEntrantPending = (sourceStation.passengersEntrantPending || 0) + v.cargo;
             } else {
               // Arrêt de bus : les voyageurs sont arrivés (passagers sortants)
-              v.source.passagersSortant = (v.source.passagersSortant || 0) + v.cargo;
+              dropped = v.cargo;
+              arriveAtStop(v.source, v.cargo);
             }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.dest, v.source);
             v.cargo = 0;
           }
           // Charger les passagers aller depuis l'arrêt source
-          let takeSrc = 0;
+          let takeSrc = 0, boardHub = v.source;
           if(isTrainStationPiece(v.source)){
             // Source = gare : prend les passagersSortant du train
             const srcMain = trainStationGroupRepresentative(v.source.stationGroupId) || v.source;
+            boardHub = srcMain;
             const availSrc = stopHasDemand(v.dest, v.garageRef?.owner ?? null) ? Math.floor(srcMain.passagersSortant || 0) : 0;
             takeSrc = Math.min(vt.capacite, availSrc);
             srcMain.passagersSortant = Math.max(0, (srcMain.passagersSortant || 0) - takeSrc);
@@ -2834,18 +2960,19 @@ function updateVehicles(dt){
             // Source = arrêt de bus : priorité passagersSortant locaux → gare proche → passagers en attente
             const nearSourceTrain = findNearbyTrainStation(v.source);
             const srcDemand = stopHasDemand(v.dest, v.garageRef?.owner ?? null);
-            const stopSortants = srcDemand ? Math.floor(v.source.passagersSortant || 0) : 0;
+            const stopSortants = srcDemand ? Math.max(0, Math.floor(v.source.passagersSortant || 0) - dropped) : 0;
             const trainSortants = srcDemand ? Math.floor(nearSourceTrain?.passagersSortant || 0) : 0;
             let availableSrc, sourceFrom;
             if(stopSortants >= trainSortants && stopSortants > 0){ availableSrc = stopSortants; sourceFrom = 'stop'; }
             else if(trainSortants > 0){ availableSrc = trainSortants; sourceFrom = 'train'; }
             else { availableSrc = Math.floor(v.source.passengers || 0); sourceFrom = 'passengers'; }
             takeSrc = Math.min(vt.capacite, availableSrc);
-            if(sourceFrom === 'stop') v.source.passagersSortant = Math.max(0, stopSortants - takeSrc);
+            if(sourceFrom === 'train') boardHub = nearSourceTrain;
+            if(sourceFrom === 'stop') v.source.passagersSortant = Math.max(0, (v.source.passagersSortant || 0) - takeSrc);
             else if(sourceFrom === 'train') nearSourceTrain.passagersSortant = Math.max(0, nearSourceTrain.passagersSortant - takeSrc);
             else v.source.passengers = Math.max(0, (v.source.passengers || 0) - takeSrc);
           }
-          v.cargo = takeSrc;
+          setBusLoad(v, takeSrc, boardHub);
           v.res = null;
           const pts = findRoadPath(v.source, v.dest);
           if(!pts){ v.waitTimer = 5; continue; }
@@ -2909,6 +3036,7 @@ function updateVehicles(dt){
         v.currentBuilding = v.dest;
         if(v.vtype === 'bus'){
           // Déposer les passagers aller à la destination
+          let dropped = 0; // descendus à cet arrêt : le bus ne les rembarque pas pour le retour
           if(v.cargo > 0){
             const destMain = isTrainStationPiece(v.dest)
               ? (trainStationGroupRepresentative(v.dest.stationGroupId) || v.dest)
@@ -2918,16 +3046,18 @@ function updateVehicles(dt){
               destMain.passengersEntrantPending = (destMain.passengersEntrantPending || 0) + v.cargo;
             } else {
               // Destination = arrêt de bus : les voyageurs deviennent passagers sortants (arrivés)
-              v.dest.passagersSortant = (v.dest.passagersSortant || 0) + v.cargo;
+              dropped = v.cargo;
+              arriveAtStop(v.dest, v.cargo);
             }
             busEarnRevenue(v, v.cargo, v.busRouteDistance, v.source, v.dest);
             v.cargo = 0;
           }
           // Charger les passagers retour
-          let take = 0;
+          let take = 0, boardHub = v.dest;
           if(isTrainStationPiece(v.dest)){
             // Dest = gare : prend les passagersSortant
             const destMain = trainStationGroupRepresentative(v.dest.stationGroupId) || v.dest;
+            boardHub = destMain;
             const avail = stopHasDemand(v.source, v.garageRef?.owner ?? null) ? Math.floor(destMain.passagersSortant || 0) : 0;
             take = Math.min(vt.capacite, avail);
             destMain.passagersSortant = Math.max(0, (destMain.passagersSortant || 0) - take);
@@ -2935,18 +3065,19 @@ function updateVehicles(dt){
             // Dest = arrêt de bus : priorité passagersSortant → gare proche → passagers en attente
             const nearDestReturn = findNearbyTrainStation(v.dest);
             const dstDemand = stopHasDemand(v.source, v.garageRef?.owner ?? null);
-            const stopSortants = dstDemand ? Math.floor(v.dest.passagersSortant || 0) : 0;
+            const stopSortants = dstDemand ? Math.max(0, Math.floor(v.dest.passagersSortant || 0) - dropped) : 0;
             const trainSortants = dstDemand ? Math.floor(nearDestReturn?.passagersSortant || 0) : 0;
             let available, returnFrom;
             if(stopSortants >= trainSortants && stopSortants > 0){ available = stopSortants; returnFrom = 'stop'; }
             else if(trainSortants > 0){ available = trainSortants; returnFrom = 'train'; }
             else { available = Math.floor(v.dest.passengers || 0); returnFrom = 'passengers'; }
             take = Math.min(vt.capacite, available);
-            if(returnFrom === 'stop') v.dest.passagersSortant = Math.max(0, stopSortants - take);
+            if(returnFrom === 'train') boardHub = nearDestReturn;
+            if(returnFrom === 'stop') v.dest.passagersSortant = Math.max(0, (v.dest.passagersSortant || 0) - take);
             else if(returnFrom === 'train') nearDestReturn.passagersSortant = Math.max(0, nearDestReturn.passagersSortant - take);
             else v.dest.passengers = Math.max(0, (v.dest.passengers || 0) - take);
           }
-          v.cargo = take;
+          setBusLoad(v, take, boardHub);
           const pts = findRoadPath(v.dest, v.source);
           if(!pts){ v.waitTimer = 5; continue; }
           v.state = 'to_source';

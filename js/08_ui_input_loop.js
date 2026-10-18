@@ -231,6 +231,30 @@ function toggleAirbnbOnly(x, y){
   const p = $('info'); if(p) p._html = null;
   if(typeof renderInfo === 'function') renderInfo();
 }
+// Rayon d'attractivité d'un lieu de loisirs : +/− en cases (bornes de la config).
+function adjustLeisureRadius(x, y, delta){
+  const b = bgrid[y*N+x];
+  if(!isLeisure(b) || b.dead) return;
+  if(MP.connected && b.owner && b.owner !== MP.myId){ toast('⛔ Bâtiment d\'un autre joueur','err'); return; }
+  setLeisureRadius(b, leisureRadiusOf(b) + delta);
+  if(MP.connected) netSend({ type:'set_leisure_radius', x:b.x, y:b.y, r:leisureRadiusOf(b) });
+  const p = $('info'); if(p) p._html = null;
+  if(typeof renderInfo === 'function') renderInfo();
+}
+// Détail des voyageurs d'un bus (panneau du véhicule) : déplié par un clic sur « Cargaison ».
+let busCargoOpenId = null;
+// Délégation sur pointerdown : le panneau est reconstruit en continu, un clic (down + up) pouvait se perdre.
+$('info').addEventListener('pointerdown', e => {
+  const row = e.target.closest && e.target.closest('[data-bus-cargo]');
+  if(!row) return;
+  e.preventDefault();
+  toggleBusCargo(+row.dataset.busCargo);
+});
+function toggleBusCargo(id){
+  busCargoOpenId = busCargoOpenId === id ? null : id;
+  const p = $('info'); if(p) p._html = null;
+  if(typeof renderInfo === 'function') renderInfo();
+}
 function homeOccupancyHtml(home){
   const key = home.x + ',' + home.y;
   const pop = Math.floor(home.pop || 0);
@@ -1758,7 +1782,7 @@ function renderInfo(){
       const dstNameDisplay = isBusVeh && veh.dest && !veh.dest.dead
         ? (veh.dest.name || BUILD[veh.dest.type].n) : dstName;
       const cargoStr = isBusVeh
-        ? (veh.cargo > 0 ? veh.cargo+' passager(s)' : 'Vide')
+        ? (veh.cargo > 0 ? veh.cargo+' voyageur(s)' : 'Vide')
         : (veh.cargo > 0 ? veh.cargo+' '+(veh.res ? RES[veh.res].n : '') : 'Vide');
       const _vehPassCap = veh.vtype === 'train' ? trainPassengerCapacity(veh) : 0;
       const passengerStr = _vehPassCap > 0
@@ -1771,7 +1795,13 @@ function renderInfo(){
       let h = '<h3><span style="font-size:22px">'+vt.icone+'</span> '+escHtml(vehLabel)+'<span style="margin-left:auto"></span><button class="tbtn" id="infoCloseBtn" aria-label="Fermer" style="width:auto;margin:0;padding:2px 8px">✕</button></h3>';
       h += '<div class="status">'+stateLabel+'</div>';
       h += ownerRowHtml(veh.garageRef?.owner ?? null);
-      h += '<div class="row"><span>Cargaison</span><b>'+cargoStr+'</b></div>';
+      if(isBusVeh && veh.cargo > 0){
+        // clic sur « Cargaison » : une ligne par joueur ayant au moins 1 voyageur dans le bus
+        const open = busCargoOpenId === veh.id;
+        h += '<div class="row" data-bus-cargo="'+veh.id+'" style="cursor:pointer" title="Voir le détail des voyageurs"><span>Voyageurs '+(open ? '▾' : '▸')+'</span><b>'+cargoStr+'</b></div>';
+        if(open) for(const l of busCargoLines(veh))
+          h += '<div class="row" style="padding-left:14px"><span><span style="color:'+playerColor(l.owner)+'">●</span> '+escHtml(l.owner == null ? 'Voyageurs' : playerName(l.owner))+'</span><b>'+l.n+' voyageur'+(l.n > 1 ? 's' : '')+'</b></div>';
+      } else h += '<div class="row"><span>'+(isBusVeh ? 'Voyageurs' : 'Cargaison')+'</span><b>'+cargoStr+'</b></div>';
       if(passengerStr) h += '<div class="row"><span>Voyageurs</span><b style="color:#c8e040">'+passengerStr+'</b></div>';
       h += '<div class="row"><span>Source</span><b style="color:#4dd9ff">'+srcNameDisplay+'</b></div>';
       h += '<div class="row"><span>Destination</span><b style="color:#ffaa44">'+dstNameDisplay+'</b></div>';
@@ -2038,11 +2068,18 @@ function renderInfo(){
     h += '<div class="row"><span>Visites / recettes</span><b>'+(b.visitsTotal || 0).toLocaleString('fr-FR')+' · '
        + Math.round(b.leisureIncome || 0).toLocaleString('fr-FR')+' $</b></div>';
     if(d.upkeep) h += '<div class="row"><span>Entretien</span><b>'+(Math.round(upkeepOf(b)*10)/10)+' $ / '+IND_UPKEEP_INTERVAL+' s</b></div>';
-    if(!buildings.some(s => isTransitHub(s) && buildingDistance(s, b) <= (s.type === 'train_station' ? TRAIN_STATION_RADIUS
-        : s.type === 'boat_depot' ? PORT_RADIUS : s.type === 'air_terminal' ? AIRPORT_RADIUS : BUS_STOP_RADIUS)))
-      h += '<div class="warn">⚠️ Aucun arrêt de bus, gare, port ou aéroport à portée : aucun visiteur ne viendra.</div>';
+    const radius = leisureRadiusOf(b);
+    const canEdit = !MP.connected || !b.owner || b.owner === MP.myId;
+    h += '<div class="row"><span title="Les voyageurs sortant d\'un arrêt, d\'une gare, d\'un port ou d\'un aéroport situé dans ce rayon viennent ici">Rayon d\'attractivité</span>'
+       + '<b style="color:#ff7ad9;display:flex;align-items:center;gap:6px">'
+       + (canEdit ? '<button class="tbtn" style="padding:0 7px" onclick="adjustLeisureRadius('+b.x+','+b.y+',-2)" '+(radius <= LEISURE_RADIUS_MIN ? 'disabled' : '')+'>−</button>' : '')
+       + radius + ' cases'
+       + (canEdit ? '<button class="tbtn" style="padding:0 7px" onclick="adjustLeisureRadius('+b.x+','+b.y+',2)" '+(radius >= LEISURE_RADIUS_MAX ? 'disabled' : '')+'>+</button>' : '')
+       + '</b></div>';
+    if(!buildings.some(s => isTransitHub(s) && buildingDistance(s, b) <= radius))
+      h += '<div class="warn">⚠️ Aucun arrêt de bus, gare, port ou aéroport dans le rayon d\'attractivité : aucun visiteur ne viendra.</div>';
     else
-      h += '<div class="status" style="opacity:.8">Les voyageurs arrivés aux points de transit voisins viennent ici avant de chercher un logement.</div>';
+      h += '<div class="status" style="opacity:.8">Les voyageurs arrivés aux points de transit dans le rayon viennent ici avant de chercher un logement.</div>';
   }
   if(d.resid)
     h += homeOccupancyHtml(b);
@@ -2811,7 +2848,9 @@ function renderInfo(){
   };
   $('bDemol').onclick = ()=>{
     if(MP.connected && b.owner && b.owner !== MP.myId){
-      toast('⛔ Ce bâtiment appartient à un autre joueur','err'); return;
+      if(mpIsWorldOwner()) demolishForeignBuilding(b); // propriétaire du monde : avec confirmation
+      else toast('⛔ Ce bâtiment appartient à un autre joueur','err');
+      return;
     }
     if(depotHasStoredVehicles(b)){
       toast('⛔ Impossible de détruire ce dépôt tant que des véhicules sont à l’intérieur.','err');

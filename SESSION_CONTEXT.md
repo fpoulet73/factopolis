@@ -204,6 +204,23 @@ sérialisés ; `spaceCenterPhaseChanged` (07_rendering.js) lance l'animation
 L'art (`artSpaceCenter`) montre la fusée sur le pas de tir pendant l'assemblage
 (`spacePadHasRocket`, inclus dans `bldSig`).
 
+### Noms des points de transit et voyageurs d'un bus
+
+- `uniqueTransitName` / `assignTransitName` (01) : arrêts de bus, gares, aéroports et ports reçoivent
+  un nom unique selon l'emplacement (`placeContextAt` : village ou région de la carte, lieu de loisirs /
+  industrie nommée à moins de 10 cases, bord de l'eau, direction), puis un numéro en dernier recours.
+  Appelé à la pose (04, 09 `build`) et à la migration d'un chargement (nom saisi par le joueur conservé).
+- Un bus mémorise la provenance de ses voyageurs (`v.cargoOwners` = { joueur: n }, `setBusLoad`,
+  `busCargoLines`) ; le panneau du véhicule déplie une ligne par joueur au clic sur « Cargaison ».
+- `arriveAtStop` (05) : les voyageurs qui descendent à un arrêt partent aussitôt vers un lieu de loisirs
+  qui les attire, avant que le bus ne les rembarque pour le retour.
+
+### Propriétaire du monde
+
+Le créateur du monde (`MP.roomCreator`, `mpIsWorldOwner`) peut démolir les bâtiments des autres
+joueurs (`demolishForeignBuilding`, 04) après confirmation ; le remboursement revient à leur
+propriétaire. Tous les clients valident l'action `bulldoze_bld` avec `msg.fromUsername`.
+
 ### Lieux de loisirs
 
 15 types (`LEISURE_TYPES`, définis par `LEISURE_DEFS` dans 01_definitions.js,
@@ -217,9 +234,15 @@ entretien comptés une fois). Menu 🎡 Loisirs de la barre d'outils (ancre
 `restaurant` dans `TOOL_ORDER`). Contrainte de site : `leisureNearError` (04).
 Chaque lieu exige des matériaux de chantier (`config.js` `materiauxChantier.batiments`,
 clé = type moteur), vérifiés et prélevés comme pour les ports et aéroports.
+- **Rayon d'attractivité** : chaque lieu a son rayon (`BUILD[t].leisure.radius`, config
+  `loisirs.lieux.<clé>.rayon`, bornes `rayonMin`/`rayonMax`) ; le joueur le règle lieu par
+  lieu (`b.attractRadius`, boutons −/+ du panneau, `adjustLeisureRadius` / `setLeisureRadius`,
+  action réseau `set_leisure_radius`, cercle rose autour du lieu sélectionné). `leisureRadiusOf(b)`.
+  Un arrêt / une gare / un port / un aéroport situé dans ce rayon (peu importe le sien) y envoie
+  ses voyageurs sortants.
 - `tickSortantsToHomes` (06) : pour chaque point de transit ayant des passagers
-  sortants, `sendSortantsToLeisure` les envoie d'abord vers les lieux à portée du
-  rayon du point (le plus proche d'abord, `LEISURE_AFFLUX` par heure de jeu, dans
+  sortants, `sendSortantsToLeisure` les envoie d'abord vers les lieux dont le rayon
+  d'attractivité couvre le point (le plus proche d'abord, `LEISURE_AFFLUX` par heure de jeu, dans
   la limite de `leisureCapacityOf` = capacité × part des employés en poste), avant
   la recherche d'un logement / Airbnb.
 - `admitVisitors` : lot `{ t:gtime, n, o }` ajouté à `b.visitors`, entrée
