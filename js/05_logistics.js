@@ -2417,8 +2417,8 @@ function syncTrainOrders(v){
     if(prev && trainOrderStopKey(prev) === key) continue;
     orders.push(b);
   }
-  while(orders.length > 1 && trainOrderStopKey(orders[0]) === trainOrderStopKey(orders[orders.length - 1]))
-    orders.pop();
+  // Une même gare peut apparaître plusieurs fois (A → B → A → C) ; seuls deux
+  // arrêts identiques consécutifs sont fusionnés (voir la boucle ci-dessus).
   v.orders = orders;
   // Nettoyer les modes pour que le nombre correspond au nombre d'ordres
   if(v.orderModes && v.orderModes.length > orders.length){
