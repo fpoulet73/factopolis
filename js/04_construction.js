@@ -943,8 +943,18 @@ function clickAt(x,y){
       if(depotHasStoredVehicles(b)){
         toast('⛔ Impossible de détruire ce dépôt tant que des véhicules sont à l’intérieur.','err'); return;
       }
-      const refund = demolishBuilding(b, b.owner);
-      if(refund) addFloat(x,y,'+'+refund+' $','#9fe89f');
+      const doDemolish = () => {
+        if(b.dead) return;
+        const refund = demolishBuilding(b, b.owner);
+        if(refund) addFloat(x,y,'+'+refund+' $','#9fe89f');
+      };
+      const nUsing = vehiclesUsingBuilding(b).length;
+      if(nUsing > 0){
+        confirmAction(nUsing+' véhicule(s) utilisent ce bâtiment dans une route. Si vous le détruisez, ils retourneront tous au dépôt.',
+          { title:'Détruire ce bâtiment ?', okText:'Détruire', danger:true }).then(ok => { if(ok) doDemolish(); });
+        return;
+      }
+      doDemolish();
     } else if(railSigDef && railSignalDefAt(x, y, railSigDef.bit)){
       setRailSignal(x, y, railSigDef.bit, false);
       earnMoney(Math.floor((BUILD.rail_signal?.cost||0) * 0.3), 'rembours');

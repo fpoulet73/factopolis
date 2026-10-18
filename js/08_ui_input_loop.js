@@ -235,7 +235,14 @@ function popBreakdown(){
   for(const r of transitByOwner(town ? town.id : null).values()){ riding += r.passengers; onboard += r.onboard; }
   riding = Math.min(Math.round(riding), Math.max(0, pop - working));
   onboard = Math.min(Math.round(onboard), riding);
-  return { pop, working, riding, onboard, waiting: riding - onboard, home: Math.max(0, pop - working - riding) };
+  // Airbnb : voyageurs installés pour une semaine chez un autre joueur (comptés dans la pop de la maison)
+  let airbnb = 0;
+  for(const b of buildings){
+    if(b.dead || !b.guests || (town && b.townId !== town.id)) continue;
+    airbnb += Math.min(b.guests.length, b.pop || 0);
+  }
+  airbnb = Math.min(airbnb, Math.max(0, pop - working - riding));
+  return { pop, working, riding, onboard, waiting: riding - onboard, airbnb, home: Math.max(0, pop - working - riding - airbnb) };
 }
 // Répartition des passagers par joueur (propriétaire des arrêts/gares/véhicules).
 let passengerOwnersOpen = false;
@@ -294,6 +301,7 @@ function renderPopPanel(){
   const p = popBreakdown();
   el.innerHTML = '<div>🏭 Au travail : <b>'+p.working+'</b></div>'
     + '<div>🚌 Voyageurs : <b>'+p.riding+'</b> <span style="opacity:.75">(attente '+p.waiting+' · à bord '+p.onboard+')</span></div>'
+    + '<div>🏨 Airbnb (chez un autre joueur) : <b>'+p.airbnb+'</b></div>'
     + '<div>🏠 À la maison : <b>'+p.home+'</b></div>'
     + '<div style="border-top:1px solid #36465e;margin-top:3px;padding-top:3px">👥 Total : <b>'+p.pop+'</b></div>';
   el.style.display = 'block';
@@ -391,7 +399,7 @@ function renderFinance(){
   const hasVeh  = hasRow('vehicules') || financeVehiculesExpanded;
   const hasExp  = hasRow('expansion');
 
-  const incCats = ['ventes','vehicules','taxes','rembours','primes','peageRecu'];
+  const incCats = ['ventes','vehicules','taxes','rembours','primes','peageRecu','airbnb'];
   const outCats = ['construction','entretien','entretienVehicules','peagePaye','expansion'];
   const netVal = read => incCats.reduce((a,c)=>a+read(c),0) - outCats.reduce((a,c)=>a+read(c),0);
   const netDeltas = months.map(m => netVal(c => (m.end ? (m.end.fin?.[c]||0) : (fin[c]||0)) - (m.start.fin?.[c]||0)));
@@ -407,6 +415,7 @@ function renderFinance(){
         ()=> bucketSubRows(ventesDetail.veh, 'vveh', k=>VEH_LABELS[k]||k, 'in')) : '')
     + row('Taxes des habitants','taxes','+','in')
     + row('Remboursements','rembours','+','in')
+    + (hasRow('airbnb') ? row('Airbnb (voyageurs hébergés)','airbnb','+','in') : '')
     + (hasRow('primes') ? row('Primes d’objectifs','primes','+','in') : '')
     + (hasRecu ? row('Péages rails reçus','peageRecu','+','in') + playerSubRows(peageDetail.recv,'precv','de','in') : '')
     + row('Construction','construction','−','out')
@@ -2752,9 +2761,19 @@ function renderInfo(){
       toast('⛔ Impossible de détruire ce dépôt tant que des véhicules sont à l’intérieur.','err');
       return;
     }
-    if(MP.connected) netSend({ type:'bulldoze_bld', bx:b.x, by:b.y });
-    demolishBuilding(b, b.owner);
-    selected = null;
+    const doDemolish = () => {
+      if(b.dead) return;
+      if(MP.connected) netSend({ type:'bulldoze_bld', bx:b.x, by:b.y });
+      demolishBuilding(b, b.owner);
+      selected = null;
+    };
+    const nUsing = vehiclesUsingBuilding(b).length;
+    if(nUsing > 0){
+      confirmAction(nUsing+' véhicule(s) utilisent ce bâtiment dans une route. Si vous le détruisez, ils retourneront tous au dépôt.',
+        { title:'Détruire ce bâtiment ?', okText:'Détruire', danger:true }).then(ok => { if(ok) doDemolish(); });
+      return;
+    }
+    doDemolish();
   };
 }
 

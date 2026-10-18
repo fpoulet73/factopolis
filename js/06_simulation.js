@@ -636,6 +636,7 @@ function tryMerge(){
         const owner = set[0].owner||null;
         for(const o of set){
           for(const k in o.storage) stock[k] = (stock[k]||0) + o.storage[k];
+          evictGuests(o);
           pop += o.pop;
           protectedPop += o.protectedPop||0;
           if(o===selected) wasSel = true;
@@ -720,6 +721,7 @@ function expandLuxuryHouse(b, rect){
   const popCapNext = BUILD[rect.type].resid.popCap;
   for(const o of rect.absorb || []){
     for(const k in o.storage) b.storage[k] = (b.storage[k]||0) + o.storage[k];
+    evictGuests(o);
     b.pop = Math.min(popCapNext, (b.pop||0) + (o.pop||0));
     if(o === selected) selected = b;
     o.dead = true;
@@ -926,6 +928,7 @@ function residentialSplitPlan(b){
 // l'excédent d'habitants quitte la ville
 function splitBuilding(b){
   if((b.pop||0) <= (b.protectedPop||0)) return;
+  evictGuests(b);
   const splitPlan = residentialSplitPlan(b);
   const lowerPopCap = splitPlan.reduce((s,p)=>s + BUILD[p.type].resid.popCap, 0);
   const wasSel = selected===b;
@@ -1000,7 +1003,9 @@ let sortantsHomeTimer = 0;
 function tickSortantsToHomes(dt){
   sortantsHomeTimer += dt;
   if(sortantsHomeTimer < 1) return;
+  const elapsed = sortantsHomeTimer;
   sortantsHomeTimer = 0;
+  tickGuestsExpire(elapsed);
   for(const hub of buildings){
     if(hub.dead || !(hub.passagersSortant >= 1)) continue;
     if(!isTransitHub(hub)) continue;
@@ -1027,8 +1032,57 @@ function moveInFromHub(hub, home){
   const A = { x:(hub.x + (hub.w||1)/2)*TILE, y:(hub.y + (hub.h||1)/2)*TILE };
   const B = { x:(home.x + (home.w||1)/2)*TILE, y:(home.y + (home.h||1)/2)*TILE };
   home.pending = (home.pending || 0) + 1;
-  walkers.push({ id: nextWalkerId++, pts:[A, B], seg:0, t:0, target:home,
+  walkers.push({ id: nextWalkerId++, pts:[A, B], seg:0, t:0, target:home, guest:true, guestOwner:hub.owner ?? null,
                  col: playerColor(home.owner), phase: Math.random()*7 });
+}
+// Un voyageur installé chez un autre joueur n'y reste qu'une semaine de jeu : ensuite il
+// retourne au point de transit le plus proche (arrêt, gare, port, aéroport) en passager entrant.
+const GUEST_STAY_SECS = 7 * 24 / GAME_HOURS_PER_SEC;
+// invité = { t: heure d'arrivée (gtime), o: joueur d'origine } (ancien format : nombre = heure)
+const guestStart = g => typeof g === 'number' ? g : g.t;
+// Un invité de la maison `h` repart : habitant retiré, passager entrant du point de transit
+// le plus proche (à défaut, il quitte la ville).
+function sendGuestToTransit(h){
+  if(h.pop <= (h.protectedPop || 0)) return;
+  h.pop--;
+  addFloat(h.x, h.y-0.5, '−1 👤', '#ff9a8a');
+  let hub = null, bd = Infinity;
+  for(const s of buildings){
+    if(s.dead || !isTransitHub(s)) continue;
+    const d = buildingDistance(s, h);
+    if(d < bd){ bd = d; hub = s; }
+  }
+  if(!hub){ spawnLeavers(h, 1); return; }
+  const rep = hub.type === 'train_station'
+    ? ((typeof trainStationGroupRepresentative === 'function' && trainStationGroupRepresentative(hub.stationGroupId)) || hub) : hub;
+  const inKey = rep.type === 'bus_stop' ? 'passengers' : 'passengersEntrant';
+  rep[inKey] = (rep[inKey] || 0) + 1;
+  spawnTransitWalkers(h, rep, 1);
+}
+// Maison fusionnée, divisée, agrandie ou détruite : ses invités repartent AVANT que sa
+// population soit reprise ; les autres habitants suivent le sort habituel (nouveau
+// logement ou départ de la ville).
+function evictGuests(h){
+  if(!h.guests) return;
+  const n = Math.min(h.guests.length, h.pop || 0);
+  delete h.guests;
+  for(let i = 0; i < n; i++) sendGuestToTransit(h);
+}
+function tickGuestsExpire(elapsed = 0){
+  for(const h of buildings){
+    if(h.dead || !h.guests) continue;
+    if(h.guests.length > h.pop) h.guests.length = Math.max(0, h.pop); // départs « pénurie » entre-temps
+    // revenu Airbnb de l'hôte, au prorata du temps écoulé (tarif par voyageur et par jour de jeu)
+    if(elapsed > 0 && h.guests.length){
+      const rate = BUILD[h.type]?.lux ? AIRBNB_RATE_DAY_LUX : AIRBNB_RATE_DAY;
+      earnMoney(h.guests.length * rate * elapsed * GAME_HOURS_PER_SEC / 24, 'airbnb', walletOf(h.owner));
+    }
+    while(h.guests.length && gtime - guestStart(h.guests[0]) >= GUEST_STAY_SECS){
+      h.guests.shift();
+      sendGuestToTransit(h);
+    }
+    if(!h.guests.length) delete h.guests;
+  }
 }
 
 function updateWalkers(dt){
@@ -1060,7 +1114,11 @@ function updateWalkers(dt){
         tg.pending--;
         if(wk.protectedResident) tg.pendingProtected = Math.max(0, (tg.pendingProtected||0) - 1);
       }
-      if(tg) growPop(tg, wk.protectedResident);
+      if(tg){
+        const before = tg.pop;
+        growPop(tg, wk.protectedResident);
+        if(wk.guest && tg.pop > before) (tg.guests || (tg.guests = [])).push({ t:gtime, o:wk.guestOwner ?? null }); // séjour limité à une semaine
+      }
       else if(wk.fromHomeless){
         const exit = randomExitPoint();
         walkers.push({

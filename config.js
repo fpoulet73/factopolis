@@ -575,6 +575,9 @@ const CONFIG = {
                        ex. 3 → revenu = tarif / 3  (intra-ville moins rentable qu'inter-ville)
        Pour un trajet inter-joueurs le revenu plein est partagé 50/50 entre les deux propriétaires.
     */
+    // Airbnb : voyageurs installés chez un autre joueur (max. 1 semaine). Revenu de l'hôte,
+    // par voyageur et par jour de jeu ; maison de luxe (villa) : tarif luxe.
+    airbnb: { tarifJour: 200, tarifJourLuxe: 500 },
     arretBus: {
       cout:             250,
       rayon:            8,

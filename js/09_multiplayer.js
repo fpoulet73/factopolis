@@ -909,6 +909,7 @@ function applyBuildingDynamicState(b, o, includeTransient, syncGtime=null){
   b.trucksOut = includeTransient ? (o.trucksOut || 0) : b.trucksOut || 0;
   b.pop = o.pop || 0;
   b.protectedPop = o.protectedPop || 0;
+  b.guests = Array.isArray(o.guests) && o.guests.length ? o.guests.slice() : undefined;
   b.ct = o.ct || 0;
   b.pending = includeTransient ? (o.pending || 0) : 0;
   b.pendingProtected = includeTransient ? (o.pendingProtected || 0) : 0;
@@ -1374,6 +1375,7 @@ function serializeState(opts = {}){
       upgradePaused:{...(b.upgradePaused || {})},
       prog:b.prog||0, trucksOut:includeTransient ? (b.trucksOut||0) : 0,
       pop:b.pop||0, protectedPop:b.protectedPop||0,
+      guests:b.guests && b.guests.length ? b.guests.slice() : null,
       ct:b.ct||0,
       pending:includeTransient ? (b.pending||0) : 0,
       pendingProtected:includeTransient ? (b.pendingProtected||0) : 0,
@@ -1734,6 +1736,7 @@ function applySnapshot(d){
       pendingProtected:hadTransient ? (o.pendingProtected||0) : 0,
       starve:o.starve||0,
     });
+    if(Array.isArray(o.guests) && o.guests.length) b.guests = o.guests.slice();
     b.renderProg = b.prog || 0;
     b.mpProgRate = 0;
     b.mpProgSyncGtime = gtime || 0;

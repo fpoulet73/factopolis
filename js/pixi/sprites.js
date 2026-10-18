@@ -574,8 +574,9 @@ const PixiSprites = (function(){
   function makeOvSlot(ovLayer){
     const s = { container:new PIXI.Container(), g:new PIXI.Graphics(),
       pop:mkOvText(11,0xffe9a0), work:mkOvText(10,0xff9a8a), warn:mkOvText(14,0xffffff,0),
-      sale:mkOvText(10,0xf0c060,0), pass:mkOvText(11,0xa0c8e8), pause:mkOvText(13,0x111111,0) };
-    s.texts = [s.pop, s.work, s.warn, s.sale, s.pass, s.pause];
+      sale:mkOvText(10,0xf0c060,0), pass:mkOvText(11,0xa0c8e8), pause:mkOvText(13,0x111111,0),
+      gt:[mkOvText(11,0xe8f4ff), mkOvText(11,0xe8f4ff), mkOvText(11,0xe8f4ff)] };
+    s.texts = [s.pop, s.work, s.warn, s.sale, s.pass, s.pause, ...s.gt];
     s.container.addChild(s.g, ...s.texts);
     ovLayer.addChild(s.container);
     return s;
@@ -708,6 +709,15 @@ const PixiSprites = (function(){
     const progPx = (r && prog > 0) ? Math.round(bw*Math.min(1, prog/r.time)) : -1;
     const showPop = d.resid && b.pop > 0 && (cam.z || 1) >= 0.8;
     const idle = showPop && (b.workersIdle || 0) > 0;
+    // Airbnb : locataires d'un autre joueur, regroupés par joueur d'origine (max. 3 icônes)
+    let guestGroups = null, guestKey = '';
+    if(showPop && b.guests && b.guests.length){
+      const m = new Map();
+      for(const g of b.guests.slice(0, b.pop)){ const o = typeof g === 'number' ? null : (g.o ?? null); m.set(o, (m.get(o) || 0) + 1); }
+      guestGroups = [...m].slice(0, 3).map(([o, n]) => ({ col: playerColor(o), n }));
+      guestKey = guestGroups.map(x => x.col + x.n).join(',');
+    }
+    const popCol = playerColor(b.owner ?? null);
     const sel = b === selected || inSelectedStation(b);
     const ownerMark = !(typeof UI_OPTIONS!=='undefined' && UI_OPTIONS.hideColorMarkers) && b.owner ? b.owner : null;
     const ownerCol = ownerMark != null ? playerColor(ownerMark) : null;
@@ -730,7 +740,7 @@ const PixiSprites = (function(){
         if(vt.resources.some(rr => b.sellTo?.[rr])) rc = 0xf0c060;
       }
     }
-    const key = progPx + '|' + (showPop ? b.pop : -1) + (idle ? 'i' : '') + '|' + (sel ? 1 : 0) + '|' + ownerCol
+    const key = progPx + '|' + (showPop ? b.pop : -1) + (idle ? 'i' : '') + '|' + popCol + '|' + guestKey + '|' + (sel ? 1 : 0) + '|' + ownerCol
       + '|' + (paused ? 1 : 0) + '|' + (lack ? 1 : 0) + '|' + (noWorkers ? workersRequiredOf(b) : -1)
       + '|' + (sale ? 1 : 0) + '|' + pass + (passFull ? 'f' : '') + '|' + rc + (AIR_TYPES.includes(b.type) ? '|a' + airVersion : '');
     if(!RENDER_SAFE && s.b === b && s.geom === geom && s.key === key) return idx + 1;
@@ -746,14 +756,33 @@ const PixiSprites = (function(){
     // habitants : une seule pastille compacte (ambre s'il reste des inactifs),
     // masquée en vue éloignée pour ne pas surcharger la ville.
     if(showPop){
-      const label = '👤' + b.pop;
+      // pastille : [personnage couleur du propriétaire] N  puis, s'il y a des locataires Airbnb,
+      // [personnage couleur du joueur d'origine] n (un par joueur)
+      const label = String(b.pop);
       if(s.pop.text !== label) s.pop.text = label;
       const fill = idle ? 0xffd27a : 0xe8f4ff;
       if(s.pop.style.fill !== fill) s.pop.style.fill = fill;
+      const items = [{ col:popCol, t:s.pop }];
+      if(guestGroups) guestGroups.forEach((gr, i) => {
+        const t = s.gt[i], txt = String(gr.n);
+        if(t.text !== txt) t.text = txt;
+        items.push({ col:gr.col, t });
+      });
+      const ICON = 9, GAP = 2, SEP = 6;
+      let pw = 10;
+      items.forEach((it, i) => { pw += ICON + GAP + it.t.width + (i ? SEP : 0); });
       const py = tc[1] - TH * 0.62;
-      const pw = s.pop.width + 10;
       s.g.roundRect(tc[0] - pw / 2, py - 7.5, pw, 15, 7).fill({ color:0x0c1420, alpha:0.68 });
-      s.pop.position.set(tc[0], py); s.pop.visible = true;
+      let x = tc[0] - pw / 2 + 5;
+      items.forEach((it, i) => {
+        if(i) x += SEP;
+        const cx = x + ICON / 2;
+        s.g.circle(cx, py - 2.6, 2.5).fill({ color:it.col }).stroke({ color:0x0c1420, width:0.8 });
+        s.g.ellipse(cx, py + 3.6, 3.9, 3.1).fill({ color:it.col }).stroke({ color:0x0c1420, width:0.8 });
+        x += ICON + GAP;
+        it.t.position.set(x + it.t.width / 2, py); it.t.visible = true;
+        x += it.t.width;
+      });
     }
     // contour propriétaire (MP) + drapeau, ou sélection solo
     if(ownerCol != null){

@@ -562,9 +562,11 @@ function demolishBuilding(b, refundOwner){
   const owner = b.owner ?? null;
   const townId = b.townId ?? null;
   if(AIR_TYPES.includes(b.type)) airVersion++;
+  if(BUILD[b.type]?.resid) evictGuests(b); // les invités d'un autre joueur repartent en transport
   const evicted = makeResidentsHomeless(b);
   // ouvriers venus par transport : ils rejoignent la maison libre / le point de transit le plus proche
   if(b.commuters) for(const key of Object.keys(b.commuters)) sendCommutersAway(b, key, b.commuters[key]);
+  sendRouteVehiclesHome(b); // les véhicules de la route retournent au dépôt
   b.dead = true;
   buildings.splice(buildings.indexOf(b),1);
   setGrid(b,null);

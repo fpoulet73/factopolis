@@ -2633,6 +2633,18 @@ function startVehicleRoute(v){
   return true;
 }
 
+// Véhicules en service dont la route (source, destination ou ordres de train) passe par b.
+function vehiclesUsingBuilding(b){
+  if(!b) return [];
+  return vehicles.filter(v => v.state !== 'idle' && v.state !== 'returning' &&
+    (v.source === b || v.dest === b || (v.orders && v.orders.includes(b))));
+}
+
+// Avant la démolition de b : tous les véhicules dont la route l'utilise rentrent au dépôt.
+function sendRouteVehiclesHome(b){
+  for(const v of vehiclesUsingBuilding(b)) returnToGarage(v);
+}
+
 function returnToGarage(v){
   if(v.state === 'idle' || v.state === 'returning') return;
   if(v.vtype === 'train'){
