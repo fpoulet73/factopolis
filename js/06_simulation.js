@@ -359,6 +359,15 @@ function update(dt){
     }
   }
 
+  // Voyageurs restés sur des quais sans gare (sauvegardes d'avant) : confiés à la gare proche.
+  for(const b of buildings){
+    if(b.dead || b.type !== 'train_platform' || !(b.passagersSortant > 0)) continue;
+    const hub = trainStopPassengerHub(b);
+    if(!hub || hub === b || hub.type !== 'train_station') continue;
+    hub.passagersSortant = (hub.passagersSortant || 0) + b.passagersSortant;
+    b.passagersSortant = 0;
+  }
+
   // Les arrivées bus -> gare sont appliquées après les mouvements du tick,
   // pour éviter qu'un train à quai les embarque immédiatement.
   for(const b of buildings){

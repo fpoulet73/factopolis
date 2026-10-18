@@ -3777,6 +3777,13 @@ function draw(){
     center: centerOfBuilding(selected),
     r: BUILD[selected.type]?.radiusOf ? BUILD[selected.type].radiusOf(selected) : depotRadiusOf(selected),
   } : null;
+  // gare sélectionnée : rayon des voyageurs + rayon de son entrepôt collé (la gare est
+  // sélectionnée à la place de l'entrepôt, qui n'a alors plus son propre rayon)
+  const stationRadiusSel = selected && !selected.dead && isTrainStationPiece(selected) ? {
+    center: centerOfBuilding(selected),
+    r: TRAIN_STATION_RADIUS,
+    depot: (() => { const d = trainStationLinkedDepot(selected); return d ? { center: centerOfBuilding(d), r: depotRadiusOf(d) } : null; })(),
+  } : null;
   const leisureRadiusSel = selected && !selected.dead && isLeisure(selected) ? {
     center: centerOfBuilding(selected),
     r: leisureRadiusOf(selected),
@@ -4311,6 +4318,12 @@ function draw(){
   // rayon du dépôt sélectionné (jaune)
   if(depotRadiusSel)
     drawWorkRadiusOverlay(depotRadiusSel.center, depotRadiusSel.r, '#ffd700', minRx, maxRx, minRy, maxRy);
+
+  if(stationRadiusSel){
+    drawWorkRadiusOverlay(stationRadiusSel.center, stationRadiusSel.r, '#7dd8ff', minRx, maxRx, minRy, maxRy);
+    if(stationRadiusSel.depot)
+      drawWorkRadiusOverlay(stationRadiusSel.depot.center, stationRadiusSel.depot.r, '#ffd700', minRx, maxRx, minRy, maxRy);
+  }
 
   // rayon d'attractivité du lieu de loisirs sélectionné (rose)
   if(leisureRadiusSel)

@@ -1936,6 +1936,23 @@ function applyInterPlayerTrade(buyerOwner, sellerOwner, res, qty){
   return take;
 }
 
+// Point de transit qui porte les compteurs de voyageurs d'un arrêt de train. Un groupe de
+// quais sans bâtiment « gare » (quais posés seuls) n'est pas un point de transit : ses
+// voyageurs seraient bloqués. On les confie alors à la gare du même joueur la plus proche
+// dans le rayon des gares.
+function trainStopPassengerHub(stopB){
+  const rep = (isTrainStationPiece(stopB) && stopB.stationGroupId != null)
+    ? (trainStationGroupRepresentative(stopB.stationGroupId) || stopB) : stopB;
+  if(!isTrainStationPiece(rep) || rep.type === 'train_station') return rep;
+  let best = null, bestD = Infinity;
+  for(const o of buildings){
+    if(o.dead || o.type !== 'train_station' || o.owner !== rep.owner) continue;
+    const d = buildingDistance(o, rep);
+    if(d <= TRAIN_STATION_RADIUS && d < bestD){ best = o; bestD = d; }
+  }
+  return best ? (trainStationGroupRepresentative(best.stationGroupId) || best) : rep;
+}
+
 function trainProcessStop(v, stopB, nextStop){
   if(!v || !stopB || stopB.dead) return;
   if(v.vtype === 'train' && typeof newsOnArrival === 'function') newsOnArrival(v, stopB);
@@ -1944,9 +1961,7 @@ function trainProcessStop(v, stopB, nextStop){
   const passCap = trainPassengerCapacity(v);
   if(passCap > 0){
     // Résoudre la pièce principale du groupe (passengersEntrant/passagersSortant sur train_station)
-    const stationMain = (isTrainStationPiece(stopB) && stopB.stationGroupId != null)
-      ? (trainStationGroupRepresentative(stopB.stationGroupId) || stopB)
-      : stopB;
+    const stationMain = trainStopPassengerHub(stopB);
     // Déposer les passagers à bord → passagers sortants de cette gare + revenu
     const onBoard = v.passengersOnBoard || 0;
     if(onBoard > 0){
