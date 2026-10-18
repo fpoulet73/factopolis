@@ -2373,7 +2373,7 @@ function removePersistentVehicle(v){
   return i >= 0;
 }
 
-// Un véhicule m'appartient-il ? (en solo, tout est à moi ; en multi, filtré par owner)
+// Un véhicule m'appartient-il ? (hors room, tout est à moi ; en room, filtré par owner)
 function isMyVehicle(v){
   return !MP.connected || !v?.garageRef?.owner || v.garageRef.owner === MP.myId;
 }

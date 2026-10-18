@@ -105,7 +105,7 @@ surface redessinée, 2-3× le viewport) toutes les quelques secondes de déplace
 caméra entre dans les `GROUND_SCROLL_COMFORT` (96 px) du bord, et ne redessine que les bandes
 découvertes (`_stripRect` : un appel interne de `draw()` par bande, clip + fenêtre restreinte).
 Coût par événement ≈ 2 à 4× moindre, étalé sur des événements plus fréquents. Le test
-`tools/tests/solo/defilement-sol.js` vérifie l'identité pixel avec une reconstruction complète.
+`tools/tests/moteur/defilement-sol.js` vérifie l'identité pixel avec une reconstruction complète.
 Reconstruction complète inchangée pour : zoom, rotation, mutation du sol, saut de caméra
 (> ½ buffer), survol d'expansion.
 

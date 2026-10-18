@@ -94,7 +94,7 @@ window.FACTOPOLIS_TRANSLATIONS.en = {
   'help.transport2': '🚦 <b>Signals</b> split the track into one-way blocks, one train per block. Click repeatedly: green → forced red → removed. Junction signals wait until a next track is free. At a terminus the train turns around.',
   'help.transport3': '📦 <b>Freight</b>: put a warehouse next to the station (or port) and set its goods to 🟢 “distribute”: trains and cargo ships load them; delivery is paid by distance.',
   'help.transport4': '⚓ <b>Ports</b> by the water (cargo ships, ferries) and ✈️ <b>airports</b> (airliners): passengers are the nearby unemployed residents.',
-  'help.transport5': '🧭 Train orders can be edited while running; its consist is changed at the depot. 🎯 Follow the <b>goals</b> (top left) to earn bonuses; 📰 the <b>Gazette</b> reports your big firsts. 💾 The Game button saves your solo game.',
+  'help.transport5': '🧭 Train orders can be edited while running; its consist is changed at the depot. 🎯 Follow the <b>goals</b> (top left) to earn bonuses; 📰 the <b>Gazette</b> reports your big firsts. 💾 The host saves the world from the 🌐 Multiplayer panel.',
   'help.go': 'Ready!',
   'help.prev': 'Prev.',
   'help.next': 'Next'

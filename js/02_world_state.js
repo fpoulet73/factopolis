@@ -139,9 +139,9 @@ const walletOf  = oid => {
   return WALLETS[k];
 };
 const myWallet  = () => walletOf(currentWalletOwner());
-// Clé de WALLETS → identifiant propriétaire des bâtiments. En solo le portefeuille
-// est rangé sous la clé 0 alors que les bâtiments ont owner = null : sans cette
-// conversion, taxes, paliers de population et efficacité ne comptaient RIEN en solo.
+// Clé de WALLETS → identifiant propriétaire des bâtiments. Hors room (monde vierge
+// du lobby) le portefeuille est rangé sous la clé 0 alors que les bâtiments ont
+// owner = null.
 const walletOwnerOf = k => { const n = +k; return n === 0 ? null : n; };
 // accesseurs rétro-compatibles (lecture/écriture du wallet courant)
 const getMoney   = ()    => myWallet().money;
@@ -605,7 +605,7 @@ function growMap(need){
 // Fait grandir la grille si la PROCHAINE bande d'expansion (EXP_DEPTH tuiles) d'un côté
 // quelconque déborderait. Appelé après chaque extension de mapBounds (buyExpansion), pour
 // que refreshExpansionSlots trouve toujours du terrain réel à tarifer sur les offres.
-// Côté hôte / solo uniquement : en multijoueur les invités reçoivent la grille agrandie
+// Côté hôte uniquement : les les invités reçoivent la grille agrandie
 // via le snapshot complet de l'hôte. Retourne le résultat de growMap ({dx,dy} ou false).
 function ensureMapCapacityForNextBand(){
   if(typeof MP !== 'undefined' && MP.connected && MP.role !== 'host') return false;
@@ -1264,7 +1264,7 @@ function genWorld(config){
 
 // ---------- aides ----------
 const inMap = (x,y)=> x>=0 && y>=0 && x<N && y<N && !!mapMask && mapMask[y*N+x]===1;
-// Filtres par owner : en solo (owner null) on compte tout, en MP on filtre
+// Filtres par owner : hors room (owner null) on compte tout, en room on filtre
 const myOwner   = () => (MP.connected && MP.myId != null) ? MP.myId : null;
 const ownedBy   = (b, oid) => oid == null ? (b.owner == null) : (b.owner === oid);
 const popTotal  = (oid=myOwner()) => buildings.filter(b=>ownedBy(b,oid)).reduce((s,b)=> s+(b.pop||0), 0);

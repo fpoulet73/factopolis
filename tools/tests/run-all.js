@@ -2,7 +2,7 @@
 // ===================== Factopolis — tests automatisés =====================
 // Lance un serveur de test isolé (données dans un dossier temporaire, jamais
 // dans data/), puis exécute dans Chromium headless :
-//   - tools/tests/solo/*.js : code évalué dans la page, doit retourner
+//   - tools/tests/moteur/*.js : code évalué dans la page (moteur, sans connexion), doit retourner
 //     { ok:boolean, ... } (scénarios trains, économie, interface, sauvegardes…) ;
 //   - tools/tests/mp/*.js   : modules async ({ host, guest, waitFor }) → { ok, ... }
 //     joués avec deux navigateurs (hôte + invité).
@@ -31,6 +31,7 @@ const LAUNCH = { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-u
 
 function startServer(){
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factopolis-test-'));
+  process.env.FACTOPOLIS_MAIL_OUTBOX = path.join(dataDir, 'outbox.jsonl'); // mails lus par les tests
   const proc = spawn(process.execPath, [path.join(ROOT, 'server.js'), String(PORT)], {
     cwd: ROOT, env: { ...process.env, FACTOPOLIS_DATA_DIR: dataDir }, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -72,11 +73,11 @@ async function waitFor(page, fn, arg, timeout = 15000){
 async function login(page, user){
   await page.evaluate(() => mpConnect('ws://' + location.host + '/ws'));
   await waitFor(page, () => MP.connected);
-  await page.evaluate(u => MP.ws.send(JSON.stringify({ type:'register', username:u, password:'pass1234' })), user);
+  await page.evaluate(u => MP.ws.send(JSON.stringify({ type:'register', username:u, password:'pass1234', email:u+'@test.be' })), user);
   await waitFor(page, () => !!MP.username, null, 5000);
 }
 
-async function runSolo(browser, file){
+async function runMoteur(browser, file){
   const errors = [];
   const page = await openGame(browser, errors, '');
   let res;
@@ -110,7 +111,7 @@ async function runMp(browser, file){
 
 (async () => {
   const list = d => fs.readdirSync(path.join(__dirname, d)).filter(f => f.endsWith('.js') && f.includes(filter)).map(f => path.join(__dirname, d, f));
-  const solo = list('solo'), mp = list('mp');
+  const moteur = list('moteur'), mp = list('mp');
   const { proc, dataDir } = await startServer();
   const browser = await chromium.launch(LAUNCH);
   let failed = 0;
@@ -121,7 +122,7 @@ async function runMp(browser, file){
     console.log((ok ? '✅' : '❌') + ' ' + name + ' (' + (ms / 1000).toFixed(1) + ' s)' + (ok ? '' : '\n   ' + JSON.stringify(res)));
   };
   try {
-    for(const f of solo){ const t = Date.now(); report(f, await runSolo(browser, f), Date.now() - t); }
+    for(const f of moteur){ const t = Date.now(); report(f, await runMoteur(browser, f), Date.now() - t); }
     for(const f of mp){ const t = Date.now(); report(f, await runMp(browser, f), Date.now() - t); }
   } finally {
     await browser.close();

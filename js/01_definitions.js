@@ -124,7 +124,6 @@ const BONUS_GROWTH_INTERVAL  = CFG.habitants?.croissanceBonus?.intervalle  ?? 30
 const WALKER_COLS = ['#e2574c','#4ca3e2','#58c470','#e2a93f','#b06fd8','#ececec'];
 const AUTO_SAVE_INTERVAL = 300; // secondes (5 minutes)
 const AUTO_SAVE_MAX      = 5;   // nombre d'emplacements conservés
-const AUTO_SAVE_KEY      = 'factopolis_autosaves';
 
 // ---------- horloge du jeu ----------
 // 1 seconde de gtime = GAME_HOURS_PER_SEC heures dans le jeu.

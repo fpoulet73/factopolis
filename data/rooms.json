@@ -1,0 +1,12 @@
+{
+  "atout2": {
+    "creator": "Fabrice",
+    "isPublic": true,
+    "members": []
+  },
+  "newworld": {
+    "creator": "Fabrice",
+    "isPublic": false,
+    "members": []
+  }
+}

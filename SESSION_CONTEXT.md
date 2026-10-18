@@ -14,7 +14,7 @@ Factopolis est un jeu de gestion/simulation en navigateur qui mélange :
   (signaux, cantons), bateaux (ports) et avions (aéroports) ;
 - rendu isométrique 2.5D rotatif : scène PixiJS (WebGL) dont les textures
   sont dessinées en Canvas 2D procédural (`07_rendering_art.js`) ;
-- jouable en solo (sauvegardes locales) ou en multijoueur (rooms serveur),
+- exclusivement multijoueur (rooms serveur),
   avec une progression guidée par objectifs (primes).
 
 Le joueur construit une ville industrielle : extraire fer/charbon/bois,
@@ -75,7 +75,7 @@ Variables globales principales (déclarées pour la plupart dans
 - `towns`, `nextTownId`, `selectedTownId` : villages/villes.
 - `expansions`, `expansionLevels`, `purchasedPieces` : pièces d'expansion.
 - `mapBounds`, `mapMask` : boîte jouable + masque des tuiles jouables.
-- `WALLETS` : économie par joueur (clé `0` en solo, id joueur en multi).
+- `WALLETS` : économie par joueur (clé `0` hors room, id joueur en room).
 - `MP` : état multijoueur local (voir section dédiée).
 - `UI_OPTIONS` : préférences UI persistées (`language`,
   `hideColorMarkers`, `highlightUnderstaffedFactories`,
@@ -239,7 +239,7 @@ clé = type moteur), vérifiés et prélevés comme pour les ports et aéroports
   cache `b._fxWater`). Poissons : au zoom ≥ `FISH_ANIM_ZOOM` (`lac.zoomAnimationPoissons`)
   ils ne sont plus cuits dans le sol (`fishAnimated`, la clé du buffer inclut cam.z)
   mais animés par `drawFishFx` (nage, queue, sauts). Test :
-  `tools/tests/solo/loisirs.js`.
+  `tools/tests/moteur/loisirs.js`.
 
 ## Boucle de simulation
 
@@ -500,7 +500,7 @@ Chaque wallet contient :
   joueur pour éviter le blocage au démarrage.
 
 En multi, chaque joueur a son wallet. Les revenus, taxes, entretien et
-coûts sont appliqués au propriétaire du bâtiment/véhicule. En solo le wallet
+coûts sont appliqués au propriétaire du bâtiment/véhicule. Hors room (monde vierge du lobby) le wallet
 est rangé sous la clé `0` alors que les bâtiments ont `owner = null` :
 `walletOwnerOf(k)` fait la conversion pour les boucles « par wallet ».
 
@@ -540,8 +540,8 @@ Côté client :
   formats et remap d'owner ID).
 - `applyAction(msg)` rejoue une action reçue d'un autre joueur.
 - `clickFn` est surchargé en multi pour envoyer l'action via `netSend`
-  puis l'appliquer localement ; hors room (`mpInRoom()` faux : solo ou lobby)
-  le jeu est purement local. Les tracés partent groupés
+  puis l'appliquer localement ; hors room (`mpInRoom()` faux : hors ligne ou lobby)
+  la construction est refusée (toast). Les tracés partent groupés
   (`applyRailPathWithNetwork`, `applyRoadPathWithNetwork`).
 - L'hôte valide les poses reçues (`canPlace(..., actorId)` : terrain, emprise,
   matériaux de chantier dans les entrepôts de l'expéditeur ; fonds), prélève les
@@ -610,15 +610,6 @@ Le serveur limite le débit par client avec un seau de jetons (rafale 400,
 
 ## Sauvegardes
 
-- **Locales (solo)** : panneau 💾 Partie — sauvegardes nommées et autosaves
-  (rotation 5 slots), export/import d'un fichier JSON, nouvelle carte.
-  Stockage `localStorage` : un **index** léger (`factopolis_saves` →
-  `[{id,name,date}]`, `factopolis_autosaves` → `[{slot,date}]`) et **une clé
-  par sauvegarde** (`factopolis_saves#<id>`, `factopolis_autosaves#<slot>`) :
-  une autosave n'écrit qu'un emplacement (≈10 ms au lieu de ~0,4 s sur une
-  grande ville). Quota plein → éviction des autosaves les plus anciennes.
-  L'ancien format (tableau unique avec les états) est migré à la lecture
-  (`migrateSaveList`).
 - **État compacté** (`packStateForStorage` / `unpackStateFromStorage`) :
   grilles codées par plages (RLE) et bâtiments sans champs vides/par défaut
   (`compactBuildingForStorage`, flottants arrondis) — ~×4 sur une grande

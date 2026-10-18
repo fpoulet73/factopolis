@@ -12,8 +12,9 @@
     "color": "#e2a93f",
     "passwordAlgo": "scrypt",
     "passwordSalt": "483c4f58a5c343aa390587c1decac2e2",
-    "sessionHash": "9c8139b60c1a10d6328a2a0c9806c29a769d946ad1583fd9a336ca9485bc3a18",
-    "sessionIssuedAt": "2026-10-18T07:07:22.828Z"
+    "sessionHash": "442a49f7968c0101651e4a9b709b25b952e7213ea37d886913fcccb0065c2b78",
+    "sessionIssuedAt": "2026-10-18T10:37:04.820Z",
+    "email": "fpoulet@atout.be"
   },
   "gege": {
     "passwordHash": "b887ec20206d9216b5e49d4a328828fc7d0735ac53424a8a30378fb6b2ef4b462696b0cfecd8940dc32c7ed9abca52e5abe1297c5980f9f1035e36356fcd5b7a",
@@ -21,7 +22,8 @@
     "passwordAlgo": "scrypt",
     "passwordSalt": "276a2d330e6f3651451a62fab4045097",
     "sessionHash": "93aed55fc2b5cc79c395b778df20c162322bdb61307e850fe376cf70f651aca9",
-    "sessionIssuedAt": "2026-10-16T18:05:39.680Z"
+    "sessionIssuedAt": "2026-10-16T18:05:39.680Z",
+    "email": "jeremy@atout.be"
   },
   "NoiceChewy": {
     "passwordAlgo": "scrypt",

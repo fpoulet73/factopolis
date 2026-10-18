@@ -654,7 +654,7 @@ function pushGameEvent(msg, target, cls){
 // ---------- la Gazette ----------
 // Les grands moments (premier train en gare, premier navire, premier vol,
 // paliers de population, premier gratte-ciel…) font la une, une seule fois par
-// partie. Seule la simulation autoritative (solo / hôte) publie ; les invités
+// partie. Seule la simulation autoritative (hôte) publie ; les invités
 // reçoivent les nouvelles via le flux monde (state.news) et les affichent.
 const NEWS_LOG_MAX = 12;
 function publishNews(key, icon, title, text, target){

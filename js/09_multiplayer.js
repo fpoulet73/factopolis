@@ -408,7 +408,7 @@ function wrappedProgressDiff(current, target, total){
 
 function buildingRenderProg(b){
   // renderProg n'est entretenu que pour l'invité (interpolation de snapshots).
-  // L'hôte et le solo simulent en direct : on lit toujours la progression vive,
+  // L'hôte simule en direct : on lit toujours la progression vive,
   // sinon une valeur renderProg périmée gèlerait la barre de progression.
   if(MP.connected && MP.role === 'guest') return b?.renderProg ?? b?.prog ?? 0;
   return b?.prog ?? 0;
@@ -2568,6 +2568,8 @@ function mpConnect(url){
     if(replaced || stopped || wasInGame){
       MP.roomId = null;
       MP.roomName = null;
+      MP.roomCreator = null;
+      MP.roomAccess = null;
       MP.roomSaveName = null;
       MP.ownerColors = {};
       if(replaced) localStorage.removeItem('fp_token'); // session invalidée côté serveur
@@ -2611,7 +2613,22 @@ function mpConnect(url){
         mpRenderRooms();
         break;
 
+      case 'room_settings':
+        MP.roomAccess = { isPublic: !!msg.isPublic, members: msg.members || [] };
+        mpRenderAccess();
+        break;
+
+      case 'room_invited':
+        toast('📨 ' + msg.by + " t'a invité dans le monde « " + msg.room + ' »', 'win');
+        break;
+
+      case 'room_deleted':
+        toast('🗑 Le monde « '+msg.name+' » a été supprimé', 'err');
+        break;
+
       case 'left_room':
+        MP.roomCreator = null;
+        MP.roomAccess = null;
         MP.role = null;
         MP.myId = null;
         MP.isAdmin = false;
@@ -2642,22 +2659,24 @@ function mpConnect(url){
         MP.isAdmin = !!msg.isAdmin;
         MP.roomId       = msg.roomId       ?? null;
         MP.roomName     = msg.roomName     ?? null;
+        MP.roomCreator  = msg.creator      ?? null;
         MP.roomSaveName = msg.saveName     ?? msg.roomName ?? null;
         MP.awaitingSnapshot = msg.role === 'guest';
         mpResetGuestSnapshotBuffer();
         mpStateSyncTimer = 0;
         document.title = MP.roomName ? 'Factopolis — ' + MP.roomName : 'Factopolis';
         mpAdoptWorldConfig(msg.worldConfig);
-        adoptSoloHomeless(MP.myId);
-        if(msg.role === 'host') adoptSoloBuildings(MP.myId);
+        adoptNeutralHomeless(MP.myId);
+        if(msg.role === 'host') adoptNeutralBuildings(MP.myId);
         ensureHomelessForOwner(MP.myId);
         resetSelectedTown();
-        if(msg.role === 'host' && MP.pendingNewWorld){ // monde tout juste créé : carte selon ses réglages (eau, taille, mode)
-          genWorld(MP.pendingNewWorld);
-          adoptSoloBuildings(MP.myId);
+        if(msg.role === 'host' && (MP.pendingNewWorld || msg.freshWorld)){ // monde tout juste créé : carte selon ses réglages (eau, taille, mode)
+          genWorld(MP.pendingNewWorld || normalizeWorldConfig({ ...WORLD, seed: undefined })); // sans sauvegarde : nouvelle carte automatique
+          adoptNeutralBuildings(MP.myId);
           MP.ws.send(JSON.stringify({ type:'new_world', config:WORLD, state:packStateForStorage(serializeState()) }));
         }
         MP.pendingNewWorld = null;
+        $('mpPanel').style.display = 'none'; // monde rejoint : on referme le panneau
         toast((msg.role==='host' ? '👑 Tu es l\'hôte' : '👥 Tu as rejoint la partie')+' (#'+msg.id+')');
         mpUpdateUI();
         mpRenderSaves();
@@ -2814,7 +2833,7 @@ function mpConnect(url){
         }
         for(const h of homeless) if(h.owner === MP.myId) h.col = msg.color;
         localStorage.setItem('fp_token', msg.token);
-        $('mpAuthPwd').value = '';
+        mpResetAuthForm();
         mpShowAuthError('');
         toast('👤 Connecté en tant que ' + msg.username);
         // Relier l'ancien id aux données déjà chargées (si snapshot déjà arrivé)
@@ -2832,7 +2851,7 @@ function mpConnect(url){
         MP.myName = msg.name || 'Moi';
         MP.myColor = msg.color || MP.myColor;
         localStorage.removeItem('fp_token');
-        $('mpAuthPwd').value = '';
+        mpResetAuthForm();
         mpShowAuthError('');
         toast('Compte déconnecté');
         mpUpdateUI();
@@ -2841,6 +2860,29 @@ function mpConnect(url){
 
       case 'auth_err':
         mpShowAuthError(msg.msg);
+        if(msg.loginFailed) $('mpResetLink').style.display = '';
+        break;
+
+      case 'reset_sent':
+        $('mpResetStep2').style.display = '';
+        $('mpResetMsg').style.color = '#8fa3bf';
+        $('mpResetMsg').textContent = 'Si un compte correspond, un code a été envoyé par email (valable 15 min).';
+        break;
+
+      case 'reset_err':
+        $('mpResetMsg').style.color = '#ff9a8a';
+        $('mpResetMsg').textContent = msg.msg;
+        break;
+
+      case 'reset_ok':
+        mpResetAuthForm();
+        $('mpResetBlock').style.display = 'none';
+        $('mpResetStep2').style.display = 'none';
+        $('mpResetLink').style.display = 'none';
+        $('mpResetCode').value = ''; $('mpResetPwd').value = '';
+        $('mpAuthUser').value = msg.username;
+        mpShowAuthError('');
+        toast('🔑 Mot de passe changé : connecte-toi avec le nouveau', 'win');
         break;
 
       case 'saves_list':
@@ -2934,6 +2976,32 @@ function mpConnect(url){
   };
 }
 
+// Seul le créateur du monde peut le supprimer (vérifié aussi côté serveur).
+function mpIsRoomCreator(){
+  return !!MP.username && MP.roomCreator != null && String(MP.username).toLowerCase() === String(MP.roomCreator).toLowerCase();
+}
+
+function mpRenderAccess(){
+  const sel = $('mpAccessSel'), list = $('mpMemberList');
+  if(!sel || !list || !MP.roomAccess) return;
+  sel.value = MP.roomAccess.isPublic ? '1' : '0';
+  const members = MP.roomAccess.members || [];
+  list.innerHTML = members.length
+    ? members.map(m => `<div style="display:flex;align-items:center;gap:4px;margin:2px 0;padding:3px 4px;background:#1d2939;border-radius:5px">
+        <span style="flex:1;font-size:12px">✅ ${escHtml(m)}</span>
+        <button class="tbtn" style="padding:1px 6px;font-size:11px;color:#ff9a8a" data-rm-member="${escHtml(m)}" title="Retirer l'invitation">✕</button></div>`).join('')
+    : '<div style="color:#8fa3bf;font-size:11px;font-style:italic">Aucun joueur invité</div>';
+  list.querySelectorAll('[data-rm-member]').forEach(b => b.onclick = ()=>
+    MP.ws.send(JSON.stringify({ type:'remove_member', username:b.dataset.rmMember })));
+}
+
+function mpResetAuthForm(){
+  $('mpAuthPwd').value = '';
+  $('mpAuthEmail').value = '';
+  $('mpAuthEmail').style.display = 'none';
+  $('mpBtnLogin').style.display = '';
+}
+
 function mpDisconnect(){
   if(MP.ws){ MP.ws.close(); MP.ws = null; }
   MP.connected = false;
@@ -2962,25 +3030,66 @@ function mpLeaveRoom(){
 function mpRenderRooms(){
   const el = $('mpRoomList');
   if(!el) return;
-  const rooms = MP.rooms || [];
+  const q = ($('mpRoomSearch')?.value || '').trim().toLowerCase();
+  const filter = $('mpRoomFilter')?.value || 'all';
+  const sort = $('mpRoomSort')?.value || 'mine';
+  const all = MP.rooms || [];
+  const keep = {
+    all: () => true,
+    mine: r => r.isMember,
+    public: r => r.isPublic,
+    private: r => !r.isPublic,
+    online: r => (r.playerCount || 0) > 0,
+    joinable: r => r.canJoin,
+  }[filter] || (() => true);
+  const rooms = all.filter(r => keep(r)
+    && (!q || r.name.toLowerCase().includes(q) || String(r.creator || '').toLowerCase().includes(q)));
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  const cmp = {
+    mine: (a, b) => (b.isMember - a.isMember) || (b.playerCount - a.playerCount) || byName(a, b),
+    online: (a, b) => (b.playerCount - a.playerCount) || byName(a, b),
+    name: byName,
+    members: (a, b) => ((b.memberCount || 0) - (a.memberCount || 0)) || byName(a, b),
+    size: (a, b) => ((b.worldConfig?.size || 0) - (a.worldConfig?.size || 0)) || byName(a, b),
+  }[sort] || byName;
+  rooms.sort(cmp);
+  const cnt = $('mpRoomCount');
+  if(cnt) cnt.textContent = rooms.length === all.length
+    ? rooms.length + ' monde' + (rooms.length !== 1 ? 's' : '')
+    : rooms.length + ' / ' + all.length + ' mondes';
   if(!rooms.length){
-    el.innerHTML = '<div style="color:#8fa3bf;font-size:11px;padding:6px 0">Aucun monde disponible.</div>';
+    el.innerHTML = '<div style="color:#8fa3bf;font-size:11px;padding:6px 0">'
+      + (all.length ? 'Aucun monde ne correspond aux filtres.' : 'Aucun monde disponible.') + '</div>';
     return;
   }
+  // lignes compactes : ~10 mondes visibles, le reste défile
   el.innerHTML = rooms.map(r => {
     const count = r.playerCount || 0;
-    const players = (r.players||[]).map(p=>`<span style="color:${p.color||'#ccc'}">${p.name}</span>`).join(', ') || '—';
+    const players = (r.players || []).map(p => p.name).join(', ');
     const size = r.worldConfig?.size || '?';
-    return `<div style="background:#16202f;border-radius:6px;padding:8px;margin-bottom:6px">
-      <div style="font-weight:bold;margin-bottom:2px">🌍 ${r.name}</div>
-      <div style="font-size:10px;color:#6e8aa0;margin-bottom:4px">${size}×${size} · ${count} joueur${count!==1?'s':''}</div>
-      ${count?`<div style="font-size:10px;margin-bottom:5px">${players}</div>`:''}
-      <button class="tbtn" onclick="mpJoinRoom(${r.id})" style="width:100%;font-size:12px">Rejoindre</button>
+    const vis = r.isPublic ? '<span style="color:#7fd48a" title="Public">🌐</span>' : '<span style="color:#e0b45a" title="Privé">🔒</span>';
+    const me = r.isCreator ? ' <span style="color:#7fb4ff" title="Mon monde">👑</span>' : r.isMember ? ' <span style="color:#7fb4ff" title="Invité">✅</span>' : '';
+    const join = r.canJoin
+      ? `<button class="tbtn" onclick="mpJoinRoom(${r.id})" style="font-size:11px;padding:3px 8px;white-space:nowrap">Rejoindre</button>`
+      : '<button class="tbtn" disabled style="font-size:11px;padding:3px 8px;white-space:nowrap" title="Le créateur du monde doit t’inviter">Sur invitation</button>';
+    return `<div style="display:flex;align-items:center;gap:6px;background:#16202f;border-radius:6px;padding:5px 7px;margin-bottom:4px${r.isMember ? ';border-left:3px solid #7fb4ff' : ''}">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:bold;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${vis}${me} ${escHtml(r.name)}</div>
+        <div style="font-size:10px;color:#6e8aa0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(players ? 'En ligne : ' + players : 'Personne en ligne')}">${size}×${size} · 👥 ${count} en ligne · ${r.memberCount || 0} membre${(r.memberCount||0)!==1?'s':''}${r.creator ? ' · ' + escHtml(r.creator) : ''}</div>
+      </div>${join}
     </div>`;
   }).join('');
 }
 
-function mpLogoutAccount(){
+async function mpLogoutAccount(){
+  // Changer de compte en pleine partie : on quitte d'abord le monde (sinon on y
+  // resterait sous une identité anonyme, y compris dans un monde privé).
+  if(mpInRoom()){
+    if(!await confirmAction('Changer de compte ?\nTu vas quitter le monde « '+(MP.roomName||'')+' ».', {
+      title: 'Changer de compte', okText: 'Changer',
+    })) return;
+    MP.ws.send(JSON.stringify({ type:'leave_room' }));
+  }
   localStorage.removeItem('fp_token');
   MP.username = null;
   MP.token = null;
@@ -2988,7 +3097,7 @@ function mpLogoutAccount(){
   if(MP.ws && MP.connected) MP.ws.send(JSON.stringify({ type:'logout' }));
   mpShowAuthError('');
   $('mpAuthUser').value = '';
-  $('mpAuthPwd').value = '';
+  mpResetAuthForm();
   mpUpdateUI();
   mpRenderSaves();
 }
@@ -3003,9 +3112,11 @@ clickFn = function(x,y){
   }
   const i = y*N+x;
   if(tool==='select'){ clickAt(x,y); return; }
-  // Hors partie multijoueur (solo, ou connecté au lobby sans monde rejoint) : le
-  // jeu est entièrement local, aucune action n'est diffusée.
-  if(!mpInRoom()){ clickAt(x,y); return; }
+  // Hors room (hors ligne, ou lobby sans monde rejoint) : rien à construire.
+  if(!mpInRoom()){
+    toast('🌐 Rejoins un monde multijoueur pour construire','err');
+    return;
+  }
   if(!MP.username){
     toast('👤 Connecte-toi avec un compte joueur pour construire','err');
     return;
@@ -3193,12 +3304,12 @@ function mpInjectUI(){
   const panel = document.createElement('div');
   panel.id = 'mpPanel'; panel.className = 'panel';
   panel.style.cssText =
-    'top:70px;left:12px;width:280px;max-height:calc(100vh - 90px);'+
+    'top:70px;left:12px;width:440px;max-width:calc(100vw - 24px);height:620px;max-height:calc(100vh - 40px);'+
     'overflow-y:auto;padding:12px 14px;font-size:13px;display:none;z-index:20';
 
   panel.innerHTML = `
 <div class="panel-head">
-  <h3 style="font-size:15px">🌐 Multijoueur</h3>
+  <h3 id="mpTitle" style="font-size:15px">🌐 Multijoueur</h3>
   <button class="tbtn" id="mpBtnClose" aria-label="Fermer">✕</button>
 </div>
 
@@ -3219,7 +3330,20 @@ function mpInjectUI(){
   <div style="color:#8fa3bf;font-size:11px;margin-bottom:4px">Compte joueur</div>
   <input id="mpAuthUser" type="text"     placeholder="Nom d'utilisateur" style="${INP}">
   <input id="mpAuthPwd"  type="password" placeholder="Mot de passe"      style="${INP}">
+  <input id="mpAuthEmail" type="email"   placeholder="Email (création de compte)" autocomplete="email" style="${INP};display:none">
   <div id="mpAuthErr" style="color:#ff9a8a;font-size:11px;min-height:14px;margin-bottom:4px"></div>
+  <a href="#" id="mpResetLink" style="display:none;color:#7fb4ff;font-size:11px;margin-bottom:6px">🔑 Mot de passe oublié ? Réinitialiser</a>
+  <div id="mpResetBlock" style="display:none;background:#16202f;border-radius:6px;padding:8px;margin-bottom:6px">
+    <div style="color:#8fa3bf;font-size:11px;margin-bottom:4px">Réinitialisation du mot de passe</div>
+    <input id="mpResetId" type="text" placeholder="Nom d'utilisateur ou email" style="${INP}">
+    <button class="tbtn" id="mpBtnResetSend" style="width:100%;margin-bottom:5px">Envoyer le code par email</button>
+    <div id="mpResetStep2" style="display:none">
+      <input id="mpResetCode" type="text" inputmode="numeric" maxlength="6" placeholder="Code reçu (6 chiffres)" style="${INP}">
+      <input id="mpResetPwd" type="password" placeholder="Nouveau mot de passe" style="${INP}">
+      <button class="tbtn" id="mpBtnResetConfirm" style="width:100%">Changer le mot de passe</button>
+    </div>
+    <div id="mpResetMsg" style="color:#8fa3bf;font-size:11px;min-height:14px;margin-top:4px"></div>
+  </div>
   <div style="display:flex;gap:6px">
     <button class="tbtn" id="mpBtnLogin"    style="flex:1">Connexion</button>
     <button class="tbtn" id="mpBtnRegister" style="flex:1">Créer compte</button>
@@ -3237,24 +3361,32 @@ function mpInjectUI(){
 <div id="mpLobbyBlock" style="display:none">
   <div style="border-top:1px solid #36465e;margin:8px 0"></div>
   <div style="color:#8fa3bf;font-size:11px;margin-bottom:6px">🌍 Mondes disponibles</div>
-  <div id="mpRoomList"></div>
+  <div style="display:flex;gap:5px;margin-bottom:5px">
+    <input id="mpRoomSearch" type="search" placeholder="🔎 Rechercher (nom, créateur)" style="${INP2};flex:1;margin:0">
+  </div>
+  <div style="display:flex;gap:5px;margin-bottom:6px">
+    <select id="mpRoomFilter" title="Filtrer" style="${INP2};flex:1;margin:0">
+      <option value="all">Tous les mondes</option>
+      <option value="mine">Mes mondes</option>
+      <option value="public">🌐 Publics</option>
+      <option value="private">🔒 Privés</option>
+      <option value="online">👥 Avec joueurs en ligne</option>
+      <option value="joinable">✅ Accessibles</option>
+    </select>
+    <select id="mpRoomSort" title="Trier" style="${INP2};flex:1;margin:0">
+      <option value="mine">Tri : mes mondes</option>
+      <option value="online">Tri : joueurs en ligne</option>
+      <option value="name">Tri : nom (A→Z)</option>
+      <option value="members">Tri : membres</option>
+      <option value="size">Tri : taille de carte</option>
+    </select>
+  </div>
+  <div id="mpRoomCount" style="color:#6e8aa0;font-size:10px;margin-bottom:3px"></div>
+  <div id="mpRoomList" style="height:230px;overflow-y:auto;padding-right:3px"></div>
   <div id="mpCreateRoomBlock" style="display:none;margin-top:6px">
     <div style="border-top:1px solid #36465e;margin:8px 0"></div>
     <input id="mpNewRoomName" type="text" placeholder="Nom du nouveau monde" style="${INP}">
-    <label style="display:block;color:#8fa3bf;font-size:11px">Taille de carte</label>
-    <select id="mpRoomSize" style="${INP}">
-      <option value="128">128×128</option>
-      <option value="192">192×192</option>
-      <option value="256">256×256</option>
-    </select>
-    <label style="display:block;color:#8fa3bf;font-size:11px">Eau (% de la carte)</label>
-    <input id="mpRoomWater" type="number" min="0" max="80" step="1" value="${WORLD_DEFAULTS.waterPct}" style="${INP}">
-    <label style="display:block;color:#8fa3bf;font-size:11px">Mode de jeu</label>
-    <select id="mpRoomMode" style="${INP}">
-      <option value="normal">Normal</option>
-      <option value="creative">Créatif (argent illimité, sans matériaux)</option>
-    </select>
-    <button class="tbtn" id="mpBtnCreateRoom" style="width:100%">+ Créer un monde</button>
+    <button class="tbtn" id="mpBtnCreateRoom" style="width:100%">🌍 Créer un monde</button>
     <div id="mpRoomErr" style="color:#ff9a8a;font-size:11px;min-height:14px;margin-top:4px"></div>
   </div>
 </div>
@@ -3264,6 +3396,19 @@ function mpInjectUI(){
 
 <div style="border-top:1px solid #36465e;margin:8px 0"></div>
 <button class="tbtn" id="mpBtnLeaveRoom" style="width:100%;margin-bottom:6px;font-size:11px">← Quitter la partie</button>
+<div id="mpAccessBlock" style="display:none;margin-bottom:6px">
+  <div style="color:#8fa3bf;font-size:11px;margin-bottom:4px">🔐 Accès au monde</div>
+  <select id="mpAccessSel" style="${INP}">
+    <option value="1">🌐 Public — tout le monde peut rejoindre</option>
+    <option value="0">🔒 Privé — sur invitation</option>
+  </select>
+  <div style="display:flex;gap:5px;margin-bottom:4px">
+    <input id="mpInviteName" type="text" placeholder="Pseudo à inviter" style="${INP2};flex:1;margin:0">
+    <button class="tbtn" id="mpBtnInvite">Inviter</button>
+  </div>
+  <div id="mpMemberList"></div>
+</div>
+<button class="tbtn" id="mpBtnDeleteRoom" style="width:100%;margin-bottom:6px;font-size:11px;color:#ff9a8a;display:none">🗑 Supprimer le monde</button>
 
 <!-- section saves -->
 <div id="mpNewBlock" style="display:none">
@@ -3340,17 +3485,37 @@ function mpInjectUI(){
 
   // --- événements ---
   $('mpBtnClose').onclick = ()=> $('mpPanel').style.display = 'none';
+  ['mpRoomSearch', 'mpRoomFilter', 'mpRoomSort'].forEach(id => {
+    $(id).addEventListener(id === 'mpRoomSearch' ? 'input' : 'change', mpRenderRooms);
+  });
+  // « Commencer » : le panneau multijoueur s'ouvre au centre de l'écran
+  $('sSplashGo').addEventListener('click', mpOpenPanelCentered);
   $('mpBtnConn').onclick = ()=> mpConnect($('mpUrl').value.trim() || `${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);
   $('mpBtnDisc').onclick = mpDisconnect;
   $('mpBtnSwitchAccount').onclick = mpLogoutAccount;
   $('mpBtnLeaveRoom').onclick = mpLeaveRoom;
+  $('mpAccessSel').onchange = ()=> MP.ws.send(JSON.stringify({ type:'set_room_access', isPublic: $('mpAccessSel').value === '1' }));
+  const invite = ()=>{
+    const u = $('mpInviteName').value.trim();
+    if(!u) return;
+    MP.ws.send(JSON.stringify({ type:'invite_player', username:u }));
+    $('mpInviteName').value = '';
+  };
+  $('mpBtnInvite').onclick = invite;
+  $('mpInviteName').onkeydown = e => { if(e.key === 'Enter') invite(); };
+  $('mpBtnDeleteRoom').onclick = async ()=>{
+    if(!mpIsRoomCreator()) return;
+    if(!await confirmAction('Supprimer définitivement le monde « '+(MP.roomName||'')+' » et toutes ses sauvegardes ?\nTous les joueurs en seront éjectés.', {
+      title: 'Supprimer le monde', okText: 'Supprimer', danger: true,
+    })) return;
+    MP.ws.send(JSON.stringify({ type:'delete_room' }));
+  };
   $('mpBtnCreateRoom').onclick = ()=>{
     const name = $('mpNewRoomName').value.trim();
     if(!name){ $('mpRoomErr').textContent = 'Entre un nom de monde'; return; }
     $('mpRoomErr').textContent = '';
-    // carte générée à l'arrivée dans le monde (message 'hello') avec ces réglages
-    const cfg = normalizeWorldConfig({ ...WORLD_DEFAULTS, size: $('mpRoomSize').value, waterPct: $('mpRoomWater').value,
-      mode: $('mpRoomMode').value, seed: undefined });
+    // carte générée à l'arrivée dans le monde (message 'hello') avec les réglages par défaut
+    const cfg = normalizeWorldConfig({ ...WORLD_DEFAULTS, seed: undefined });
     MP.pendingNewWorld = cfg;
     MP.ws.send(JSON.stringify({ type:'create_room', name, worldConfig:cfg }));
   };
@@ -3365,9 +3530,33 @@ function mpInjectUI(){
     MP.ws.send(JSON.stringify({ type:'login', username:u, password:p }));
   };
   $('mpBtnRegister').onclick = ()=>{
-    const u = $('mpAuthUser').value.trim(), p = $('mpAuthPwd').value;
-    if(!u||!p){ mpShowAuthError('Remplis les deux champs'); return; }
-    MP.ws.send(JSON.stringify({ type:'register', username:u, password:p }));
+    // 1er clic : affiche le champ email ; 2e clic : crée le compte
+    const emailEl = $('mpAuthEmail');
+    if(emailEl.style.display === 'none'){
+      emailEl.style.display = '';
+      $('mpBtnLogin').style.display = 'none';
+      emailEl.focus();
+      mpShowAuthError('Renseigne ton email pour créer le compte');
+      return;
+    }
+    const u = $('mpAuthUser').value.trim(), p = $('mpAuthPwd').value, em = emailEl.value.trim();
+    if(!u||!p||!em){ mpShowAuthError('Remplis tous les champs, email compris'); return; }
+    MP.ws.send(JSON.stringify({ type:'register', username:u, password:p, email:em }));
+  };
+  $('mpResetLink').onclick = e => {
+    e.preventDefault();
+    $('mpResetBlock').style.display = '';
+    $('mpResetId').value = $('mpAuthUser').value.trim();
+    $('mpResetId').focus();
+  };
+  $('mpBtnResetSend').onclick = ()=>{
+    const id = $('mpResetId').value.trim();
+    if(!id){ $('mpResetMsg').textContent = "Indique ton nom d'utilisateur ou ton email"; return; }
+    MP.ws.send(JSON.stringify({ type:'request_reset', identifier:id }));
+  };
+  $('mpBtnResetConfirm').onclick = ()=>{
+    MP.ws.send(JSON.stringify({ type:'reset_password', identifier:$('mpResetId').value.trim(),
+      code:$('mpResetCode').value.trim(), password:$('mpResetPwd').value }));
   };
   $('mpAuthPwd').addEventListener('keydown', e=>{
     if(e.key==='Enter') $('mpBtnLogin').click();
@@ -3408,6 +3597,13 @@ function mpInjectUI(){
   $('mpChatIn').addEventListener('keydown', e=>{ if(e.key==='Enter') mpSendChat(); });
 }
 
+function mpOpenPanelCentered(){
+  const p = $('mpPanel');
+  if(!p) return;
+  Object.assign(p.style, { left:'50%', top:'50%', right:'auto', bottom:'auto', transform:'translate(-50%,-50%)', display:'block' });
+  mpSyncWorldInputs();
+}
+
 function mpTogglePanel(){
   const p = $('mpPanel');
   p.style.display = p.style.display==='block' ? 'none' : 'block';
@@ -3434,6 +3630,10 @@ function mpUpdateUI(){
 
     // game
     $('mpGameBlock').style.display = inGame ? '' : 'none';
+    // en partie : plus d'URL ni de bouton Déconnecter, le titre devient le nom du monde
+    $('mpConnBlock').style.display = inGame ? 'none' : '';
+    $('mpBtnDeleteRoom').style.display = (inGame && mpIsRoomCreator()) ? '' : 'none';
+    $('mpAccessBlock').style.display = (inGame && mpIsRoomCreator()) ? '' : 'none';
 
     if(inGame){
       // Sauvegardes (manuelles + auto) : réservées à l'hôte/admin, qui seul
@@ -3473,6 +3673,8 @@ function mpUpdateUI(){
     st.textContent = 'Non connecté';
     st.style.color = '#8fa3bf';
   }
+  const title = $('mpTitle');
+  if(title) title.textContent = (MP.connected && MP.role !== null && MP.roomName) ? '🌍 ' + MP.roomName : '🌐 Multijoueur';
   mpSyncWorldInputs();
   mpRenderNewCollapse();
   renderAutoSaves();

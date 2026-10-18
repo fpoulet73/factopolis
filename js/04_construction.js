@@ -15,7 +15,7 @@ const MP = {
 
 const mpHasAdminRights = () => MP.connected && (MP.role === 'host' || MP.isAdmin);
 // Vrai uniquement quand on joue dans un monde multijoueur (room rejointe). Connecté
-// au lobby sans room, ou hors ligne, le jeu est local (solo).
+// au lobby sans room, ou hors ligne, on ne peut pas construire.
 const mpInRoom = () => MP.connected && MP.roomId != null && MP.role != null;
 const controlledBy = (owner, actorId = (MP.connected ? MP.myId : null)) =>
   owner == null || actorId == null || owner === actorId;
@@ -27,7 +27,7 @@ const MP_ZONE = 20; // distance minimale entre bâtiments de joueurs différents
 // Retourne l'id du joueur adverse le plus proche ayant un bâtiment à moins de MP_ZONE cases,
 // ou null si la pose est libre.
 function nearbyEnemyOwner(myId, cx, cy){
-  if(!myId) return null; // solo : pas de restriction
+  if(!myId) return null; // hors room : pas de restriction
   // Seuls les joueurs actuellement connectés comptent — évite les faux positifs
   // liés aux bâtiments créés par le joueur lui-même dans une session précédente
   // (où son ID de session était différent).

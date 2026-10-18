@@ -1248,7 +1248,7 @@ function drawBuildingOverlays(b, g){
     ctx.fillStyle = ownerColor;
     ctx.beginPath(); ctx.arc(tc[0]-TW*rw*0.28, tc[1]-4, 4, 0, 7); ctx.fill();
   } else if(b===selected || trainStationSelectionMatches(selected, b)){
-    // sélection solo
+    // sélection hors room
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
     diamond(rx0, ry0, rw, rh, lift); ctx.stroke();
   }
@@ -1740,7 +1740,7 @@ function drawSmoke(){
 // ---------- fusées du centre spatial ----------
 // Animations purement visuelles (temps réel) : décollage depuis le pas de tir, puis
 // retour de la capsule sous parachute. Déclenchées par spaceCenterPhaseChanged
-// (simulation en solo / chez l'hôte, synchronisation chez l'invité).
+// (simulation chez l'hôte, synchronisation chez l'invité).
 let rocketFx = [];
 const ROCKET_LAUNCH_MS = 7000, CAPSULE_LAND_MS = 4500;
 function spaceCenterPhaseChanged(b, phase){

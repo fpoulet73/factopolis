@@ -94,7 +94,7 @@ window.FACTOPOLIS_TRANSLATIONS.es = {
   'help.transport2': '🚦 Las <b>señales</b> dividen la vía en cantones de sentido único, un tren por cantón. Clic repetido: verde → rojo forzado → quitada. La señal de enlace espera a que una vía siguiente esté libre. En una terminal el tren da la vuelta.',
   'help.transport3': '📦 <b>Mercancías</b>: pega un almacén a la estación (o al puerto) y pon sus recursos en 🟢 «distribuye»: trenes y cargueros los cargan; el transporte se paga a la llegada según la distancia.',
   'help.transport4': '⚓ <b>Puertos</b> junto al agua (cargueros, ferris) y ✈️ <b>aeropuertos</b> (aviones de línea): los viajeros son los habitantes sin empleo cercanos.',
-  'help.transport5': '🧭 Las órdenes de un tren se editan incluso en marcha; su composición se cambia en el depósito. 🎯 Sigue los <b>objetivos</b> (arriba a la izquierda) para ganar primas; 📰 la <b>Gaceta</b> anuncia tus grandes estrenos. 💾 El botón Partida guarda tu partida en solitario.',
+  'help.transport5': '🧭 Las órdenes de un tren se editan incluso en marcha; su composición se cambia en el depósito. 🎯 Sigue los <b>objetivos</b> (arriba a la izquierda) para ganar primas; 📰 la <b>Gaceta</b> anuncia tus grandes estrenos. 💾 El anfitrión guarda el mundo desde el panel 🌐 Multijugador.',
   'help.go': '¡Listo!',
   'help.prev': 'Ant.',
   'help.next': 'Sig.'

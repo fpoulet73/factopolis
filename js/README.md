@@ -77,7 +77,7 @@ js/pixi/vendor/pixi.min.js, js/pixi/scene.js, js/pixi/sprites.js  ← scène Pix
   (`refreshExpansionSlots`, `buyExpansion`), allocation des travailleurs
   et transit (`refreshWorkerAllocation` 2 passes,
   `refreshTransitPassengerCaps` — gares, arrêts, ports, aéroports),
-  conversions solo (`walletOwnerOf`).
+  conversions de clé de portefeuille (`walletOwnerOf`).
 - **`02b_biomes.js`** : 7 biomes (`BIOMES` : prairie, forêt, désert,
   toundra, marais, savane, canyon) déduits de deux champs de bruit
   (température, humidité) dans le repère absolu du monde (`WORLD.seed`,
@@ -186,9 +186,8 @@ js/pixi/vendor/pixi.min.js, js/pixi/scene.js, js/pixi/sprites.js  ← scène Pix
   `mpRenderPlayerList`, `mpRenderSaves`, `mpRenderChat`, `mpSendChat`,
   `mpRenderNewCollapse`), helpers rail multi
   (`applyRailPathWithNetwork`).
-- **`10_saves_chat_console.js`** : autosaves locales
-  (`loadAutoSaves`, `performAutoSave`, `renderAutoSaves`,
-  `autoSaveStorageKey`) + serveur (`autoSaveServerName`,
+- **`10_saves_chat_console.js`** : autosaves serveur
+  (`performAutoSave`, `renderAutoSaves`, `autoSaveServerName`,
   `autoSaveServerPattern`), chat (`mpRenderChat`, `mpSendChat`),
   `escHtml` (échappement), commandes console exposées sur `window`
   (`regenExpansions`, `spawnFieldsOnMap`), **bootstrap final**

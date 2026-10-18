@@ -50,8 +50,7 @@ function settleRailToll(v, payerId, fx, fy){
 
 // ---------- objectifs (progression guidée) ----------
 // Fil d'objectifs par joueur, du premier logement aux trains/ports/aéroports,
-// chacun récompensé d'une prime. Vérifié par la simulation autoritaire (solo ou
-// hôte) ; l'avancement voyage dans le portefeuille (wallet.objIndex).
+// chacun récompensé d'une prime. Vérifié par la simulation autoritaire (hôte) ; l'avancement voyage dans le portefeuille (wallet.objIndex).
 const countOwned = (o, pred) => buildings.reduce((n, b) => n + (!b.dead && ownedBy(b, o) && pred(b) ? 1 : 0), 0);
 const OBJECTIVES = [
   { ic:'🏠', txt:'Construis ta première maison', reward:300, check:o => countOwned(o, b => BUILD[b.type].resid) >= 1 },

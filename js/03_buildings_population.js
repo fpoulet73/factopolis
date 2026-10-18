@@ -448,14 +448,14 @@ function ensureHomelessForOwner(owner){
   w.homelessSeeded = true;
 }
 
-// Le monde solo devient celui d'une room fraîchement créée : ses bâtiments (sans
+// Le monde local du lobby devient celui d'une room fraîchement créée : ses bâtiments (sans
 // propriétaire) reviennent au joueur qui l'héberge, sinon ils resteraient neutres.
-function adoptSoloBuildings(owner){
+function adoptNeutralBuildings(owner){
   if(owner == null) return;
   for(const b of buildings) if(!b.dead && b.owner == null) b.owner = owner;
 }
 
-function adoptSoloWallet(owner){
+function adoptNeutralWallet(owner){
   if(owner == null || owner === 0) return;
   if(WALLETS[owner]) return;
   if(WALLETS[0]){
@@ -464,9 +464,9 @@ function adoptSoloWallet(owner){
   }
 }
 
-function adoptSoloHomeless(owner){
+function adoptNeutralHomeless(owner){
   if(owner == null) return;
-  adoptSoloWallet(owner);
+  adoptNeutralWallet(owner);
   let adopted = 0;
   for(const h of homeless){
     if(h.owner == null){

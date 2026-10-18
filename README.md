@@ -14,8 +14,7 @@ qui mélange trois genres :
 
 Le tout en **rendu isométrique 2.5D rotatif** (PixiJS/WebGL, textures cuites
 depuis un dessin Canvas 2D procédural), JS vanilla sans build, avec un serveur
-Node.js léger pour le multijoueur. Le jeu se joue **en solo** (sauvegardes
-locales) ou **en multijoueur** (mondes partagés sur le serveur).
+Node.js léger pour le multijoueur. Le jeu est **exclusivement multijoueur** (mondes partagés sur le serveur).
 
 ---
 
@@ -99,10 +98,7 @@ npm start                 # ou : node server.js
 # WebSocket         → ws://localhost:8765
 ```
 
-Le serveur sert aussi les fichiers statiques. **Solo** : cliquer « Commencer »
-et construire ; le bouton 💾 (Partie) crée une nouvelle carte, sauvegarde/charge
-localement (navigateur, grilles compressées) et exporte/importe un fichier JSON.
-**Multijoueur** : bouton 🌐 → connexion, compte, choix d'un monde.
+Le serveur sert aussi les fichiers statiques. **Jeu** : bouton 🌐 → connexion, compte, choix d'un monde.
 
 ### Tests automatisés
 
@@ -112,7 +108,7 @@ npm test                  # serveur isolé (données temporaires) + Chromium hea
 npm test -- trains        # filtre par nom de scénario
 ```
 
-Scénarios dans `tools/tests/solo/` (trains : terminus, boucle, quais, évitement,
+Scénarios dans `tools/tests/moteur/` (trains : terminus, boucle, quais, évitement,
 ordres en route ; fret/voyageurs ; bateaux/avions ; zone de départ des cartes
 générées ; économie de début de partie et filière acier → outils → première fusion ;
 matériaux de chantier ; chaînes avancées ; centre spatial ; interface ; sauvegarde ;
@@ -148,7 +144,7 @@ global — **l'ordre numérique des prefixes doit rester stable**.
 | `08_objectives.js` | Panneau des objectifs (progression guidée, primes) |
 | `pixi/scene.js`, `pixi/sprites.js` | Scène PixiJS : terrain (texture du scroll-buffer), sprites triés (bâtiments, arbres, véhicules), overlays, culling |
 | `09_multiplayer.js` | WebSocket client, `serializeState`/`applySnapshot`, `applyAction`, rooms, auth token, owner remapping, override de `clickFn`/`drawFn`, panneau multijoueur |
-| `10_saves_chat_console.js` | Panneau Partie (solo), sauvegardes locales compressées (RLE) + auto-saves serveur, chat, commandes console, bootstrap |
+| `10_saves_chat_console.js` | Compression RLE des sauvegardes, auto-saves serveur, chat, commandes console, bootstrap |
 | `i18n.js` + `i18n/{fr,en,es}.js` | Système de traduction (`t()`, `setLanguage()`, attributs `data-i18n`) |
 
 ### Serveur (`server.js`)
@@ -335,10 +331,7 @@ Voir `SESSION_CONTEXT.md` pour le détail du protocole WebSocket.
 
 ## Sauvegardes
 
-- **Locales** (solo) : panneau 💾 Partie — sauvegardes nommées et autosaves
-  (rotation 5 slots) en `localStorage`, grilles compressées par plages (RLE,
-  ~×13) ; export/import d'un fichier JSON.
-- **Serveur** (`data/saves/<room>_<nom>.json`) — par monde (room),
+- **Serveur** (grilles compressées par plages RLE ; `data/saves/<room>_<nom>.json`) — par monde (room),
   chargement/diffusion à toute la room.
 - Autosaves serveur pattern `[Auto] <room> <slot>`.
 - Format : `{ meta:{username,name,date}, state: serializeState() }`.

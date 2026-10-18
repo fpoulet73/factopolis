@@ -786,7 +786,7 @@ const PixiSprites = (function(){
         x += it.t.width;
       });
     }
-    // contour propriétaire (MP) + drapeau, ou sélection solo
+    // contour propriétaire (MP) + drapeau, ou sélection hors room
     if(ownerCol != null){
       // le trait de couleur est dessiné dans la couche triée (updateOwnerOutline) pour que les
       // bords cachés par les volumes 3D le restent ; ici seulement le repère sur le toit

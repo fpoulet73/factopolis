@@ -30,7 +30,7 @@ npm test           # tests headless (Playwright requis, serveur isolé)
 | `js/07_rendering_art.js` | Art procédural des bâtiments (cuit en textures) |
 | `js/08_minimap.js`, `js/08_objectives.js` | Mini-carte, panneau des objectifs |
 | `js/pixi/` | Scène PixiJS (terrain, sprites triés, culling) + Pixi embarqué |
-| `tools/tests/` | Tests automatisés (`npm test`) : scénarios solo et multijoueur |
+| `tools/tests/` | Tests automatisés (`npm test`) : scénarios moteur (sans connexion) et multijoueur |
 | `js/i18n.js` + `js/i18n/{fr,en,es}.js` | Traductions (`t()`, `setLanguage()`, `data-i18n`) |
 | `server.js` | Serveur HTTP statique + WebSocket (`ws`) — multi-room, scrypt auth, sauvegardes |
 | `data/users.json` | Comptes joueurs (créé au runtime) |
