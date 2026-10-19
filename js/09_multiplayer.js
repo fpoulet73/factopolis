@@ -907,6 +907,7 @@ function applyLeisureState(b, o){
     : [];
   if(list.length) b.visitors = list; else delete b.visitors;
   b.visitsTotal = o.visitsTotal || 0;
+  b.visitPeriod = o.visitPeriod && Number.isFinite(o.visitPeriod.t0) && o.visitPeriod.n ? { t0:o.visitPeriod.t0, n:{ ...o.visitPeriod.n } } : undefined;
   b.leisureIncome = o.leisureIncome || 0;
   b.attractRadius = o.attractRadius > 0 ? o.attractRadius : undefined;
   setLeisureDir(b, o.dir);
@@ -1412,6 +1413,7 @@ function serializeState(opts = {}){
       stationGroupId:b.stationGroupId??null, stationAxis:b.stationAxis||null, runwayRev:b.runwayRev ? 1 : 0, decor:b.decor ?? null, design:b.design ?? null,
       spacePhase:b.spacePhase || null, launches:b.launches || 0,
       visitors:b.visitors && b.visitors.length ? b.visitors.map(g => ({ ...g })) : null,
+      visitPeriod:b.visitPeriod ? { t0:b.visitPeriod.t0, n:{ ...b.visitPeriod.n } } : null,
       visitsTotal:b.visitsTotal || 0, leisureIncome:b.leisureIncome || 0, attractRadius:b.attractRadius || 0, dir:b.dir || 0,
       shopIncome:b.shopIncome || 0, shopSales:b.shopSales || 0,
     })),
@@ -2168,6 +2170,17 @@ function applyAction(msg){
       rebuildWaterLevels(); markTerrainDirty();
       break;
     }
+    case 'terraform_resource': {
+      // seul le propriétaire du monde peut ajouter des ressources (revalidé côté réception)
+      if(!mpIsWorldOwner(msg.fromUsername) || !Array.isArray(act.tiles)) break;
+      if(!TERRAFORM_RESOURCES.some(r => r.t === act.res)) break;
+      for(const i of act.tiles){
+        if(!validIdx(i) || bgrid[i] || road[i] || rail[i] || terrain[i] !== T.GRASS) continue;
+        terrain[i] = act.res;
+      }
+      markTerrainDirty();
+      break;
+    }
     case 'terraform_level': {
       if(!Array.isArray(act.tiles) || !act.tiles.length || (act.dir !== 1 && act.dir !== -1)) break;
       const maxLevel = reliefCfg().levels;
@@ -2350,6 +2363,7 @@ function applyAction(msg){
       const cost = VEHICLE_TYPES[act.vtype].cost || 0;
       const wSender = walletOf(msg.from);
       if(VEHICLE_TYPES[act.vtype].buyDisabled || wSender.money < cost) break;
+      if(!featureUnlocked('v:' + act.vtype, msg.from)) break; // véhicule pas encore débloqué
       if(planePurchaseError(garage, act.vtype)) break; // hangars pleins
       wSender.money -= cost;
       wSender.fin.construction = (wSender.fin.construction||0) + cost;
@@ -2638,6 +2652,10 @@ function mpConnect(url){
     try { msg = JSON.parse(e.data); } catch { return; }
 
     switch(msg.type){
+      case 'online_stats':
+        mpShowOnlineStats(msg.online, msg.total);
+        break;
+
       case 'rooms_list':
         MP.rooms = msg.rooms || [];
         mpUpdateUI();
@@ -2814,6 +2832,8 @@ function mpConnect(url){
 
       case 'player_list': {
         MP.players = msg.players;
+        MP.roomMembers = msg.members ?? null;
+        mpRenderOnlineLine();
         for(const p of MP.players){
           if(p?.id != null && p.color) MP.ownerColors[p.id] = p.color;
         }
@@ -3058,9 +3078,58 @@ function mpLeaveRoom(){
   MP.ws.send(JSON.stringify({ type:'leave_room' }));
 }
 
+// Compteur « joueurs connectés / joueurs au total », affiché en bas à gauche de la page.
+function mpShowOnlineStats(online, total){
+  let el = $('onlineStats');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'onlineStats';
+    el.title = 'Joueurs connectés / comptes de joueurs';
+    document.body.appendChild(el);
+  }
+  el.textContent = '🟢 ' + (online | 0) + ' / ' + (total | 0) + ' joueur' + ((total | 0) > 1 ? 's' : '');
+  el.style.display = '';
+  MP.onlineStats = { online: online | 0, total: total | 0 };
+  mpRenderOnlineLine();
+}
+// Même compteur dans le lobby de la fenêtre multijoueur (connecté, sans monde rejoint).
+function mpRenderOnlineLine(){
+  const el = $('mpOnlineLine'), st = MP.onlineStats;
+  if(!el) return;
+  if(MP.roomId != null){ // dans un monde : joueurs en ligne / joueurs du monde (déjà venus ou invités)
+    const on = (MP.players || []).length;
+    const known = new Set((MP.players || []).map(p => p.username).filter(Boolean));
+    for(const k in WALLETS) if(WALLETS[k]?.username) known.add(WALLETS[k].username); // portefeuilles = joueurs passés dans ce monde
+    const tot = Math.max(on, known.size, MP.roomMembers || 0);
+    el.textContent = '🟢 ' + on + ' / ' + tot + ' joueur' + (tot > 1 ? 's' : '') + ' dans ce monde';
+  } else if(st) el.textContent = '🟢 ' + st.online + ' / ' + st.total + ' joueur' + (st.total > 1 ? 's' : '') + ' en ligne';
+}
+// Mondes favoris : propres à chaque compte, mémorisés dans ce navigateur (localStorage).
+let mpRoomTab = 'all';
+const mpFavKey = () => 'factopolis.favRooms.' + (MP.username || '');
+function mpFavRooms(){
+  try { return new Set(JSON.parse(localStorage.getItem(mpFavKey()) || '[]')); } catch(e){ return new Set(); }
+}
+function mpToggleFavRoom(id){
+  const fav = mpFavRooms();
+  if(fav.has(id)) fav.delete(id); else fav.add(id);
+  try { localStorage.setItem(mpFavKey(), JSON.stringify([...fav])); } catch(e){}
+  mpRenderRooms();
+}
+function mpSetRoomTab(tab){ mpRoomTab = tab; mpRenderRooms(); }
+
 function mpRenderRooms(){
   const el = $('mpRoomList');
   if(!el) return;
+  mpRenderOnlineLine();
+  const favs = mpFavRooms();
+  const nFav = (MP.rooms || []).filter(r => favs.has(r.id)).length;
+  const tAll = $('mpTabAll'), tFav = $('mpTabFav');
+  if(tAll && tFav){
+    tAll.classList.toggle('on', mpRoomTab === 'all');
+    tFav.classList.toggle('on', mpRoomTab === 'fav');
+    tFav.textContent = '⭐ Favoris (' + nFav + ')';
+  }
   const q = ($('mpRoomSearch')?.value || '').trim().toLowerCase();
   const filter = $('mpRoomFilter')?.value || 'all';
   const sort = $('mpRoomSort')?.value || 'mine';
@@ -3073,7 +3142,7 @@ function mpRenderRooms(){
     online: r => (r.playerCount || 0) > 0,
     joinable: r => r.canJoin,
   }[filter] || (() => true);
-  const rooms = all.filter(r => keep(r)
+  const rooms = all.filter(r => keep(r) && (mpRoomTab !== 'fav' || favs.has(r.id))
     && (!q || r.name.toLowerCase().includes(q) || String(r.creator || '').toLowerCase().includes(q)));
   const byName = (a, b) => a.name.localeCompare(b.name);
   const cmp = {
@@ -3090,7 +3159,8 @@ function mpRenderRooms(){
     : rooms.length + ' / ' + all.length + ' mondes';
   if(!rooms.length){
     el.innerHTML = '<div style="color:#8fa3bf;font-size:11px;padding:6px 0">'
-      + (all.length ? 'Aucun monde ne correspond aux filtres.' : 'Aucun monde disponible.') + '</div>';
+      + (mpRoomTab === 'fav' && !nFav ? 'Aucun favori : clique sur ☆ à côté d’un monde pour l’ajouter ici.'
+        : all.length ? 'Aucun monde ne correspond aux filtres.' : 'Aucun monde disponible.') + '</div>';
     return;
   }
   // lignes compactes : ~10 mondes visibles, le reste défile
@@ -3100,11 +3170,12 @@ function mpRenderRooms(){
     const size = r.worldConfig?.size || '?';
     const vis = r.isPublic ? '<span style="color:#7fd48a" title="Public">🌐</span>' : '<span style="color:#e0b45a" title="Privé">🔒</span>';
     const me = r.isCreator ? ' <span style="color:#7fb4ff" title="Mon monde">👑</span>' : r.isMember ? ' <span style="color:#7fb4ff" title="Invité">✅</span>' : '';
+    const star = `<button class="tbtn" onclick="mpToggleFavRoom(${r.id})" title="${favs.has(r.id) ? 'Retirer des favoris' : 'Ajouter aux favoris'}" style="font-size:14px;padding:1px 5px;background:none;border:none;color:${favs.has(r.id) ? '#ffd24a' : '#6e8aa0'}">${favs.has(r.id) ? '★' : '☆'}</button>`;
     const join = r.canJoin
       ? `<button class="tbtn" onclick="mpJoinRoom(${r.id})" style="font-size:11px;padding:3px 8px;white-space:nowrap">Rejoindre</button>`
       : '<button class="tbtn" disabled style="font-size:11px;padding:3px 8px;white-space:nowrap" title="Le créateur du monde doit t’inviter">Sur invitation</button>';
     return `<div style="display:flex;align-items:center;gap:6px;background:#16202f;border-radius:6px;padding:5px 7px;margin-bottom:4px${r.isMember ? ';border-left:3px solid #7fb4ff' : ''}">
-      <div style="flex:1;min-width:0">
+      ${star}<div style="flex:1;min-width:0">
         <div style="font-weight:bold;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${vis}${me} ${escHtml(r.name)}</div>
         <div style="font-size:10px;color:#6e8aa0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(players ? 'En ligne : ' + players : 'Personne en ligne')}">${size}×${size} · 👥 ${count} en ligne · ${r.memberCount || 0} membre${(r.memberCount||0)!==1?'s':''}${r.creator ? ' · ' + escHtml(r.creator) : ''}</div>
       </div>${join}
@@ -3198,6 +3269,14 @@ clickFn = function(x,y){
   if(tool==='terraform_canal'){
     if(!canalTileError(x, y)) netSend({ type:'terraform_canal', i:y*N+x });
     clickAt(x,y);
+    return;
+  }
+  if(tool==='terraform_resource'){
+    if(canAddResources()){
+      const tiles = terraformResourceTiles(x, y, terraformRadius);
+      if(tiles.length) netSend({ type:'terraform_resource', tiles, res:terraformResource });
+    }
+    clickAt(x,y); // applique localement (sans re-envoyer), affiche l'erreur sinon
     return;
   }
   if(tool==='terraform_dig' || tool==='terraform_raise'){
@@ -3335,8 +3414,8 @@ function mpInjectUI(){
   const panel = document.createElement('div');
   panel.id = 'mpPanel'; panel.className = 'panel';
   panel.style.cssText =
-    'top:70px;left:12px;width:440px;max-width:calc(100vw - 24px);height:620px;max-height:calc(100vh - 40px);'+
-    'overflow-y:auto;padding:12px 14px;font-size:13px;display:none;z-index:20';
+    'top:70px;left:12px;width:440px;max-width:calc(100vw - 24px);height:634px;max-height:calc(100vh - 20px);'+
+    'overflow:hidden;padding:12px 14px 38px;font-size:13px;display:none;z-index:20';
 
   panel.innerHTML = `
 <div class="panel-head">
@@ -3392,6 +3471,10 @@ function mpInjectUI(){
 <div id="mpLobbyBlock" style="display:none">
   <div style="border-top:1px solid #36465e;margin:8px 0"></div>
   <div style="color:#8fa3bf;font-size:11px;margin-bottom:6px">🌍 Mondes disponibles</div>
+  <div style="display:flex;gap:5px;margin-bottom:6px">
+    <button class="tbtn" id="mpTabAll" onclick="mpSetRoomTab('all')" style="flex:1">🌍 Tous</button>
+    <button class="tbtn" id="mpTabFav" onclick="mpSetRoomTab('fav')" style="flex:1">⭐ Favoris (0)</button>
+  </div>
   <div style="display:flex;gap:5px;margin-bottom:5px">
     <input id="mpRoomSearch" type="search" placeholder="🔎 Rechercher (nom, créateur)" style="${INP2};flex:1;margin:0">
   </div>
@@ -3479,7 +3562,7 @@ function mpInjectUI(){
       style="${INP2};flex:1;margin:0">
     <button class="tbtn" id="mpBtnSave" title="Sauvegarder">💾</button>
   </div>
-  <div id="mpSaveList" style="max-height:130px;overflow-y:auto;margin-bottom:4px"></div>
+  <div id="mpSaveList" style="max-height:83px;overflow-y:auto;margin-bottom:4px"></div>
   <div id="mpSaveErr" style="color:#ff9a8a;font-size:11px;min-height:14px"></div>
 </div>
 
@@ -3490,7 +3573,7 @@ function mpInjectUI(){
     <div style="color:#8fa3bf;font-size:11px">🔄 Sauvegardes auto</div>
     <span id="autoSaveCountdown" style="color:#6e8aa0;font-size:10px"></span>
   </div>
-  <div id="autoSaveList" style="max-height:130px;overflow-y:auto;margin-bottom:4px"></div>
+  <div id="autoSaveList" style="max-height:83px;overflow-y:auto;margin-bottom:4px"></div>
 </div>
 
 <!-- joueurs connectés -->
@@ -3508,14 +3591,19 @@ function mpInjectUI(){
   <button class="tbtn" id="mpBtnSend">↵</button>
 </div>
 
-</div>`;
+</div>
+
+<!-- joueurs en ligne : collé tout en bas de la fenêtre (toujours visible, hors blocs masqués) -->
+<div id="mpOnlineLine" title="Joueurs connectés / comptes de joueurs"
+  style="position:absolute;left:14px;right:14px;bottom:0;height:26px;line-height:26px;border-top:1px solid #36465e;
+  background:rgba(13,18,28,.98);color:#b9c8dc;font-size:11px;text-align:center"></div>`;
 
   document.body.appendChild(panel);
   ensurePanelDragHandle('mpPanel');
   makePanelDraggable('mpPanel');
 
   // --- événements ---
-  $('mpBtnClose').onclick = ()=> $('mpPanel').style.display = 'none';
+  $('mpBtnClose').onclick = ()=> { if(MP.roomId != null) $('mpPanel').style.display = 'none'; };
   ['mpRoomSearch', 'mpRoomFilter', 'mpRoomSort'].forEach(id => {
     $(id).addEventListener(id === 'mpRoomSearch' ? 'input' : 'change', mpRenderRooms);
   });
@@ -3637,6 +3725,7 @@ function mpOpenPanelCentered(){
 
 function mpTogglePanel(){
   const p = $('mpPanel');
+  if(MP.roomId == null && p.style.display === 'block') return; // pas de monde rejoint : le panneau reste ouvert
   p.style.display = p.style.display==='block' ? 'none' : 'block';
   if(p.style.display === 'block') mpSyncWorldInputs();
 }
@@ -3644,6 +3733,7 @@ function mpTogglePanel(){
 function mpUpdateUI(){
   const conn = $('mpBtnConn'), disc = $('mpBtnDisc'), st = $('mpStatus');
   if(!conn) return;
+  mpRenderOnlineLine();
 
   const inGame = MP.connected && MP.role !== null;
   const inLobby = MP.connected && MP.role === null;

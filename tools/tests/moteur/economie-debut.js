@@ -15,4 +15,4 @@ for(const x of [102,103,104,105]) T_.build('house', x, 99);
 const money0 = myWallet().money;
 T_.run(600, 0.1);
 const pop = popTotal(), money = myWallet().money;
-return { ok: pop >= 25 && money > money0 + 300 && myWallet().objIndex >= 4, pop, money: Math.round(money), objIndex: myWallet().objIndex };
+return { ok: pop >= 25 && money > money0 + 300 && Object.keys(myWallet().objDone || {}).length >= 4, pop, money: Math.round(money), objDone: Object.keys(myWallet().objDone || {}) };

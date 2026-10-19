@@ -549,6 +549,22 @@ point / du véhicule qui les porte.
 - Arrivés (`passagersSortant`) à portée d'un logement de leur joueur, même plein :
   ils sont rentrés (plus de navette sans fin).
 
+### Ajout de ressources (propriétaire du monde)
+
+Menu Terraforming > **Ressource** (`terraform_resource`) : visible et utilisable uniquement
+par le propriétaire du monde (`canAddResources` = `mpIsWorldOwner`). Pose gratuitement la
+ressource choisie (`TERRAFORM_RESOURCES` : forêt, blé, coton, minerais, calcaire, sable,
+argile, pétrole) sur les tuiles d'herbe libres de la zone N×N (`terraformResourceTiles`).
+Action réseau `terraform_resource`, revalidée à la réception (créateur du monde).
+
+### Période de visite des lieux de loisirs
+
+Un habitant ne se rend qu'une fois par période dans un même lieu ; la période est propre au
+lieu (`loisirs.lieux.*.periode`, en jours de jeu, défaut 7 ; `leisure.period`). Les voyageurs
+étant anonymes, le lieu compte les visites de la période par joueur d'origine
+(`b.visitPeriod = { t0, n:{joueur: visites} }`, sauvegardé/synchronisé) et refuse au-delà de
+la population de ce joueur (`leisureAllowance`) ; les refusés rentrent chez eux.
+
 ### Bateaux et avions
 
 - Types de véhicules à `mode` dédié (`VEHICLE_TYPES[k].mode` : road | rail |
@@ -585,8 +601,11 @@ Chaque wallet contient :
   `{ventes, taxes, rembours, construction, entretien, expansion}` ;
 - `finHist[]` : historique (max 61 échantillons ~1 s) pour calculer
   le rythme $/min ;
-- `objIndex` : avancement dans `OBJECTIVES` (`06_simulation.js`) ; primes
-  versées dans la catégorie `fin.primes` ;
+- `objDone` : objectifs atteints `{ id: 1 }` (`OBJECTIVES`,
+  `js/06b_progression.js`) ; primes versées dans la catégorie `fin.primes` ;
+- `objGranted` : objectifs dont les déblocages sont accordés d'office (ancienne
+  partie qui utilisait déjà ces fonctionnalités). L'ancien `objIndex` (fil
+  linéaire) est converti puis supprimé à la première vérification ;
 - `mi` : progression des milestones `[25, 50, 100, 200, 400]` ;
 - `eff` : efficacité de production (workers alloués / requis) ;
 - `starterHomes`, `starterHomesGranted` : 2 maisons protégées par

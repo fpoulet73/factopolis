@@ -280,7 +280,7 @@ function loadRoomSettings() {
 function persistRooms() {
   const out = {};
   for (const r of rooms.values()) {
-    out[roomIdentity(r)] = { creator: r.creator, isPublic: r.isPublic, members: Array.from(r.members) };
+    out[roomIdentity(r)] = { creator: r.creator, isPublic: r.isPublic, members: Array.from(r.members), visitors: Array.from(r.visitors) };
   }
   try { fs.writeFileSync(ROOMS_FILE, JSON.stringify(out, null, 2)); } catch (e) { console.warn('[rooms.json]', e.message); }
 }
@@ -294,7 +294,7 @@ function sendRoomSettings(room) {
 }
 
 // ---- rooms ----
-function createRoom({ name, worldConfig, saveName, saveUsername, creator, isPublic = true, members = [] } = {}) {
+function createRoom({ name, worldConfig, saveName, saveUsername, creator, isPublic = true, members = [], visitors = [] } = {}) {
   const id = nextRoomId++;
   const room = {
     id,
@@ -307,6 +307,7 @@ function createRoom({ name, worldConfig, saveName, saveUsername, creator, isPubl
     creator: creator || null, // seul le créateur peut supprimer le monde et gérer l'accès
     isPublic: isPublic !== false,
     members: new Set(members), // joueurs invités (le créateur est toujours membre)
+    visitors: new Set(visitors), // tous les comptes déjà entrés dans ce monde (compteur « joueurs du monde »)
   };
   rooms.set(id, room);
   return room;
@@ -346,7 +347,7 @@ function initRooms() {
       for (const [roomName, info] of byRoom.entries()) {
         const st = settings[roomName.toLowerCase()] || {};
         createRoom({ name: roomName, saveName: info.saveName, saveUsername: info.username, worldConfig: info.worldConfig,
-          creator: st.creator || info.creator, isPublic: st.isPublic !== false, members: st.members || [] });
+          creator: st.creator || info.creator, isPublic: st.isPublic !== false, members: st.members || [], visitors: st.visitors || [] });
         if (rooms.size >= 20) break; // limite de sécurité
       }
     }
@@ -416,6 +417,12 @@ function sendRoomList(client) {
   send(client, { type: 'rooms_list', rooms: Array.from(rooms.values()).map(r => getRoomInfo(r, client)) });
 }
 // La liste dépend du joueur (membre, peut rejoindre…) : envoi individuel au lobby.
+// Joueurs connectés (comptes distincts) sur le nombre total de comptes enregistrés.
+function onlineStats() {
+  const online = new Set(allClients.filter(c => c.username).map(c => c.username)).size;
+  return { type: 'online_stats', online, total: Object.keys(loadUsers()).length };
+}
+function broadcastOnlineStats() { broadcastEveryone(onlineStats()); }
 function broadcastRoomList() {
   lobbyClients().forEach(c => sendRoomList(c));
 }
@@ -428,7 +435,12 @@ function broadcastPlayerList(roomId) {
     id: c.id, name: c.name, color: c.color,
     isHost: c.id === room.hostId, isAdmin: !!c.isAdmin, username: c.username || null,
   }));
-  broadcastRoom(roomId, { type: 'player_list', players: list });
+  let changed = false;
+  for (const c of rc) if (c.username && !room.visitors.has(c.username)) { room.visitors.add(c.username); changed = true; }
+  if (changed) persistRooms();
+  const everyone = new Set([...room.visitors, ...room.members]);
+  if (room.creator) everyone.add(room.creator);
+  broadcastRoom(roomId, { type: 'player_list', players: list, members: everyone.size });
 }
 
 function isPrivileged(c) {
@@ -480,6 +492,7 @@ function authenticateClient(client, { username, token, color, isAdmin = false })
   userOwnerRegistry.set(username, client.id);
   send(client, { type: 'auth_ok', username, color, token, prevOwnerId });
   if (client.roomId == null) sendRoomList(client); // droits d'accès propres au compte
+  broadcastOnlineStats();
   logClientJoin(client);
   if (client.roomId != null) {
     const room = rooms.get(client.roomId);
@@ -553,6 +566,7 @@ function sanitizeWorldConfig(config = {}) {
     // terrain des expansions différents d'une machine à l'autre) et perdaient les biomes.
     biomes: config.biomes === true,
     buildMaterials: config.buildMaterials !== false,
+    progression: config.progression !== false,
     noiseOx: clampInt(config.noiseOx, -1e6, 1e6, 0),
     noiseOy: clampInt(config.noiseOy, -1e6, 1e6, 0),
     ...(Number.isFinite(Number(config.seed)) && config.seed !== null && config.seed !== ''
@@ -827,6 +841,7 @@ wss.on('connection', (ws) => {
     roomId: null,
   };
   allClients.push(client);
+  send(client, onlineStats()); // visible dès l'écran de connexion
 
   // heartbeat
   let pongTimeout = null;
@@ -1341,6 +1356,7 @@ wss.on('connection', (ws) => {
     clearTimeout(pongTimeout);
     allClients = allClients.filter(c => c.id !== id);
     if (client.replaced) return;
+    broadcastOnlineStats();
 
     console.log(`[-] ${clientLabel(client)} déconnecté (${allClients.length} connectés)`);
 

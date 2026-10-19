@@ -4466,8 +4466,10 @@ function draw(){
   }
 
   // fantôme de placement
-  if((tool==='terraform_dig' || tool==='terraform_raise') && inMap(mouse.tx,mouse.ty)){
-    const { tiles } = terraformLevelTiles(tool, mouse.tx, mouse.ty, terraformRadius);
+  if((tool==='terraform_dig' || tool==='terraform_raise' || tool==='terraform_resource') && inMap(mouse.tx,mouse.ty)){
+    const { tiles } = tool === 'terraform_resource'
+      ? { tiles: canAddResources() ? terraformResourceTiles(mouse.tx, mouse.ty, terraformRadius) : [] }
+      : terraformLevelTiles(tool, mouse.tx, mouse.ty, terraformRadius);
     const impacted = new Set(tiles);
     for(let dy = 0; dy < terraformRadius; dy++) for(let dx = 0; dx < terraformRadius; dx++){
       const tx = mouse.tx + dx, ty = mouse.ty + dy;

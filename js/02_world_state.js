@@ -27,6 +27,7 @@ let hoveredExpansion = null;
 let selectedExpansion = null;
 let gtime = 0, eff = 1; // eff = snapshot du wallet courant, gardé pour statusOf
 let selected = null, tool = 'select';
+let terraformResource = T.IRON; // ressource posée par l'outil Terraforming > Ressource
 let terraformRadius = 1; // 1..4 : taille du carré N×N affecté par Creuser/Remonter
 let speed = 1, paused = false;
 let dispatchTimer = 0, taxTimer = 0, mergeTimer = 0, upkeepTimer = 0, busStopTimer = 0, passengerCycleTimer = 0;
@@ -241,6 +242,8 @@ function normalizeWorldConfig(config){
     },
     // Matériaux de chantier exigés pour les grands bâtiments (false : bac à sable, cf. tests)
     buildMaterials: c.buildMaterials !== false,
+    // Objectifs qui débloquent bâtiments et véhicules (false : tout accessible, cf. tests ; js/06b_progression.js)
+    progression: c.progression !== false,
     // Monde découpé en biomes (js/02b_biomes.js) — absent des mondes plus anciens
     biomes: c.biomes === true,
     seed: Number.isFinite(c.seed) ? c.seed : Math.floor(Math.random() * 2 ** 31),

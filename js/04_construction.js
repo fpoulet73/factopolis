@@ -579,6 +579,21 @@ function terraformLevelTiles(t, x, y, radius){
   return { tiles, dir };
 }
 
+// Seul le propriétaire du monde peut ajouter des ressources.
+const canAddResources = (username = MP.username) => mpIsWorldOwner(username);
+// Tuiles du carré N×N (ancré en x,y) où une ressource peut être posée : herbe libre.
+function terraformResourceTiles(x, y, radius){
+  const tiles = [];
+  for(let dy = 0; dy < radius; dy++) for(let dx = 0; dx < radius; dx++){
+    const tx = x + dx, ty = y + dy;
+    if(!inMap(tx, ty)) continue;
+    const i = ty * N + tx;
+    if(bgrid[i] || road[i] || rail[i] || terrain[i] !== T.GRASS) continue;
+    tiles.push(i);
+  }
+  return tiles;
+}
+
 // Recherche automatique d'un tracé de tunnel depuis une tuile en pente (x0,y0) :
 // on part de la tuile non-plate cliquée (toujours le côté bas d'une transition de
 // relief, cf. tileIsFlat), on remonte dans la direction du voisin le plus haut, puis
@@ -700,12 +715,18 @@ function applyCanal(i){
 
 function canPlace(t,x,y, actorId = MP.myId){
   if(!inMap(x,y)) return { ok:false };
+  // fonctionnalité pas encore débloquée par les objectifs (js/06b_progression.js)
+  if(!featureUnlocked(t, actorId ?? null)) return { ok:false, locked:true, msg:featureLockedMsg(t) };
   const i = y*N+x, ter = terrain[i];
   if(t==='terraform') return { ok: !!(road[i] || rail[i] || bgrid[i] || isClearableTerrain(ter)) };
   if(t==='fill_water'){
     if(ter !== T.WATER) return { ok:false, msg:'L\'outil Remblai ne s\'applique que sur l\'eau' };
     if(!terrassementNear(x, y, actorId ?? null)) return { ok:false, msg:'Aucune usine de terrassement à portée avec assez de terre ('+FILL_WATER_COST+' terres requises)' };
     return { ok:true };
+  }
+  if(t==='terraform_resource'){
+    if(!canAddResources()) return { ok:false, msg:'⛔ Réservé au propriétaire du monde' };
+    return terraformResourceTiles(x, y, terraformRadius).length ? { ok:true } : { ok:false, msg:"Aucune tuile d'herbe libre ici" };
   }
   if(t==='terraform_canal') return canalTileError(x, y) ? { ok:false, msg:canalTileError(x, y) } : { ok:true };
   if(t==='terraform_dig' || t==='terraform_raise'){
@@ -1019,6 +1040,14 @@ function clickAt(x,y){
     depot.storage['dirt'] = (depot.storage['dirt']||0) - FILL_WATER_COST;
     terrain[i] = T.GRASS; rebuildWaterLevels(); markTerrainDirty();
     // netSend géré par l'intercept MP (09_multiplayer.js) pour éviter le double envoi
+    return;
+  }
+  if(tool==='terraform_resource'){
+    const v = canPlace(tool, x, y);
+    if(!v.ok){ if(v.msg) toast(v.msg, 'err'); return; }
+    for(const ti of terraformResourceTiles(x, y, terraformRadius)) terrain[ti] = terraformResource;
+    markTerrainDirty();
+    // netSend géré par l'intercept MP (09_multiplayer.js)
     return;
   }
   if(tool==='terraform_canal'){

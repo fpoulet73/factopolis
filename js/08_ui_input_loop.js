@@ -47,6 +47,8 @@ function updateHUD(dt){
     gdEl.textContent = `📅 ${day}/${mon}/${yr} 🕐 ${hr}:${min}`;
   }
   syncLuxeToolbar();
+  syncToolbarVisibility();
+  syncToolbarLocks();
   renderInfo();
   renderPopPanel();
   renderFinance();
@@ -2033,7 +2035,7 @@ function renderInfo(){
     h += '<div style="margin-top:8px;color:#8fa3bf">Spécialisation</div>';
     h += '<div style="font-size:11px;color:#8fa3bf;margin-bottom:4px">Choisir une seule fois le type d\'usine. 🏗️ : matériaux de chantier pris dans un entrepôt proche.</div>';
     for(const cat of PLANT_UPGRADE_CATEGORIES){
-      const opts = Object.values(PLANT_UPGRADES).filter(o => (o.cat || 'build') === cat.key && !plantUpgradeError(b, o.type, false));
+      const opts = Object.values(PLANT_UPGRADES).filter(o => (o.cat || 'build') === cat.key && !plantUpgradeError(b, o.type, false, false));
       if(!opts.length) continue; // types impossibles ici (terrain) masqués
       const collapsed = !plantCatExpanded.has(cat.key);
       h += '<div style="margin-top:6px;font-size:10px;color:#6e8aa0;text-transform:uppercase;letter-spacing:.06em;cursor:pointer;user-select:none" onclick="togglePlantCat(\''+cat.key+'\')" title="Cliquer pour '+(collapsed ? 'déplier' : 'replier')+'">'
@@ -2043,12 +2045,14 @@ function renderInfo(){
         const d2 = BUILD[opt.type];
         const mats = buildMaterialsFor(opt.type);
         const miss = mats ? buildMaterialsMissing(opt.type, b.x, b.y, b.w, b.h, b.owner ?? null) : null;
-        const tip = recipeText(d2.recipe, 'full') + (mats ? '\n🏗️ Matériaux : ' + resAmountsText(mats) + (miss ? '\n⛔ Manque : ' + resAmountsText(miss) : '') : '');
-        h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:3px'+(miss ? ';opacity:.6' : '')+'" data-plant-upgrade="'+opt.type+'"'
+        const lockMsg = featureUnlocked(opt.type, b.owner ?? null) ? null : featureLockedMsg(opt.type);
+        const tip = (lockMsg ? lockMsg + '\n\n' : '') + recipeText(d2.recipe, 'full') + (mats ? '\n🏗️ Matériaux : ' + resAmountsText(mats) + (miss ? '\n⛔ Manque : ' + resAmountsText(miss) : '') : '');
+        h += '<button class="tbtn'+(lockMsg ? ' feat-locked' : '')+'" style="width:100%;text-align:left;margin-top:3px'+(miss && !lockMsg ? ';opacity:.6' : '')+'" data-plant-upgrade="'+opt.type+'"'
           + ' title="'+escHtml(tip)+'"' + (!canUpgrade ? ' disabled' : '') + '>'
-          + opt.icon+' '+opt.label+' <span style="color:#8fa3bf">— '+(d2.cost||0)+' $'+(mats ? ' 🏗️' : '')+'</span>'
+          + (lockMsg ? '🔒 ' : '')+opt.icon+' '+opt.label+' <span style="color:#8fa3bf">— '+(d2.cost||0)+' $'+(mats ? ' 🏗️' : '')+'</span>'
           + '<br><span style="font-size:10px;color:#9fb3c8">'+escHtml(plantRecipeLine(d2.recipe))+'</span>'
-          + (miss ? '<br><span style="font-size:10px;color:#ff9a8a">Manque : '+escHtml(resAmountsIcons(miss))+'</span>' : '')
+          + (lockMsg ? '<br><span style="font-size:10px;color:#ffd87a">'+escHtml(featureLockHint(opt.type))+'</span>'
+            : miss ? '<br><span style="font-size:10px;color:#ff9a8a">Manque : '+escHtml(resAmountsIcons(miss))+'</span>' : '')
           + '</button>';
       }
     }
@@ -2061,11 +2065,13 @@ function renderInfo(){
       const d2 = BUILD[opt.type], sh = d2.shop;
       const mats = buildMaterialsFor(opt.type);
       const miss = mats ? buildMaterialsMissing(opt.type, b.x, b.y, b.w, b.h, b.owner ?? null) : null;
-      h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:3px'+(miss ? ';opacity:.6' : '')+'" data-plant-upgrade="'+opt.type+'"'
-        + ' title="'+escHtml(d2.desc)+'"' + (!canUpgrade ? ' disabled' : '') + '>'
-        + opt.icon+' '+opt.label+' <span style="color:#8fa3bf">— '+(d2.cost||0)+' $'+(mats ? ' 🏗️' : '')+'</span>'
+      const lockMsg = featureUnlocked(opt.type, b.owner ?? null) ? null : featureLockedMsg(opt.type);
+      h += '<button class="tbtn'+(lockMsg ? ' feat-locked' : '')+'" style="width:100%;text-align:left;margin-top:3px'+(miss && !lockMsg ? ';opacity:.6' : '')+'" data-plant-upgrade="'+opt.type+'"'
+        + ' title="'+escHtml((lockMsg ? lockMsg + '\n\n' : '') + d2.desc)+'"' + (!canUpgrade ? ' disabled' : '') + '>'
+        + (lockMsg ? '🔒 ' : '')+opt.icon+' '+opt.label+' <span style="color:#8fa3bf">— '+(d2.cost||0)+' $'+(mats ? ' 🏗️' : '')+'</span>'
         + '<br><span style="font-size:10px;color:#9fb3c8">Vend : '+sh.res.map(r => RES[r].ic+' '+RES[r].n).join(', ')+' · rayon '+sh.radius+'</span>'
-        + (miss ? '<br><span style="font-size:10px;color:#ff9a8a">Manque : '+escHtml(resAmountsIcons(miss))+'</span>' : '')
+        + (lockMsg ? '<br><span style="font-size:10px;color:#ffd87a">'+escHtml(featureLockHint(opt.type))+'</span>'
+          : miss ? '<br><span style="font-size:10px;color:#ff9a8a">Manque : '+escHtml(resAmountsIcons(miss))+'</span>' : '')
         + '</button>';
     }
   }
@@ -2132,6 +2138,7 @@ function renderInfo(){
       h += '<div class="warn">⚠️ Personnel incomplet : la capacité baisse au prorata des employés en poste.</div>';
     h += '<div class="row"><span>Entrée</span><b style="color:#ffe9a0">'+L.fee+' $ / visiteur</b></div>';
     h += '<div class="row"><span>Durée de visite</span><b>'+leisureDaysText(L.days)+' de jeu</b></div>';
+    h += '<div class="row"><span title="Un habitant ne vient qu\'une fois par période dans ce lieu">Période (1 visite / habitant)</span><b>'+leisureDaysText(L.period)+'</b></div>';
     h += '<div class="row"><span>Visites / recettes</span><b>'+(b.visitsTotal || 0).toLocaleString('fr-FR')+' · '
        + Math.round(b.leisureIncome || 0).toLocaleString('fr-FR')+' $</b></div>';
     if(d.upkeep) h += '<div class="row"><span>Entretien</span><b>'+(Math.round(upkeepOf(b)*10)/10)+' $ / '+IND_UPKEEP_INTERVAL+' s</b></div>';
@@ -2536,8 +2543,11 @@ function renderInfo(){
         const maintLabel = vt.maintenanceCost > 0 ? ' <span style="color:#ff9a8a;font-size:10px">'+vt.maintenanceCost+' $/j</span>' : '';
         // avion cargo : grisé tant que l'aéroport n'a pas d'entrepôt (la raison est dans l'info-bulle)
         const cargoErr = vk === 'cargo_plane' ? planePurchaseError(b, vk) : null;
-        h += '<button class="tbtn" style="width:100%;text-align:left;margin-top:2px'+(cargoErr?';opacity:.55':'')+'" data-buy-v="'+vk+'"'+(canControl?'':' disabled')+(cargoErr?' title="'+escHtml(cargoErr)+'"':'')+'>'
-           + vt.icone+' '+vt.nom+resLabel+' <span style="color:#8fa3bf">— '+vt.cost+' $</span>'+maintLabel+'</button>';
+        // véhicule pas encore débloqué par les objectifs : grisé, objectif dans l'info-bulle
+        const lockMsg = featureUnlocked('v:'+vk, b.owner ?? null) ? null : featureLockedMsg('v:'+vk);
+        const tipMsg = lockMsg || cargoErr;
+        h += '<button class="tbtn'+(lockMsg?' feat-locked':'')+'" style="width:100%;text-align:left;margin-top:2px'+(cargoErr && !lockMsg?';opacity:.55':'')+'" data-buy-v="'+vk+'"'+(canControl?'':' disabled')+(tipMsg?' title="'+escHtml(tipMsg)+'"':'')+'>'
+           + (lockMsg?'🔒 ':'')+vt.icone+' '+vt.nom+resLabel+' <span style="color:#8fa3bf">— '+vt.cost+' $</span>'+maintLabel+'</button>';
       }
     } else if(b.type !== 'garage'){
       h += '<div style="margin-top:8px;color:#8fa3bf;font-style:italic">Catalogue de transport à venir pour ce dépôt.</div>';
@@ -2830,6 +2840,7 @@ function renderInfo(){
           toast('⛔ Ce dépôt appartient à un autre joueur.','err');
           return;
         }
+        if(!featureUnlocked('v:'+vtype, b.owner ?? null)){ toast(featureLockedMsg('v:'+vtype),'err'); return; }
         const planeErr = planePurchaseError(b, vtype);
         if(planeErr){ toast('⛔ '+planeErr,'err'); return; }
         if(myWallet().money < vt.cost){ toast('Fonds insuffisants ('+vt.cost+' $)','err'); return; }
@@ -3039,7 +3050,7 @@ let vehicleToolbarMenu = null;
 const VEHICLE_TOOLBAR_TOOLS = ['road','bus_stop'];
 let terraformToolbarGroup = null;
 let terraformToolbarMenu = null;
-const TERRAFORM_TOOLBAR_TOOLS = ['terraform_dig','terraform_raise','terraform_canal'];
+const TERRAFORM_TOOLBAR_TOOLS = ['terraform_dig','terraform_raise','terraform_canal','terraform_resource'];
 
 function closeResourceToolbarMenu(){
   if(!resourceToolbarGroup || !resourceToolbarMenu) return;
@@ -3081,6 +3092,47 @@ function syncLuxeToolbar(){
   if(basic) basic.textContent = unlocked ? 'Maison basique' : BUILD.house.n;
   if(!unlocked && tool === 'lux_house') setTool('select');
   if(announce) toast('💎 '+LUX_UNLOCK_POP+' habitants : les maisons de luxe sont disponibles (menu Bâtiments) !', 'win');
+}
+
+// Outils pas encore débloqués par les objectifs (js/06b_progression.js) : grisés avec
+// un cadenas et l'objectif à atteindre dans l'info-bulle, mais visibles pour montrer
+// au joueur ce qui l'attend. Un menu dont tous les choix sont verrouillés est grisé aussi.
+let toolbarLockSig = null;
+const TOOL_DATA_KEYS = ['t', 'vehicleTool', 'terraformTool', 'buildingTool', 'leisureTool', 'airportTool', 'storageTool', 'resourceTool', 'trainTool', 'depotTool'];
+function syncToolbarLocks(force = false){
+  const bar = $('toolbar');
+  if(!bar) return;
+  const w = progWallet();
+  const sig = progressionActive() + '|' + Object.keys(w?.objDone || {}).length + '|' + Object.keys(w?.objGranted || {}).length;
+  if(!force && sig === toolbarLockSig) return;
+  toolbarLockSig = sig;
+  bar.querySelectorAll('.tool').forEach(el => {
+    if(el.classList.contains('tool-group-btn')) return;
+    const dk = TOOL_DATA_KEYS.find(k => el.dataset[k]);
+    if(!dk) return;
+    const key = el.dataset[dk];
+    const locked = !featureUnlocked(key);
+    el.classList.toggle('feat-locked', locked);
+    if(el.dataset.baseTitle == null) el.dataset.baseTitle = el.title || '';
+    el.title = locked ? featureLockedMsg(key) + (el.dataset.baseTitle ? '\n\n' + el.dataset.baseTitle : '') : el.dataset.baseTitle;
+  });
+  bar.querySelectorAll('.tool-group').forEach(g => {
+    const items = [...g.querySelectorAll('.tool-group-item')].filter(el => el.style.display !== 'none' && TOOL_DATA_KEYS.some(k => el.dataset[k]));
+    const btn = g.querySelector('.tool-group-btn');
+    if(btn) btn.classList.toggle('feat-locked', items.length > 0 && items.every(el => el.classList.contains('feat-locked')));
+  });
+  if(tool !== 'select' && !featureUnlocked(tool)) setTool('select');
+}
+
+// Barres du haut et du bas masquées tant qu'aucun monde n'est rejoint (après « Commencer », dans
+// le lobby) ; le panneau multijoueur y est alors imposé (sans bouton de fermeture).
+function syncToolbarVisibility(){
+  const inWorld = MP.roomId != null;
+  document.body.classList.toggle('no-world', !inWorld); // masque toutes les fenêtres sauf #mpPanel (CSS)
+  const close = $('mpBtnClose');
+  if(close) close.style.display = inWorld ? '' : 'none';
+  const mp = $('mpPanel');
+  if(!inWorld && mp && $('splash').style.display === 'none' && mp.style.display !== 'block' && typeof mpOpenPanelCentered === 'function') mpOpenPanelCentered();
 }
 
 function closeBuildingToolbarMenu(){
@@ -3244,10 +3296,51 @@ function syncToolbarState(){
     terraformToolbarMenu.querySelectorAll('[data-terraform-tool]').forEach(b=>{
       b.classList.toggle('on', b.dataset.terraformTool === tool);
     });
+    const owner = canAddResources();
+    terraformToolbarMenu.querySelectorAll('[data-owner-only]').forEach(el => { el.style.display = owner ? '' : 'none'; });
     terraformToolbarMenu.querySelectorAll('[data-terraform-radius]').forEach(b=>{
       b.classList.toggle('on', +b.dataset.terraformRadius === terraformRadius);
     });
   }
+  syncResPalette();
+}
+
+// ---------- palette de ressources (outil Terraforming > Ressource, propriétaire du monde) ----------
+// Panneau flottant au-dessus de la barre d'outils : une carte par ressource (tuile isométrique
+// colorée + nom), choix de la zone N×N, fermeture. Affichée tant que l'outil est actif.
+let resPaletteEl = null;
+const resPaletteColor = t => (typeof RES_SIGN_DEFS !== 'undefined' && RES_SIGN_DEFS[t]?.col) || '#4f9a58';
+function buildResPalette(){
+  const el = document.createElement('div');
+  el.id = 'resPalette';
+  el.className = 'panel';
+  let h = '<div class="rp-head"><span class="rp-title">💎 Ajouter une ressource</span>'
+    + '<span class="rp-size" role="group" aria-label="Taille de la zone">';
+  for(let r = 1; r <= 4; r++) h += '<button type="button" data-rp-size="'+r+'" title="Zone '+r+'×'+r+'">'+r+'×'+r+'</button>';
+  h += '</span><button type="button" class="rp-close" data-rp-close title="Fermer (Échap)">✕</button></div><div class="rp-grid">';
+  for(const r of TERRAFORM_RESOURCES){
+    h += '<button type="button" class="rp-card" data-rp-res="'+r.t+'" style="--c:'+resPaletteColor(r.t)+'" title="'+r.n+'">'
+      + '<span class="rp-tile"><span class="rp-ic">'+r.ic+'</span></span><span class="rp-name">'+r.n+'</span></button>';
+  }
+  el.innerHTML = h + '</div>';
+  el.addEventListener('click', e => {
+    const card = e.target.closest('[data-rp-res]');
+    if(card){ terraformResource = +card.dataset.rpRes; syncToolbarState(); return; }
+    const size = e.target.closest('[data-rp-size]');
+    if(size){ terraformRadius = +size.dataset.rpSize; syncToolbarState(); return; }
+    if(e.target.closest('[data-rp-close]')) setTool('select');
+  });
+  document.body.appendChild(el);
+  return el;
+}
+function syncResPalette(){
+  const show = tool === 'terraform_resource' && canAddResources();
+  if(!show && !resPaletteEl) return;
+  if(!resPaletteEl) resPaletteEl = buildResPalette();
+  resPaletteEl.classList.toggle('open', show);
+  if(!show) return;
+  resPaletteEl.querySelectorAll('[data-rp-res]').forEach(b => b.classList.toggle('on', +b.dataset.rpRes === terraformResource));
+  resPaletteEl.querySelectorAll('[data-rp-size]').forEach(b => b.classList.toggle('on', +b.dataset.rpSize === terraformRadius));
 }
 
 function buildToolbar(){
@@ -3321,7 +3414,7 @@ function buildToolbar(){
     if(k === 'lumber' || k === 'fisher' || k === 'pump' || k === 'oil_well') continue; // regroupés sous "Ressources"
     if(k === 'tank') continue; // regroupé sous "Stockage"
     if(k === 'house' || k === 'market' || k === 'shop' || k === 'space_center') continue; // regroupés sous "Bâtiments"
-    if(k === 'terraform_raise' || k === 'terraform_canal') continue; // regroupés sous "Terraforming"
+    if(k === 'terraform_raise' || k === 'terraform_canal' || k === 'terraform_resource') continue; // regroupés sous "Terraforming"
     if(k === 'terraform_dig'){
       const group = document.createElement('div');
       group.className = 'tool-group';
@@ -3342,6 +3435,7 @@ function buildToolbar(){
         choice.innerHTML = '<span class="ic">'+d.ic+'</span><span>'+d.n+'</span>'
           + '<span class="cost">'+(d.cost ? d.cost+' $/tuile' : '&nbsp;')+'</span>';
         choice.onclick = e => { e.stopPropagation(); setTool(toolKey); };
+        if(toolKey === 'terraform_resource') choice.dataset.ownerOnly = '1';
         menu.appendChild(choice);
       }
       const radiusRow = document.createElement('div');
@@ -3650,8 +3744,11 @@ function buildToolbar(){
 
   syncToolbarState();
   syncLuxeToolbar();
+  syncToolbarLocks(true);
 }
 function setTool(k){
+  // outil verrouillé par la progression : on explique quel objectif le débloque
+  if(k !== tool && !featureUnlocked(k)){ toast(featureLockedMsg(k), 'err'); closeToolbarMenus(); return; }
   tool = k;
   roadDragStart = null; roadPreviewTiles = []; tunnelPreview = null;
   shiftToggle = false;
@@ -4031,7 +4128,7 @@ function canvasLeftMove(x, y, shiftKey, oldTx, oldTy){
     updateZoneOverlay(x, y);
     return;
   }
-  if(mouse.lDown && (tool==='terraform'||tool==='fill_water'||tool==='terraform_dig'||tool==='terraform_raise'||tool==='terraform_canal') && (mouse.tx!==oldTx || mouse.ty!==oldTy))
+  if(mouse.lDown && (tool==='terraform'||tool==='fill_water'||tool==='terraform_dig'||tool==='terraform_raise'||tool==='terraform_canal'||tool==='terraform_resource') && (mouse.tx!==oldTx || mouse.ty!==oldTy))
     clickFn(mouse.tx, mouse.ty);
   if(mouse.lDown && (tool==='road' || tool==='rail') && roadDragStart && (mouse.tx!==oldTx || mouse.ty!==oldTy))
     roadPreviewTiles = tool === 'rail'

@@ -50,6 +50,7 @@ npm test           # tests headless (Playwright requis, serveur isolé)
 | Validation/Placement, rails, signaux, gares | `js/04_construction.js` |
 | Camions, bus, trains, pathfinding | `js/05_logistics.js` |
 | Boucle de simulation `update(dt)` | `js/06_simulation.js` |
+| Objectifs, déblocages de fonctionnalités | `js/06b_progression.js` |
 | Rendu `draw()`, terrain, véhicules | `js/07_rendering.js` |
 | Apparence des bâtiments | `js/07_rendering_art.js` |
 | Sprites Pixi, culling | `js/pixi/sprites.js` |

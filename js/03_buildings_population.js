@@ -641,14 +641,17 @@ function setBuildingPaused(b, pausedState, broadcastChange=true){
 
 // checkMaterials=false : seules les règles de terrain (le panneau affiche alors les
 // spécialisations en attente de matériaux au lieu de les masquer).
-function plantUpgradeError(b, targetType, checkMaterials = true){
+// checkLock=false : ignore le verrou des objectifs (le panneau les affiche grisées).
+function plantUpgradeError(b, targetType, checkMaterials = true, checkLock = true){
   // magasin vierge : mêmes règles (une seule spécialisation), sans contrainte de terrain
   if(b && !b.dead && b.type === 'shop'){
     if(!SHOP_UPGRADES[targetType]) return 'Type de magasin invalide';
+    if(checkLock && !featureUnlocked(targetType, b.owner ?? null)) return featureLockedMsg(targetType);
     return checkMaterials ? buildMaterialsError(targetType, b.x, b.y, b.w, b.h, b.owner ?? null) : '';
   }
   if(!b || b.dead || b.type !== 'plant') return 'Usine déjà spécialisée';
   if(!PLANT_UPGRADES[targetType]) return 'Type d\'usine invalide';
+  if(checkLock && !featureUnlocked(targetType, b.owner ?? null)) return featureLockedMsg(targetType);
   if(targetType === 'farm'){
     if(!fieldNear(b.x, b.y, 2)) return 'Aucun champ de blé à moins de 2 cases';
     const capErr = farmCapacityError(b.x, b.y, 'farm', T.WHEAT);

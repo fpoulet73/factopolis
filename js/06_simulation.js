@@ -48,67 +48,10 @@ function settleRailToll(v, payerId, fx, fy){
     addFloat(fx, fy - 0.7, '−'+(Math.round(totalPaid*10)/10)+' $ 🛤️', '#ff8c42');
 }
 
-// ---------- objectifs (progression guidée) ----------
-// Fil d'objectifs par joueur, du premier logement aux trains/ports/aéroports,
-// chacun récompensé d'une prime. Vérifié par la simulation autoritaire (hôte) ; l'avancement voyage dans le portefeuille (wallet.objIndex).
-const countOwned = (o, pred) => buildings.reduce((n, b) => n + (!b.dead && ownedBy(b, o) && pred(b) ? 1 : 0), 0);
-const OBJECTIVES = [
-  { ic:'🏠', txt:'Construis ta première maison', reward:300, check:o => countOwned(o, b => BUILD[b.type].resid) >= 1 },
-  { ic:'🛣️', txt:'Relie une maison à une route', reward:200, check:o => buildings.some(b => !b.dead && ownedBy(b, o) && BUILD[b.type].resid && adjRoadTiles(b).length > 0) },
-  { ic:'🎣', txt:'Construis une cabane de pêcheur au bord de l’eau', reward:300, check:o => countOwned(o, b => b.type === 'fisher') >= 1 },
-  { ic:'🐟', txt:'Transforme une usine abandonnée en poissonnerie', reward:400, check:o => countOwned(o, b => b.type === 'fishery') >= 1 },
-  { ic:'👥', txt:'Atteins 25 habitants', reward:800, check:o => popTotal(o) >= 25 },
-  { ic:'🔥', txt:'Produis de l’acier : mines de fer et de charbon + aciérie', reward:1200, check:o => countOwned(o, b => b.type === 'smelter') >= 1 },
-  { ic:'🔧', txt:'Fabrique des outils : bûcheron + usine d’outils', reward:1500, check:o => countOwned(o, b => b.type === 'factory') >= 1 },
-  { ic:'🏡', txt:'Fais fusionner des maisons pleines (outils livrés)', reward:2000, check:o => countOwned(o, b => BUILD[b.type].resid && b.type !== 'house' && !BUILD[b.type].lux) >= 1 },
-  { ic:'🚚', txt:'Achète un camion ou un bus (dépôt de véhicules)', reward:1000, check:o => vehicles.some(v => VEHICLE_TYPES[v.vtype]?.mode === 'road' && v.garageRef && ownedBy(v.garageRef, o)) },
-  { ic:'🏙️', txt:'Atteins 100 habitants', reward:3000, check:o => popTotal(o) >= 100 },
-  { ic:'🚉', txt:'Construis un dépôt de train et deux gares', reward:5000, check:o => countOwned(o, b => b.type === 'train_depot') >= 1
-      && new Set(buildings.filter(b => !b.dead && b.type === 'train_station' && ownedBy(b, o)).map(b => b.stationGroupId)).size >= 2 },
-  { ic:'🚂', txt:'Mets un train en circulation', reward:8000, check:o => vehicles.some(v => v.vtype === 'train' && v.state !== 'idle' && v.garageRef && ownedBy(v.garageRef, o)) },
-  // matériaux de chantier : ports, aéroports et usines avancées en exigent dans un entrepôt proche
-  { ic:'🔲', txt:'Produis du béton : carrière de calcaire, cimenterie + centrale à béton', reward:3000, check:o => countOwned(o, b => b.type === 'concrete_plant') >= 1 },
-  { ic:'🪜', txt:'Lamine l’acier : laminoir (poutrelles) et tôlerie (plaques)', reward:3000, check:o => countOwned(o, b => b.type === 'rolling_mill') >= 1 && countOwned(o, b => b.type === 'sheet_mill') >= 1 },
-  { ic:'🪟', txt:'Fabrique des vitres : verrerie (sable) + vitrerie', reward:3000, check:o => countOwned(o, b => b.type === 'glazier') >= 1 },
-  { ic:'🛢️', txt:'Fore un puits de pétrole et construis une raffinerie', reward:6000, check:o => countOwned(o, b => b.type === 'oil_well') >= 1 && countOwned(o, b => b.type === 'refinery') >= 1 },
-  { ic:'⚓', txt:'Ouvre un port ou un aéroport (matériaux de chantier dans un entrepôt proche)', reward:5000, check:o => countOwned(o, b => b.type === 'boat_depot' || isActiveAirTerminal(b)) >= 1 },
-  { ic:'🛋️', txt:'Meuble les classes aisées : clouterie, usine chimique (colle) + ébénisterie', reward:6000, check:o => countOwned(o, b => b.type === 'furniture_factory') >= 1 },
-  { ic:'🌆', txt:'Atteins 400 habitants', reward:20000, check:o => popTotal(o) >= 400 },
-  { ic:'💾', txt:'Fabrique des cartes électroniques (fil de cuivre, plastique, or)', reward:12000, check:o => countOwned(o, b => b.type === 'electronics_plant') >= 1 },
-  { ic:'🚀', txt:'Lance une fusée depuis un centre spatial', reward:50000, check:o => buildings.some(b => !b.dead && b.type === 'space_center' && ownedBy(b, o) && (b.launches || 0) >= 1) },
-  { ic:'🔮', txt:'Produis un processeur quantique (xénite + hélium-3 de l’espace)', reward:80000, check:o => countOwned(o, b => b.type === 'quantum_lab') >= 1 },
-];
-// Déphasé d'une demi-seconde des fusions (mergeTimer) : les deux tâches périodiques
-// ne tombent plus dans la même image.
-let objectivesTimer = 0.5;
+// Objectifs, déblocages et updateObjectives : js/06b_progression.js
 const MERGE_PASSES = [() => tryMerge(), () => tryMergeHangars(), () => tryExpandLuxury(),
   () => tryMergeInd(), () => tryMergeDepot(), () => tryMergeTrainStations()];
 let mergeQueue = [];
-// Après le chargement d'une partie / la réception d'un état de l'hôte, l'état du monde peut
-// être incomplet ou en cours de synchronisation : pendant ce court délai, un objectif déjà
-// rempli est validé SANS prime ni annonce (la prime n'est versée qu'à l'accomplissement réel).
-let objectivesSettleUntil = performance.now() + 6000;
-function objectivesSettle(){ objectivesSettleUntil = performance.now() + 6000; }
-function updateObjectives(){
-  if(typeof MP !== 'undefined' && MP.connected && MP.role === 'guest') return; // l'hôte est seul juge (primes dans son état)
-  const settling = performance.now() < objectivesSettleUntil;
-  for(const k in WALLETS){
-    const w = WALLETS[k], o = walletOwnerOf(k);
-    if(w.objIndex == null){
-      // Première vérification (nouvelle partie ou ancienne sauvegarde) : les
-      // objectifs déjà remplis sont validés sans prime.
-      let i = 0;
-      while(i < OBJECTIVES.length && OBJECTIVES[i].check(o)) i++;
-      w.objIndex = i;
-      continue;
-    }
-    const obj = OBJECTIVES[w.objIndex];
-    if(!obj || !obj.check(o)) continue;
-    if(settling){ w.objIndex++; continue; } // déjà rempli au chargement : validé sans prime
-    earnMoney(obj.reward, 'primes', w);
-    w.objIndex++;
-  }
-}
 
 // ---------- centre spatial ----------
 // Cycle d'une fusée : assemblage sur le pas de tir (toutes les pièces en stock +
@@ -1164,6 +1107,23 @@ function leisureCapacityOf(b){
   const req = workersRequiredOf(b);
   return Math.floor(L.capacity * (req > 0 ? workersAllocatedOf(b) / req : 1));
 }
+// Période de visite : chaque habitant ne se rend qu'UNE fois par période dans un même lieu (durée
+// propre au lieu : leisure.period, en jours). Les voyageurs étant anonymes, le lieu compte les
+// visites de la période par joueur d'origine (b.visitPeriod = { t0, n:{ joueur: visites } }) : un
+// joueur ne peut pas en faire plus que d'habitants. Les voyageurs refusés rentrent chez eux.
+const leisurePeriodSecs = b => (BUILD[b.type]?.leisure?.period || 7) * 24 / GAME_HOURS_PER_SEC;
+const leisureOwnerKey = o => String(o ?? 'n');
+function leisurePeriodState(b){
+  const secs = leisurePeriodSecs(b);
+  if(!b.visitPeriod || !(gtime - b.visitPeriod.t0 < secs) || gtime < b.visitPeriod.t0){
+    b.visitPeriod = { t0: b.visitPeriod && gtime >= b.visitPeriod.t0 ? b.visitPeriod.t0 + Math.floor((gtime - b.visitPeriod.t0) / secs) * secs : gtime, n:{} };
+  }
+  return b.visitPeriod;
+}
+// Visites encore permises ce tour-ci aux habitants du joueur `o` (population − déjà venus).
+function leisureAllowance(b, o){
+  return Math.max(0, popTotal(o ?? null) - (leisurePeriodState(b).n[leisureOwnerKey(o)] || 0));
+}
 const leisureStaySecs = b => (BUILD[b.type]?.leisure?.days || 1) * 24 / GAME_HOURS_PER_SEC;
 // Voyageurs arrivés au point de transit `hub` → lieux de loisirs dont le rayon d'attractivité
 // (leisureRadiusOf) couvre le point, le plus proche d'abord, au plus LEISURE_AFFLUX par heure de jeu écoulée.
@@ -1199,7 +1159,7 @@ function sendSortantsToLeisure(hub, elapsed = 1, maxBudget = null){
   const near = [];
   for(const b of buildings){
     if(b.dead || !isLeisure(b)) continue;
-    const free = leisureCapacityOf(b) - leisureVisitorsOf(b);
+    const free = Math.min(leisureCapacityOf(b) - leisureVisitorsOf(b), leisureAllowance(b, hub.owner ?? null));
     if(free < 1) continue;
     const d = buildingDistance(b, hub);
     if(d <= leisureRadiusOf(b)) near.push({ b, d, free });
@@ -1218,6 +1178,8 @@ function sendSortantsToLeisure(hub, elapsed = 1, maxBudget = null){
 function admitVisitors(b, hub, n){
   (b.visitors ||= []).push({ t: gtime, n, o: hub.owner ?? null, h: hub.x + ',' + hub.y }); // h : point d'arrivée
   b.visitsTotal = (b.visitsTotal || 0) + n;
+  const per = leisurePeriodState(b).n, ok = leisureOwnerKey(hub.owner ?? null);
+  per[ok] = (per[ok] || 0) + n;
   const fee = Math.round(n * (BUILD[b.type].leisure.fee || 0));
   if(fee > 0){
     earnMoney(fee, 'loisirs', walletOf(b.owner));

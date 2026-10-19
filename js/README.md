@@ -23,6 +23,7 @@ js/03_buildings_population.js
 js/04_construction.js
 js/05_logistics.js
 js/06_simulation.js
+js/06b_progression.js   ← objectifs en parallèle et déblocages
 js/07_rendering.js
 js/07_rendering_art.js  ← art procédural des bâtiments (cuit en textures)
 js/08_ui_input_loop.js
@@ -134,12 +135,19 @@ js/pixi/vendor/pixi.min.js, js/pixi/scene.js, js/pixi/sprites.js  ← scène Pix
   - `bateau.js` : `boat_depot` = port (`cargo_ship`, `ferry`).
   - `avion.js` : `plane_depot` = aéroport (`plane`).
 - **`06_simulation.js`** : boucle `update(dt)` (voir l'ordre détaillé
-  dans `SESSION_CONTEXT.md`), objectifs (`OBJECTIVES`, `updateObjectives`),
-  cycle des fusées (`updateSpaceCenter`). Helpers : `fisherFishBonus`,
+  dans `SESSION_CONTEXT.md`), cycle des fusées (`updateSpaceCenter`). Helpers : `fisherFishBonus`,
   `checkRect`/`checkRectInd`, `tryMerge`/`tryMergeInd`/`tryMergeDepot`/
   `tryMergeTrainStations`, `growPop`, `pathToEdge` (Dijkstra maison),
   `spawnWalker`, `spawnLeavers`, `residentialSplitPlan` (backtracking),
   `splitBuilding`, `leaveOne`, `updateWalkers`.
+- **`06b_progression.js`** : arbre d'objectifs (`OBJECTIVES` : `id`, `ch`
+  chapitre, `req` prérequis, `unlocks` déblocages, `check`, `prog` jauge) menés
+  en parallèle, et verrous de fonctionnalités : `featureUnlocked(clé, owner)`
+  (clé `BUILD`, spécialisation d'usine/magasin ou `v:<véhicule>`),
+  `featureLockedMsg`, `updateObjectives`. Verrous appliqués dans `canPlace`,
+  `setTool`, `plantUpgradeError`, l'achat de véhicules (client + hôte) ; la
+  barre d'outils grise les outils verrouillés (`syncToolbarLocks`, 08).
+  Désactivé en mode créatif ou avec `WORLD.progression === false` (tests).
 - **`07_rendering.js`** : `draw()` principal (voir ordre dans
   `SESSION_CONTEXT.md`). Système iso (`shade`, `quad`, `diamond`,
   `prism`, `trainPrism`, `spriteDepthKey`, `buildingDepthKey`), sprites

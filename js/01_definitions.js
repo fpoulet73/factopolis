@@ -60,6 +60,13 @@ const DEPOSIT_ORES = {
   [T.LIMESTONE]:'limestone', [T.SAND]:'sand', [T.CLAY]:'clay',
 };
 const isMineDeposit = ter => DEPOSIT_ORES[ter] != null;
+// Ressources que le propriétaire du monde peut ajouter sur la carte (outil Terraforming > Ressource).
+const TERRAFORM_RESOURCES = [
+  { t:T.TREE, n:'Forêt', ic:'🌲' }, { t:T.WHEAT, n:'Blé', ic:'🌾' }, { t:T.COTTON, n:'Coton', ic:'☁️' },
+  { t:T.IRON, n:'Fer', ic:'⛓️' }, { t:T.COAL, n:'Charbon', ic:'⚫' }, { t:T.COPPER, n:'Cuivre', ic:'🟠' },
+  { t:T.GOLD, n:'Or', ic:'🪙' }, { t:T.LIMESTONE, n:'Calcaire', ic:'🪨' }, { t:T.SAND, n:'Sable', ic:'🏖️' },
+  { t:T.CLAY, n:'Argile', ic:'🧱' }, { t:T.OIL, n:'Pétrole', ic:'🛢️' },
+];
 // Tuiles « ressource » rasables au bulldozer (champs, arbres, gisements, nappes).
 const isClearableTerrain = ter => ter === T.TREE || ter === T.WHEAT || ter === T.COTTON || ter === T.OIL || isMineDeposit(ter);
 const DIRS  = [[1,0],[-1,0],[0,1],[0,-1]];
@@ -869,6 +876,8 @@ const BUILD = {
                   desc:'Baisse le niveau du terrain d\'un palier ('+TERRAFORM_LEVEL_COST+' $/tuile impactée). Nécessite un niveau > 0.' },
   terraform_raise:{ n:'Remonter', ic:'⛰️', hk:'', cost: TERRAFORM_LEVEL_COST,
                   desc:'Élève le niveau du terrain d\'un palier ('+TERRAFORM_LEVEL_COST+' $/tuile impactée).' },
+  terraform_resource:{ n:'Ressource', ic:'💎', cost:0,
+                  desc:"Réservé au propriétaire du monde : ajoute gratuitement la ressource choisie (forêt, champ, gisement, pétrole…) sur les tuiles d'herbe libres de la zone." },
   terraform_canal:{ n:'Canal', ic:'〰️', hk:'', cost: TERRAFORM_LEVEL_COST * 3,
                   desc:'Creuse une tuile de 3 niveaux et la met en eau, à niveau avec les berges (' + (TERRAFORM_LEVEL_COST * 3) + ' $/tuile). Se raccorde à l\'eau voisine : on peut tracer un canal en glissant.' },
   terrassement: { n:'Usine de terrassement', ic:'🏗️', hk:'', cost: CFG.production?.terrassement?.cout ?? 700,
@@ -965,6 +974,7 @@ for(const [type, key, n, ic, col, hgt, def, note] of LEISURE_DEFS){
   const leisure = {
     capacity: Math.max(1, Math.round(+c.capacite || 1)),
     days:     Math.max(0.1, +c.duree || 1),   // jours de jeu sur place
+    period:   Math.max(0.1, +c.periode || 7), // jours de jeu pendant lesquels un habitant ne visite le lieu qu'une fois
     fee:      Math.max(0, +c.tarif || 0),
     near:     c.pres === 'arbres' || c.pres === 'eau' ? c.pres : null,
     radius:   Math.max(LEISURE_RADIUS_MIN, Math.min(LEISURE_RADIUS_MAX, Math.round(+c.rayon || LEISURE_RADIUS_DEFAULT))), // attractivité (cases)
@@ -1831,5 +1841,5 @@ const BUILD_MATERIALS = (()=>{
 // pose un quai sur un rail : la clé est alors train_platform.
 const buildMaterialsOf = type => BUILD_MATERIALS[type] || null;
 
-const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','oil_well','plant','house','space_center','restaurant','depot','market','shop','tank','pump','garage','bus_stop','air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco','terraform','fill_water','terraform_dig','terraform_raise','terraform_canal'];
+const TOOL_ORDER = ['select','road','rail','mine','lumber','fisher','oil_well','plant','house','space_center','restaurant','depot','market','shop','tank','pump','garage','bus_stop','air_terminal','air_runway','air_taxi','air_parking','air_tower','air_deco','terraform','fill_water','terraform_dig','terraform_raise','terraform_canal','terraform_resource'];
 const MILESTONES = [25, 50, 100, 200, 400];

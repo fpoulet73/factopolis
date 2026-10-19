@@ -1,8 +1,10 @@
 // Aides injectées dans la page de test (scope global du jeu). Voir run-all.js.
 window.T_ = {
   // Monde plat, tout en herbe, entièrement jouable, budget illimité, sans
-  // matériaux de chantier (bac à sable : materials=true pour les exiger).
+  // matériaux de chantier (bac à sable : materials=true pour les exiger), tout
+  // débloqué (progression par objectifs désactivée, cf. js/06b_progression.js).
   flatWorld(materials = false){
+    WORLD.progression = false;
     for(let i = 0; i < N * N; i++){ terrain[i] = T.GRASS; terrainHeightMap[i] = 1; }
     mapMask.fill(1);
     mapBounds = { x0:0, y0:0, x1:N, y1:N };
