@@ -2968,7 +2968,7 @@ function drawTownLabels(){
     const isOwn = townOwnedBy(t);
     const isSelectedTown = t.id === selectedTownId;
 
-    const pop = members.reduce((s, b) => s + (b.pop||0), 0);
+    const pop = members.reduce((s, b) => s + residentsOf(b), 0); // sans les invités Airbnb
 
     // Centroïde en tiles → position X centrale du label
     let sx = 0, sy = 0;

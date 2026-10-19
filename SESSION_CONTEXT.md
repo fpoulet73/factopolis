@@ -515,8 +515,39 @@ Le système le plus complexe (~880 lignes dans `05_logistics.js`) :
 - `bus_stop` configuré par `CONFIG.logistique.arretBus` (rayon 8,
   tarif 1, diviseurIntra 3, partProprietaire 0.8).
 - `refreshTransitPassengerCaps()` répartit les habitants oisifs d'un
-  village entre les arrêts à portée (apportionment à reste trié).
+  village entre les arrêts à portée (apportionment à reste trié) ; seuls les
+  points **desservis** par une ligne (`transitHubServed`, d'après `transitLinks`)
+  attirent des voyageurs.
 - Transfert bus → gare via `passengersEntrant`/`passagersSortant`.
+
+### Cohérence des habitants
+
+Un habitant reste compté dans la `pop` de son logement et se trouve à un seul
+endroit. `transitByOwner()` (alias console `populationAudit()`) fait le bilan par
+joueur : `atWork` (job.homeCommuters), `toWork` (piétons `cj` « home »),
+`commuting` (job.commuters + piétons venus d'un point de transit), `waiting`,
+`sortants`, `onboard`, `visiting`, `abroad` (invité Airbnb chez un autre joueur),
+`atHome` = le reste. Les compteurs de transit appartiennent au propriétaire du
+point / du véhicule qui les porte.
+
+- Invités Airbnb : ils occupent une place du logement hôte (`pop`, capacité,
+  consommation) mais restent des habitants de leur joueur d'origine (`abroad`).
+  `residentsOf(b)` = `pop` − invités : base de `popTotal`, `townPopTotal`, des
+  taxes, paliers, objectifs, de l'allocation d'ouvriers et des voyageurs générés.
+
+- `enforceTransitCoherence()` (après chaque allocation d'ouvriers et toutes les
+  3 s) : si `atHome < 0`, retire le surplus (attente, puis arrivés, à bord,
+  navetteurs).
+- Génération des voyageurs plafonnée par `atHome` du joueur (06_simulation.js).
+- Changement de mobilité (ligne supprimée, véhicule vendu, dépôt démoli) :
+  `sendStrandedPassengersHome()` (toutes les 3 s) renvoie à pied au logement le
+  plus proche (`walkHome`) les voyageurs d'un point non desservi et ceux restés à
+  bord d'un véhicule hors ligne (retour au dépôt) ; un navetteur dont le point
+  d'arrivée n'est plus desservi quitte son poste et rentre (`refreshWorkerAllocation`,
+  passe 2a). `returnHubFor` ne propose que des points desservis : sans ligne de
+  retour, visiteurs, navetteurs et invités rentrent à pied.
+- Arrivés (`passagersSortant`) à portée d'un logement de leur joueur, même plein :
+  ils sont rentrés (plus de navette sans fin).
 
 ### Bateaux et avions
 

@@ -12,7 +12,7 @@ T_.train(dep, [a, b], ['voiture']);
 const errs = [];
 const job = { type:'farm', x:110, y:95, w:1, h:1, owner:a.owner, commuters:{ [a.x + ',' + a.y]: 3 } };
 if(returnHubFor(job, a, a.owner) !== a) errs.push('retour par la gare d\'arrivée attendu');
-if(returnHubFor(job, null, a.owner) !== c) errs.push('arrivée inconnue : gare la plus proche attendue');
+if(returnHubFor(job, null, a.owner) !== b) errs.push('arrivée inconnue : gare desservie la plus proche attendue (pas C, sans ligne)');
 // gare D reliée à la même origine (B) par une autre ligne, plus proche que A : elle est retenue
 const d = T_.build('train_station', 100, 99); T_.build('train_station', 100, 100);
 T_.train(dep, [d, b], ['voiture']);

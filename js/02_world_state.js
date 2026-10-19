@@ -992,7 +992,7 @@ function focusCameraOnWorld(){
   if(!at){
     const homes = alive.filter(b => BUILD[b.type]?.resid);
     const byTown = new Map();
-    for(const h of homes){ const k = h.townId ?? -1; byTown.set(k, (byTown.get(k) || 0) + (h.pop || 0)); }
+    for(const h of homes){ const k = h.townId ?? -1; byTown.set(k, (byTown.get(k) || 0) + residentsOf(h)); }
     let bestTown = null, bestPop = -1;
     for(const [k, p] of byTown) if(p > bestPop){ bestPop = p; bestTown = k; }
     at = pick(homes.filter(h => (h.townId ?? -1) === bestTown));
@@ -1267,7 +1267,12 @@ const inMap = (x,y)=> x>=0 && y>=0 && x<N && y<N && !!mapMask && mapMask[y*N+x]=
 // Filtres par owner : hors room (owner null) on compte tout, en room on filtre
 const myOwner   = () => (MP.connected && MP.myId != null) ? MP.myId : null;
 const ownedBy   = (b, oid) => oid == null ? (b.owner == null) : (b.owner === oid);
-const popTotal  = (oid=myOwner()) => buildings.filter(b=>ownedBy(b,oid)).reduce((s,b)=> s+(b.pop||0), 0);
+// `pop` d'un logement = ses occupants, invités Airbnb d'autres joueurs compris (ils y prennent
+// une place). Ces invités restent des habitants de leur joueur d'origine : ils ne comptent pas
+// dans la population de l'hôte (taxes, paliers, objectifs, ouvriers, voyageurs).
+const guestsOf     = b => Math.min((b.guests || []).length, b.pop || 0);
+const residentsOf  = b => (b.pop || 0) - guestsOf(b);
+const popTotal  = (oid=myOwner()) => buildings.filter(b=>ownedBy(b,oid)).reduce((s,b)=> s+residentsOf(b), 0);
 const housingCap= (oid=myOwner()) => buildings.filter(b=>ownedBy(b,oid)).reduce((s,b)=>
       s + (BUILD[b.type].resid ? BUILD[b.type].resid.popCap : 0), 0);
 const jobsTotal = (oid=myOwner()) => buildings.filter(b=>!b.dead && ownedBy(b,oid))
@@ -1641,7 +1646,7 @@ function townHomes(townId, oid=myOwner()){
 }
 
 function townPopTotal(townId){
-  return townHomes(townId).reduce((s,b)=>s+(b.pop||0), 0);
+  return townHomes(townId).reduce((s,b)=>s+residentsOf(b), 0);
 }
 
 function townHousingCap(townId){
@@ -1716,6 +1721,8 @@ function refreshTransitPassengerCaps(){
     t.townId = tw ? tw.id : null;
   }
   for(const stop of busStops) stop.passengersMax = 0;
+  // seuls les points desservis par une ligne attirent des voyageurs (ailleurs ils resteraient bloqués)
+  const served = new Set(busStops.concat(trainStations, terminals).filter(transitHubServed));
   for(const station of trainStations) station.passengersEntrantMax = 0;
   for(const t of terminals) t.passengersEntrantMax = 0;
 
@@ -1769,17 +1776,17 @@ function refreshTransitPassengerCaps(){
       if(idle <= 0) continue;
 
       for(const stop of busStops){
-        if(stop.townId !== townId) continue;
+        if(stop.townId !== townId || !served.has(stop)) continue;
         if(buildingDistance(home, stop) > BUS_STOP_RADIUS) continue;
         addEntry('bus:' + stop.x + ',' + stop.y, stop).weight += idle;
       }
       for(const station of trainStations){
-        if(station.townId !== townId) continue;
+        if(station.townId !== townId || !served.has(station)) continue;
         if(buildingDistance(home, station) > TRAIN_STATION_RADIUS) continue;
         addEntry('train:' + station.stationGroupId + ':' + station.x + ',' + station.y, station).weight += idle;
       }
       for(const t of terminals){
-        if(t.townId !== townId) continue;
+        if(t.townId !== townId || !served.has(t)) continue;
         const radius = t.type === 'boat_depot' ? PORT_RADIUS : AIRPORT_RADIUS;
         if(buildingDistance(home, t) > radius) continue;
         addEntry('term:' + t.x + ',' + t.y, t).weight += idle;
@@ -1860,26 +1867,54 @@ function busStopPassengerBadge(b){
   return { n, full: max > 0 && n >= max, groups };
 }
 
-// ---------- cohérence des passagers ----------
-// Les passagers sont des habitants SANS travail : pour chaque joueur, le total
-// (en attente aux arrêts/gares/ports/aéroports + arrivés + à bord des véhicules)
-// ne peut jamais dépasser sa population moins ses ouvriers en poste.
-// (les navetteurs déjà arrivés à leur poste — entrants d'arrêt de bus — comptent
-// comme « au travail »)
+// ---------- cohérence des habitants ----------
+// Chaque habitant est compté dans la population de son logement (`pop`) et se trouve à
+// UN SEUL endroit, par joueur :
+//  - au travail depuis sa maison (atWork : job.homeCommuters) ou en route vers son poste
+//    (toWork : piétons cj « home ») ;
+//  - navetteur venu par les transports (commuting : job.commuters + piétons cj en route) ;
+//  - voyageur : en attente (waiting), arrivé (sortants), à bord (onboard), en visite dans un
+//    lieu de loisirs (visiting) ;
+//  - invité Airbnb chez un autre joueur (abroad : compté pour son joueur d'origine) ;
+//  - sinon à la maison (atHome).
+// Les compteurs de transit sont anonymes : ils appartiennent au propriétaire du point de
+// transit / du véhicule qui les porte. `allowed` = passagers possibles (pop − travail − navetteurs
+// − invités ailleurs) ; atHome = pop − tout le reste, jamais négatif (enforceTransitCoherence).
 function transitByOwner(townId = null){
   const out = new Map();
   const inTown = b => townId == null || b?.townId === townId;
   const get = o => {
     o = o ?? null;
     let r = out.get(o);
-    if(!r){ r = { owner:o, pop:0, working:0, waiting:0, sortants:0, onboard:0, visiting:0, passengers:0, allowed:0, refs:[] }; out.set(o, r); }
+    if(!r){ r = { owner:o, pop:0, working:0, atWork:0, toWork:0, commuting:0, waiting:0, sortants:0, onboard:0, visiting:0, abroad:0,
+                  passengers:0, away:0, allowed:0, atHome:0, refs:[] }; out.set(o, r); }
     return r;
   };
+  const homeAt = key => { const h = keyBuilding(key); return h && !h.dead && BUILD[h.type]?.resid ? h : null; };
   for(const b of buildings){
-    if(b.dead || !inTown(b)) continue;
+    if(b.dead) continue;
+    // ouvriers venus à pied de leur maison : comptés pour le joueur (et le village) du logement
+    if(b.homeCommuters && !b.paused) for(const key in b.homeCommuters){
+      const h = homeAt(key);
+      if(h && inTown(h)) get(h.owner).atWork += b.homeCommuters[key] || 0;
+    }
+    if(!inTown(b)) continue;
     const r = get(b.owner);
-    r.pop += b.pop || 0;
-    r.working += workersAllocatedOf(b);
+    r.pop += residentsOf(b); // sans les invités Airbnb (comptés « abroad » chez leur joueur)
+    // navetteurs arrivés par les transports : comptés pour le joueur de leur point d'arrivée
+    if(b.commuters) for(const key in b.commuters){
+      const n = b.commuters[key] || 0;
+      if(!(n > 0)) continue;
+      const hub = keyBuilding(key);
+      const rc = get(hub && !hub.dead && isTransitHub(hub) ? hub.owner : b.owner);
+      rc.commuting += n;
+      rc.refs.push([b.commuters, key, 3]);
+    }
+    // invités Airbnb : physiquement ici, mais habitants de leur joueur d'origine
+    if(b.guests && BUILD[b.type]?.resid) for(const g of b.guests.slice(0, b.pop || 0)){
+      const o = typeof g === 'object' ? (g?.o ?? null) : null;
+      if(typeof g === 'object' && o !== (b.owner ?? null)) get(o).abroad++;
+    }
     if(b.type === 'bus_stop'){
       r.waiting += b.passengers || 0; r.sortants += b.passagersSortant || 0;
       r.refs.push([b, 'passagersSortant', 0], [b, 'passengers', 1]);
@@ -1901,28 +1936,62 @@ function transitByOwner(townId = null){
       r.refs.push([v, v.vtype === 'train' ? 'passengersOnBoard' : 'cargo', 2]);
     }
   }
+  // piétons en route vers un poste : sortis de chez eux (maison) ou du point de transit
+  for(const wk of walkers){
+    const cj = wk.cj;
+    if(!cj || !(cj.n > 0)) continue;
+    if(cj.field === 'home'){
+      const h = homeAt(cj.key);
+      if(h && inTown(h)) get(h.owner).toWork += cj.n;
+      continue;
+    }
+    const hub = keyBuilding(cj.key), job = inMap(cj.jx, cj.jy) ? bgrid[cj.jy*N+cj.jx] : null;
+    const ref = hub && !hub.dead && isTransitHub(hub) ? hub : job;
+    if(townId == null || inTown(ref)) get(ref?.owner).commuting += cj.n;
+  }
   for(const r of out.values()){
-    r.working = Math.min(r.pop, r.working);
-    if(townId == null) r.sortants = Math.max(0, r.sortants - (_stationWorkersByOwner.get(r.owner) || 0)); // déjà « au travail »
+    r.working = r.atWork + r.commuting;
     r.passengers = r.waiting + r.sortants + r.onboard + r.visiting;
-    r.allowed = Math.max(0, r.pop - r.working);
+    r.away = r.passengers + r.commuting + r.abroad;
+    r.allowed = Math.max(0, r.pop - r.atWork - r.toWork - r.commuting - r.abroad);
+    r.atHome = r.pop - r.atWork - r.toWork - r.away;
   }
   return out;
 }
-// Retire le surplus de passagers (sortants d'abord, puis ceux en attente).
+// Bilan des habitants par joueur (console : populationAudit().get(myOwner())).
+const populationAudit = () => transitByOwner();
+// Un habitant ne peut pas être à deux endroits : si un joueur a plus d'habitants « dehors »
+// que sa population ne le permet (départs de la ville, logement détruit, habitants embauchés
+// depuis leur maison alors qu'ils attendaient à un arrêt…), le surplus est retiré — d'abord
+// ceux qui attendent à un arrêt près de chez eux, puis les arrivés, ceux à bord, enfin les
+// navetteurs venus en transport (ils rentrent).
 function enforceTransitCoherence(){
+  let jobsChanged = false;
   for(const r of transitByOwner().values()){
-    let excess = r.passengers - r.allowed;
+    let excess = -r.atHome;
     if(excess <= 0.01) continue;
-    for(const stage of [0, 1, 2]){
+    for(const stage of [1, 0, 2, 3]){
+      if(excess <= 0.01) break;
       const refs = r.refs.filter(x => x[2] === stage && (x[0][x[1]] || 0) > 0);
       const sum = refs.reduce((s, x) => s + x[0][x[1]], 0);
-      if(sum <= 0 || excess <= 0) continue;
-      const cut = Math.min(excess, sum), f = 1 - cut / sum;
-      for(const x of refs) x[0][x[1]] = stage === 2 ? Math.floor(x[0][x[1]] * f) : x[0][x[1]] * f;
-      excess -= cut;
+      if(sum <= 0) continue;
+      if(stage < 2){ // compteurs fractionnaires : au prorata
+        const cut = Math.min(excess, sum), f = 1 - cut / sum;
+        for(const x of refs) x[0][x[1]] *= f;
+        excess -= cut;
+        continue;
+      }
+      // voyageurs à bord / navetteurs : par personnes entières
+      for(const x of refs){
+        if(excess <= 0.01) break;
+        const cut = Math.min(x[0][x[1]], Math.ceil(excess - 0.01));
+        x[0][x[1]] -= cut;
+        excess -= cut;
+        if(stage === 3){ jobsChanged = true; if(x[0][x[1]] <= 0) delete x[0][x[1]]; }
+      }
     }
   }
+  if(jobsChanged) _workerAllocAt = -Infinity; // postes libérés : nouvelle allocation
 }
 
 // ---------- retour des habitants vers leur point de départ ----------
@@ -1962,19 +2031,27 @@ function transitLinks(){
   _transitLinksCache = { gtime, n: vehicles.length, map };
   return map;
 }
+// Point de transit desservi : au moins une ligne de voyageurs (bus, train, ferry, avion) s'y
+// arrête. Ailleurs, un voyageur ne peut ni partir ni être ramené : il rentre à pied.
+const transitHubServed = h => {
+  const rep = h && !h.dead ? transitRepOf(h) : null;
+  return !!rep && isTransitHub(rep) && transitLinks().has(rep);
+};
 // Point de transit (représentant) où repart un habitant quittant `place`. `arrival` = point
 // par lequel il est arrivé (null : inconnu, sauvegardes d'avant). `owner` = son joueur.
-// Repli : point d'arrivée, puis point de transit le plus proche (de son joueur de préférence).
+// Seuls les points desservis par une ligne comptent. Arrivée inconnue : point desservi le plus
+// proche (de son joueur de préférence). Arrivée connue mais plus desservie (ligne supprimée,
+// véhicule vendu, point démoli) et aucun autre point ne mène à ses origines : null → il rentre à pied.
 function returnHubFor(place, arrival, owner = null, acceptHub = null){
-  let arr = arrival && !arrival.dead ? transitRepOf(arrival) : null;
-  if(arr && acceptHub && !acceptHub(arr)) arr = null;
   const links = transitLinks();
-  const origins = arr && isTransitHub(arr) ? links.get(arr) : null; // d'où ont pu venir les voyageurs
+  let arr = arrival && !arrival.dead ? transitRepOf(arrival) : null;
+  if(arr && (!isTransitHub(arr) || (acceptHub && !acceptHub(arr)))) arr = null;
+  const origins = arr ? links.get(arr) : null; // d'où ont pu venir les voyageurs
   let best = null, bd = Infinity, mine = null, md = Infinity, any = null, ad = Infinity;
   for(const s of buildings){
     if(!isTransitHub(s)) continue;
     const rep = transitRepOf(s);
-    if(!isTransitHub(rep) || (acceptHub && !acceptHub(rep))) continue;
+    if(!isTransitHub(rep) || !links.has(rep) || (acceptHub && !acceptHub(rep))) continue;
     const d = buildingDistance(s, place);
     if(d < ad){ ad = d; any = rep; }
     if((rep.owner ?? null) === owner && d < md){ md = d; mine = rep; }
@@ -1983,31 +2060,71 @@ function returnHubFor(place, arrival, owner = null, acceptHub = null){
     if(!ok && origins) for(const o of (links.get(rep) || [])) if(origins.has(o)){ ok = true; break; }
     if(ok){ bd = d; best = rep; }
   }
-  return best || (arr && isTransitHub(arr) ? arr : null) || mine || any;
+  if(best) return best;
+  return arrival ? null : (mine || any);
 }
-// Logement non plein le plus proche de `place` accepté par `accept`.
-function nearestOpenHome(place, accept){
+// Logement le plus proche de `place` accepté par `accept`. `needRoom` : il doit avoir une place
+// libre (nouvel habitant) ; un habitant qui rentre chez lui y est déjà compté et n'en a pas besoin.
+function nearestHome(place, accept, needRoom = false){
   let best = null, bd = Infinity;
   for(const h of buildings){
     if(h.dead || !BUILD[h.type]?.resid || h.airbnbOnly || !accept(h)) continue;
-    if((h.pop || 0) + (h.pending || 0) >= BUILD[h.type].resid.popCap) continue;
+    if(needRoom && (h.pop || 0) + (h.pending || 0) >= BUILD[h.type].resid.popCap) continue;
     const d = buildingDistance(h, place);
     if(d < bd){ bd = d; best = h; }
   }
   return best;
 }
+// `n` habitants du joueur `owner` sans moyen de transport rentrent à pied au logement le plus
+// proche de `from` (déjà comptés comme habitants : seul le piéton est créé). Renvoie ce logement.
+function walkHome(from, owner, n){
+  const home = nearestHome(from, h => (h.owner ?? null) === (owner ?? null));
+  if(home && n >= 1) spawnTransitWalkers(from, home, n);
+  return home;
+}
 // Choix du chemin de retour depuis `place` : { home } (à pied) ou { hub } (par les transports).
+// À pied vers un logement non plein s'il est plus proche que le point de transit de retour ;
+// si aucune ligne ne le ramène, vers n'importe quel logement de son joueur (il y est déjà compté).
 function returnRouteFor(place, arrival, owner, acceptHome = null, acceptHub = null){
-  const home = acceptHome ? nearestOpenHome(place, acceptHome) : null;
+  const home = acceptHome ? nearestHome(place, acceptHome, true) : null;
   const hub = returnHubFor(place, arrival, owner, acceptHub);
   if(home && (!hub || buildingDistance(home, place) <= buildingDistance(hub, place))) return { home };
-  return hub ? { hub } : (home ? { home } : {});
+  if(hub) return { hub };
+  const any = acceptHome ? nearestHome(place, acceptHome) : null;
+  return any ? { home: any } : {};
 }
 // `n` habitants rejoignent le point de transit `hub` en passagers entrants (piétons visuels).
 function boardReturnHub(from, hub, n){
   const inKey = hub.type === 'bus_stop' ? 'passengers' : 'passengersEntrant';
   hub[inKey] = (hub[inKey] || 0) + n;
   spawnTransitWalkers(from, hub, n);
+}
+// Voyageurs bloqués après un changement de mobilité (ligne supprimée, véhicule vendu, dépôt
+// démoli, point de transit isolé) : personne ne peut plus les emmener, ils rentrent à pied au
+// logement le plus proche de leur joueur. De même pour ceux restés à bord d'un véhicule qui a
+// quitté sa ligne (retour au dépôt, véhicule sans arrêts). Appelé toutes les 3 s.
+const TRANSIT_COUNTER_KEYS = ['passengers', 'passengersEntrant', 'passengersEntrantPending', 'passagersSortant'];
+function sendStrandedPassengersHome(){
+  for(const b of buildings){
+    if(b.dead || !isTransitHub(b) || transitHubServed(b)) continue;
+    let n = 0;
+    for(const k of TRANSIT_COUNTER_KEYS) if(b[k] > 0){ n += b[k]; b[k] = 0; }
+    if(n > 0){ b._sortantAge = 0; walkHome(b, b.owner, Math.floor(n)); }
+  }
+  for(const v of vehicles){
+    const key = v.vtype === 'train' ? 'passengersOnBoard'
+      : (v.vtype === 'bus' || VEHICLE_TYPES[v.vtype]?.passengers) ? 'cargo' : null;
+    if(!key || !(v[key] > 0)) continue;
+    const onLine = v.state !== 'idle' && v.state !== 'returning'
+      && (v.vtype === 'train' ? (v.orders || []).length >= 2 : !!(v.source && v.dest && !v.source.dead && !v.dest.dead));
+    if(onLine) continue;
+    const n = v[key];
+    v[key] = 0;
+    if(v.vtype === 'train') v.passengerBoardStop = null;
+    else if(v.cargoOwners) v.cargoOwners = null;
+    const at = (v.currentBuilding && !v.currentBuilding.dead ? v.currentBuilding : null) || v.garageRef;
+    if(at && !at.dead) walkHome(at, v.owner ?? v.garageRef?.owner ?? null, Math.floor(n));
+  }
 }
 
 // ---------- ouvriers venus par transport : départ d'un poste ----------
@@ -2017,19 +2134,16 @@ function boardReturnHub(from, hub, n){
 //    proche que le point de transit de retour (ils y sont déjà comptés comme habitants :
 //    ils quittent simplement le compteur de voyageurs) ;
 //  - sinon au point de transit d'où une ligne les ramène, en passagers entrants ;
-//  - sinon au point d'arrivée d'origine, en passagers sortants.
+//  - sinon (aucun logement, aucune ligne) ils quittent simplement le compteur de navetteurs.
 // Un piéton (purement visuel) fait le trajet.
 function sendCommutersAway(job, key, n){
   if(!(n > 0) || !job.commuters) return;
-  const take = () => { job.commuters[key] -= n; if(job.commuters[key] <= 0) delete job.commuters[key]; };
+  job.commuters[key] -= n;
+  if(job.commuters[key] <= 0) delete job.commuters[key];
   const sameOwner = h => !(job.owner != null && h.owner != null && h.owner !== job.owner);
   const route = returnRouteFor(job, keyBuilding(key), job.owner ?? null, sameOwner, sameOwner);
-  if(route.home){ take(); spawnTransitWalkers(job, route.home, n); return; }
-  if(route.hub){ take(); boardReturnHub(job, route.hub, n); return; }
-  const [x, y] = key.split(',').map(Number);
-  const origin = bgrid[y*N+x];
-  if(origin && !origin.dead) origin.passagersSortant = (origin.passagersSortant || 0) + n;
-  take();
+  if(route.home) spawnTransitWalkers(job, route.home, n);
+  else if(route.hub) boardReturnHub(job, route.hub, n);
 }
 // Envoie `n` voyageurs du point de transit `hub` vers l'usine `job` : au plus 3 piétons,
 // chacun porte une part ; ils sont embauchés à leur arrivée (deliverCommuters).
@@ -2058,6 +2172,9 @@ function deliverCommuters(jx, jy, key, n, field = 'commuters'){
       if(!job.homeCommuters) job.homeCommuters = {};
       job.homeCommuters[key] = (job.homeCommuters[key] || 0) + n;
       _workerAllocAt = -Infinity;
+    } else {
+      const home = keyBuilding(key); // poste disparu / en pause : demi-tour à pied
+      if(home && !home.dead) spawnTransitWalkers({ x:jx, y:jy, w:1, h:1, owner:home.owner }, home, n);
     }
     return;
   }
@@ -2073,9 +2190,10 @@ function deliverCommuters(jx, jy, key, n, field = 'commuters'){
     sendCommutersAway(job, key, n);
     return;
   }
-  const [x, y] = key.split(',').map(Number);
-  const origin = bgrid[y*N+x];
-  if(origin && !origin.dead) origin.passagersSortant = (origin.passagersSortant || 0) + n;
+  // poste démoli pendant le trajet : retour au point d'arrivée s'il est encore desservi, sinon à pied
+  const origin = keyBuilding(key);
+  if(origin && transitHubServed(origin)) origin.passagersSortant = (origin.passagersSortant || 0) + n;
+  else walkHome({ x:jx, y:jy, w:1, h:1 }, origin && !origin.dead ? origin.owner : null, n);
 }
 // Piétons purement visuels (au plus 3 par déplacement) entre deux bâtiments.
 // ---------- trajet des piétons autour des bâtiments ----------
@@ -2220,7 +2338,6 @@ function isEssentialJob(b){
   return false;
 }
 // ouvriers d'un poste par joueur (propriétaire du logement / de l'arrêt d'origine)
-let _stationWorkersByOwner = new Map(); // ouvriers pris parmi les arrivés en gare (déjà comptés « au travail »)
 function addWorkersOwner(job, owner, n){
   const k = owner ?? 'null';
   job.workersByOwner[k] = (job.workersByOwner[k] || 0) + n;
@@ -2232,7 +2349,6 @@ function refreshWorkerAllocation(){
     _workerAllocSig = buildings.length + ':' + pop + ':' + paused + ':' + Object.keys(WALLETS).length;
     _workerAllocAt = gtime;
   }
-  _stationWorkersByOwner = new Map();
   for(const b of buildings){ b.workersAssigned = 0; b.workersByTown = {}; b.workersIdle = 0; b.workersByBusStop = 0; b.workersByOwner = {}; }
   const jobs = buildings.filter(b=>!b.dead && !b.paused && workersRequiredOf(b)>0);
   for(const b of jobs) b._wEss = isEssentialJob(b) ? 1 : 0;
@@ -2240,9 +2356,9 @@ function refreshWorkerAllocation(){
   // pourvu avant ses fournisseurs : la chaîne démarre même avec peu d'habitants)
   jobs.sort((a,b)=> (b._wEss - a._wEss) || (workersRequiredOf(b) - workersRequiredOf(a)));
   const homes = buildings
-    .filter(b=>!b.dead && BUILD[b.type].resid && b.pop>0);
-  // disponibilité par maison
-  const avail = new Map(homes.map(h => [h, h.pop]));
+    .filter(b=>!b.dead && BUILD[b.type].resid && residentsOf(b)>0);
+  // disponibilité par maison (les invités Airbnb ne travaillent pas pour l'hôte)
+  const avail = new Map(homes.map(h => [h, residentsOf(h)]));
   // Grille spatiale des logements (par centre) : un poste n'examine que les
   // cellules à portée du plus grand rayon de travail, au lieu de toute la carte.
   // Centres et rayons précalculés (pas d'allocation dans les boucles chaudes).
@@ -2286,7 +2402,7 @@ function refreshWorkerAllocation(){
     jobInbound.set(jk, (jobInbound.get(jk) || 0) + wk.cj.n);
     if(wk.cj.field === 'home') homeInbound.set(wk.cj.key, (homeInbound.get(wk.cj.key) || 0) + wk.cj.n);
   }
-  for(const h of homes) avail.set(h, Math.max(0, h.pop - (homeInbound.get(h.x + ',' + h.y) || 0)));
+  for(const h of homes) avail.set(h, Math.max(0, residentsOf(h) - (homeInbound.get(h.x + ',' + h.y) || 0)));
   const homeAtKey = key => { const [x, y] = key.split(',').map(Number); const h = bgrid[y*N+x]; return h && !h.dead && BUILD[h.type]?.resid ? h : null; };
   const jobSetAll = new Set(jobs);
   // 1a : ceux déjà en poste le restent tant que le poste a besoin d'eux et que la maison est à portée
@@ -2337,9 +2453,11 @@ function refreshWorkerAllocation(){
   const hubRadius = h => h.type === 'train_station' ? TRAIN_STATION_RADIUS
     : h.type === 'boat_depot' ? PORT_RADIUS : h.type === 'air_terminal' ? AIRPORT_RADIUS : BUS_STOP_RADIUS;
   const hubAt = key => { const [x, y] = key.split(',').map(Number); return bgrid[y*N+x] || null; };
+  // surplus : retour au point d'arrivée s'il est encore desservi, sinon chez eux (sendCommutersAway)
   const giveBack = (job, key, n) => {
     const hub = hubAt(key);
-    if(hub && !hub.dead) hub.passagersSortant = (hub.passagersSortant || 0) + n;
+    if(!hub || !transitHubServed(hub)){ sendCommutersAway(job, key, n); return; }
+    hub.passagersSortant = (hub.passagersSortant || 0) + n;
     job.commuters[key] -= n;
     if(job.commuters[key] <= 0) delete job.commuters[key];
   };
@@ -2357,10 +2475,12 @@ function refreshWorkerAllocation(){
     job.workersByBusStop = (job.workersByBusStop||0) + n;
     addWorkersOwner(job, hub?.owner, n);
   };
-  // 2a : ceux déjà en poste gardent leur place (dans la limite des besoins)
+  // 2a : ceux déjà en poste gardent leur place (dans la limite des besoins) tant qu'une ligne
+  // dessert leur point d'arrivée ; sinon ils ne pourraient plus rentrer : ils rentrent à pied
   for(const job of jobs){
     if(!job.commuters) continue;
     for(const key of Object.keys(job.commuters)){
+      if(!transitHubServed(hubAt(key))){ sendCommutersAway(job, key, job.commuters[key]); continue; }
       const need = Math.max(0, workersRequiredOf(job) - workersAllocatedOf(job));
       const keep = Math.min(job.commuters[key], need);
       if(keep < job.commuters[key]) giveBack(job, key, job.commuters[key] - keep);
@@ -2416,4 +2536,6 @@ function refreshWorkerAllocation(){
     }
     WALLETS[k].eff = req > 0 ? Math.min(1, assigned / req) : 1;
   }
+  // un habitant embauché depuis sa maison ne peut plus attendre en même temps à un arrêt
+  enforceTransitCoherence();
 }

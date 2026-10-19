@@ -318,12 +318,9 @@ function popBreakdown(){
   riding = Math.min(Math.round(riding), Math.max(0, pop - working));
   onboard = Math.min(Math.round(onboard), riding);
   leisure = Math.min(Math.round(leisure), riding - onboard);
-  // Airbnb : voyageurs installés pour une semaine chez un autre joueur (comptés dans la pop de la maison)
-  let airbnb = 0;
-  for(const b of buildings){
-    if(b.dead || !b.guests || (town && b.townId !== town.id)) continue;
-    airbnb += Math.min(b.guests.length, b.pop || 0);
-  }
+  // Airbnb : habitants du joueur installés pour une semaine chez un autre joueur (toujours comptés
+  // dans sa population ; ceux qu'il héberge ne le sont pas)
+  let airbnb = transitByOwner().get(myOwner() ?? null)?.abroad || 0;
   airbnb = Math.min(airbnb, Math.max(0, pop - working - riding));
   return { pop, working, riding, onboard, leisure, waiting: riding - onboard - leisure, airbnb, home: Math.max(0, pop - working - riding - airbnb) };
 }
@@ -826,7 +823,7 @@ function updateNews(){
   const popByTown = new Map();
   for(const b of buildings){
     if(b.dead || b.townId == null || !BUILD[b.type]?.resid) continue;
-    popByTown.set(b.townId, (popByTown.get(b.townId) || 0) + (b.pop || 0));
+    popByTown.set(b.townId, (popByTown.get(b.townId) || 0) + residentsOf(b));
   }
   for(const t of towns){
     const pop = popByTown.get(t.id) || 0;

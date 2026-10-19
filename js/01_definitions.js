@@ -1575,7 +1575,7 @@ function townCenterOf(t){
 function townPopulation(t){
   let pop = 0;
   for(const b of buildings){
-    if(!b.dead && b.townId === t.id && BUILD[b.type]?.resid) pop += b.pop||0;
+    if(!b.dead && b.townId === t.id && BUILD[b.type]?.resid) pop += residentsOf(b); // sans les invités Airbnb
   }
   return pop;
 }

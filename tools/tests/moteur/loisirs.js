@@ -23,6 +23,11 @@ for(let x = 90; x < 102; x++){
   if(h){ h.pop = 5; h.starterHome = false; h.protectedPop = 0; h.storage.fish_fillet = 10; }
 }
 const stop = T_.build('bus_stop', 95, 100);
+// arrêts desservis par une ligne de bus (au dépôt) : sans ligne, les voyageurs rentreraient à pied
+for(const t of T_.line(78, 99, 88, 99)) road[t.y*N+t.x] = 1;
+const garage = T_.build('garage', 80, 100), terminus = T_.build('bus_stop', 86, 100);
+const serve = s => { const v = createPersistentVehicle('bus', garage); v.source = s; v.dest = terminus; return v; };
+serve(stop);
 const money0 = myWallet().money;
 const resto = T_.build('restaurant', 97, 100);
 check('restaurant posé', resto?.type === 'restaurant' && myWallet().money === money0 - BUILD.restaurant.cost);
@@ -68,6 +73,7 @@ check('démolition : visiteurs à l’arrêt', (stop2.passengers || 0) >= p1 + n
 // rayon d'attractivité du lieu : l'arrêt doit se trouver dans CE rayon (réglable), peu importe le sien
 const far = T_.build('restaurant', 97, 100);
 const stop3 = T_.build('bus_stop', 112, 100);
+serve(stop3);
 stop2.passagersSortant = 0;
 for(let k = 0; k < 40 && workersAllocatedOf(far) < workersRequiredOf(far); k++) T_.run(0.5, 0.1);
 const dFar = buildingDistance(far, stop3);

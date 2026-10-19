@@ -496,10 +496,11 @@ function update(dt){
   busStopTimer += dt;
   const updateBusMax = busStopTimer >= 3;
   if(updateBusMax) busStopTimer = 0;
-  if(updateBusMax){ refreshTransitPassengerCaps(); enforceTransitCoherence(); }
+  if(updateBusMax){ refreshTransitPassengerCaps(); sendStrandedPassengersHome(); enforceTransitCoherence(); }
   // Passagers arrivés qui n'ont trouvé aucun bus :
-  // Arrêt de bus, gare, port, aéroport : les voyageurs arrivés qui ne sont pas partis
-  // redeviennent passagers entrants après 3 jours (pas de retour à la maison pour le moment).
+  // Arrêt de bus, gare, port, aéroport desservi : les voyageurs arrivés qui ne sont pas partis
+  // redeviennent passagers entrants après 3 jours (ils attendent une ligne pour rentrer ; sans
+  // ligne, sendStrandedPassengersHome les renvoie chez eux à pied).
   {
     const dtc = Math.min(dt, 0.5) * GAME_HOURS_PER_SEC;
     for(const b of buildings){
@@ -522,6 +523,15 @@ function update(dt){
   passengerCycleTimer += dt;
   const resetPassengerCycle = passengerCycleTimer >= BUS_FILL_RATE_SECS;
   if(resetPassengerCycle) passengerCycleTimer = 0;
+  // Nouveaux voyageurs : pris parmi les habitants encore à la maison de leur joueur (jamais
+  // au-delà : un habitant n'est pas à la fois chez lui, au travail et à l'arrêt). Bilan calculé
+  // au premier remplissage du pas.
+  let homeBudget = null;
+  const budgetOf = o => {
+    if(!homeBudget){ homeBudget = new Map(); for(const r of transitByOwner().values()) homeBudget.set(r.owner, Math.max(0, r.atHome)); }
+    return homeBudget.get(o ?? null) || 0;
+  };
+  const spendBudget = (o, n) => homeBudget.set(o ?? null, budgetOf(o) - n);
   for(const b of buildings){
     if(b.dead || b.type !== 'bus_stop') continue;
     // (plafond par joueur : enforceTransitCoherence, pas par arrêt)
@@ -529,9 +539,12 @@ function update(dt){
     if(resetPassengerCycle || b.passengersQuota == null) b.passengersQuota = max;
     if(max > 0 && (b.passengersQuota || 0) > 0 && (b.passengers || 0) < max){
       const rate = max / BUS_FILL_RATE_SECS;
-      const fillAmount = Math.min(b.passengersQuota, rate * Math.min(dt, 0.5), max - (b.passengers || 0));
-      b.passengers = (b.passengers || 0) + fillAmount;
-      b.passengersQuota -= fillAmount;
+      const fillAmount = Math.min(b.passengersQuota, rate * Math.min(dt, 0.5), max - (b.passengers || 0), budgetOf(b.owner));
+      if(fillAmount > 0){
+        b.passengers = (b.passengers || 0) + fillAmount;
+        b.passengersQuota -= fillAmount;
+        spendBudget(b.owner, fillAmount);
+      }
     }
     // ancien compteur « travailleurs » des sauvegardes d'avant : simples voyageurs arrivés
     if((b.passengersEntrant || 0) > 0){
@@ -551,9 +564,12 @@ function update(dt){
     if(resetPassengerCycle || b.passengersEntrantQuota == null) b.passengersEntrantQuota = maxE;
     if(maxE > 0 && (b.passengersEntrantQuota || 0) > 0 && (b.passengersEntrant || 0) < maxE){
       const rate = maxE / BUS_FILL_RATE_SECS;
-      const fillAmount = Math.min(b.passengersEntrantQuota, rate * Math.min(dt, 0.5), maxE - (b.passengersEntrant || 0));
-      b.passengersEntrant = (b.passengersEntrant || 0) + fillAmount;
-      b.passengersEntrantQuota -= fillAmount;
+      const fillAmount = Math.min(b.passengersEntrantQuota, rate * Math.min(dt, 0.5), maxE - (b.passengersEntrant || 0), budgetOf(b.owner));
+      if(fillAmount > 0){
+        b.passengersEntrant = (b.passengersEntrant || 0) + fillAmount;
+        b.passengersEntrantQuota -= fillAmount;
+        spendBudget(b.owner, fillAmount);
+      }
     }
   }
 }
@@ -780,7 +796,7 @@ function popTaxMultiplier(oid, total = popTotal(oid)){
   let weighted = 0;
   for(const b of buildings){
     if(b.dead || !b.pop || !ownedBy(b, oid)) continue;
-    weighted += b.pop * residClassDef(b).taxe;
+    weighted += residentsOf(b) * residClassDef(b).taxe; // invités Airbnb : pas des habitants de l'hôte
   }
   return weighted / total;
 }
@@ -1011,9 +1027,10 @@ function leaveOne(b){
 }
 
 // Voyageurs arrivés (sortants) d'un arrêt / gare / port / aéroport : s'il y a une maison
-// non pleine à portée, ils la rejoignent à pied (1 par seconde et par point de transit).
-// Maison du même joueur : ils y sont déjà comptés comme habitants, ils quittent le compteur.
-// Maison d'un autre joueur : ils s'y installent (nouvel habitant à leur arrivée).
+// à portée, ils la rejoignent à pied (1 par seconde et par point de transit).
+// Maison du même joueur (même pleine) : ils y sont déjà comptés comme habitants, ils quittent
+// le compteur — ils sont rentrés chez eux et ne font plus la navette sans fin.
+// Maison non pleine d'un autre joueur : ils s'y installent (nouvel habitant à leur arrivée).
 let sortantsHomeTimer = 0;
 function tickSortantsToHomes(dt){
   sortantsHomeTimer += dt;
@@ -1034,8 +1051,9 @@ function tickSortantsToHomes(dt){
     let best = null, bd = Infinity;
     for(const h of buildings){
       if(h.dead || !BUILD[h.type]?.resid) continue;
-      if((h.pop || 0) + (h.pending || 0) >= BUILD[h.type].resid.popCap) continue;
-      if(h.airbnbOnly && !(hub.owner != null && h.owner != null && h.owner !== hub.owner)) continue; // réservé aux autres joueurs
+      const other = hub.owner != null && h.owner != null && h.owner !== hub.owner;
+      if(other && (h.pop || 0) + (h.pending || 0) >= BUILD[h.type].resid.popCap) continue;
+      if(h.airbnbOnly && !other) continue; // réservé aux autres joueurs
       const d = buildingDistance(h, hub);
       if(d <= radius && d < bd){ bd = d; best = h; }
     }
@@ -1209,12 +1227,13 @@ function admitVisitors(b, hub, n){
   spawnTransitWalkers(hub, b, n);
 }
 // Fin de visite : les visiteurs regagnent leur point de départ par le chemin le plus court
-// (returnRouteFor) : à pied jusqu'à un logement de leur joueur s'il est plus proche, sinon en
-// passagers entrants du point de transit d'où une ligne les ramène vers leur point d'arrivée.
+// (returnRouteFor) : à pied jusqu'à un logement de leur joueur s'il est plus proche (ou si plus
+// aucune ligne ne les ramène), sinon en passagers entrants du point de transit d'où une ligne
+// les ramène vers leur point d'arrivée.
 function sendVisitorsToTransit(b, n, origin = null, arrivalKey = null){
   const route = returnRouteFor(b, keyBuilding(arrivalKey), origin, h => (h.owner ?? null) === origin);
   if(route.home){ spawnTransitWalkers(b, route.home, n); return; } // déjà comptés comme habitants
-  if(!route.hub) return; // plus aucun point de transit : ils rentrent par leurs propres moyens
+  if(!route.hub) return; // ni logement ni ligne : leur joueur n'a plus de logement
   boardReturnHub(b, route.hub, n);
 }
 function tickLeisureVisits(){
@@ -1252,14 +1271,15 @@ const GUEST_STAY_SECS = 7 * 24 / GAME_HOURS_PER_SEC;
 // invité = { t: heure d'arrivée (gtime), o: joueur d'origine } (ancien format : nombre = heure)
 const guestStart = g => typeof g === 'number' ? g : g.t;
 // Un invité `g` ({ t, o, h }) de la maison `h` repart : habitant retiré, passager entrant du
-// point de transit d'où une ligne le ramène vers son point d'arrivée (returnHubFor ; à défaut
-// le plus proche, sinon il quitte la ville).
+// point de transit d'où une ligne le ramène vers son point d'arrivée (returnHubFor) ; sans ligne,
+// il rentre à pied chez son joueur d'origine (où il est toujours compté), sinon il quitte la ville.
 function sendGuestToTransit(h, g = null){
   if(h.pop <= (h.protectedPop || 0)) return;
   h.pop--;
   addFloat(h.x, h.y-0.5, '−1 👤', '#ff9a8a');
-  const hub = returnHubFor(h, keyBuilding(g?.h), typeof g === 'object' ? (g?.o ?? null) : null);
-  if(!hub){ spawnLeavers(h, 1); return; }
+  const origin = typeof g === 'object' ? (g?.o ?? null) : null;
+  const hub = returnHubFor(h, keyBuilding(g?.h), origin);
+  if(!hub){ if(typeof g !== 'object' || !walkHome(h, origin, 1)) spawnLeavers(h, 1); return; }
   boardReturnHub(h, hub, 1);
 }
 // Maison fusionnée, divisée, agrandie ou détruite : ses invités repartent AVANT que sa
